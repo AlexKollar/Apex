@@ -1,6 +1,4 @@
-# Apex
-
-**Powered by Navi. Your machine. Your model. No cloud.**
+# Apex - Powered by Navi
 
 Apex is the standalone desktop app that puts Navi — a cybersecurity-tuned local AI — on your own hardware. CLI-first chat, cartridge-style chips, knowledge packs, and a fully local voice, answering to no server but yours.
 
