@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Apex
+GenericName=Local AI Assistant
+Comment=Apex — local AI for cybersecurity work, running on a single llamafile
+Exec=__INSTALL_DIR__/start.sh
+Icon=navi-apex
+Terminal=false
+Categories=Development;Utility;Security;
+Keywords=ai;llm;security;navi;
+StartupWMClass=navi-apex

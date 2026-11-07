@@ -1,0 +1,114 @@
+{
+  "backend": "live",
+  "live": {
+    "llamafile_endpoint": "http://localhost:8080/v1",
+    "model_name": "navi"
+  },
+  "bridge": {
+    "host": "127.0.0.1",
+    "port": 8675
+  },
+  "startup": "on-ui-launch",
+  "install_dir": "/opt/navi-apex",
+  "sudo_mode": false,
+  "threat_level": "Guarded",
+  "operator_name": "",
+  "installed_commands": [
+    "nmap",
+    "grep"
+  ],
+  "hardware_profile": {
+    "detected": {
+      "os": "linux",
+      "osLabel": "Linux (Pop!_OS / Ubuntu family)",
+      "cpuModel": "13th Gen Intel Core i5-1340P",
+      "cpuCores": 12,
+      "performanceCores": 4,
+      "totalRamGB": 9.4,
+      "gpuPresent": true,
+      "gpuName": "Intel Iris Xe Graphics",
+      "gpuKind": "integrated",
+      "gpuVramGB": null
+    },
+    "settings": {
+      "threads": 4,
+      "ctxSize": 4096,
+      "batchSize": 512,
+      "gpuLayers": 0
+    },
+    "autoSettings": {
+      "threads": 4,
+      "ctxSize": 4096,
+      "batchSize": 512,
+      "gpuLayers": 0
+    },
+    "source": "auto",
+    "tier": "fluid",
+    "tierLabel": "Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)",
+    "reasoning": [
+      "Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.",
+      "Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+      "Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.",
+      "GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.",
+      "Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."
+    ],
+    "installLog": [
+      "[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)",
+      "[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)",
+      "[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance",
+      "[hardware] RAM: 9.4 GiB total",
+      "[hardware] GPU: Intel Iris Xe Graphics (integrated)",
+      "[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.",
+      "[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+      "[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.",
+      "[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.",
+      "[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).",
+      "[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"
+    ],
+    "detectedAt": "2026-11-07T00:00:00.000Z"
+  },
+  "runtime": {
+    "threads": 4,
+    "ctx_size": 4096,
+    "batch_size": 512,
+    "gpu_layers": 0,
+    "flags": "--ctx-size 4096 --threads 4 --batch-size 512"
+  },
+  "persona_files": [
+    "config/soul.md",
+    "config/memory.md"
+  ],
+  "voice": {
+    "enabled": true,
+    "stt": {
+      "engine": "faster-whisper",
+      "model": "small.en"
+    },
+    "tts": {
+      "engine": "kokoro",
+      "voice": "bf_isabella",
+      "rate": 1,
+      "pitch": 1
+    }
+  },
+  "github": {
+    "client_id": "",
+    "backup_repo": "navi-backup",
+    "backup_private": true,
+    "backup_items": [
+      "soul",
+      "memory",
+      "settings",
+      "chips",
+      "rag",
+      "workflows"
+    ],
+    "backup_interval_days": 1,
+    "last_backup_at": null,
+    "last_backup_result": "",
+    "last_import_at": null,
+    "last_import_result": ""
+  },
+  "version": "0.1.0",
+  "version_status": "alpha"
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Apex",
+  "version": "0.1.0",
+  "identifier": "org.saintssec.navi-apex",
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Apex",
+        "url": "http://localhost:8675",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 880,
+        "minHeight": 580,
+        "center": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "../assets/navi-apex.ico", "../assets/navi-apex.icns"]
+  }
+}

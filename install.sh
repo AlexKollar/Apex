@@ -1,0 +1,732 @@
+#!/usr/bin/env bash
+# Apex installer — Linux (reference build)
+# Script-based on purpose (no graphical wizard): it downloads the Navi
+# llamafile from Hugging Face, installs the app, wires up startup, and
+# registers Apex in the application menu with its icon.
+# The install root is /opt/navi-apex. An earlier install under
+# ~/.local/share/navi is migrated as a clean break: its bridge and
+# boot service are stopped and disabled, its llamafile binary is
+# MOVED into /opt (never re-downloaded), its config and persona
+# documents are carried across, and the old files are removed — so
+# nothing from the old location can grab port 8675 at boot or answer
+# the browser with a stale page.
+# If a real llamafile binary is already present in the install
+# location, the download (and the llamafile setup) is skipped entirely.
+# --fresh reinstalls the app from scratch — everything in the install
+# location is removed and reinstalled — EXCEPT the operator's own
+# state: the llamafile binary, the installed chips (the whole chips/
+# folder), her knowledge packs (rag-packs/), and the Soul/Memory
+# documents are stashed before the wipe
+# and restored after it, so a fresh install never costs Navi her
+# chips or who she is. Her voice venv is stashed and restored too,
+# and the voice step checks it: when the engines still import, the
+# voice install is skipped as already set up. A first install has
+# nothing to stash and creates everything fresh, as it should.
+set -euo pipefail
+
+LLAMAFILE_URL="https://huggingface.co/saintssec/navi.llamafile/resolve/main/navi.llamafile"
+INSTALL_DIR="${NAVI_HOME:-/opt/navi-apex}"
+OLD_DIR="$HOME/.local/share/navi"
+STARTUP=""
+FRESH=""
+
+# /opt is root-owned on most systems: file operations on the install
+# root go through sudo when the operator can't write there directly.
+# The finished install is chown'd back to the operator — the bridge
+# runs as them and writes the persona documents as them.
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  if [ -d "$INSTALL_DIR" ]; then
+    [ -w "$INSTALL_DIR" ] || SUDO="sudo"
+  else
+    [ -w "$(dirname "$INSTALL_DIR")" ] || SUDO="sudo"
+  fi
+fi
+
+VOICE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --startup) STARTUP="$2"; shift 2 ;;
+    --dir) INSTALL_DIR="$2"; shift 2 ;;
+    --fresh) FRESH=1; shift ;;
+    --voice) VOICE="$2"; shift 2 ;;
+    *) echo "unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+# The startup mode is the operator's call, made during the install —
+# there is no hard-coded default. --startup launch|boot answers it
+# ahead of time (for scripted installs); otherwise the installer asks.
+if [ -z "$STARTUP" ]; then
+  if [ -r /dev/tty ]; then
+    echo ""
+    echo "How should the navi.llamafile server start?"
+    echo "  1) On app launch — starts when you open Apex, stops when it closes"
+    echo "  2) At system boot — registered as a service, warm before you open the app"
+    while true; do
+      printf "Enter 1 or 2: "
+      read -r CHOICE < /dev/tty
+      case "$CHOICE" in
+        1|launch) STARTUP="launch"; break ;;
+        2|boot) STARTUP="boot"; break ;;
+        *) echo "Please answer 1 or 2." ;;
+      esac
+    done
+  else
+    echo "No terminal to ask about startup mode. Re-run with --startup launch or --startup boot." >&2
+    exit 1
+  fi
+fi
+
+case "$STARTUP" in
+  launch|boot) ;;
+  *) echo "--startup must be 'launch' or 'boot'" >&2; exit 1 ;;
+esac
+
+echo "==> Apex installer (Linux) — startup mode: $STARTUP"
+
+# A file that starts with an HTML doctype is a web page, not the
+# llamafile binary (older installs could end up holding the Hugging
+# Face repo page under this name). Such a file is never treated as an
+# installed llamafile and never kept.
+is_html_file() {
+  [ -f "$1" ] && head -c 4096 "$1" 2>/dev/null | grep -qiE '<!doctype html|<html'
+}
+
+# --- Migration: a clean break from the pre-/opt install location ---
+# Retire everything the old location could use to answer again — its
+# bridge, its boot service — move its llamafile instead of
+# re-downloading 3.27 GB, and carry its config and persona across.
+# The old files themselves are removed at the end of the install,
+# once the new location is fully in place.
+MIGRATED=""
+if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
+  MIGRATED=1
+  echo "==> Migrating the earlier install from $OLD_DIR to $INSTALL_DIR"
+  if [ -f "$OLD_DIR/bridge.pid" ]; then
+    kill "$(cat "$OLD_DIR/bridge.pid")" 2>/dev/null || true
+    rm -f "$OLD_DIR/bridge.pid"
+  fi
+  pkill -f "$OLD_DIR/bridge.py" 2>/dev/null || true
+  UNIT_FILE="$HOME/.config/systemd/user/navi-llamafile.service"
+  if [ -f "$UNIT_FILE" ] && grep -q "$OLD_DIR" "$UNIT_FILE"; then
+    systemctl --user disable --now navi-llamafile.service 2>/dev/null || true
+    rm -f "$UNIT_FILE"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "    old boot service (pointing at $OLD_DIR) disabled and removed"
+  fi
+  $SUDO mkdir -p "$INSTALL_DIR"
+  if [ -f "$OLD_DIR/navi.llamafile" ] && is_html_file "$OLD_DIR/navi.llamafile"; then
+    rm -f "$OLD_DIR/navi.llamafile"
+  fi
+  if [ ! -f "$INSTALL_DIR/navi.llamafile" ] && [ -f "$OLD_DIR/navi.llamafile" ]; then
+    $SUDO mv "$OLD_DIR/navi.llamafile" "$INSTALL_DIR/navi.llamafile"
+    echo "    navi.llamafile moved from the old location — no re-download"
+  fi
+  # A fresh install stashes the operator's chips and Soul/Memory
+  # before the wipe and restores them after it (see below) — the
+  # binary move applies either way.
+  if [ -z "$FRESH" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    for f in navi.config.json soul.md memory.md; do
+      if [ ! -f "$INSTALL_DIR/config/$f" ] && [ -f "$OLD_DIR/config/$f" ]; then
+        $SUDO cp "$OLD_DIR/config/$f" "$INSTALL_DIR/config/$f"
+        echo "    config/$f carried across from the old location"
+      fi
+    done
+  fi
+  # Installed chips travel too — in fresh mode they land before the
+  # wipe, so the stash below picks them up and restores them.
+  if [ -d "$OLD_DIR/chips" ] && [ ! -d "$INSTALL_DIR/chips" ]; then
+    $SUDO cp -r "$OLD_DIR/chips" "$INSTALL_DIR/chips"
+    echo "    installed chips carried across from the old location"
+  fi
+fi
+
+$SUDO mkdir -p "$INSTALL_DIR"
+
+if [ -n "$FRESH" ]; then
+  echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
+  echo "    (the llamafile, your installed chips, and your Soul/Memory documents are kept)"
+  # Stash the operator's own state before the wipe: the installed
+  # chips (chips, installs, workflows) and the Soul/Memory
+  # documents. A first install has none of these — the stash stays
+  # empty and everything is created fresh, as it should be.
+  STASH_DIR="$(mktemp -d)"
+  if [ -d "$INSTALL_DIR/chips" ]; then
+    $SUDO cp -r "$INSTALL_DIR/chips" "$STASH_DIR/chips" 2>/dev/null || true
+  fi
+  if [ -d "$INSTALL_DIR/rag-packs" ]; then
+    $SUDO cp -r "$INSTALL_DIR/rag-packs" "$STASH_DIR/rag-packs" 2>/dev/null || true
+  fi
+  # Her downloaded speech models and her call log are hers too —
+  # they ride the same keep-list. The voice venv rides along as
+  # well: the voice step below checks whether her voice is already
+  # set up in it (the engines import) and skips the rebuild when
+  # it is, so a fresh install never re-pays the pip install for a
+  # voice that already works.
+  if [ -d "$INSTALL_DIR/voice/models" ]; then
+    $SUDO cp -r "$INSTALL_DIR/voice/models" "$STASH_DIR/voice-models" 2>/dev/null || true
+  fi
+  if [ -d "$INSTALL_DIR/voice/venv" ]; then
+    $SUDO cp -r "$INSTALL_DIR/voice/venv" "$STASH_DIR/voice-venv" 2>/dev/null || true
+  fi
+  if [ -f "$INSTALL_DIR/voice/calls.json" ]; then
+    $SUDO cp "$INSTALL_DIR/voice/calls.json" "$STASH_DIR/voice-calls.json" 2>/dev/null || true
+  fi
+  for f in soul.md memory.md; do
+    if [ -f "$INSTALL_DIR/config/$f" ]; then
+      $SUDO cp "$INSTALL_DIR/config/$f" "$STASH_DIR/$f" 2>/dev/null || true
+    fi
+  done
+  $SUDO find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name 'navi.llamafile' -exec rm -rf {} +
+fi
+$SUDO mkdir -p "$INSTALL_DIR/app" "$INSTALL_DIR/config" "$INSTALL_DIR/assets"
+if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
+  if [ -d "$STASH_DIR/chips" ]; then
+    $SUDO cp -r "$STASH_DIR/chips" "$INSTALL_DIR/chips"
+    echo "    installed chips restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/rag-packs" ]; then
+    $SUDO cp -r "$STASH_DIR/rag-packs" "$INSTALL_DIR/rag-packs"
+    echo "    her knowledge packs restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/voice-models" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/voice"
+    $SUDO cp -r "$STASH_DIR/voice-models" "$INSTALL_DIR/voice/models"
+    echo "    her speech models restored across the fresh install"
+  fi
+  if [ -f "$STASH_DIR/voice-calls.json" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/voice"
+    $SUDO cp "$STASH_DIR/voice-calls.json" "$INSTALL_DIR/voice/calls.json"
+    echo "    her call log restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/voice-venv" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/voice"
+    $SUDO cp -r "$STASH_DIR/voice-venv" "$INSTALL_DIR/voice/venv"
+    echo "    her voice venv restored across the fresh install"
+  fi
+  for f in soul.md memory.md; do
+    if [ -f "$STASH_DIR/$f" ]; then
+      $SUDO cp "$STASH_DIR/$f" "$INSTALL_DIR/config/$f"
+      echo "    config/$f restored across the fresh install"
+    fi
+  done
+  rm -rf "$STASH_DIR"
+fi
+
+if [ -f "$INSTALL_DIR/navi.llamafile" ] && is_html_file "$INSTALL_DIR/navi.llamafile"; then
+  echo "==> The existing $INSTALL_DIR/navi.llamafile is an HTML page, not the llamafile binary — removing it"
+  $SUDO rm -f "$INSTALL_DIR/navi.llamafile"
+fi
+
+if [ -f "$INSTALL_DIR/navi.llamafile" ]; then
+  echo "==> navi.llamafile already exists in $INSTALL_DIR — skipping the download and llamafile setup"
+else
+  echo "==> Downloading the Navi llamafile"
+  echo "    from: $LLAMAFILE_URL"
+  $SUDO curl -fL -o "$INSTALL_DIR/navi.llamafile" "$LLAMAFILE_URL"
+  if is_html_file "$INSTALL_DIR/navi.llamafile"; then
+    $SUDO rm -f "$INSTALL_DIR/navi.llamafile"
+    echo "ERROR: the download produced an HTML page, not the llamafile binary." >&2
+    echo "       Expected the file itself from: $LLAMAFILE_URL" >&2
+    exit 1
+  fi
+  $SUDO chmod +x "$INSTALL_DIR/navi.llamafile"
+fi
+
+# Stop a bridge still running from a previous install BEFORE its
+# files are replaced. A running bridge holds port 8675 and serves
+# the (new) dashboard from disk while executing its old in-memory
+# code — chat 400s and sudo-auth 404s against a UI that looks fully
+# updated. The pid file names it exactly; pkill is the backstop.
+echo "==> Stopping any bridge still running from a previous install"
+if [ -f "$INSTALL_DIR/bridge.pid" ]; then
+  kill "$(cat "$INSTALL_DIR/bridge.pid")" 2>/dev/null || true
+  rm -f "$INSTALL_DIR/bridge.pid"
+fi
+pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null || true
+sleep 1
+
+# If a page that is not a Navi bridge still answers on 8675 — the
+# operator's own earlier UI for Navi also served this address — the
+# launcher would land on that program's page, not this dashboard.
+# It is not this installer's process to kill; warn, by name, now.
+if curl -s --max-time 2 -o /dev/null http://localhost:8675/ 2>/dev/null; then
+  if ! curl -s --max-time 2 http://localhost:8675/api/status 2>/dev/null | grep -q '"app": "Navi: Apex"'; then
+    FOREIGN_TITLE=$(curl -s --max-time 2 http://localhost:8675/ 2>/dev/null | grep -oiE '<title[^>]*>[^<]*</title>' | head -1 | sed -E 's/<[^>]+>//g' || true)
+    echo "WARNING: http://localhost:8675 is still served by a different program (its page is titled \"$FOREIGN_TITLE\") — not a Navi bridge." >&2
+    echo "         Launching Apex will keep showing that program's page until it is stopped." >&2
+    echo "         Find it with: lsof -i :8675" >&2
+  fi
+fi
+
+echo "==> Installing the dashboard, bridge, icon, and config"
+$SUDO cp -r app/* "$INSTALL_DIR/app/"
+$SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
+$SUDO cp start.sh "$INSTALL_DIR/start.sh"
+$SUDO chmod +x "$INSTALL_DIR/start.sh"
+$SUDO cp run-llamafile.sh "$INSTALL_DIR/run-llamafile.sh"
+$SUDO chmod +x "$INSTALL_DIR/run-llamafile.sh"
+# The standalone window's sources (Tauri shell) — built into the
+# navi-apex-shell binary by the shell step near the end of this
+# installer, once the install root belongs to the operator.
+$SUDO mkdir -p "$INSTALL_DIR/shell"
+$SUDO cp -r shell/* "$INSTALL_DIR/shell/"
+$SUDO cp assets/icon.png "$INSTALL_DIR/assets/icon.png"
+if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
+  $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
+fi
+# Persona documents are the operator's to edit — never overwrite them
+# on a reinstall.
+[ -f "$INSTALL_DIR/config/soul.md" ] || $SUDO cp config/soul.md "$INSTALL_DIR/config/soul.md"
+[ -f "$INSTALL_DIR/config/memory.md" ] || $SUDO cp config/memory.md "$INSTALL_DIR/config/memory.md"
+# Her voice ships as documentation + a folder: the models download
+# into voice/models/ on first use (that folder is never wiped by an
+# update — see the --fresh stash above), and the call log lives
+# beside them.
+$SUDO cp requirements-voice.txt "$INSTALL_DIR/requirements-voice.txt"
+$SUDO mkdir -p "$INSTALL_DIR/voice/models"
+$SUDO cp voice/README.md "$INSTALL_DIR/voice/README.md"
+# Record the chosen startup mode in the installed config — and
+# re-stamp the two fields that describe THIS package on THIS machine:
+# the bridge port and the install directory. A config carried across
+# from an older install (the migration above, or any plain reinstall)
+# still names the old build's port and the old location; left alone,
+# the bridge once bound that stale port while its launcher polled
+# the new one. The operator's own settings stay untouched.
+$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$STARTUP" "$INSTALL_DIR" "8675" <<'PY'
+import json, sys
+path, mode, install_dir, port = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+with open(path) as f:
+    cfg = json.load(f)
+cfg["startup"] = "on-ui-launch" if mode == "launch" else "on-boot"
+cfg.setdefault("bridge", {})["host"] = "127.0.0.1"
+cfg["bridge"]["port"] = port
+cfg["install_dir"] = install_dir
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PY
+
+# --- Hardware profiling ---
+# Her runtime settings are derived from THIS machine, never copied
+# from the developer's: detect CPU / RAM / GPU, derive threads,
+# context, batch and GPU layers, log detection + reasoning to
+# hardware-profile.log, and write the profile into the config —
+# every launch path reads its flags from there. A manual override
+# already in the config (source=manual) is preserved and the log
+# says so; anything else is re-profiled fresh on every install.
+echo "==> Profiling this machine for Navi's runtime settings"
+$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$INSTALL_DIR/hardware-profile.log" <<'PY'
+import json, os, platform, subprocess, sys, time
+cfg_path, log_path = sys.argv[1], sys.argv[2]
+with open(cfg_path) as f:
+    cfg = json.load(f)
+existing = cfg.get("hardware_profile") or {}
+if existing.get("source") == "manual" and existing.get("settings"):
+    with open(log_path, "a") as f:
+        f.write("[hardware] install: preserved the operator's manual override from Settings — not re-profiling over it.\n")
+    print("    hardware: kept your manual Settings override (see hardware-profile.log)")
+    sys.exit(0)
+det = {"os": "linux", "osLabel": "Linux", "cpuModel": platform.processor() or "unknown CPU",
+       "cpuCores": os.cpu_count() or 1, "performanceCores": None, "totalRamGB": 0.0,
+       "gpuPresent": False, "gpuName": "", "gpuKind": "none", "gpuVramGB": None}
+try:
+    mem_kb = 0; cpu_name = ""
+    with open("/proc/meminfo") as f:
+        for line in f:
+            if line.startswith("MemTotal:"): mem_kb = int(line.split()[1])
+    with open("/proc/cpuinfo") as f:
+        for line in f:
+            if line.startswith("model name"): cpu_name = line.split(":", 1)[1].strip(); break
+    if cpu_name: det["cpuModel"] = cpu_name
+    det["totalRamGB"] = round(mem_kb / 1048576.0, 1) if mem_kb else 0.0
+    # Hybrid Intel (e.g. i5-1340P: 4P+8E): performance cores = the
+    # distinct max-frequency cluster is not in /proc; cpuinfo_max_freq
+    # per-core gives a usable signal — count cores at the top freq.
+    try:
+        freqs = []
+        for i in range(det["cpuCores"]):
+            p = f"/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq"
+            if os.path.exists(p):
+                with open(p) as f: freqs.append(int(f.read().strip()))
+        if freqs and len(set(freqs)) > 1:
+            det["performanceCores"] = freqs.count(max(freqs)) or None
+    except Exception: pass
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if out:
+            parts = [p.strip() for p in out.splitlines()[0].split(",")]
+            det.update(gpuPresent=True, gpuName=parts[0], gpuKind="discrete")
+            if len(parts) > 1: det["gpuVramGB"] = int(round(float(parts[1].split()[0]) / 1024.0))
+        else: raise RuntimeError("no gpu")
+    except Exception:
+        try:
+            out = subprocess.run(["lspci"], capture_output=True, text=True, timeout=5).stdout
+            for line in out.splitlines():
+                if "VGA compatible controller" in line or "3D controller" in line:
+                    det["gpuPresent"] = True; det["gpuName"] = line.split(":", 2)[-1].strip()
+                    low = det["gpuName"].lower()
+                    det["gpuKind"] = "discrete" if ("nvidia" in low or "geforce" in low or "radeon rx" in low) else "integrated"
+                    break
+        except Exception: pass
+except Exception as e:
+    print(f"    hardware: detection partially failed ({e}) — conservative fluid floor applies")
+ram = float(det["totalRamGB"] or 0); logical = max(1, int(det["cpuCores"] or 1)); perf = det["performanceCores"]
+reason = []
+if perf: threads = max(2, min(12, int(perf))); reason.append(f"Threads {threads}: matched to the {perf} performance cores.")
+elif logical >= 16: threads = 8; reason.append(f"Threads 8: half of {logical} logical cores, capped.")
+elif logical >= 8: threads = 4; reason.append(f"Threads 4: half of {logical} logical cores.")
+elif logical >= 4: threads = 2; reason.append(f"Threads 2: conservative for a {logical}-core machine.")
+else: threads = 1; reason.append("Threads 1: single-core floor.")
+if ram < 6: ctx = 2048; reason.append("Context 2048: under 6 GiB RAM.")
+elif ram < 12: ctx = 4096; reason.append(f"Context 4096: {ram:.1f} GiB RAM — proven fluid size for this class (Framework 13 baseline).")
+elif ram < 20: ctx = 8192; reason.append(f"Context 8192: {ram:.1f} GiB RAM.")
+elif ram < 40: ctx = 16384; reason.append(f"Context 16384: {ram:.1f} GiB RAM.")
+else: ctx = 32768; reason.append(f"Context 32768: {ram:.1f} GiB RAM — workstation headroom.")
+batch = 256 if ram < 6 else (512 if ram < 20 else 1024); reason.append(f"Batch {batch}: sized to RAM ({ram:.1f} GiB).")
+gpu = 0; vram = det["gpuVramGB"]
+if det["gpuKind"] == "discrete" and vram is not None and vram >= 4:
+    gpu = 99 if vram >= 12 else (28 if vram >= 8 else (20 if vram >= 6 else 12)); reason.append(f"GPU layers {gpu}: discrete GPU with {vram} GiB VRAM.")
+elif det["gpuKind"] == "integrated": reason.append("GPU layers 0: integrated graphics share system RAM — CPU inference is the fluid path.")
+else: reason.append("GPU layers 0: no confirmed discrete GPU — CPU-only.")
+if ram < 6 or logical <= 4: tier, tier_label = "constrained", "Constrained — small machine, fluid floor"
+elif gpu > 0 and ram >= 16: tier, tier_label = ("workstation", "Workstation — discrete GPU + ample RAM") if ram >= 32 else ("performance", "Performance — discrete GPU acceleration")
+elif ram >= 20: tier, tier_label = "performance", "Performance — ample RAM, CPU inference scaled up"
+elif ram >= 12: tier, tier_label = "balanced", "Balanced — above the fluid baseline"
+else: tier, tier_label = "fluid", "Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)"
+settings = {"threads": threads, "ctxSize": ctx, "batchSize": batch, "gpuLayers": gpu}
+now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+flags = f"--ctx-size {ctx} --threads {threads} --batch-size {batch}" + (f" --n-gpu-layers {gpu}" if gpu > 0 else "")
+log = [f"[hardware] {now} — install-time profiling (Linux)", f"[hardware] OS: {det['osLabel']}", f"[hardware] CPU: {det['cpuModel']} — {logical} logical cores" + (f", {perf} performance" if perf else ""), f"[hardware] RAM: {ram:.1f} GiB total", f"[hardware] GPU: {det['gpuName'] or 'none detected'} ({det['gpuKind']})"] + [f"[hardware] → {r}" for r in reason] + [f"[hardware] chosen: {flags} (written to config hardware_profile + runtime)"]
+profile = {"detected": det, "settings": settings, "autoSettings": settings, "source": "auto", "tier": tier, "tierLabel": tier_label, "reasoning": reason, "installLog": log, "detectedAt": now}
+cfg["hardware_profile"] = profile
+cfg["runtime"] = {"threads": threads, "ctx_size": ctx, "batch_size": batch, "gpu_layers": gpu, "flags": flags}
+with open(cfg_path, "w") as f: json.dump(cfg, f, indent=2)
+with open(log_path, "a") as f:
+    for line in log: f.write(line + "\n")
+print(f"    hardware: {det['cpuModel']} · {ram:.1f} GiB RAM · GPU {det['gpuName'] or 'none'} ({det['gpuKind']})")
+print(f"    chosen: {flags} — {tier_label} (full log: hardware-profile.log)")
+PY
+
+# --- Her voice (optional) ---
+# The speech engines (faster-whisper + Kokoro/Piper) are the app's
+# only Python dependencies, and they stay optional: the bridge is
+# stdlib-only and imports them lazily. Say yes and they land in an
+# isolated venv at voice/venv — start.sh then runs the bridge with
+# that Python. Say no (or run non-interactively without --voice)
+# and the exact manual command is printed instead; the Voice tab
+# keeps naming it until the engines exist. A failed voice install
+# never fails the app install.
+# Already set up? When the venv is on disk and its Python imports
+# the engines, her voice is already installed — most often because
+# a --fresh install just restored the venv it stashed before the
+# wipe. Asking again, let alone rebuilding ~250 MB of packages over
+# a working voice, would be pure waste: the whole step is skipped
+# and the installer says so.
+VOICE_READY=""
+if [ -x "$INSTALL_DIR/voice/venv/bin/python" ] && "$INSTALL_DIR/voice/venv/bin/python" -c "import faster_whisper, kokoro" >/dev/null 2>&1; then
+  VOICE_READY=1
+fi
+if [ -z "$VOICE_READY" ]; then
+case "$VOICE" in
+  yes|no) ;;
+  *)
+    if [ -r /dev/tty ]; then
+      echo ""
+      echo "Give Navi a voice? She'd hear you with a local Whisper model and"
+      echo "answer out loud with Kokoro — all on this machine, all on CPU."
+      echo "This installs Python speech packages into an isolated venv in the"
+      echo "install folder (~250 MB; the speech models download on first use)."
+      echo "  1) Yes — install her voice now"
+      echo "  2) No — skip it (the Voice tab will name the command)"
+      while true; do
+        printf "Enter 1 or 2: "
+        read -r VCHOICE < /dev/tty
+        case "$VCHOICE" in
+          1|yes) VOICE="yes"; break ;;
+          2|no) VOICE="no"; break ;;
+          *) echo "Please answer 1 or 2." ;;
+        esac
+      done
+    else
+      VOICE="no"
+    fi
+    ;;
+esac
+fi
+if [ -n "$VOICE_READY" ]; then
+  echo "==> Her voice is already set up — $INSTALL_DIR/voice/venv imports faster_whisper and kokoro — skipping the voice install"
+elif [ "$VOICE" = "yes" ]; then
+  echo "==> Installing her voice (Python speech engines, isolated venv)"
+  # Every step is checked and logged, and the result is VERIFIED —
+  # the engines must import in the venv's Python before this step
+  # may call itself done. The previous shape chained the steps
+  # behind pip --quiet with one generic failure line: the voice
+  # step could fail (the classic Debian/Ubuntu failure is
+  # python3 -m venv dying because the python3-venv package is
+  # missing) and the install still finished looking successful,
+  # leaving a silent Voice tab to discover later. Failures now
+  # name the step that failed, keep the full log beside her voice,
+  # and repeat as the last lines of the install.
+  VOICE_TMP_LOG="$(mktemp)"
+  VOICE_FAIL=""
+  if ! $SUDO python3 -m venv "$INSTALL_DIR/voice/venv" >>"$VOICE_TMP_LOG" 2>&1; then
+    VOICE_FAIL="creating the venv (python3 -m venv) — on Debian/Ubuntu this usually means the python3-venv package is missing: sudo apt install python3-venv, then re-run this installer"
+  elif ! $SUDO "$INSTALL_DIR/voice/venv/bin/python" -m pip install --upgrade pip >>"$VOICE_TMP_LOG" 2>&1; then
+    VOICE_FAIL="installing pip into the venv"
+  elif ! $SUDO "$INSTALL_DIR/voice/venv/bin/python" -m pip install -r "$INSTALL_DIR/requirements-voice.txt" >>"$VOICE_TMP_LOG" 2>&1; then
+    VOICE_FAIL="installing the speech packages from requirements-voice.txt — the log tail names the cause (a blocked download or a missing system library are the usual ones)"
+  elif ! "$INSTALL_DIR/voice/venv/bin/python" -c "import faster_whisper, kokoro" >>"$VOICE_TMP_LOG" 2>&1; then
+    VOICE_FAIL="verification — the packages landed, but the venv's Python cannot import faster_whisper and kokoro"
+  fi
+  $SUDO mkdir -p "$INSTALL_DIR/voice"
+  $SUDO cp "$VOICE_TMP_LOG" "$INSTALL_DIR/voice/voice-install.log" 2>/dev/null || true
+  rm -f "$VOICE_TMP_LOG"
+  if [ -z "$VOICE_FAIL" ]; then
+    echo "    voice installed and verified: $INSTALL_DIR/voice/venv — faster_whisper and kokoro import cleanly."
+    echo "    (install log: $INSTALL_DIR/voice/voice-install.log; her speech models download on first use)"
+  else
+    echo "" >&2
+    echo "  *** HER VOICE DID NOT INSTALL ***" >&2
+    echo "  *** Failed step: $VOICE_FAIL" >&2
+    echo "  *** Navi herself is fully installed — only her voice is missing." >&2
+    echo "  *** Full log: $INSTALL_DIR/voice/voice-install.log" >&2
+    echo "  *** Fix the step above, then re-run this installer and say yes at the voice step." >&2
+  fi
+else
+  echo "==> Skipping her voice for now. Install it any time with:"
+  echo "    python3 -m pip install -r $INSTALL_DIR/requirements-voice.txt"
+  echo "    (or re-run this installer and say yes at the voice step)"
+fi
+
+echo "==> Registering Apex in the application menu"
+ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
+APP_DIR="$HOME/.local/share/applications"
+mkdir -p "$ICON_DIR" "$APP_DIR"
+cp assets/icon.png "$ICON_DIR/navi-apex.png"
+sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" assets/navi-apex.desktop > "$APP_DIR/navi-apex.desktop"
+chmod +x "$APP_DIR/navi-apex.desktop"
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" || true
+echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: navi-apex)"
+
+if [ "$STARTUP" = "boot" ]; then
+  echo "==> Registering the llamafile server as a systemd user service"
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
+  systemctl --user daemon-reload
+  systemctl --user enable --now navi-llamafile.service
+  echo "    service enabled: navi-llamafile.service"
+else
+  echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
+fi
+
+# The install root is the operator's, whatever privileges it took to
+# write there: the bridge runs as them and edits persona as them.
+if [ -n "$SUDO" ]; then
+  echo "==> Handing $INSTALL_DIR to $(id -un)"
+  $SUDO chown -R "$(id -un):$(id -gn)" "$INSTALL_DIR"
+fi
+
+# The migration's clean break, completed: the old location goes away
+# entirely, so nothing stale remains to grab port 8675 at boot.
+if [ -n "$MIGRATED" ]; then
+  echo "==> Removing the old install at $OLD_DIR"
+  rm -rf "$OLD_DIR"
+fi
+
+# The standalone window: verify-then-skip. The same law as her
+# voice and the llamafile — work already done and verifiably
+# unchanged is not redone. A completed shell build is stamped: the
+# hash of the shipped shell sources sits beside the binary
+# (navi-apex-shell.stamp). A later install whose package ships
+# those exact sources, with the binary present and sane, skips the
+# Rust check and the cargo build both. Changed sources, a missing
+# or suspect binary, or --fresh always rebuild — and the installer
+# prints which road it took either way.
+# The stamp is checked against TWO hashes of the same sources:
+# the installed copies (what the launcher will verify at run time)
+# and this package's own pristine copies beside the installer
+# (immune to anything that happens to the installed tree between
+# the copy above and this check). Either match proves the binary
+# was built from exactly the sources this package ships. And when
+# the build is NOT skipped on a reinstall, the installer now says
+# WHY — a missing stamp used to rebuild in total silence, which
+# made a lost stamp indistinguishable from changed sources.
+shell_sources_hash() {
+  local dir="$1"
+  local files="Cargo.toml build.rs src/main.rs tauri.conf.json icons/icon.png README.md"
+  local f
+  for f in $files; do
+    if [ ! -f "$dir/$f" ]; then echo ""; return; fi
+  done
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$dir" && sha256sum $files | sha256sum | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    (cd "$dir" && shasum -a 256 $files | shasum -a 256 | awk '{print $1}')
+  else
+    echo ""
+  fi
+}
+SHELL_HASH="$(shell_sources_hash "$INSTALL_DIR/shell")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_SHELL_HASH=""
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+  PKG_SHELL_HASH="$(shell_sources_hash "$SCRIPT_DIR/shell")"
+fi
+SHELL_SKIP=""
+if [ -z "$FRESH" ]; then
+  STAMP=""
+  if [ -f "$INSTALL_DIR/navi-apex-shell.stamp" ]; then STAMP="$(cat "$INSTALL_DIR/navi-apex-shell.stamp")"; fi
+  if [ ! -x "$INSTALL_DIR/navi-apex-shell" ]; then
+    if [ -n "$STAMP" ]; then
+      echo "==> Her window: a build stamp is saved but the window binary itself is missing — rebuilding it below."
+    fi
+  elif [ -z "$SHELL_HASH" ] && [ -z "$PKG_SHELL_HASH" ]; then
+    echo "==> Her window: the shell sources cannot be hashed here (no sha256sum/shasum, or a source file is missing) — rebuilding it below."
+  else
+    BIN_SIZE=$(wc -c < "$INSTALL_DIR/navi-apex-shell" | tr -d ' ')
+    if [ "$BIN_SIZE" -le 100000 ]; then
+      echo "==> Her window: the binary beside the installer is only $BIN_SIZE bytes — too small to be her window — rebuilding it below."
+    elif [ -z "$STAMP" ]; then
+      echo "==> Her window: the window binary is present but its build stamp (navi-apex-shell.stamp) is missing — rebuilding so the binary is verifiably stamped."
+      echo "    (If this message appears on every install, something on this machine is removing that stamp file between installs.)"
+    elif [ "$STAMP" = "$SHELL_HASH" ] || { [ -n "$PKG_SHELL_HASH" ] && [ "$STAMP" = "$PKG_SHELL_HASH" ]; }; then
+      SHELL_SKIP=1
+      echo "==> Her window is already built from these exact shell sources — the stamp beside the binary matches."
+    else
+      echo "==> Her window: the saved build stamp does not cover this binary and these shell sources — rebuilding it below."
+    fi
+  fi
+fi
+
+# --- Rust toolchain (rustup) ---
+# The shell build below needs cargo. If cargo is not already here,
+# the official rustup installer fills the gap: per-user (no sudo),
+# non-interactive, minimal profile — just enough to build the shell.
+# An existing toolchain is left exactly as found. The attempt is
+# logged to shell/shell-build.log (the shell build appends to the
+# same log), PATH is refreshed in this shell afterwards, and the
+# same install run proceeds to build the window with the toolchain
+# it just installed. A failed Rust install (no network is the usual
+# cause) never fails the install: it says so plainly below, and
+# start.sh's browser fallback covers launching.
+echo "==> Checking for a Rust toolchain (her window needs one)"
+if [ -n "$SHELL_SKIP" ]; then
+  echo "    her window is already built from these shell sources — no Rust needed this run."
+elif command -v cargo >/dev/null 2>&1; then
+  echo "    Rust found: $(cargo --version 2>/dev/null || echo cargo) — using the existing toolchain as-is."
+elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+  echo "    Rust found at $HOME/.cargo/bin/cargo (not on PATH) — using it."
+else
+  echo "    no Rust toolchain here — installing one with rustup (per-user, minimal profile)…"
+  mkdir -p "$INSTALL_DIR/shell"
+  RUST_OK=""
+  if command -v curl >/dev/null 2>&1; then
+    if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs 2>>"$INSTALL_DIR/shell/shell-build.log" | sh -s -- -y --profile minimal >> "$INSTALL_DIR/shell/shell-build.log" 2>&1; then
+      RUST_OK=1
+    fi
+  fi
+  export PATH="$HOME/.cargo/bin:$PATH"
+  if [ -n "$RUST_OK" ] && command -v cargo >/dev/null 2>&1; then
+    echo "    Rust installed via rustup: $(cargo --version 2>/dev/null || echo cargo) — building her window with it below."
+  else
+    echo "" >&2
+    echo "  *** RUST DID NOT INSTALL — the rustup download or run failed (no network is the usual cause)." >&2
+    echo "  *** Full log: $INSTALL_DIR/shell/shell-build.log" >&2
+    echo "  *** Navi herself is fully installed — only her standalone window is missing." >&2
+    echo "  *** She still launches: start.sh falls back to the dashboard in your browser." >&2
+    echo "  *** Install Rust yourself (https://rustup.rs) and re-run this installer to give her a window of her own." >&2
+  fi
+fi
+
+# A shell binary from an older build is a hazard, not a fallback:
+# it predates whatever the current shell does, so when a new build
+# fails and the old binary stays beside start.sh, the launcher would
+# run the wrong app as if it were this build. When this build cannot
+# be produced, the previous binary is retired — moved aside, stamp
+# removed — so the launcher takes its honest fallback instead.
+retire_stale_shell() {
+  if [ -x "$INSTALL_DIR/navi-apex-shell" ]; then
+    mv "$INSTALL_DIR/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell.stale"
+    rm -f "$INSTALL_DIR/navi-apex-shell.stamp"
+    echo "  *** The previous window binary was built from older shell sources — moved aside as" >&2
+    echo "  *** navi-apex-shell.stale (stamp removed) so it can never be launched as if it were" >&2
+    echo "  *** this build. Fix the cause above and re-run this installer to rebuild her window." >&2
+  fi
+}
+
+# --- The standalone window (Tauri shell) ---
+# Apex opens in her own window now — a small Tauri shell over
+# the OS webview (no bundled Chromium; the footprint matters on a
+# 9.4 GiB machine) that loads the dashboard from the local bridge.
+# It is built here, as the operator (after the chown above), from
+# the sources in shell/ — cargo is incremental, so a reinstall
+# rebuilds only what changed. When no Rust toolchain could be had
+# (the rustup step above failed) the install still succeeds:
+# start.sh falls back to opening the dashboard in the default
+# browser, exactly as before, and the dashboard stays reachable at
+# http://localhost:8675 either way. A failed build never
+# fails the install — it names itself and keeps the log.
+echo "==> Building the standalone window (Tauri shell)"
+if [ -n "$SHELL_SKIP" ]; then
+  echo "    already built from these exact shell sources — skipping the cargo build."
+  echo "    (binary: $INSTALL_DIR/navi-apex-shell — pass --fresh, change the shell sources, or delete navi-apex-shell.stamp to force a rebuild)"
+elif command -v cargo >/dev/null 2>&1; then
+  if (cd "$INSTALL_DIR/shell" && cargo build --release >> "$INSTALL_DIR/shell/shell-build.log" 2>&1) && [ -x "$INSTALL_DIR/shell/target/release/navi-apex-shell" ]; then
+    cp "$INSTALL_DIR/shell/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"
+    chmod +x "$INSTALL_DIR/navi-apex-shell"
+    # The stamp is what lets the next install skip this build and
+    # what the launcher verifies before running the binary — so
+    # the write is read back, not assumed. A stamp that did not
+    # land (a permissions surprise in the install root) is named
+    # now, in the open, instead of silently costing a full cargo
+    # build on every later install.
+    if [ -n "$SHELL_HASH" ]; then
+      echo "$SHELL_HASH" > "$INSTALL_DIR/navi-apex-shell.stamp" || true
+      if [ "$(cat "$INSTALL_DIR/navi-apex-shell.stamp" 2>/dev/null || true)" = "$SHELL_HASH" ]; then
+        echo "    build stamp saved: $INSTALL_DIR/navi-apex-shell.stamp"
+      else
+        echo "  *** THE BUILD STAMP DID NOT SAVE to $INSTALL_DIR/navi-apex-shell.stamp — the window is built," >&2
+        echo "  *** but the next install will rebuild it because it cannot verify this one. Check that" >&2
+        echo "  *** $INSTALL_DIR is writable by $(id -un), then re-run this installer." >&2
+      fi
+    fi
+    echo "    standalone window built: $INSTALL_DIR/navi-apex-shell"
+    echo "    (build log: $INSTALL_DIR/shell/shell-build.log)"
+  else
+    echo "  *** THE STANDALONE WINDOW DID NOT BUILD — full log: $INSTALL_DIR/shell/shell-build.log" >&2
+    echo "  *** On Debian/Ubuntu the usual cause is the WebKitGTK development packages:" >&2
+    echo "  ***   sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev" >&2
+    retire_stale_shell
+    echo "  *** Navi still launches meanwhile: start.sh falls back to the dashboard in your browser." >&2
+  fi
+else
+  echo "    no working Rust toolchain — skipping the shell build (the rustup step above says why)."
+  retire_stale_shell
+  echo "    Navi still launches: start.sh falls back to the dashboard in your browser."
+fi
+
+if [ -n "${VOICE_FAIL:-}" ]; then
+  echo "" >&2
+  echo "  *** REMINDER: HER VOICE DID NOT INSTALL — failed step: $VOICE_FAIL" >&2
+  echo "  *** Full log: $INSTALL_DIR/voice/voice-install.log — Navi works without it, and the Voice tab will keep naming the step." >&2
+fi
+
+# The tray login autostart is retired: earlier builds registered
+# an XDG autostart entry that launched her tray-resident at login.
+# Remove it, so an upgrade cleans the machine — nothing starts
+# Navi at login now; she runs when the operator launches her.
+echo "==> Removing the retired tray login autostart, if an earlier install left one"
+AUTOSTART_DIR="$HOME/.config/autostart"
+if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
+  rm -f "$AUTOSTART_DIR/navi-apex.desktop"
+  echo "    removed: $AUTOSTART_DIR/navi-apex.desktop (the tray autostart an earlier build registered)"
+fi
+
+
+echo ""
+echo "Done. Launch \"Apex\" from your application menu, or run:"
+echo "    $INSTALL_DIR/start.sh"

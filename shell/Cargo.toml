@@ -1,0 +1,27 @@
+[package]
+name = "navi-apex-shell"
+version = "0.1.0"
+description = "Apex — standalone window (Tauri shell over the local bridge dashboard)"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+
+# Linux only: direct handles on the WebKitGTK webview, used for one
+# thing — answering the webview's media-permission requests so the
+# dashboard's microphone (push-to-talk, calls) works in the shell
+# exactly as it does in a browser (see grant_media_permissions in
+# src/main.rs). Version "2.0" is the line wry itself builds on, so
+# the dependency unifies with Tauri's own.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
+# The shell is a window and nothing more: keep it lean.
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

@@ -1,0 +1,11 @@
+[Unit]
+Description=Navi llamafile server
+After=network.target
+
+[Service]
+ExecStart=__INSTALL_DIR__/run-llamafile.sh
+Restart=on-failure
+WorkingDirectory=__INSTALL_DIR__
+
+[Install]
+WantedBy=default.target

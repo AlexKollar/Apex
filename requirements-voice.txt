@@ -1,0 +1,29 @@
+# Navi's voice — optional speech dependencies.
+#
+# bridge.py is stdlib-only and stays that way: these are imported
+# lazily, only when a voice endpoint is used. Install them into the
+# same Python the bridge runs with — the installers offer to do it
+# into an isolated venv at voice/venv (the launchers prefer that
+# Python when it exists), or install them yourself:
+#
+#     python3 -m pip install -r requirements-voice.txt
+#
+# Until they are importable, the Voice tab reports her voice as
+# unavailable with this step named — nothing fakes audio.
+
+# Hearing: OpenAI's Whisper run by CTranslate2 — fast on CPU with
+# int8. Models (tiny.en / base.en / small.en) download on first use
+# into voice/models/whisper.
+faster-whisper>=1.0
+
+# Speaking: Kokoro-82M, an Apache-2.0 voice model built for CPU.
+# Its weights ride inside the package; voices are built in.
+kokoro>=0.9
+
+# Playback helpers (her voice out loud on this machine).
+soundfile>=0.12
+sounddevice>=0.4
+
+# The lighter fallback TTS engine. Piper voices (.onnx) download on
+# first use into voice/models/piper.
+piper-tts>=1.3
