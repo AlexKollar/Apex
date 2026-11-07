@@ -1,2 +1,1 @@
-# Navi-Apex
-Navi's next Evolusion
+#Powered by Navi
