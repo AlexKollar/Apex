@@ -264,6 +264,16 @@ fi
 echo "==> Installing the dashboard, bridge, icon, and config"
 $SUDO cp -r app/* "$INSTALL_DIR/app/"
 $SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
+# The VERSION file is the app's single source of truth for its own
+# version — the bridge reads it on every /api/status and the Updater
+# compares it against the latest release. It is app code, not
+# operator state: replaced on every install, like bridge.py.
+# (Installers before build .47 never copied it at all, so the bridge
+# fell back to the version recorded in the preserved config — a
+# file written by whichever build installed first — and the menu
+# footer flashed the new build's baked 0.1.0 at first paint before
+# the status poll "reverted" it to that stale 1.0.0.)
+$SUDO cp VERSION "$INSTALL_DIR/VERSION"
 $SUDO cp start.sh "$INSTALL_DIR/start.sh"
 $SUDO chmod +x "$INSTALL_DIR/start.sh"
 $SUDO cp run-llamafile.sh "$INSTALL_DIR/run-llamafile.sh"
@@ -304,6 +314,19 @@ cfg["startup"] = "on-ui-launch" if mode == "launch" else "on-boot"
 cfg.setdefault("bridge", {})["host"] = "127.0.0.1"
 cfg["bridge"]["port"] = port
 cfg["install_dir"] = install_dir
+# The config's recorded version is re-stamped from this package's
+# VERSION file as well: the config is carried across installs, so
+# without this its version stays whatever the first-ever install
+# recorded (the retired 1.0.0 placeholder) long after the app has
+# moved on — the stale record behind the menu footer's flash.
+try:
+    with open("VERSION") as f:
+        ver_parts = f.read().strip().splitlines()[0].split()
+    if ver_parts:
+        cfg["version"] = ver_parts[0]
+        cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
+except Exception:
+    pass
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PY

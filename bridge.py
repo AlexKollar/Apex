@@ -5,6 +5,14 @@ local powers.
 Stdlib only. Endpoints:
   GET  /              the dashboard (app/index.html)
   GET  /api/status    backend, model, version, llamafile reachability
+  GET  /api/update/check -> the Updater's real check: the project's
+                      latest GitHub release compared against the
+                      VERSION file; a check that cannot complete
+                      answers ok: False with the reason
+  POST /api/update/apply -> downloads the latest release's package
+                      zip and stages it under updates/<tag>/package,
+                      answering with the one install command; the
+                      bridge never installs over the running app
   GET  /api/commands  the commands actually installed on this machine
                       (a scan of PATH) — feeds command autocomplete
   GET  /api/persona   Navi's Soul and Memory documents (config files)
@@ -310,9 +318,21 @@ MEMORY_PATH = os.path.join(ROOT, "config", "memory.md")
 # stores the version.
 VERSION_PATH = os.path.join(ROOT, "VERSION")
 
+# The release this bridge shipped in, baked at export — the fallback
+# when the VERSION file itself is missing (an install made by a
+# pre-.47 installer, which never copied the file, say). It outranks
+# anything the preserved config remembers: that config is carried
+# across installs and written only when missing, so its recorded
+# version belongs to whichever build installed first — the stale
+# 1.0.0 placeholder that used to flash in the dashboard's menu
+# footer and then "revert" the freshly baked number. This constant
+# is exactly as old as the code answering, never older.
+SHIPPED_VERSION = "0.1.0"
+SHIPPED_VERSION_STATUS = "alpha"
+
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-07.46"
+BRIDGE_BUILD = "2026-11-07.47"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -378,22 +398,14 @@ def app_version_status(cfg=None):
     # followed by a status word - "0.1.0 alpha" - or carry it as a
     # suffix - "0.1.0-alpha". Alpha and beta builds wear a
     # single-letter tag in the menu footer (a / b); stable wears
-    # none. Anything unrecognized reads as stable. The config's
-    # recorded version_status is the fallback when the file is
-    # missing or carries no word.
+    # none. Anything unrecognized reads as stable. When the file is
+    # missing entirely, the status of the release this bridge
+    # shipped in answers — never the preserved config's record,
+    # which belongs to an older build (see SHIPPED_VERSION above).
     text = read_file(VERSION_PATH).strip()
-    raw = ""
-    if text:
-        raw = text.splitlines()[0].strip().lower()
-    if cfg:
-        recorded = str(cfg.get("version_status") or cfg.get("versionStatus") or "").strip().lower()
-        if recorded in ("alpha", "beta"):
-            # The file's word wins when it has one; otherwise the
-            # config's recorded status is the truth.
-            if not any(raw.endswith(" " + w) or raw.endswith("-" + w) for w in ("alpha", "beta")):
-                return recorded
-        if not raw:
-            raw = str(cfg.get("version") or "").strip().lower()
+    if not text:
+        return SHIPPED_VERSION_STATUS
+    raw = text.splitlines()[0].strip().lower()
     for word in ("alpha", "beta"):
         if raw.endswith(" " + word) or raw.endswith("-" + word):
             return word
@@ -404,9 +416,13 @@ def app_version(cfg=None):
     # The VERSION file is the source of truth (see VERSION_PATH).
     # The reported number never carries the status word — the
     # status rides separately as versionStatus, and the dashboard
-    # renders the two together ("Ver. 0.1.0a"). Fall back to the
-    # config's recorded version, then the release this bridge
-    # shipped in, so the status answer is never blank.
+    # renders the two together ("Ver. 0.1.0a"). When the file is
+    # missing, the release this bridge shipped in answers. The
+    # config's recorded version is NOT a fallback: the config is
+    # preserved across installs, so its version is whichever build
+    # installed first (the retired 1.0.0 placeholder, on machines
+    # installed before the release prep) — trusting it is what made
+    # the dashboard's footer flash the baked 0.1.0 and then revert.
     def _number(raw):
         raw = raw.strip()
         if not raw:
@@ -422,11 +438,7 @@ def app_version(cfg=None):
         n = _number(text.splitlines()[0])
         if n:
             return n
-    if cfg:
-        v = _number(str(cfg.get("version") or ""))
-        if v:
-            return v
-    return "0.1.0"
+    return SHIPPED_VERSION
 
 
 def persona_prompt(cfg, operator_name=""):
@@ -900,6 +912,188 @@ def github_text(url, accept):
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", "replace")
+
+
+# ---------------------------------------------------------------------
+# App updates — the Updater, for real (build .47).
+#
+# A check asks GitHub for the project's latest published release
+# and compares its tag against the VERSION file (the very number
+# app_version reports), so the footer, the status answer, and the
+# Updater all read the same truth. Apply downloads the release's
+# package zip into updates/<tag>/ and unpacks it there — staged
+# beside the app, never installed over the running one by the
+# bridge itself: the installer is the one path that replaces the
+# app, because it owns the state-preservation stash (chips, packs
+# and their indexes, the llamafile, Soul/Memory, voice, GitHub
+# settings), the hardware profile, and the sudo prompts. The
+# dashboard shows the staged folder and the one command that
+# finishes the job:
+#     cd <staged folder> && ./install.sh
+# A check that cannot complete — offline, or GitHub's rate limit —
+# answers ok: False with the reason named. It never dresses a
+# failure up as "up to date".
+
+UPDATES_DIR = os.path.join(ROOT, "updates")
+
+
+def _version_tuple(raw):
+    # "v0.2.0" / "0.2.0-beta" -> (0, 2, 0): the numeric core is what
+    # orders releases. A leading v and any pre-release word are
+    # ignored for ordering; a tag that will not parse orders as
+    # (0,), below everything real.
+    text = str(raw or "").strip().lower()
+    if text.startswith("v"):
+        text = text[1:]
+    text = text.split("-")[0].split("+")[0]
+    parts = []
+    for piece in text.split("."):
+        digits = ""
+        for ch in piece:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def _version_newer(candidate, current):
+    a, b = _version_tuple(candidate), _version_tuple(current)
+    width = max(len(a), len(b))
+    a += (0,) * (width - len(a))
+    b += (0,) * (width - len(b))
+    return a > b
+
+
+def _update_error_text(e):
+    # A failed check, worded honestly: offline and rate-limited are
+    # different days, and the operator deserves to know which one
+    # it is.
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 403:
+            return ("GitHub refused the check (HTTP 403) — its rate "
+                    "limit for this network is likely used up. Wait a "
+                    "while and check again.")
+        if e.code == 404:
+            return ("GitHub answered 404 — the project has no "
+                    "published release yet, so there is nothing to "
+                    "update to.")
+        return ("GitHub answered HTTP " + str(e.code)
+                + " — the check did not complete.")
+    return ("The check could not reach GitHub (" + type(e).__name__
+            + ") — this machine may be offline.")
+
+
+def latest_release():
+    # The project's latest published release, shaped for the
+    # Updater; raises on any failure and lets the caller word it.
+    # The package asset is the release's .zip (the export package);
+    # a release without one can be reported but never staged.
+    rel = github_json(GITHUB_API_BASE + "/releases/latest")
+    if not isinstance(rel, dict):
+        raise ValueError("GitHub's answer was not a release record.")
+    asset = None
+    for a in rel.get("assets") or []:
+        name = str(a.get("name") or "")
+        if name.lower().endswith(".zip"):
+            asset = {
+                "name": name,
+                "size": a.get("size") or 0,
+                "url": a.get("browser_download_url") or "",
+            }
+            break
+    return {
+        "tag": str(rel.get("tag_name") or ""),
+        "name": str(rel.get("name") or ""),
+        "url": str(rel.get("html_url") or ""),
+        "publishedAt": str(rel.get("published_at") or ""),
+        "notes": str(rel.get("body") or ""),
+        "asset": asset,
+    }
+
+
+def update_check_payload(cfg=None):
+    current = app_version(cfg)
+    base = {
+        "current": current,
+        "currentStatus": app_version_status(cfg),
+        "checkedAt": _now_iso(),
+    }
+    try:
+        rel = latest_release()
+    except Exception as e:
+        return dict(base, ok=False, updateAvailable=False, latest="",
+                    error=_update_error_text(e))
+    newer = bool(rel["tag"]) and _version_newer(rel["tag"], current)
+    return dict(
+        base, ok=True, updateAvailable=newer,
+        latest=rel["tag"], releaseName=rel["name"],
+        releaseUrl=rel["url"], publishedAt=rel["publishedAt"],
+        notes=rel["notes"], asset=rel["asset"],
+    )
+
+
+def update_apply_payload(cfg=None):
+    # Downloads the latest release's package zip and unpacks it
+    # into updates/<tag>/package — staged, never installed (see the
+    # section comment). The answer carries the staged folder and
+    # the one install command; every failure names itself.
+    try:
+        rel = latest_release()
+    except Exception as e:
+        return {"ok": False, "error": _update_error_text(e)}
+    current = app_version(cfg)
+    if not rel["tag"] or not _version_newer(rel["tag"], current):
+        return {"ok": False, "error": "The latest release ("
+                + (rel["tag"] or "none") + ") is not newer than the "
+                "running v" + current + " — nothing to stage."}
+    asset = rel["asset"]
+    if not asset or not asset["url"]:
+        return {"ok": False, "error": "The latest release carries no "
+                "package .zip asset, so there is nothing to download."}
+    tag_dir = re.sub(r"[^0-9A-Za-z._-]+", "-", rel["tag"]) or "release"
+    stage_root = os.path.join(UPDATES_DIR, tag_dir)
+    pkg_dir = os.path.join(stage_root, "package")
+    zip_path = os.path.join(stage_root, asset["name"])
+    try:
+        os.makedirs(pkg_dir, exist_ok=True)
+        if not os.path.isfile(zip_path):
+            data = github_download(asset["url"])
+            with open(zip_path, "wb") as f:
+                f.write(data)
+        if not zipfile.is_zipfile(zip_path):
+            return {"ok": False, "error": "The download did not "
+                    "arrive as a zip file — nothing was staged."}
+        with zipfile.ZipFile(zip_path) as z:
+            names = z.namelist()
+            if "install.sh" not in names or "VERSION" not in names:
+                return {"ok": False, "error": "That zip is not an "
+                        "Apex package (no install.sh / VERSION "
+                        "inside) — nothing was staged."}
+            base = os.path.realpath(pkg_dir)
+            for member in names:
+                target = os.path.realpath(os.path.join(pkg_dir, member))
+                if target != base and not target.startswith(base + os.sep):
+                    return {"ok": False, "error": "The package zip "
+                            "contains a path outside its folder ("
+                            + member + ") — nothing was staged."}
+            z.extractall(pkg_dir)
+        try:
+            os.chmod(os.path.join(pkg_dir, "install.sh"), 0o755)
+        except Exception:
+            pass
+    except Exception as e:
+        return {"ok": False, "error": "Staging the download failed: "
+                + str(e)}
+    return {
+        "ok": True,
+        "tag": rel["tag"],
+        "assetName": asset["name"],
+        "sizeBytes": asset["size"] or os.path.getsize(zip_path),
+        "stagedDir": pkg_dir,
+        "command": "cd " + pkg_dir + " && ./install.sh",
+    }
 
 
 # ---------------------------------------------------------------------
@@ -4517,6 +4711,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/github/pulse":
             # The Overview tab: the project's live pulse.
             self._send(200, github_pulse_payload())
+        elif self.path == "/api/update/check":
+            # The Updater's real check: the project's latest GitHub
+            # release against the VERSION file. A check that cannot
+            # complete answers ok: False with the reason — never a
+            # made-up "up to date".
+            self._send(200, update_check_payload(load_config()))
         else:
             self._send(404, {"error": "not found"})
 
@@ -4532,6 +4732,12 @@ class Handler(BaseHTTPRequestHandler):
                 ))
             except Exception as e:
                 self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
+        elif self.path == "/api/update/apply":
+            # Stages the latest release's package beside the app
+            # (updates/<tag>/package) and answers with the staged
+            # folder and the one install command — the bridge never
+            # installs over the running app itself.
+            self._send(200, update_apply_payload(cfg))
         elif self.path == "/api/sudo/auth":
             # Authenticate sudo mode once, when the operator enables
             # it: validate the password AND open the bridge's
