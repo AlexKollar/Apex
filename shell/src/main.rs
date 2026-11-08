@@ -29,10 +29,10 @@
 // close_docs_window and docs_window_open complete the round trip
 // the dashboard's Pop back in and its dock polling drive.
 //
-// External links: the GitHub view's Issues page must open in the
+// External links: the dashboard's links must open in the
 // operator's browser, not inside her webview — open_external_url
-// hands an https://github.com/ address (and nothing else) to the
-// OS opener for exactly that.
+// hands an http(s) address (and nothing else) to the OS opener
+// for exactly that.
 //
 // The GitHub section's Roadmap and Discussions tabs get windows
 // of their own instead (open_github_window): the project board
@@ -172,31 +172,46 @@ fn docs_window_open(app: tauri::AppHandle) -> bool {
 // web page. The page names are fixed here, not passed in: the
 // dashboard asks for "roadmap" or "discussions" and the shell
 // alone decides which address that means, so this is not a
-// general webview launcher either.
+// general webview launcher either. Issue windows (issue #24)
+// follow the same rule one step removed: the dashboard passes
+// "issue:<number>", the number must be digits only, and the
+// shell builds the address itself — the page can never aim this
+// window anywhere but an issue of AlexKollar/Apex.
 #[tauri::command]
 fn open_github_window(app: tauri::AppHandle, page: String) -> Result<(), String> {
-    let (label, url, title) = match page.as_str() {
-        "roadmap" => (
-            "roadmap",
-            "https://github.com/users/AlexKollar/projects/9",
-            "Apex — Roadmap",
-        ),
-        "discussions" => (
-            "discussions",
-            "https://github.com/AlexKollar/Apex/discussions",
-            "Apex — Discussions",
-        ),
-        _ => return Err(format!("unknown GitHub page: {page}")),
+    let (label, url, title) = if let Some(num) = page.strip_prefix("issue:") {
+        if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!("bad issue number: {page}"));
+        }
+        (
+            format!("issue-{num}"),
+            format!("https://github.com/AlexKollar/Apex/issues/{num}"),
+            format!("Apex — Issue #{num}"),
+        )
+    } else {
+        match page.as_str() {
+            "roadmap" => (
+                "roadmap".to_string(),
+                "https://github.com/users/AlexKollar/projects/9".to_string(),
+                "Apex — Roadmap".to_string(),
+            ),
+            "discussions" => (
+                "discussions".to_string(),
+                "https://github.com/AlexKollar/Apex/discussions".to_string(),
+                "Apex — Discussions".to_string(),
+            ),
+            _ => return Err(format!("unknown GitHub page: {page}")),
+        }
     };
-    if let Some(w) = app.get_webview_window(label) {
+    if let Some(w) = app.get_webview_window(&label) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
         return Ok(());
     }
     let parsed: tauri::Url = url.parse().map_err(|e| format!("bad GitHub URL: {e}"))?;
-    WebviewWindowBuilder::new(&app, label, WebviewUrl::External(parsed))
-        .title(title)
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
+        .title(&title)
         .inner_size(1080.0, 900.0)
         .min_inner_size(560.0, 480.0)
         .center()
@@ -206,15 +221,16 @@ fn open_github_window(app: tauri::AppHandle, page: String) -> Result<(), String>
 }
 
 // Open a link in the operator's real browser, outside her window —
-// the GitHub view's Issues link is the caller. The webview would
-// otherwise navigate itself away from the dashboard (or refuse), and
-// the Issues page belongs in a browser anyway. Restricted on
-// purpose: only https://github.com/ addresses the dashboard itself
-// names ever open this way — this is not a general URL launcher.
+// the dashboard's own links are the callers: its wiki, repo, and
+// device sign-in links, and the links inside her chat replies.
+// The webview would otherwise navigate itself away from the
+// dashboard (or refuse), and those pages belong in a browser
+// anyway. Only http(s) addresses ever open this way — every other
+// scheme is refused, so this is not a general URL launcher.
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://github.com/") {
-        return Err("only https://github.com/ links open externally".to_string());
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("only http(s) links open externally".to_string());
     }
     #[cfg(target_os = "linux")]
     let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();

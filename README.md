@@ -4,6 +4,16 @@ Apex is the standalone desktop app that puts Navi — a cybersecurity-tuned loca
 
 > **Status: v0.1.0 (alpha)** — first public release. Linux is the supported install today; Windows and macOS installers are planned. Expect rough edges, and please file what you find in [Issues](https://github.com/AlexKollar/Apex/issues).
 
+## Latest release — 0.1.1 (alpha)
+
+- Chat folds finished work into reopenable cards, and the composer completes the zsh set — recall, Ctrl+R, path completion, preview-only history expansion.
+- Syntax highlighting is tuned per theme across eleven palettes, including resource-light Dark Liquid Glass and five new themes.
+- Chips and knowledge packs publish to GitHub from the app, and Local Chips is the one home for managing them.
+- The GitHub lists reconcile what is already installed, packs wear flip cards, and pulse entries open their issues.
+- A link that fails in the desktop shell lands on an honest warning toast with the Web UI address.
+
+[Read the changelog](CHANGELOG.md)
+
 ## Install
 
 1. Download the app package (`.zip`) from the [latest release](https://github.com/AlexKollar/Apex/releases).

@@ -93,6 +93,8 @@ Stdlib only. Endpoints:
   GET  /api/rag/catalog -> the RAG tab's Packs list: a live GitHub
                       search for repos tagged navi-rag, merged with
                       the packs recorded in rag-packs/installed.json
+  GET  /api/rag/readme?repo=<owner/name> -> a pack repo's
+                      README as raw Markdown (the pack flip cards)
   GET  /api/rag/packs -> {packs}: the pack folders on this machine,
                       with documents, chunk counts, and active flags
   GET  /api/rag/pack-source?slug=<folder> -> a pack's name,
@@ -140,6 +142,11 @@ Stdlib only. Endpoints:
                       the chip .png, and a .gitignore
   GET  /api/chips/export-file?name=<zip> -> downloads an exported
                       chip repo ZIP from chips-exports/
+  POST /api/downloads/save {filename, dataBase64} -> writes a
+                      download the dashboard fetched inside the
+                      desktop shell (chip .png, export ZIP) into
+                      ~/Downloads under a sanitized basename —
+                      the shell's webview cannot save files itself
   GET  /api/workflows -> {chips, workflows}: the local chips
                       and the saved chains (chips/workflows.json)
   POST /api/workflows/create|delete|run -> manage and run chains;
@@ -332,7 +339,7 @@ SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-07.47"
+BRIDGE_BUILD = "2026-11-07.55"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -708,6 +715,50 @@ def validate_sudo_password(password, timeout=120):
         return False, msg
     except Exception as e:
         return False, str(e)
+
+
+
+def path_complete(prefix, base=None):
+    """One-level completion for the chat composer (#27d). Pure helper:
+    lists only the prefix's parent directory, directories first then
+    files (alphabetical), at most 12 entries, dotfiles only when the
+    partial name starts with a dot. Replacement text preserves the
+    operator's prefix style (~ stays ~, relative stays relative); a
+    directory's replacement ends with '/'."""
+    prefix = prefix or ""
+    slash = prefix.rfind("/")
+    dirpart = prefix[:slash + 1] if slash != -1 else ""
+    partial = prefix[slash + 1:] if slash != -1 else prefix
+    if prefix.startswith("~"):
+        expanded = os.path.expanduser(dirpart if dirpart else "~")
+        listdir = expanded
+    elif dirpart.startswith("/"):
+        listdir = dirpart
+    else:
+        root = base if base is not None else shell_cwd()
+        listdir = os.path.join(root, dirpart) if dirpart else root
+    try:
+        names = os.listdir(listdir)
+    except Exception:
+        return []
+    dirs, files = [], []
+    for nm in names:
+        if nm.startswith(".") and not partial.startswith("."):
+            continue
+        if not nm.lower().startswith(partial.lower()):
+            continue
+        full = os.path.join(listdir, nm)
+        try:
+            is_dir = os.path.isdir(full)
+        except Exception:
+            is_dir = False
+        (dirs if is_dir else files).append(nm)
+    out = []
+    for nm in sorted(dirs):
+        out.append({"name": nm, "description": "Folder", "replacement": dirpart + nm + "/", "isDir": True})
+    for nm in sorted(files):
+        out.append({"name": nm, "description": "File", "replacement": dirpart + nm, "isDir": False})
+    return out[:12]
 
 
 def run_shell(command, timeout=20, sudo=False, sudo_password=""):
@@ -1096,6 +1147,51 @@ def update_apply_payload(cfg=None):
     }
 
 
+def save_download_payload(data):
+    # The dashboard's download-save flow (build .48, issue #10):
+    # inside the desktop shell the webview cannot save a file the
+    # way a browser does, so when the operator clicks a download
+    # there (a chip .png, an export ZIP) the dashboard fetches the
+    # bytes itself and hands them here as base64; the bridge writes
+    # them into the operator's Downloads folder. The filename is
+    # never trusted as a path: it is reduced to a plain basename,
+    # a name already taken gains a numeric suffix instead of an
+    # overwrite, and anything over the cap is refused outright.
+    name = str(data.get("filename") or "").strip()
+    name = name.replace(chr(92), "/").split("/")[-1].strip()
+    if name in ("", ".", ".."):
+        name = "navi-download"
+    try:
+        blob = base64.b64decode(str(data.get("dataBase64") or ""),
+                                validate=True)
+    except Exception:
+        return {"ok": False, "error": "That download did not arrive "
+                "as readable data — nothing was saved."}
+    if len(blob) > 64 * 1024 * 1024:
+        return {"ok": False, "error": "That file is larger than the "
+                "64 MB download limit — nothing was saved."}
+    try:
+        folder = os.path.join(os.path.expanduser("~"), "Downloads")
+        os.makedirs(folder, exist_ok=True)
+        target = os.path.join(folder, name)
+        if os.path.exists(target):
+            stem, dot, ext = name.rpartition(".")
+            n = 2
+            while os.path.exists(target):
+                if stem and dot:
+                    candidate = stem + " (" + str(n) + ")." + ext
+                else:
+                    candidate = name + " (" + str(n) + ")"
+                target = os.path.join(folder, candidate)
+                n += 1
+        with open(target, "wb") as f:
+            f.write(blob)
+    except Exception as e:
+        return {"ok": False, "error": "Saving to the Downloads "
+                "folder failed: " + str(e)}
+    return {"ok": True, "path": target, "sizeBytes": len(blob)}
+
+
 # ---------------------------------------------------------------------
 # GitHub: optional sign-in (Device Flow) and backup/import of the
 # ready-to-fly essentials (build .35).
@@ -1244,21 +1340,70 @@ def github_auth():
         with open(GITHUB_TOKEN_PATH) as f:
             data = json.load(f)
         if isinstance(data, dict) and data.get("token"):
-            return {"token": str(data["token"]), "login": str(data.get("login") or "")}
+            return {
+                "token": str(data["token"]),
+                "login": str(data.get("login") or ""),
+                "refresh_token": str(data.get("refresh_token") or ""),
+                "expires_in": data.get("expires_in"),
+            }
     except Exception:
         pass
     return None
 
 
-def github_save_auth(token, login):
+def github_save_auth(token, login, refresh_token=None, expires_in=None):
+    # The whole token set GitHub returned. An expiring user token
+    # also carries a refresh token and a lifetime; the first build
+    # threw both away, so the day the access token expired every
+    # authenticated call answered 401 forever, with no renewal
+    # path (issue #14). A non-expiring sign-in returns neither and
+    # stores exactly what it always stored.
+    data = {"token": token, "login": login}
+    if refresh_token:
+        data["refresh_token"] = str(refresh_token)
+    if expires_in:
+        data["expires_in"] = expires_in
     os.makedirs(os.path.dirname(GITHUB_TOKEN_PATH), exist_ok=True)
     fd = os.open(GITHUB_TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        json.dump({"token": token, "login": login}, f)
+        json.dump(data, f)
     try:
         os.chmod(GITHUB_TOKEN_PATH, 0o600)
     except Exception:
         pass
+
+
+def github_refresh_auth():
+    # Renew an expired access token from the stored refresh token
+    # — once. Returns the fresh auth dict (already saved), or None
+    # when there is nothing to renew with or GitHub refuses; the
+    # caller then asks the operator to sign in again.
+    auth = github_auth()
+    if not auth or not auth.get("refresh_token"):
+        return None
+    client_id = github_settings(load_config())["client_id"]
+    if not client_id:
+        return None
+    st, resp = github_api(
+        "POST", "https://github.com/login/oauth/access_token", None,
+        {
+            "client_id": client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": auth["refresh_token"],
+        },
+        form=True,
+    )
+    if isinstance(resp, dict) and resp.get("access_token"):
+        # GitHub rotates the refresh token on renewal: keep the
+        # new one when it sends one, the stored one otherwise.
+        github_save_auth(
+            str(resp["access_token"]),
+            auth["login"],
+            resp.get("refresh_token") or auth["refresh_token"],
+            resp.get("expires_in"),
+        )
+        return github_auth()
+    return None
 
 
 def github_status_payload(cfg):
@@ -1454,7 +1599,11 @@ def github_device_poll(cfg):
         ust, user = github_api("GET", "https://api.github.com/user", token)
         if ust == 200 and isinstance(user, dict):
             login = str(user.get("login") or "")
-        github_save_auth(token, login)
+        # Keep the whole token set: when GitHub answers with an
+        # expiring token, the refresh token and lifetime ride
+        # along — without them the sign-in dies with the access
+        # token and cannot be renewed (issue #14).
+        github_save_auth(token, login, resp.get("refresh_token"), resp.get("expires_in"))
         _github_device.clear()
         return {"ok": True, "status": "authorized", "login": login}
     err = resp.get("error") if isinstance(resp, dict) else None
@@ -1529,11 +1678,16 @@ def github_collect_backup(cfg, dashboard=None):
     }
     out = {"navi-backup.json": b""}
     out.update(files)
-    # The manifest records the backup's own file count — every file
-    # written, the manifest included. The status column's simple
+    # The manifest records the backup's file count — the files the
+    # backup actually contains, exactly as Settings → GitHub & Backup
+    # presents them: one per ticked essential's payload files. The
+    # manifest itself (navi-backup.json) is the index, not content,
+    # and is never counted — counting it (plus expanding settings
+    # into three files) is what pinned the old readout at "6 files"
+    # no matter what was ticked. The status column's simple
     # "# files | # days ago" readout and Settings → GitHub & Backup
     # both read this one record, so they can never disagree.
-    manifest["fileCount"] = len(out)
+    manifest["fileCount"] = len(files)
     out["navi-backup.json"] = json.dumps(manifest, indent=2).encode()
     return out, manifest
 
@@ -2113,9 +2267,37 @@ def chip_catalog_view():
     except Exception as e:
         error = "GitHub search failed: " + str(e)
     installs = {row.get("full_name"): row for row in load_chip_installs()}
+    # Issue #22: an entry also reads as installed when a chip with
+    # the same slug is on this machine under another name — a
+    # Studio-forged chip (its local/ record), the same repo
+    # installed from a different owner, or a .png dropped into
+    # chips/ by hand (no record at all). An exact full-name match
+    # keeps the update math; a slug match claims only "installed"
+    # — no update is offered against a lineage this machine did
+    # not download from this repo.
+    installs_ci = {}
+    by_slug = {}
+    for row in load_chip_installs():
+        fn = row.get("full_name") or ""
+        if fn:
+            installs_ci.setdefault(fn.lower(), row)
+        s = fn.split("/")[-1].lower()
+        if s and s not in by_slug:
+            by_slug[s] = row
+    local_files = {}
+    for lc in local_chips():
+        local_files.setdefault(str(lc.get("slug") or "").lower(), lc.get("file"))
     chips = []
     for repo in repos:
-        inst = installs.get(repo["fullName"])
+        inst = installs.get(repo["fullName"]) or installs_ci.get(repo["fullName"].lower())
+        slug_row = None
+        slug_file = None
+        if not inst:
+            s = repo["fullName"].split("/")[-1].lower()
+            slug_row = by_slug.get(s)
+            slug_file = local_files.get(s)
+        matched = inst or slug_row
+        slug_matched = bool(not inst and (slug_row is not None or slug_file is not None))
         update = False
         if inst:
             if repo["latestRelease"]:
@@ -2125,15 +2307,22 @@ def chip_catalog_view():
                     inst.get("installed_pushed_at")
                     and repo["pushedAt"] > inst["installed_pushed_at"]
                 )
+        if inst:
+            ref = _display_ref(inst.get("installed_ref"))
+        elif slug_row and str(slug_row.get("full_name") or "").startswith("local/"):
+            ref = _display_ref(slug_row.get("installed_ref"))
+        else:
+            ref = None
         entry = dict(repo)
         entry["inCatalog"] = True
-        entry["installed"] = bool(inst)
-        entry["installedTag"] = inst.get("installed_tag") if inst else None
-        entry["installedRef"] = _display_ref(inst.get("installed_ref")) if inst else None
-        entry["installedAt"] = inst.get("installed_at") if inst else None
+        entry["installed"] = bool(inst) or slug_matched
+        entry["slugMatched"] = slug_matched
+        entry["installedTag"] = matched.get("installed_tag") if matched else None
+        entry["installedRef"] = ref
+        entry["installedAt"] = matched.get("installed_at") if matched else None
         entry["updateAvailable"] = update
-        entry["localFile"] = inst.get("local_file") if inst else None
-        entry["locallyEdited"] = bool(inst.get("locally_edited")) if inst else False
+        entry["localFile"] = (matched.get("local_file") if matched else None) or slug_file
+        entry["locallyEdited"] = bool(matched.get("locally_edited")) if matched else False
         chips.append(entry)
     seen = {c["fullName"] for c in chips}
     for full, inst in installs.items():
@@ -2150,7 +2339,7 @@ def chip_catalog_view():
             "pushedAt": inst.get("installed_pushed_at") or "",
             "defaultBranch": "main", "openIssues": 0,
             "latestRelease": None,
-            "inCatalog": False, "installed": True,
+            "inCatalog": False, "installed": True, "slugMatched": False,
             "installedTag": inst.get("installed_tag"),
             "installedRef": _display_ref(inst.get("installed_ref")),
             "installedAt": inst.get("installed_at"),
@@ -3051,9 +3240,9 @@ def build_rag_repo_files(name, description, documents, version, index_text=""):
         "",
         "## Publishing an update",
         "",
-        "Edit the documents, bump `version` in `navi-rag.json`, push, and cut",
-        "a new release whose tag is the new version (this export is `"
-        + version + "`). A newer release tag is what offers everyone who",
+        "Edit the documents, bump `version` in `navi-rag.json`, push, and publish",
+        "a new release — the version tag is created with that publish (this export is `"
+        + version + "`). A newer release is what offers everyone who",
         "installed the pack an update. Keep the `navi-rag` topic on the",
         "repo — that is how Navi finds it.",
         "",
@@ -3075,12 +3264,22 @@ def build_rag_repo_files(name, description, documents, version, index_text=""):
     return files
 
 
-def export_rag_pack(slug, version):
-    # Builds the pack's GitHub-ready repo ZIP in rag-exports/ and
-    # returns (zip file name, [repo file names]). The documents are
-    # the pack folder's own files (PDF-sourced text already lives
-    # there as .txt); a root README in the folder was a source
-    # repo's page and is not carried into documents/.
+def rag_readme_override(slug):
+    # The operator's edited README for a pack, kept in the pack
+    # folder as a hidden file (no .md/.txt suffix, so it is never
+    # collected as a document). None when they have not edited it —
+    # the generated README ships instead.
+    try:
+        with open(os.path.join(RAG_PACKS_DIR, slug, ".readme-override")) as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def rag_repo_files(slug, version):
+    # The pack's GitHub-ready repo file set — the exact files the
+    # export ZIP holds and the publish upload sends, README override
+    # included when the operator edited one.
     index = _rag_pack_index(slug)
     if index is None:
         raise ValueError("That pack is not in rag-packs/.")
@@ -3104,6 +3303,16 @@ def export_rag_pack(slug, version):
         index.get("name") or slug, index.get("description") or "",
         documents, version, index_text,
     )
+    override = rag_readme_override(slug)
+    if override is not None:
+        files = [(arc, override if arc == "README.md" else data) for arc, data in files]
+    return files
+
+
+def export_rag_pack(slug, version):
+    # Builds the pack's GitHub-ready repo ZIP in rag-exports/ and
+    # returns (zip file name, [repo file names]).
+    files = rag_repo_files(slug, version)
     os.makedirs(RAG_EXPORTS_DIR, exist_ok=True)
     safe_version = re.sub(r"[^0-9A-Za-z.-]+", "-", version).strip("-.") or "0.1.0"
     zip_name = slug + "-" + safe_version + ".zip"
@@ -3161,16 +3370,20 @@ def build_chip_repo_files(chip, version):
         "",
         "## Publishing an update",
         "",
-        "Edit the code, bump `version` in `navi-chip.json`, push, and cut",
-        "a new release whose tag is the new version (this export is `"
-        + version + "`). A newer release tag is what offers everyone who",
+        "Edit the code, bump `version` in `navi-chip.json`, push, and publish",
+        "a new release — the version tag is created with that publish (this export is `"
+        + version + "`). A newer release is what offers everyone who",
         "installed the chip an update. Keep the `navi-chips` topic on the",
         "repo — that is how Navi finds it.",
         "",
     ]
     gitignore = chr(10).join([".DS_Store", "Thumbs.db", "__pycache__/", ""])
+    # An operator-edited README (kept inside the cartridge as
+    # "readme") ships instead of the generated page, in the export
+    # ZIP and the publish upload alike.
+    readme_text = chip.get("readme") or chr(10).join(lines)
     files = [
-        ("README.md", chr(10).join(lines)),
+        ("README.md", readme_text),
         ("navi-chip.json", json.dumps(manifest, indent=2) + chr(10)),
     ]
     for f in chip_files:
@@ -3180,9 +3393,7 @@ def build_chip_repo_files(chip, version):
     return files
 
 
-def export_chip(fname, version):
-    # Builds a local chip's GitHub-ready repo ZIP in
-    # chips-exports/ and returns (zip file name, [repo file names]).
+def load_local_chip(fname):
     path = os.path.join(CHIPS_DIR, os.path.basename(fname or ""))
     if not fname.endswith(".png") or not os.path.isfile(path):
         raise ValueError("That chip is not in the chips folder.")
@@ -3191,6 +3402,27 @@ def export_chip(fname, version):
     if not chip:
         raise ValueError("That chip could not be read.")
     chip["file"] = os.path.basename(fname)
+    return chip
+
+
+def save_local_chip_readme(fname, readme):
+    # Persists (or clears, when readme is None) the operator's
+    # edited README inside the chip cartridge itself, so it travels
+    # with the chip and survives re-export and re-publish.
+    chip = load_local_chip(fname)
+    if readme is None:
+        chip.pop("readme", None)
+    else:
+        chip["readme"] = readme
+    path = os.path.join(CHIPS_DIR, os.path.basename(fname))
+    with open(path, "wb") as f:
+        f.write(build_cartridge_png(chip))
+
+
+def export_chip(fname, version):
+    # Builds a local chip's GitHub-ready repo ZIP in
+    # chips-exports/ and returns (zip file name, [repo file names]).
+    chip = load_local_chip(fname)
     files = build_chip_repo_files(chip, version)
     os.makedirs(CHIPS_EXPORTS_DIR, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", chip["name"].lower()).strip("-") or "chip"
@@ -3200,6 +3432,104 @@ def export_chip(fname, version):
         for arc, data in files:
             z.writestr(arc, data)
     return zip_name, [arc for arc, _data in files]
+
+
+def github_publish_files(repo_name, files, topic, description):
+    # The publish loop, shared by RAG packs and chips: create the
+    # repo on the signed-in account when it is not there (public —
+    # the catalogs only find public repos), apply the topic with no
+    # prompt, and upload the exact file set the export builds.
+    # Navi never publishes the release: she creates the repo,
+    # applies the topic (that is the tagging), and uploads the
+    # files; publishing the release is the operator's one step,
+    # and the version tag is created with that publish. Returns
+    # a result dict; failures carry the real reason and never
+    # fake a success.
+    auth = github_auth()
+    if not auth:
+        return {"ok": False, "error": "You are not signed in to GitHub. Sign in under Settings → GitHub & Backup, or use Export for GitHub and upload the ZIP yourself."}
+    login, token = auth["login"], auth["token"]
+    # Every call below goes through pub(): it carries the current
+    # token, and on a 401 it renews the sign-in once from the
+    # stored refresh token and retries the call once (issue #14).
+    # A 401 that survives that — or arrives with no refresh token
+    # stored — means the saved sign-in is dead, and the operator
+    # hears that in plain words, never as a raw HTTP string.
+    state = {"token": token, "renewed": False}
+
+    def reauth_error():
+        return {"ok": False, "error": "GitHub rejected the sign-in Navi has saved — the token has expired or been revoked, and Navi could not renew it. Sign out and back in under Settings → GitHub & Backup, then publish again. Nothing was uploaded."}
+
+    def pub(method, url, body=None):
+        st, resp = github_api(method, url, state["token"], body)
+        if st == 401 and not state["renewed"]:
+            state["renewed"] = True
+            fresh = github_refresh_auth()
+            if fresh:
+                state["token"] = fresh["token"]
+                st, resp = github_api(method, url, state["token"], body)
+        return st, resp
+
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(repo_name or "")).strip("-.")[:100]
+    if not name:
+        return {"ok": False, "error": "The repo name came out empty — give it a name before publishing."}
+    if not login:
+        st, me = pub("GET", "https://api.github.com/user")
+        if st == 401:
+            return reauth_error()
+        if st == 200 and isinstance(me, dict):
+            login = str(me.get("login") or "")
+    if not login:
+        return {"ok": False, "error": "GitHub did not say whose account this is — sign out and back in under Settings → GitHub & Backup, then try again."}
+    base = "https://api.github.com/repos/" + login + "/" + name
+    st, _repo = pub("GET", base)
+    created = False
+    if st == 401:
+        return reauth_error()
+    if st == 404:
+        st2, resp = pub("POST", "https://api.github.com/user/repos", {
+            "name": name, "description": description or "", "private": False,
+        })
+        if st2 == 401:
+            return reauth_error()
+        if st2 not in (200, 201):
+            return {"ok": False, "error": "GitHub would not create the repo (HTTP " + str(st2) + "): " + github_err_text(resp) + " If the sign-in token cannot create repos, make a public repo named " + name + " on GitHub yourself and publish again — Navi will upload into it — or use Export for GitHub."}
+        created = True
+    elif st != 200:
+        return {"ok": False, "error": "GitHub would not answer for that repo (HTTP " + str(st) + "): " + github_err_text(_repo)}
+    # Topic: merge with whatever is already there, never prompt.
+    _st3, topics_resp = pub("GET", base + "/topics")
+    if _st3 == 401:
+        return reauth_error()
+    names = topics_resp.get("names") if isinstance(topics_resp, dict) else []
+    merged = sorted(set(list(names or []) + [topic]))
+    _stt, _tresp = pub("PUT", base + "/topics", {"names": merged})
+    if _stt == 401:
+        return reauth_error()
+    # Upload each file through the contents API (sha when updating).
+    for arc, data in files:
+        raw = data if isinstance(data, bytes) else str(data).encode("utf-8")
+        body = {
+            "message": ("Publish " if created else "Update ") + arc,
+            "content": base64.b64encode(raw).decode("ascii"),
+        }
+        url = base + "/contents/" + urllib.parse.quote(arc)
+        stx, existing = pub("GET", url)
+        if stx == 401:
+            return reauth_error()
+        if stx == 200 and isinstance(existing, dict) and existing.get("sha"):
+            body["sha"] = existing["sha"]
+        st4, resp4 = pub("PUT", url, body)
+        if st4 == 401:
+            return reauth_error()
+        if st4 not in (200, 201):
+            return {"ok": False, "error": "Uploading " + arc + " failed (HTTP " + str(st4) + "): " + github_err_text(resp4)}
+    return {
+        "ok": True, "error": None, "created": created,
+        "repo": login + "/" + name,
+        "repoUrl": "https://github.com/" + login + "/" + name,
+        "files": [arc for arc, _d in files],
+    }
 
 
 def _rag_pack_index(slug):
@@ -3239,6 +3569,7 @@ def local_rag_packs():
             "description": index.get("description") or "",
             "fullName": full,
             "source": "github" if rec and not str(full).startswith("local/") else "local",
+            "installedRef": _display_ref(rec.get("installed_ref")) if rec else None,
             "locallyEdited": bool(rec.get("locally_edited")) if rec else False,
             "active": bool(rec.get("active", True)) if rec else True,
             "docCount": len(index.get("documents") or []),
@@ -3455,9 +3786,37 @@ def rag_catalog_view():
     except Exception as e:
         error = "GitHub search failed: " + str(e)
     installs = {row.get("full_name"): row for row in load_rag_installs()}
+    # Issue #22, the pack half — the case from Alex's screenshot:
+    # a pack forged in RAG Studio (its local/ record, folder named
+    # for the pack) must read as installed on its repo's catalog
+    # card, not NOT INSTALLED with a live Install above the local
+    # card proving otherwise. Same slug rule as chips: the repo
+    # name is matched against the pack folders on this machine
+    # and the install records, local/ ones included. An exact
+    # full-name match keeps the update math; a slug match claims
+    # only "installed" and borrows its state from the local pack.
+    installs_ci = {}
+    rec_by_slug = {}
+    for row in load_rag_installs():
+        fn = row.get("full_name") or ""
+        if fn:
+            installs_ci.setdefault(fn.lower(), row)
+        s = fn.split("/")[-1].lower()
+        if s and s not in rec_by_slug:
+            rec_by_slug[s] = row
+    local_packs = {}
+    for lp in local_rag_packs():
+        local_packs.setdefault(str(lp.get("slug") or "").lower(), lp)
     packs = []
     for repo in repos:
-        inst = installs.get(repo["fullName"])
+        inst = installs.get(repo["fullName"]) or installs_ci.get(repo["fullName"].lower())
+        slug_lp = None
+        slug_rec = None
+        if not inst:
+            s = repo["fullName"].split("/")[-1].lower()
+            slug_lp = local_packs.get(s)
+            slug_rec = rec_by_slug.get(s)
+        slug_matched = bool(not inst and (slug_lp is not None or slug_rec is not None))
         update = False
         if inst:
             if repo["latestRelease"]:
@@ -3467,17 +3826,46 @@ def rag_catalog_view():
                     inst.get("installed_pushed_at")
                     and repo["pushedAt"] > inst["installed_pushed_at"]
                 )
+        if inst:
+            ref = _display_ref(inst.get("installed_ref"))
+            local_dir = inst.get("local_dir")
+            active = bool(inst.get("active", True))
+            doc_count = inst.get("doc_count")
+            edited = bool(inst.get("locally_edited"))
+            tag = inst.get("installed_tag")
+            at = inst.get("installed_at")
+        elif slug_matched:
+            ref = slug_lp.get("installedRef") if slug_lp else (
+                _display_ref(slug_rec.get("installed_ref"))
+                if slug_rec and str(slug_rec.get("full_name") or "").startswith("local/")
+                else None
+            )
+            local_dir = slug_lp.get("slug") if slug_lp else (slug_rec.get("local_dir") if slug_rec else None)
+            active = slug_lp.get("active") if slug_lp else (bool(slug_rec.get("active", True)) if slug_rec else None)
+            doc_count = slug_lp.get("docCount") if slug_lp else (slug_rec.get("doc_count") if slug_rec else None)
+            edited = slug_lp.get("locallyEdited") if slug_lp else (bool(slug_rec.get("locally_edited")) if slug_rec else False)
+            tag = slug_rec.get("installed_tag") if slug_rec else None
+            at = slug_rec.get("installed_at") if slug_rec else None
+        else:
+            ref = None
+            local_dir = None
+            active = None
+            doc_count = None
+            edited = False
+            tag = None
+            at = None
         entry = dict(repo)
         entry["inCatalog"] = True
-        entry["installed"] = bool(inst)
-        entry["installedTag"] = inst.get("installed_tag") if inst else None
-        entry["installedRef"] = _display_ref(inst.get("installed_ref")) if inst else None
-        entry["installedAt"] = inst.get("installed_at") if inst else None
+        entry["installed"] = bool(inst) or slug_matched
+        entry["slugMatched"] = slug_matched
+        entry["installedTag"] = tag
+        entry["installedRef"] = ref
+        entry["installedAt"] = at
         entry["updateAvailable"] = update
-        entry["localDir"] = inst.get("local_dir") if inst else None
-        entry["active"] = bool(inst.get("active", True)) if inst else None
-        entry["docCount"] = inst.get("doc_count") if inst else None
-        entry["locallyEdited"] = bool(inst.get("locally_edited")) if inst else False
+        entry["localDir"] = local_dir
+        entry["active"] = active
+        entry["docCount"] = doc_count
+        entry["locallyEdited"] = edited
         packs.append(entry)
     seen = {p["fullName"] for p in packs}
     for full, inst in installs.items():
@@ -3494,7 +3882,7 @@ def rag_catalog_view():
             "pushedAt": inst.get("installed_pushed_at") or "",
             "defaultBranch": "main", "openIssues": 0,
             "latestRelease": None,
-            "inCatalog": False, "installed": True,
+            "inCatalog": False, "installed": True, "slugMatched": False,
             "installedTag": inst.get("installed_tag"),
             "installedRef": _display_ref(inst.get("installed_ref")),
             "installedAt": inst.get("installed_at"),
@@ -4523,6 +4911,10 @@ class Handler(BaseHTTPRequestHandler):
                 + " — served by the bridge in " + ROOT + " -->\n"
             ).encode()
             self._send(200, banner + html, "text/html; charset=utf-8")
+        elif self.path.startswith("/api/pathcomplete"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            prefix = (qs.get("prefix") or [""])[0]
+            self._send(200, {"entries": path_complete(prefix)})
         elif self.path == "/api/status":
             cfg = load_config()
             endpoint = cfg.get("live", {}).get("llamafile_endpoint", "")
@@ -4602,6 +4994,30 @@ class Handler(BaseHTTPRequestHandler):
             # fetched raw from GitHub on demand. A repo without one
             # (or an unreachable GitHub) reports the reason instead
             # of inventing content.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            repo = (qs.get("repo") or [""])[0]
+            if not repo or "/" not in repo:
+                self._send(200, {"ok": False, "error": "No repo was named."})
+            else:
+                try:
+                    md = github_text(
+                        "https://api.github.com/repos/" + repo + "/readme",
+                        "application/vnd.github.raw+json",
+                    )
+                    self._send(200, {"ok": True, "markdown": md})
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        self._send(200, {"ok": False, "error": "This repo has no README."})
+                    else:
+                        self._send(200, {"ok": False, "error": "GitHub answered HTTP " + str(e.code) + " — the README could not be loaded."})
+                except Exception:
+                    self._send(200, {"ok": False, "error": "GitHub could not be reached — the README could not be loaded."})
+        elif self.path.split("?")[0] == "/api/rag/readme":
+            # The back of a pack flip card: the pack repo's README,
+            # fetched raw from GitHub on demand — the pack
+            # counterpart of /api/chips/readme, same contract. (The
+            # POST /api/rag/readme further down is a different
+            # thing: the local pack README editor's read.)
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             repo = (qs.get("repo") or [""])[0]
             if not repo or "/" not in repo:
@@ -4738,6 +5154,13 @@ class Handler(BaseHTTPRequestHandler):
             # folder and the one install command — the bridge never
             # installs over the running app itself.
             self._send(200, update_apply_payload(cfg))
+        elif self.path == "/api/downloads/save":
+            # The dashboard's download-save flow (build .48): the
+            # bytes behind a download click inside the desktop shell
+            # (chip .png, export ZIP), written into the operator's
+            # Downloads folder under a sanitized name — the shell's
+            # webview cannot save files the way a browser does.
+            self._send(200, save_download_payload(self._body()))
         elif self.path == "/api/sudo/auth":
             # Authenticate sudo mode once, when the operator enables
             # it: validate the password AND open the bridge's
@@ -5603,6 +6026,54 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None, "file": zip_name, "files": repo_files})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e), "file": None, "files": []})
+        elif self.path == "/api/rag/publish":
+            # Publish to GitHub: upload the export's exact file set
+            # to a repo on the signed-in account (created when
+            # missing, navi-rag topic applied). Navi never releases.
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            try:
+                files = rag_repo_files(slug, version)
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)})
+            else:
+                index = _rag_pack_index(slug) or {}
+                repo_name = str(data.get("repo_name") or "").strip() or (index.get("name") or slug)
+                result = github_publish_files(repo_name, files, "navi-rag", index.get("description") or "")
+                self._send(200, result)
+        elif self.path == "/api/rag/readme":
+            # The effective README for the editor: the operator's
+            # saved edit when there is one, else the generated page.
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            try:
+                files = rag_repo_files(slug, version)
+                readme = next((d for a, d in files if a == "README.md"), "")
+                self._send(200, {"ok": True, "error": None, "readme": readme if isinstance(readme, str) else "", "edited": rag_readme_override(slug) is not None})
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e), "readme": "", "edited": False})
+        elif self.path == "/api/rag/readme-save":
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            text = str(data.get("readme") or "")
+            if _rag_pack_index(slug) is None:
+                self._send(200, {"ok": False, "error": "That pack is not in rag-packs/."})
+            elif len(text) > 200000:
+                self._send(200, {"ok": False, "error": "That README is too long to keep (200,000 characters max)."})
+            else:
+                with open(os.path.join(RAG_PACKS_DIR, slug, ".readme-override"), "w") as f:
+                    f.write(text)
+                self._send(200, {"ok": True, "error": None})
+        elif self.path == "/api/rag/readme-restore":
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            try:
+                os.remove(os.path.join(RAG_PACKS_DIR, slug, ".readme-override"))
+            except Exception:
+                pass
+            self._send(200, {"ok": True, "error": None})
         elif self.path == "/api/chips/export":
             # Export for GitHub: build a local chip's repo ZIP
             # in chips-exports/ — README page, navi-chip.json, the
@@ -5615,6 +6086,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None, "file": zip_name, "files": repo_files})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e), "file": None, "files": []})
+        elif self.path == "/api/chips/publish":
+            # Publish to GitHub: the chip counterpart of the pack
+            # publish — same loop, navi-chips topic.
+            data = self._body()
+            fname = os.path.basename(str(data.get("file") or ""))
+            version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            try:
+                chip = load_local_chip(fname)
+                files = build_chip_repo_files(chip, version)
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)})
+            else:
+                repo_name = str(data.get("repo_name") or "").strip() or chip.get("name") or ""
+                result = github_publish_files(repo_name, files, "navi-chips", chip.get("description") or "")
+                self._send(200, result)
+        elif self.path == "/api/chips/readme":
+            data = self._body()
+            fname = os.path.basename(str(data.get("file") or ""))
+            version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            try:
+                chip = load_local_chip(fname)
+                files = build_chip_repo_files(chip, version)
+                readme = next((d for a, d in files if a == "README.md"), "")
+                self._send(200, {"ok": True, "error": None, "readme": readme if isinstance(readme, str) else "", "edited": bool(chip.get("readme"))})
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e), "readme": "", "edited": False})
+        elif self.path == "/api/chips/readme-save":
+            data = self._body()
+            fname = os.path.basename(str(data.get("file") or ""))
+            text = str(data.get("readme") or "")
+            if len(text) > 200000:
+                self._send(200, {"ok": False, "error": "That README is too long to keep (200,000 characters max)."})
+            else:
+                try:
+                    save_local_chip_readme(fname, text)
+                    self._send(200, {"ok": True, "error": None})
+                except Exception as e:
+                    self._send(200, {"ok": False, "error": str(e)})
+        elif self.path == "/api/chips/readme-restore":
+            data = self._body()
+            fname = os.path.basename(str(data.get("file") or ""))
+            try:
+                save_local_chip_readme(fname, None)
+                self._send(200, {"ok": True, "error": None})
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)})
         elif self.path == "/api/chips/install":
             # Installing a chip means the chip itself lands here:
             # its source is downloaded from the repo at the ref

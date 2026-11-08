@@ -246,6 +246,12 @@ if [ -f "$INSTALL_DIR/bridge.pid" ]; then
   rm -f "$INSTALL_DIR/bridge.pid"
 fi
 pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null || true
+# The previous shell window goes too (build .49): a window left open
+# from the old install keeps the old dashboard's process alive and
+# can hold the single-instance lock, so the new build never becomes
+# the one actually running. Stop it before the new files land.
+pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
+sleep 1
 sleep 1
 
 # If a page that is not a Navi bridge still answers on 8675 — the
