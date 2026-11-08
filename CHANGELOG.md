@@ -2,6 +2,27 @@
 
 All notable changes to Apex are recorded here. Releases are alpha until the first stable release.
 
+## 0.1.4 (alpha)
+
+Release tag: v0.1.4a. The next major update, live-confirmed by Alex before this release was cut: the Updater release notes (#47), full Linux support (#48), and the docs formatting pass (#51).
+
+### Updater release notes
+
+- When an update is available, the Updater screen shows that release's notes in a rendered panel, readable before you press Download & install. The words come from the GitHub release body; when the release page carries none, the matching section of this changelog stands in and the panel says so.
+- A check that cannot reach GitHub — no network, or GitHub's rate limit — says that in plain words and shows no panel; it never pretends you are up to date.
+
+### One installer, every major Linux family
+
+- The installer reads /etc/os-release, announces the family it found in plain words, and branches only its dependency step: the Debian family (Debian, Ubuntu, Pop!_OS, Mint and their kin) via apt, Fedora via dnf, and Arch via pacman. Everything else — hardware profiling, the model download, what an update keeps, the startup choice — is shared.
+- Bazzite takes a user-space path: the installer never layers packages with rpm-ostree and never asks for a reboot. Her window is built inside a Fedora distrobox when one is available; without one, the window build is skipped in plain words and the complete core install — the bridge and the browser dashboard — still lands.
+- An unrecognized distro is named, no package manager is guessed at, everything that can be installed user-space still is, and the core install completes.
+
+### Docs formatting
+
+- Full markdown in the in-app Docs — headings, bulleted and numbered lists, tables, grouped blockquotes, inline code, fenced code blocks, and links — the same set the GitHub wiki renders, on both sides.
+- Fenced code blocks are syntax-highlighted with the chat's per-theme palettes, in every theme.
+- Prose enumerations are real bulleted lists and instruction sequences are numbered steps, in the in-app Docs and on the wiki alike.
+
 ## 0.1.3 (alpha)
 
 Release tag: v0.1.3a. Everything from the phone round (builds .62–.68), live-confirmed by Alex on his phone and desktop before this release was cut.

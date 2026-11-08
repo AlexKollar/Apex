@@ -6,13 +6,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.3 (alpha) — tag v0.1.3a
+## Latest release — 0.1.4 (alpha) — tag v0.1.4a
 
-- Local server: one flip in Settings → System puts Apex on your local network, and the passcode is only ever shown on Apex's own machine.
-- Phone chrome that fits the phone: left-clustered top bar, slide-in menu and status panels at full width, and a compact square menu button.
-- The CLI | Navi toggle persists across sends, page switches, and restarts.
-- No focus zoom anywhere on mobile — tapping the chat bar or any field keeps the page exactly where it was.
-- Composer placeholders sized for phones, the hint moved beside the toggle, and a full-width Docs page dropdown on small screens.
+- Release notes on the Updater screen: read what changed — the GitHub release body, or the matching changelog section — before you press Download & install.
+- One installer for every major Linux family, each announced in plain words: the Debian family via apt, Fedora via dnf, Arch via pacman.
+- Bazzite gets its own user-space path — no layering and no reboot; her window builds inside a Fedora distrobox when one is there, and the core install completes either way.
+- Docs, formatted properly: full markdown in the in-app Docs, real lists where lists belong, numbered steps for instructions, and code highlighting in every theme.
+- An unrecognized distro is warned in plain words and still completes the core install — no mid-install dead ends.
 
 [Read the changelog](CHANGELOG.md)
 
@@ -80,6 +80,22 @@ icon), so Apex opens in your browser instead. Everything else
 installs exactly the same. The release zip remains the
 complete package: release zip → ./install.sh; clone or GitHub
 source zip → bash install.sh.
+
+One installer covers the major Linux families. It reads your
+distro from /etc/os-release and announces the family it found in
+plain words, and only its dependency step branches: apt for the
+Debian family, dnf for Fedora, pacman for Arch — the same
+development libraries and base tools under each family's own
+package names. Bazzite is its own case: it is Fedora-based but
+immutable, so the installer never layers packages with
+rpm-ostree and never asks for a reboot — her standalone window
+is built inside a Fedora distrobox when one is available, and
+when none is, the window build is skipped in plain words and
+the core install (the bridge, plus the dashboard in your
+browser) completes in full. A distro the installer does not
+recognize is named as such: no package manager is guessed at,
+everything that can be installed user-space still is, and the
+core install completes just the same.
 
 The installer is a script (no graphical wizard). It asks one question
 during the install — whether the llamafile server should load on app
@@ -219,7 +235,11 @@ fallback, served by the bridge at the same address.
       none ships filled in).
 - install.sh — the Linux installer (the only installer in this
   package for now; Windows and macOS installers are planned, not
-  included). It downloads the llamafile
+  included). It detects the distro family from /etc/os-release
+  (Debian family, Fedora, Arch, and Bazzite as its own immutable
+  case) and installs the build dependencies with that family's
+  package manager — only the dependency step branches. It
+  downloads the llamafile
   from https://huggingface.co/saintssec/navi.llamafile/resolve/main/navi.llamafile, marks it executable, wires up startup, and
   registers the application-menu entry with the icon.
 - assets/ — the Apex app icon as PNG (Linux/desktop use), ICO

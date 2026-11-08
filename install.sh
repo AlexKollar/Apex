@@ -10,6 +10,15 @@
 # documents are carried across, and the old files are removed — so
 # nothing from the old location can grab port 8675 at boot or answer
 # the browser with a stale page.
+# One installer, every major Linux family (build .70, issue #48):
+# the distro family is detected up front from /etc/os-release and
+# announced in plain words, and ONLY the dependency step branches
+# on it — a small per-family package table (apt / dnf / pacman)
+# for the same dependency set. Bazzite is its own case (immutable:
+# no rpm-ostree layering, no reboot — the window build takes the
+# user-space path or is skipped, said out loud), and an
+# unrecognized distro is never guessed at: the system-package
+# step is skipped with a warning and the core install completes.
 # If a real llamafile binary is already present in the install
 # location, the download (and the llamafile setup) is skipped entirely.
 # --fresh reinstalls the app from scratch — everything in the install
@@ -84,6 +93,158 @@ case "$STARTUP" in
 esac
 
 echo "==> Apex installer (Linux) — startup mode: $STARTUP"
+
+# --- Which Linux family is this? (build .70, issue #48) ---
+# The family is read once, up front, from /etc/os-release (ID and
+# ID_LIKE) and announced in plain words. Only the dependency step
+# below branches on it; everything else in this installer is
+# shared and behaves the same on every family. Bazzite is matched
+# first and kept as its own case: it is Fedora-based but
+# immutable, so it never gets packages layered onto the host.
+DISTRO_FAMILY="unknown"
+DISTRO_ID=""
+DISTRO_ID_LIKE=""
+if [ -r /etc/os-release ]; then
+  DISTRO_ID="$(sed -n 's/^ID=//p' /etc/os-release | head -1 | tr -d '"')"
+  DISTRO_ID_LIKE="$(sed -n 's/^ID_LIKE=//p' /etc/os-release | head -1 | tr -d '"')"
+fi
+case "$DISTRO_ID $DISTRO_ID_LIKE" in
+  *bazzite*) DISTRO_FAMILY="bazzite" ;;
+esac
+if [ "$DISTRO_FAMILY" = "unknown" ]; then
+  case " $DISTRO_ID " in
+    " debian "|" ubuntu "|" pop "|" linuxmint "|" raspbian "|" kali "|" mx "|" devuan "|" elementary "|" zorin ") DISTRO_FAMILY="debian" ;;
+    " fedora "|" rhel "|" centos "|" rocky "|" almalinux "|" nobara ") DISTRO_FAMILY="fedora" ;;
+    " arch "|" manjaro "|" endeavouros "|" garuda "|" artix "|" cachyos ") DISTRO_FAMILY="arch" ;;
+  esac
+fi
+if [ "$DISTRO_FAMILY" = "unknown" ]; then
+  case "$DISTRO_ID_LIKE" in
+    *debian*|*ubuntu*) DISTRO_FAMILY="debian" ;;
+    *fedora*|*rhel*|*centos*) DISTRO_FAMILY="fedora" ;;
+    *arch*) DISTRO_FAMILY="arch" ;;
+  esac
+fi
+case "$DISTRO_FAMILY" in
+  debian) DISTRO_LABEL="the Debian family (Debian, Ubuntu, Pop!_OS, Mint and their kin)" ;;
+  fedora) DISTRO_LABEL="Fedora (or a Fedora-based distro)" ;;
+  arch) DISTRO_LABEL="Arch (or an Arch-based distro)" ;;
+  bazzite) DISTRO_LABEL="Bazzite — Fedora-based, but immutable/atomic" ;;
+  *) DISTRO_LABEL="an unrecognized distro" ;;
+esac
+echo "==> Detected Linux: $DISTRO_LABEL"
+echo "    (read from /etc/os-release: ID=${DISTRO_ID:-?} ID_LIKE=${DISTRO_ID_LIKE:-none})"
+
+# --- System dependencies: the one step that branches ---
+# The same dependency set on every family — the dev libraries her
+# window (the Tauri shell) builds against, the C toolchain the
+# Rust build links with, and the base tools this installer itself
+# uses (curl for the downloads, python3 for the bridge and the
+# config steps, file) — each named in that family's own packages:
+#
+#   dependency         debian family                 fedora                       arch
+#   -----------------  ---------------------------   --------------------------   ----------------------
+#   C toolchain        build-essential               gcc gcc-c++ make             base-devel
+#   pkg-config         pkg-config                    pkgconf-pkg-config           pkgconf
+#   webkit2gtk dev     libwebkit2gtk-4.1-dev         webkit2gtk4.1-devel          webkit2gtk-4.1
+#   gtk dev            libgtk-3-dev                  gtk3-devel                   gtk3
+#   rsvg dev           librsvg2-dev                  librsvg2-devel               librsvg
+#   appindicator dev   libayatana-appindicator3-dev  libappindicator-gtk3-devel   libappindicator-gtk3
+#   openssl dev        libssl-dev                    openssl-devel                openssl
+#   base tools         curl file python3             curl file python3            curl file python
+#                      (+ python3-venv for her voice's venv)
+DEPS_DEBIAN="build-essential pkg-config curl file python3 python3-venv libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev"
+DEPS_FEDORA="gcc gcc-c++ make pkgconf-pkg-config curl file python3 webkit2gtk4.1-devel gtk3-devel librsvg2-devel libappindicator-gtk3-devel openssl-devel"
+DEPS_ARCH="base-devel pkgconf curl file python webkit2gtk-4.1 gtk3 librsvg libappindicator-gtk3 openssl"
+
+# System packages need real root, which is a different question
+# from write access to the install dir ($SUDO above): root needs
+# no prefix; anyone else goes through sudo when it exists.
+PKG_SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+  PKG_SUDO="sudo"
+fi
+
+# A failed dependency step never fails the install: it says what
+# happened in plain words, the steps that need the packages (her
+# window, above all) degrade the way they always have, and the
+# core install (bridge + dashboard) completes regardless.
+install_system_deps() {
+  case "$DISTRO_FAMILY" in
+    debian)
+      echo "==> Installing system dependencies with apt (Debian family)"
+      if [ "$(id -u)" -ne 0 ] && [ -z "$PKG_SUDO" ]; then
+        echo "    note: no sudo available, so system packages cannot be installed from here." >&2
+        echo "          The core install continues; her window build may fail without the" >&2
+        echo "          development libraries. The full set for this family:" >&2
+        echo "            apt install $DEPS_DEBIAN" >&2
+        return 0
+      fi
+      $PKG_SUDO apt-get update -y >/dev/null 2>&1 || true
+      if $PKG_SUDO apt-get install -y $DEPS_DEBIAN; then
+        echo "    system dependencies installed (apt)."
+      else
+        echo "  *** Some system dependencies did not install — the apt output above names them." >&2
+        echo "  *** The core install continues; her window build may fail without them." >&2
+        echo "  *** Full set for this family: apt install $DEPS_DEBIAN" >&2
+      fi
+      ;;
+    fedora)
+      echo "==> Installing system dependencies with dnf (Fedora)"
+      if [ "$(id -u)" -ne 0 ] && [ -z "$PKG_SUDO" ]; then
+        echo "    note: no sudo available, so system packages cannot be installed from here." >&2
+        echo "          The core install continues; her window build may fail without the" >&2
+        echo "          development libraries. The full set for this family:" >&2
+        echo "            dnf install $DEPS_FEDORA" >&2
+        return 0
+      fi
+      if $PKG_SUDO dnf install -y $DEPS_FEDORA; then
+        echo "    system dependencies installed (dnf)."
+      else
+        echo "  *** Some system dependencies did not install — the dnf output above names them." >&2
+        echo "  *** The core install continues; her window build may fail without them." >&2
+        echo "  *** Full set for this family: dnf install $DEPS_FEDORA" >&2
+      fi
+      ;;
+    arch)
+      echo "==> Installing system dependencies with pacman (Arch)"
+      if [ "$(id -u)" -ne 0 ] && [ -z "$PKG_SUDO" ]; then
+        echo "    note: no sudo available, so system packages cannot be installed from here." >&2
+        echo "          The core install continues; her window build may fail without the" >&2
+        echo "          development libraries. The full set for this family:" >&2
+        echo "            pacman -S $DEPS_ARCH" >&2
+        return 0
+      fi
+      if $PKG_SUDO pacman -S --needed --noconfirm $DEPS_ARCH; then
+        echo "    system dependencies installed (pacman)."
+      else
+        echo "  *** Some system dependencies did not install — the pacman output above names them." >&2
+        echo "  *** The core install continues; her window build may fail without them." >&2
+        echo "  *** Full set for this family: pacman -S $DEPS_ARCH" >&2
+      fi
+      ;;
+    bazzite)
+      echo "==> Bazzite: no system packages are installed on the host."
+      echo "    Bazzite is immutable, and this installer never layers packages with"
+      echo "    rpm-ostree and never asks for a reboot. Her window takes the user-space"
+      echo "    path instead (a Fedora distrobox, when one is available — see the"
+      echo "    window step below); the bridge and the dashboard need no system"
+      echo "    packages at all, and everything user-space (her voice's venv, the"
+      echo "    model download) works exactly as on any other family."
+      ;;
+    *)
+      echo "==> This distro wasn't recognized (ID=${DISTRO_ID:-?} ID_LIKE=${DISTRO_ID_LIKE:-none})," >&2
+      echo "    so no package manager is guessed at and no system packages are" >&2
+      echo "    installed. Everything that can be installed user-space still is," >&2
+      echo "    and the core install (bridge + dashboard) completes as usual. Her" >&2
+      echo "    standalone window needs the WebKitGTK development libraries" >&2
+      echo "    (webkit2gtk / gtk / rsvg) from your distro's packages; without them" >&2
+      echo "    its build cannot succeed, and start.sh opens the dashboard in your" >&2
+      echo "    browser instead — the window step below says so again when it lands." >&2
+      ;;
+  esac
+}
+install_system_deps
 
 # A file that starts with an HTML doctype is a web page, not the
 # llamafile binary (older installs could end up holding the Hugging
@@ -681,6 +842,19 @@ if [ ! -f "$INSTALL_DIR/shell/icons/icon.png" ]; then
   SHELL_ICON_MISSING="shell/icons/icon.png"
 fi
 
+# Bazzite's window path (build .70, issue #48): the host is
+# immutable, so her window can only be built inside a Fedora
+# distrobox — a container whose own filesystem may change, and
+# which shares this home folder (the build runs on a scratch copy
+# of the shell sources under ~/.cache for exactly that reason).
+# Find one now, if it exists; the Rust and window steps below
+# branch on it. No distrobox, no window build — said plainly
+# there, never a silent half-install.
+BAZZITE_BOX=""
+if [ "$DISTRO_FAMILY" = "bazzite" ] && command -v distrobox >/dev/null 2>&1; then
+  BAZZITE_BOX="$(distrobox list 2>/dev/null | grep -i fedora | head -1 | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}')"
+fi
+
 # --- Rust toolchain (rustup) ---
 # The shell build below needs cargo. If cargo is not already here,
 # the official rustup installer fills the gap: per-user (no sudo),
@@ -697,6 +871,10 @@ if [ -n "$SHELL_SKIP" ]; then
   echo "    her window is already built from these shell sources — no Rust needed this run."
 elif [ -n "$SHELL_ICON_MISSING" ]; then
   echo "    her window cannot be built from this copy of the sources (missing icon files: $SHELL_ICON_MISSING) — no Rust needed this run; the window step below explains."
+elif [ "$DISTRO_FAMILY" = "bazzite" ] && [ -z "$BAZZITE_BOX" ]; then
+  echo "    Bazzite with no Fedora distrobox available: her window build is skipped below (the window step explains what you got instead), so no Rust is needed this run."
+elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
+  echo "    Bazzite with a Fedora distrobox ($BAZZITE_BOX): her window is built inside it — the toolchain lives in the container, so no host Rust is needed."
 elif command -v cargo >/dev/null 2>&1; then
   echo "    Rust found: $(cargo --version 2>/dev/null || echo cargo) — using the existing toolchain as-is."
 elif [ -x "$HOME/.cargo/bin/cargo" ]; then
@@ -764,6 +942,42 @@ elif [ -n "$SHELL_ICON_MISSING" ]; then
   echo "    The release zip is the complete package."
   retire_stale_shell
   echo "    Navi still launches: start.sh falls back to the dashboard in your browser."
+elif [ "$DISTRO_FAMILY" = "bazzite" ] && [ -z "$BAZZITE_BOX" ]; then
+  echo "    SKIPPED on Bazzite: her standalone window is not built on this install."
+  echo "    Bazzite is immutable — its system cannot take the development libraries"
+  echo "    her window builds against, and this installer will not layer them with"
+  echo "    rpm-ostree or ask you to reboot. What you got instead is the complete"
+  echo "    core install: the bridge and the dashboard, which start.sh opens in"
+  echo "    your browser — everything she does works there; only the standalone"
+  echo "    window is missing. To give her the window later, create a Fedora"
+  echo "    distrobox (distrobox create --name fedora --image fedora:latest),"
+  echo "    then re-run this installer: it will build her window inside it."
+  retire_stale_shell
+elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
+  echo "    building her window inside the Fedora distrobox '$BAZZITE_BOX'…"
+  BOX_BUILD_DIR="$HOME/.cache/navi-apex-shell-build"
+  rm -rf "$BOX_BUILD_DIR"
+  mkdir -p "$BOX_BUILD_DIR"
+  cp -r "$INSTALL_DIR/shell/." "$BOX_BUILD_DIR/"
+  if distrobox enter "$BAZZITE_BOX" -- bash -c "sudo dnf install -y webkit2gtk4.1-devel gtk3-devel librsvg2-devel libappindicator-gtk3-devel openssl-devel gcc gcc-c++ make pkgconf-pkg-config curl file >/dev/null 2>&1; if ! command -v cargo >/dev/null 2>&1; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1; fi; export PATH=\$HOME/.cargo/bin:\$PATH; cd \"$BOX_BUILD_DIR\" && cargo build --release" >> "$INSTALL_DIR/shell/shell-build.log" 2>&1 && [ -x "$BOX_BUILD_DIR/target/release/navi-apex-shell" ]; then
+    cp "$BOX_BUILD_DIR/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"
+    chmod +x "$INSTALL_DIR/navi-apex-shell"
+    if [ -n "$SHELL_HASH" ]; then
+      echo "$SHELL_HASH" > "$INSTALL_DIR/navi-apex-shell.stamp" || true
+      if [ "$(cat "$INSTALL_DIR/navi-apex-shell.stamp" 2>/dev/null || true)" = "$SHELL_HASH" ]; then
+        echo "    build stamp saved: $INSTALL_DIR/navi-apex-shell.stamp"
+      else
+        echo "  *** THE BUILD STAMP DID NOT SAVE to $INSTALL_DIR/navi-apex-shell.stamp — the window is built," >&2
+        echo "  *** but the next install will rebuild it because it cannot verify this one." >&2
+      fi
+    fi
+    echo "    standalone window built (inside the distrobox): $INSTALL_DIR/navi-apex-shell"
+    echo "    (build log: $INSTALL_DIR/shell/shell-build.log)"
+  else
+    echo "  *** THE STANDALONE WINDOW DID NOT BUILD inside the Fedora distrobox — full log: $INSTALL_DIR/shell/shell-build.log" >&2
+    retire_stale_shell
+    echo "  *** Navi still launches meanwhile: start.sh falls back to the dashboard in your browser." >&2
+  fi
 elif command -v cargo >/dev/null 2>&1; then
   if (cd "$INSTALL_DIR/shell" && cargo build --release >> "$INSTALL_DIR/shell/shell-build.log" 2>&1) && [ -x "$INSTALL_DIR/shell/target/release/navi-apex-shell" ]; then
     cp "$INSTALL_DIR/shell/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"
@@ -788,8 +1002,9 @@ elif command -v cargo >/dev/null 2>&1; then
     echo "    (build log: $INSTALL_DIR/shell/shell-build.log)"
   else
     echo "  *** THE STANDALONE WINDOW DID NOT BUILD — full log: $INSTALL_DIR/shell/shell-build.log" >&2
-    echo "  *** On Debian/Ubuntu the usual cause is the WebKitGTK development packages:" >&2
-    echo "  ***   sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev" >&2
+    echo "  *** The usual cause is the WebKitGTK development packages — the dependency step" >&2
+    echo "  *** near the start of this install installs them on every family it knows" >&2
+    echo "  *** (Debian family, Fedora, Arch); its lines above say what happened there." >&2
     retire_stale_shell
     echo "  *** Navi still launches meanwhile: start.sh falls back to the dashboard in your browser." >&2
   fi

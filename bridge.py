@@ -349,12 +349,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.3"
+SHIPPED_VERSION = "0.1.4"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-08.69"
+BRIDGE_BUILD = "2026-11-08.71"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -1280,6 +1280,43 @@ def latest_release():
     }
 
 
+def changelog_section_for(tag):
+    # The CHANGELOG fallback for the Updater's release notes
+    # (build .70, issue #47): when a release is published with an
+    # empty body, the panel still deserves the notes, so the
+    # bridge reads the project's CHANGELOG.md from the repo and
+    # cuts out the section for the release's version — the
+    # "## 0.1.4 (alpha)" heading down to the next "## " heading.
+    # Any failure (offline, no such section) returns "" and the
+    # panel simply shows no notes; it never invents any.
+    number, _status = _tag_parts(tag)
+    if not number:
+        return ""
+    try:
+        text = github_text(
+            "https://raw.githubusercontent.com/AlexKollar/Apex/main/CHANGELOG.md",
+            "text/plain")
+    except Exception:
+        return ""
+    lines = str(text).splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            head = line[3:].strip()
+            head_number = head.split(" ")[0].split("(")[0].strip()
+            if head_number == number:
+                start = i
+                break
+    if start is None:
+        return ""
+    out = []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        out.append(line)
+    return "\n".join(out).strip()
+
+
 def update_check_payload(cfg=None):
     current = app_version(cfg)
     base = {
@@ -1293,11 +1330,24 @@ def update_check_payload(cfg=None):
         return dict(base, ok=False, updateAvailable=False, latest="",
                     error=_update_error_text(e))
     newer = bool(rel["tag"]) and _version_newer(rel["tag"], current)
+    # The release's notes travel with the check result (build .70,
+    # issue #47): the Updater panel reads them before offering the
+    # install, and Apply never fetches them again. Source of truth
+    # is the release body; an empty body falls back to the matching
+    # CHANGELOG section, and notesSource says which one answered,
+    # so the panel can label the fallback honestly.
+    notes = rel["notes"]
+    notes_source = "release" if notes.strip() else ""
+    if newer and not notes_source:
+        fallback = changelog_section_for(rel["tag"])
+        if fallback:
+            notes = fallback
+            notes_source = "changelog"
     return dict(
         base, ok=True, updateAvailable=newer,
         latest=rel["tag"], releaseName=rel["name"],
         releaseUrl=rel["url"], publishedAt=rel["publishedAt"],
-        notes=rel["notes"], asset=rel["asset"],
+        notes=notes, notesSource=notes_source, asset=rel["asset"],
     )
 
 
@@ -1305,7 +1355,7 @@ def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
     # letter (a for alpha, b for beta, none for stable) — the form
     # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.1a → v0.1.3a".
+    # "Updated v0.1.3a → v0.1.4a".
     return "v" + str(number) + (
         "a" if status == "alpha" else "b" if status == "beta" else "")
 
