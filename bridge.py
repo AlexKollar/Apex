@@ -9,10 +9,21 @@ Stdlib only. Endpoints:
                       latest GitHub release compared against the
                       VERSION file; a check that cannot complete
                       answers ok: False with the reason
-  POST /api/update/apply -> downloads the latest release's package
-                      zip and stages it under updates/<tag>/package,
-                      answering with the one install command; the
-                      bridge never installs over the running app
+  POST /api/update/apply -> starts the end-to-end apply: a worker
+                      downloads the latest release's package zip
+                      (unwrapping a gzip-wrapped payload first),
+                      verifies it is an Apex package, stages it
+                      under updates/<tag>/package, then hands the
+                      install to a detached helper (written into
+                      updates/<tag>/) that outlives this bridge,
+                      runs the staged installer (never --fresh),
+                      relaunches the app through start.sh, and
+                      records the outcome in config/update-result.json
+  GET  /api/update/result -> the apply's live record: the step it
+                      is on while it runs, and afterwards either
+                      the confirmed version before → after or the
+                      failed step, its reason, and the manual
+                      fallback (staged folder + install command)
   GET  /api/commands  the commands actually installed on this machine
                       (a scan of PATH) — feeds command autocomplete
   GET  /api/persona   Navi's Soul and Memory documents (config files)
@@ -290,6 +301,7 @@ incumbent instead of landing the operator on the wrong UI.
 import atexit
 import base64
 import binascii
+import gzip
 import importlib.util
 import io
 import calendar
@@ -334,12 +346,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.0"
+SHIPPED_VERSION = "0.1.1"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-07.55"
+BRIDGE_BUILD = "2026-11-07.58"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -966,26 +978,59 @@ def github_text(url, accept):
 
 
 # ---------------------------------------------------------------------
-# App updates — the Updater, for real (build .47).
+# App updates — the Updater, for real (build .47; end-to-end apply
+# in build .56).
 #
 # A check asks GitHub for the project's latest published release
 # and compares its tag against the VERSION file (the very number
 # app_version reports), so the footer, the status answer, and the
-# Updater all read the same truth. Apply downloads the release's
-# package zip into updates/<tag>/ and unpacks it there — staged
-# beside the app, never installed over the running one by the
-# bridge itself: the installer is the one path that replaces the
-# app, because it owns the state-preservation stash (chips, packs
-# and their indexes, the llamafile, Soul/Memory, voice, GitHub
-# settings), the hardware profile, and the sudo prompts. The
-# dashboard shows the staged folder and the one command that
-# finishes the job:
-#     cd <staged folder> && ./install.sh
-# A check that cannot complete — offline, or GitHub's rate limit —
-# answers ok: False with the reason named. It never dresses a
-# failure up as "up to date".
+# Updater all read the same truth. A check that cannot complete —
+# offline, or GitHub's rate limit — answers ok: False with the
+# reason named. It never dresses a failure up as "up to date".
+#
+# Apply carries the update through from the one click (build .56):
+# download the release's package zip -> verify it -> stage it
+# under updates/<tag>/package -> hand the install to a detached
+# helper the bridge writes into updates/<tag>/, which outlives the
+# bridge, runs the staged installer itself (never --fresh: the
+# installer is the one path that replaces the app, because it owns
+# the state-preservation stash — chips, packs and their indexes,
+# the llamafile, Soul/Memory, voice, GitHub settings — and the
+# bridge cannot overwrite itself while it runs) -> relaunch the
+# app through start.sh -> confirm. The helper records every step
+# in config/update-result.json; the panel polls that record while
+# the apply runs (downloading / verifying / staging / installing /
+# restarting) and reads the outcome from it afterwards. "Updated"
+# is claimed only when the VERSION file after the relaunch reads
+# the target version — a step that did not observe its own
+# success never reports one.
+#
+# The failure ladder is part of the design: every step can fail
+# and names itself and its reason in the record (download failed,
+# not a zip, not an Apex package, staging failed, the installer
+# failed with its exit state, the relaunch did not answer, the
+# version after relaunch is not the expected one). A failed
+# validation leaves nothing staged; a failure at or after staging
+# leaves the staged package in place and the record carries the
+# manual fallback — the staged folder and the one install
+# command — labeled as the fallback it is.
+#
+# Gzip tolerance (build .56): a package asset can arrive
+# gzip-wrapped (its first bytes are the gzip signature, 1f 8b,
+# instead of a zip's PK) when whatever staged the release asset
+# compressed the zip itself. The validator unwraps that layer
+# and runs the same Apex-package verification on the zip inside;
+# only when neither the raw payload nor its unwrapped form is a
+# valid Apex package does it refuse, and the refusal names what
+# was wrong. The plain-PK path behaves exactly as it always did.
+#
+# NAVI_UPDATE_FEED_URL overrides the release-feed address. It is
+# the seam the project's own end-to-end updater tests use to run
+# this real apply path against a local stand-in instead of the
+# live release; it is unset in normal installs.
 
 UPDATES_DIR = os.path.join(ROOT, "updates")
+UPDATE_RESULT_PATH = os.path.join(ROOT, "config", "update-result.json")
 
 
 def _version_tuple(raw):
@@ -1041,7 +1086,9 @@ def latest_release():
     # Updater; raises on any failure and lets the caller word it.
     # The package asset is the release's .zip (the export package);
     # a release without one can be reported but never staged.
-    rel = github_json(GITHUB_API_BASE + "/releases/latest")
+    feed_url = os.environ.get("NAVI_UPDATE_FEED_URL") or ""
+    rel = github_json(feed_url) if feed_url else github_json(
+        GITHUB_API_BASE + "/releases/latest")
     if not isinstance(rel, dict):
         raise ValueError("GitHub's answer was not a release record.")
     asset = None
@@ -1085,66 +1132,534 @@ def update_check_payload(cfg=None):
     )
 
 
-def update_apply_payload(cfg=None):
-    # Downloads the latest release's package zip and unpacks it
-    # into updates/<tag>/package — staged, never installed (see the
-    # section comment). The answer carries the staged folder and
-    # the one install command; every failure names itself.
+def _version_label(number, status):
+    # The footer's version-label form: "v" + number + the status
+    # letter (a for alpha, b for beta, none for stable) — the form
+    # the Updater's confirmation line uses for both sides of
+    # "Updated v0.1.0a → v0.1.1a".
+    return "v" + str(number) + (
+        "a" if status == "alpha" else "b" if status == "beta" else "")
+
+
+def _tag_parts(tag):
+    # A release tag in the label's shape — "v0.1.1a", "v0.1.1",
+    # "v0.1.1-alpha" — split into (number, status).
+    text = str(tag or "").strip()
+    if text.lower().startswith("v"):
+        text = text[1:]
+    status = "stable"
+    low = text.lower()
+    for word in ("alpha", "beta"):
+        if low.endswith("-" + word) or low.endswith(" " + word):
+            status = word
+            text = text[: -(len(word) + 1)]
+            low = text.lower()
+            break
+    if (status == "stable" and len(text) > 1
+            and text[-1].lower() in ("a", "b") and text[-2].isdigit()):
+        status = "alpha" if text[-1].lower() == "a" else "beta"
+        text = text[:-1]
+    return text, status
+
+
+def _write_update_result(rec):
     try:
-        rel = latest_release()
-    except Exception as e:
-        return {"ok": False, "error": _update_error_text(e)}
-    current = app_version(cfg)
-    if not rel["tag"] or not _version_newer(rel["tag"], current):
-        return {"ok": False, "error": "The latest release ("
-                + (rel["tag"] or "none") + ") is not newer than the "
-                "running v" + current + " — nothing to stage."}
-    asset = rel["asset"]
-    if not asset or not asset["url"]:
-        return {"ok": False, "error": "The latest release carries no "
-                "package .zip asset, so there is nothing to download."}
-    tag_dir = re.sub(r"[^0-9A-Za-z._-]+", "-", rel["tag"]) or "release"
-    stage_root = os.path.join(UPDATES_DIR, tag_dir)
-    pkg_dir = os.path.join(stage_root, "package")
-    zip_path = os.path.join(stage_root, asset["name"])
+        os.makedirs(os.path.dirname(UPDATE_RESULT_PATH), exist_ok=True)
+        tmp = UPDATE_RESULT_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, UPDATE_RESULT_PATH)
+    except Exception:
+        pass
+
+
+def update_result_payload():
+    # The apply's live record (config/update-result.json): the
+    # step it is on while it runs, and afterwards either the
+    # confirmed outcome or the failure + fallback. No record yet
+    # reads as state "none".
     try:
-        os.makedirs(pkg_dir, exist_ok=True)
-        if not os.path.isfile(zip_path):
-            data = github_download(asset["url"])
-            with open(zip_path, "wb") as f:
-                f.write(data)
-        if not zipfile.is_zipfile(zip_path):
-            return {"ok": False, "error": "The download did not "
-                    "arrive as a zip file — nothing was staged."}
-        with zipfile.ZipFile(zip_path) as z:
-            names = z.namelist()
-            if "install.sh" not in names or "VERSION" not in names:
-                return {"ok": False, "error": "That zip is not an "
-                        "Apex package (no install.sh / VERSION "
-                        "inside) — nothing was staged."}
-            base = os.path.realpath(pkg_dir)
-            for member in names:
-                target = os.path.realpath(os.path.join(pkg_dir, member))
-                if target != base and not target.startswith(base + os.sep):
-                    return {"ok": False, "error": "The package zip "
-                            "contains a path outside its folder ("
-                            + member + ") — nothing was staged."}
-            z.extractall(pkg_dir)
+        with open(UPDATE_RESULT_PATH) as f:
+            rec = json.load(f)
+        if isinstance(rec, dict):
+            return dict(rec, ok=True)
+    except Exception:
+        pass
+    return {"ok": True, "state": "none"}
+
+
+def _unwrap_package(data):
+    # The download validator's front door (build .56): returns
+    # (payload, note) — payload is the zip bytes to verify, note
+    # says how they arrived ("" for a plain zip, "gzip" when a
+    # gzip wrapper was unwrapped). When neither the raw payload
+    # nor its unwrapped form can be a zip, payload is None and
+    # note names the shape that failed ("gzip-broken",
+    # "gzip-not-zip"); a plain non-zip payload comes back as-is
+    # and fails the zip check with the classic wording, exactly
+    # as before.
+    if data[:2] == bytes([0x1F, 0x8B]):
         try:
-            os.chmod(os.path.join(pkg_dir, "install.sh"), 0o755)
+            inner = gzip.decompress(data)
+        except Exception:
+            return None, "gzip-broken"
+        if inner[:2] == b"PK":
+            return inner, "gzip"
+        return None, "gzip-not-zip"
+    return data, ""
+
+
+# The detached apply helper, written by the bridge into
+# updates/<tag>/apply-helper.py at apply time and spawned in its
+# own session so it outlives the bridge: it runs the staged
+# installer (never --fresh — persistence is the installer's own
+# stash-and-restore), relaunches the app through start.sh, and
+# finishes the update-result record the panel reads. It is a
+# standalone stdlib script: everything it needs arrives in the
+# job file beside it.
+APPLY_HELPER_PY = '''#!/usr/bin/env python3
+# Apex updater apply helper — written by bridge.py into
+# updates/<tag>/ and run detached (its own session), so it
+# outlives the bridge it replaces. It runs the staged installer
+# (never --fresh), relaunches the app through start.sh, and
+# records the outcome in config/update-result.json — the record
+# the Updater panel reads its confirmation (or its failure and
+# fallback) from. Stdlib only, like the bridge.
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def version_tuple(raw):
+    text = str(raw or "").strip().lower()
+    if text.startswith("v"):
+        text = text[1:]
+    text = text.split("-")[0].split("+")[0]
+    parts = []
+    for piece in text.split("."):
+        digits = ""
+        for ch in piece:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def tuples_equal(a, b):
+    width = max(len(a), len(b))
+    return a + (0,) * (width - len(a)) == b + (0,) * (width - len(b))
+
+
+def read_installed_version(root):
+    # The VERSION file at the install root, parsed the way the
+    # bridge parses it: (number, status).
+    try:
+        with open(os.path.join(root, "VERSION")) as f:
+            text = f.read().strip()
+    except Exception:
+        return "", "stable"
+    if not text:
+        return "", "stable"
+    raw = text.splitlines()[0].strip()
+    status = "stable"
+    low = raw.lower()
+    for word in ("alpha", "beta"):
+        if low.endswith(" " + word) or low.endswith("-" + word):
+            status = word
+            raw = raw[: -(len(word) + 1)]
+            break
+    parts = raw.split()
+    token = parts[0] if parts else ""
+    for word in ("alpha", "beta", "stable"):
+        if token.lower().endswith("-" + word):
+            token = token[: -(len(word) + 1)]
+            break
+    return token, status
+
+
+def version_label(number, status):
+    return "v" + number + (
+        "a" if status == "alpha" else "b" if status == "beta" else "")
+
+
+def main():
+    job_path = sys.argv[1]
+    with open(job_path) as f:
+        job = json.load(f)
+    root = job["root"]
+    result_path = job["resultPath"]
+    pkg_dir = job["pkgDir"]
+
+    def write_result(patch):
+        rec = {}
+        try:
+            with open(result_path) as f:
+                rec = json.load(f)
+            if not isinstance(rec, dict):
+                rec = {}
+        except Exception:
+            rec = {}
+        rec.update(patch)
+        tmp = result_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, result_path)
+
+    def fail(step, error):
+        write_result({
+            "state": "failed", "step": step, "error": error,
+            "stagedDir": pkg_dir, "command": job["command"],
+            "failedAt": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+
+    # Give the bridge a moment to answer the apply request and
+    # the panel a moment to paint the installing step before the
+    # installer stops the bridge.
+    time.sleep(2)
+    write_result({"state": "working", "step": "installing"})
+    startup = "boot" if job.get("startup") == "on-boot" else "launch"
+    env = dict(os.environ)
+    env["NAVI_HOME"] = root
+    code = None
+    why = ""
+    try:
+        with open(job["installLog"], "wb") as log:
+            proc = subprocess.run(
+                ["bash", os.path.join(pkg_dir, "install.sh"),
+                 "--startup", startup, "--voice", "no",
+                 "--dir", root],
+                cwd=pkg_dir, env=env, stdout=log,
+                stderr=subprocess.STDOUT, timeout=3000)
+        code = proc.returncode
+    except subprocess.TimeoutExpired:
+        why = "the installer did not finish within 50 minutes"
+    except Exception as e:
+        why = str(e)
+
+    def relaunch():
+        try:
+            log = open(job["relaunchLog"], "ab")
+            subprocess.Popen(
+                ["bash", os.path.join(root, "start.sh")],
+                cwd=root, env=env, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True)
+            return True
+        except Exception:
+            return False
+
+    if code != 0:
+        reason = why or ("it exited with code " + str(code))
+        fail("install",
+             "Installing the update failed — " + reason + ". The "
+             "installer's own output is in updates/" + job["tagDir"]
+             + "/apply-install.log. Nothing is confirmed updated: "
+             "the app is being relaunched as it lies, and the "
+             "staged package is still in place — the manual "
+             "fallback below finishes the job by hand.")
+        relaunch()
+        return
+
+    write_result({"state": "working", "step": "restarting"})
+    relaunch()
+    target = tuple(job["targetTuple"])
+    answered = None
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        seen = None
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:" + str(job["port"]) + "/api/status",
+                headers={"User-Agent": "navi-update-helper"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                seen = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception:
+            seen = None
+        if seen and seen.get("app") == "Navi: Apex":
+            answered = seen
+            if (seen.get("version")
+                    and tuples_equal(
+                        version_tuple(seen["version"]), target)):
+                break
+        time.sleep(2)
+    after_number, after_status = read_installed_version(root)
+    after_label = (
+        version_label(after_number, after_status) if after_number else "")
+    live_ok = bool(
+        answered and answered.get("version")
+        and tuples_equal(version_tuple(answered["version"]), target))
+    file_ok = bool(
+        after_number
+        and tuples_equal(version_tuple(after_number), target))
+    if live_ok and file_ok:
+        write_result({
+            "state": "done", "step": "done",
+            "afterVersion": after_number,
+            "afterStatus": after_status,
+            "afterLabel": after_label,
+            "updatedAt": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+    elif answered is None:
+        fail("restart",
+             "The update installed, but Apex did not answer on "
+             "http://localhost:" + str(job["port"]) + " after "
+             "restarting, so the update is not confirmed. The "
+             "staged package is still in place — the manual "
+             "fallback below re-runs its installer by hand, or "
+             "launch the app again from its menu entry.")
+    else:
+        fail("restart",
+             "Apex came back after the update, but its VERSION "
+             "file reads " + (after_label or "nothing readable")
+             + " instead of the expected " + job["targetLabel"]
+             + " — the update is not confirmed. The staged "
+             "package is still in place — the manual fallback "
+             "below finishes the job by hand.")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+_update_apply_lock = threading.Lock()
+_update_apply_state = {"running": False}
+
+
+def _run_update_apply(cfg):
+    # The apply worker (build .56): download -> verify -> stage on
+    # this thread, writing each step into the update record, then
+    # hand the install itself to the detached helper and finish.
+    # Every failure lands in the record with its step named; a
+    # failure before staging completes carries no fallback (there
+    # is no complete staged package to fall back to), and nothing
+    # is extracted before the package verifies.
+    record = {
+        "state": "working", "step": "downloading",
+        "startedAt": _now_iso(),
+    }
+    staged = {"dir": "", "command": ""}
+
+    def fail(step, error):
+        record["state"] = "failed"
+        record["step"] = step
+        record["error"] = error
+        record["failedAt"] = _now_iso()
+        if staged["dir"]:
+            record["stagedDir"] = staged["dir"]
+            record["command"] = staged["command"]
+        _write_update_result(record)
+
+    try:
+        current = app_version(cfg)
+        current_status = app_version_status(cfg)
+        record["beforeVersion"] = current
+        record["beforeStatus"] = current_status
+        record["beforeLabel"] = _version_label(current, current_status)
+        try:
+            rel = latest_release()
+        except Exception as e:
+            fail("downloading",
+                 "Downloading the update failed — the release check "
+                 "did not complete: " + _update_error_text(e))
+            return
+        tag = rel["tag"]
+        t_num, t_status = _tag_parts(tag)
+        record["tag"] = tag
+        record["targetLabel"] = (
+            _version_label(t_num, t_status) if t_num else tag)
+        if not tag or not _version_newer(tag, current):
+            fail("downloading",
+                 "The latest release (" + (tag or "none") + ") is not "
+                 "newer than the running v" + current
+                 + " — nothing was downloaded.")
+            return
+        asset = rel["asset"]
+        if not asset or not asset["url"]:
+            fail("downloading",
+                 "The latest release carries no package .zip asset, "
+                 "so there is nothing to download.")
+            return
+        record["assetName"] = asset["name"]
+        tag_dir = re.sub(r"[^0-9A-Za-z._-]+", "-", tag) or "release"
+        stage_root = os.path.join(UPDATES_DIR, tag_dir)
+        pkg_dir = os.path.join(stage_root, "package")
+        zip_path = os.path.join(stage_root, asset["name"])
+        command = "cd " + pkg_dir + " && ./install.sh"
+        # Downloading (a package already downloaded beside the app
+        # — including one a pre-.56 Updater refused after
+        # downloading — is read back and put through the same
+        # validation instead of being fetched again).
+        _write_update_result(record)
+        if os.path.isfile(zip_path):
+            try:
+                with open(zip_path, "rb") as f:
+                    data = f.read()
+            except Exception as e:
+                fail("downloading",
+                     "Downloading the update failed: the package "
+                     "already beside the app could not be read ("
+                     + str(e) + ") — nothing was staged.")
+                return
+        else:
+            try:
+                data = github_download(asset["url"])
+            except Exception as e:
+                fail("downloading",
+                     "Downloading the update failed ("
+                     + type(e).__name__ + ") — nothing was staged.")
+                return
+        # Verifying: unwrap a gzip-wrapped payload, then the same
+        # Apex-package verification as always — a real zip, holding
+        # install.sh + VERSION, with no path escaping its folder.
+        record["step"] = "verifying"
+        _write_update_result(record)
+        payload, _note = _unwrap_package(data)
+        if payload is None:
+            if _note == "gzip-broken":
+                fail("verifying",
+                     "The download arrived gzip-wrapped but could "
+                     "not be unwrapped — nothing was staged.")
+            else:
+                fail("verifying",
+                     "The download arrived gzip-wrapped, but what "
+                     "is inside is not a zip file — nothing was "
+                     "staged.")
+            return
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(payload))
+            names = zf.namelist()
+        except Exception:
+            fail("verifying",
+                 "The download did not arrive as a zip file "
+                 "— nothing was staged.")
+            return
+        if "install.sh" not in names or "VERSION" not in names:
+            fail("verifying",
+                 "That zip is not an Apex package (no install.sh / "
+                 "VERSION inside) — nothing was staged.")
+            return
+        base = os.path.realpath(pkg_dir)
+        for member in names:
+            target = os.path.realpath(os.path.join(pkg_dir, member))
+            if target != base and not target.startswith(base + os.sep):
+                fail("verifying",
+                     "The package zip contains a path outside its "
+                     "folder (" + member + ") — nothing was staged.")
+                return
+        # Staging: the verified (unwrapped) zip lands beside the
+        # app and unpacks under updates/<tag>/package, as before.
+        record["step"] = "staging"
+        _write_update_result(record)
+        try:
+            os.makedirs(pkg_dir, exist_ok=True)
+            with open(zip_path, "wb") as f:
+                f.write(payload)
+            zf.extractall(pkg_dir)
+            try:
+                os.chmod(os.path.join(pkg_dir, "install.sh"), 0o755)
+            except Exception:
+                pass
+        except Exception as e:
+            fail("staging", "Staging the download failed: " + str(e))
+            return
+        staged["dir"] = pkg_dir
+        staged["command"] = command
+        record["stagedDir"] = pkg_dir
+        record["command"] = command
+        record["step"] = "installing"
+        _write_update_result(record)
+        # Installing + restarting belong to the detached helper:
+        # the installer stops this bridge, so the bridge cannot
+        # run it and live to tell the panel. The helper outlives
+        # the swap, relaunches the app, and finishes the record.
+        try:
+            cfg_now = cfg if isinstance(cfg, dict) else load_config()
+            job = {
+                "root": ROOT,
+                "pkgDir": pkg_dir,
+                "tagDir": tag_dir,
+                "resultPath": UPDATE_RESULT_PATH,
+                "installLog": os.path.join(
+                    stage_root, "apply-install.log"),
+                "relaunchLog": os.path.join(
+                    stage_root, "apply-relaunch.log"),
+                "command": command,
+                "port": BRIDGE_PORT,
+                "startup": str(cfg_now.get("startup") or "on-ui-launch"),
+                "targetTuple": list(_version_tuple(tag)),
+                "targetLabel": record["targetLabel"],
+            }
+            job_path = os.path.join(stage_root, "apply-job.json")
+            helper_path = os.path.join(stage_root, "apply-helper.py")
+            with open(job_path, "w") as f:
+                json.dump(job, f)
+            with open(helper_path, "w") as f:
+                f.write(APPLY_HELPER_PY)
+            os.chmod(helper_path, 0o755)
+            logf = open(os.path.join(stage_root, "apply.log"), "ab")
+            try:
+                proc = subprocess.Popen(
+                    [sys.executable, helper_path, job_path],
+                    cwd=stage_root, stdin=subprocess.DEVNULL,
+                    stdout=logf, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True)
+            finally:
+                logf.close()
+            record["helperPid"] = proc.pid
+            _write_update_result(record)
+        except Exception as e:
+            fail("install",
+                 "The update was staged but the install could not "
+                 "be started: " + str(e) + " The staged package is "
+                 "still in place — the manual fallback below "
+                 "finishes the job by hand.")
+            return
+    except Exception as e:
+        # Last resort: never leave the record claiming a step is
+        # still running when this worker has died.
+        try:
+            record["state"] = "failed"
+            record["error"] = "The update failed: " + str(e)
+            record["failedAt"] = _now_iso()
+            _write_update_result(record)
         except Exception:
             pass
-    except Exception as e:
-        return {"ok": False, "error": "Staging the download failed: "
-                + str(e)}
-    return {
-        "ok": True,
-        "tag": rel["tag"],
-        "assetName": asset["name"],
-        "sizeBytes": asset["size"] or os.path.getsize(zip_path),
-        "stagedDir": pkg_dir,
-        "command": "cd " + pkg_dir + " && ./install.sh",
-    }
+    finally:
+        _update_apply_state["running"] = False
+
+
+def update_apply_payload(cfg=None):
+    # Starts the end-to-end apply (see the section comment) and
+    # answers at once: progress and outcome live in the update
+    # record, which GET /api/update/result serves and the panel
+    # polls. A second apply while one is already working — this
+    # bridge's worker, or the detached helper a previous click
+    # left installing — is refused in words, never queued.
+    rec = update_result_payload()
+    helper_alive = False
+    if rec.get("state") == "working" and rec.get("helperPid"):
+        try:
+            helper_alive = pid_alive(int(rec["helperPid"]))
+        except Exception:
+            helper_alive = False
+    with _update_apply_lock:
+        if _update_apply_state["running"] or helper_alive:
+            return {"ok": False, "error": "An update is already "
+                    "being applied — watch its progress in the "
+                    "Updater; it finishes (or fails) on its own."}
+        _update_apply_state["running"] = True
+    t = threading.Thread(
+        target=_run_update_apply, args=(cfg,), daemon=True)
+    t.start()
+    return {"ok": True, "started": True}
 
 
 def save_download_payload(data):
@@ -5133,6 +5648,15 @@ class Handler(BaseHTTPRequestHandler):
             # complete answers ok: False with the reason — never a
             # made-up "up to date".
             self._send(200, update_check_payload(load_config()))
+        elif self.path == "/api/update/result":
+            # The end-to-end apply's live record: its current step
+            # while it runs (written by the bridge's worker, then by
+            # the detached helper once the install takes the bridge
+            # down), and afterwards the confirmed version before →
+            # after — or the failed step, its reason, and the manual
+            # fallback. The relaunched bridge serves the same file,
+            # which is how the panel learns the outcome.
+            self._send(200, update_result_payload())
         else:
             self._send(404, {"error": "not found"})
 
@@ -5149,10 +5673,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
         elif self.path == "/api/update/apply":
-            # Stages the latest release's package beside the app
-            # (updates/<tag>/package) and answers with the staged
-            # folder and the one install command — the bridge never
-            # installs over the running app itself.
+            # Starts the end-to-end apply: the worker downloads,
+            # verifies (gzip-tolerant), and stages the release
+            # package under updates/<tag>/package, then a detached
+            # helper runs the staged installer and relaunches the
+            # app. Progress and outcome are read back through
+            # GET /api/update/result.
             self._send(200, update_apply_payload(cfg))
         elif self.path == "/api/downloads/save":
             # The dashboard's download-save flow (build .48): the

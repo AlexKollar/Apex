@@ -506,7 +506,7 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-07.55";
+var BRIDGE_BUILD = "2026-11-07.58";
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 // Known chats: every conversation is saved; the Memory tab switches
@@ -527,16 +527,22 @@ var uploads = [];
 try { uploads = JSON.parse(localStorage.getItem("navi.uploads") || "[]"); } catch (e) { uploads = []; }
 function persistUploads() { try { localStorage.setItem("navi.uploads", JSON.stringify(uploads)); } catch (e) {} }
 var docs = [];
-// Updater state (build .47): the real check's last answer, kept in
+// Updater state (build .47; end-to-end apply in build .56): the
+// real check's last answer plus the apply's live record, kept in
 // one place so the Updater view and the status column's UPDATER
 // element read the same truth. state: idle (never checked) |
 // checking | uptodate | available | failed (the check could not
-// complete — error says why) | staging | staged (the package is
-// downloaded under updates/ and stagedDir + command say where and
-// what finishes it). Nothing here is simulated: in Mock backend
+// complete — error says why) | applying (the one-click apply is
+// running; step names where it is: downloading | verifying |
+// staging | installing | restarting) | updated (the apply
+// finished and the relaunched app's VERSION read confirmed it;
+// fromLabel → toLabel are the actual versions) | applyfailed
+// (a step failed; applyError names the step and the reason, and
+// stagedDir + command carry the manual fallback when staging
+// was reached). Nothing here is simulated: in Mock backend
 // mode no check runs at all (checks go through the live bridge),
 // and the view says so.
-var updater = { state: "idle", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", assetName: "", assetSize: 0, error: "", stageError: "", stagedDir: "", command: "" };
+var updater = { state: "idle", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", assetName: "", assetSize: 0, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", pollTimer: null };
 // Chips screen: three tabs — Navi User Repo (NUR) (the GitHub navi-chips
 // catalog + installs, served live by the bridge), Chip Studio (the
 // code editor), and Workflows (chips chained output → input).
@@ -1499,7 +1505,7 @@ function mockChat(text) {
   if (text.charAt(0) === "$") { var cmd = text.slice(1).trim(); return { text: "Done — ran it for you:", exec: { command: CONFIG.sudo && cmd.indexOf("sudo") !== 0 ? "sudo " + cmd : cmd, output: mockShell(cmd) } }; }
   if (/who are you|your name/i.test(text)) return { text: "I'm Navi — your Navi, specifically. I live in this machine, I run your commands for real instead of guessing, and I remember what matters to you between sessions. Operator and partner, that's the job — and honestly, it's a good one.", exec: null };
   if (/^(hi|hello|hey)\b/i.test(text)) return { text: "Hello_" + opName() + "() — hey, it's good to see you. Ask me to show you a directory, run a chip, or check the updater — or just talk to me. What are we getting into?", exec: null };
-  if (/update/i.test(text)) return { text: "Good instinct checking. We're on v" + CONFIG.version + " — and the Updater tab is real now: it asks GitHub for the project's latest release and compares it against this one. Open the Updater and press Check for updates; if a newer Apex is out, it downloads the package and walks you through the one install command.", exec: null };
+  if (/update/i.test(text)) return { text: "Good instinct checking. We're on v" + CONFIG.version + " — and the Updater tab is real now: it asks GitHub for the project's latest release and compares it against this one. Open the Updater and press Check for updates; if a newer Apex is out, one click on Download & install downloads it, installs it, and restarts me into the new version — the Updater confirms the version afterwards.", exec: null };
   var chipHit = matchChipText(text, CHIP_DEFS);
   if (chipHit) return { text: "Slotted in " + chipHit.name + " and ran it — here's what it gave me:", exec: { command: "chip " + chipHit.id, output: chipHit.output } };
   if (/chip/i.test(text)) return { text: "Chips live in the Chips tab — each one a little chip with its code inside the picture. My shelf starts empty: forge one in Chip Studio (in live mode it writes a real chip) and it can run right here — type /chip followed by its name and its output lands in our conversation.", exec: null };
@@ -1835,15 +1841,16 @@ var DOC_PAGES = [
   { id: "installing", title: "Installing & updating", related: ["getting-started", "troubleshooting"], html:
     "<div class='doc-sec'><h4>Installing Navi, and keeping her up to date</h4>" +
   "<p>Navi lives on your own computer — the app, her model, her memory, and her voice are all on your machine.</p>" +
-  "<p><b>Right now Navi installs on Linux.</b> That is the one installer in the package: <span class='mono'>./install.sh</span>. Windows and macOS installers are planned for later — they are not in this package yet, so there is nothing to run on those systems today.</p><ol>" +
-  "<li>Download the app package and unzip it.</li>" +
-  "<li>Run the Linux installer, <span class='mono'>./install.sh</span>. It asks one question: should her model start when the app opens, or when the computer boots? Either is fine.</li>" +
+  "<p><b>Right now Navi installs on Linux.</b> That is the one installer in the package: <span class='mono'>install.sh</span>. How you run it depends on where your copy came from — from the <b>release zip</b>, run <span class='mono'>./install.sh</span> (its scripts arrive executable, so that just works); from a <b>git clone or GitHub's source zip</b>, run <span class='mono'>bash install.sh</span> instead (the paragraph below explains why, in plain words). Windows and macOS installers are planned for later — they are not in this package yet, so there is nothing to run on those systems today.</p><ol>" +
+  "<li>Download the app package and unzip it — or clone the repo / unzip GitHub's source zip, and use <span class='mono'>bash install.sh</span> in the next step instead of <span class='mono'>./install.sh</span>.</li>" +
+  "<li>Run the Linux installer: <span class='mono'>./install.sh</span> from the release zip, or <span class='mono'>bash install.sh</span> from a clone or source zip. It asks one question: should her model start when the app opens, or when the computer boots? Either is fine.</li>" +
   "<li>The installer downloads her model file (big — about 3 GB — so this takes a while) unless it is already there. It never downloads it twice.</li>" +
   "<li>It also offers her voice, and sets up the tool that builds her window, the same way — say no and she still works; she just cannot talk out loud yet.</li>" +
   "<li>It looks at your machine — the processor and its cores, how much memory, the graphics chip — and picks her thinking settings to fit it: how many threads, how big a context, how much she reads at once, and whether the graphics chip helps. A modest machine gets the gentle, proven numbers; a strong one gets more. It writes what it found and why into <span class='mono'>hardware-profile.log</span>, and you can see or change the result later in Settings.</li>" +
   "<li>Open <b>Apex</b> from your app menu. Her own window opens — no web browser. That window is the app.</li></ol>" +
   "<p>On Linux she installs into <span class='mono'>/opt/navi-apex</span>. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
-  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the status column lights up <b>New Version Available</b>. Press <b>Download &amp; stage</b> and the release package is downloaded and unpacked beside the app, under <span class='mono'>updates/</span> — then the Updater shows you the one command that finishes the job: run that folder's <span class='mono'>./install.sh</span> in a terminal. She never installs over herself while she is running; the installer replaces the app and keeps everything that's yours, exactly as the paragraph above promises. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
+  "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
+  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the status column lights up <b>New Version Available</b>. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.0a → v0.1.1a</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
   "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and optionally a build status after it — like <span class='mono'>0.1.1 alpha</span>, which is what the current release carries (the status word can be <span class='mono'>alpha</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means stable). It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release, and the dashboard shows it at the bottom of the side menu (under a divider, in the lower-left corner) as <b>Ver. + number + a one-letter status tag</b> — alpha wears <span class='mono'>a</span>, beta wears <span class='mono'>b</span>, stable wears none, the same letter style Python's PEP 440 versioning uses. So this alpha reads <b>Ver. 0.1.1a</b> and a stable build reads <b>Ver. 0.1.1</b>. With the side menu collapsed to its icon rail, the footer narrows with it: just the number and its tag, centered, in the same status color — the full <b>Ver.</b> form returns when the menu opens again. The number-and-tag is colored by status in every theme: red for alpha, yellow for beta, blue for stable (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's UPDATER element carries no number — it reads <b>Not checked yet</b> until the first real check runs, <b>Up to date</b> once one has run clean, the plain words <b>Couldn't check for updates</b> when GitHub couldn't be reached, and it switches to a lit <b>New Version Available</b> warning when a check finds a newer one. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
@@ -2233,7 +2240,7 @@ NAV.forEach(function (name) {
   b.id = "nav-" + name;
   b.setAttribute("aria-label", name);
   b.innerHTML = "<span class='ic'>" + navIcon(name) + "</span><span class='lbl'>" + name + "</span><span class='nav-tip' aria-hidden='true'>" + name + "</span>";
-  b.onclick = function () { view = name; render(); if (name === "Updater" && updater.state === "idle") checkForUpdates(); };
+  b.onclick = function () { view = name; render(); if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); } };
   navEl.appendChild(b);
 });
 // The version at the foot of the menu, under its divider: baked
@@ -2632,7 +2639,7 @@ function refreshUpdaterUi() {
 }
 function checkForUpdates() {
   if (CONFIG.backend !== "live") return;
-  if (updater.state === "checking" || updater.state === "staging") return;
+  if (updater.state === "checking" || updater.state === "applying") return;
   updater.state = "checking";
   updater.error = "";
   refreshUpdaterUi();
@@ -2647,7 +2654,10 @@ function checkForUpdates() {
       updater.publishedAt = j.publishedAt || "";
       updater.assetName = (j.asset && j.asset.name) || "";
       updater.assetSize = (j.asset && j.asset.size) || 0;
-      updater.state = j.updateAvailable ? "available" : "uptodate";
+      // A just-confirmed update keeps its confirmation when the
+      // check agrees we're current — the "Updated" line is the
+      // news; "up to date" would only bury it.
+      updater.state = j.updateAvailable ? "available" : (updater.state === "updated" ? "updated" : "uptodate");
     }
     refreshUpdaterUi();
   }).catch(function () {
@@ -2656,36 +2666,105 @@ function checkForUpdates() {
     refreshUpdaterUi();
   });
 }
-function stageUpdate() {
+function applyUpdate() {
   if (CONFIG.backend !== "live" || updater.state !== "available") return;
-  updater.state = "staging";
+  updater.state = "applying";
+  updater.step = "downloading";
   updater.stageError = "";
+  updater.applyError = "";
   render();
   fetch("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) {
     if (!j || j.ok !== true) {
       updater.state = "available";
-      updater.stageError = (j && j.error) || "Staging failed — the bridge answered with an unreadable response.";
+      updater.stageError = (j && j.error) || "The update could not be started — the bridge answered with an unreadable response.";
+      render();
     } else {
-      updater.state = "staged";
-      updater.stagedDir = j.stagedDir || "";
-      updater.command = j.command || "";
-      updater.assetName = j.assetName || updater.assetName;
+      pollUpdateResult();
     }
-    render();
   }).catch(function () {
-    updater.state = "available";
-    updater.stageError = "The bridge didn't answer while staging the download.";
-    render();
+    // The bridge may already be going down for the restart — the
+    // record poll is the source of truth either way.
+    pollUpdateResult();
   });
+}
+function pollUpdateResult() {
+  if (updater.pollTimer) return;
+  var tick = function () {
+    updater.pollTimer = null;
+    fetchUpdateResult(true);
+  };
+  updater.pollTimer = setTimeout(tick, 1500);
+}
+function fetchUpdateResult(keepPolling) {
+  fetch("/api/update/result").then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.state && j.state !== "none") applyUpdateRecord(j);
+    if (updater.state === "applying" && keepPolling) pollUpdateResult();
+    refreshUpdaterUi();
+  }).catch(function () {
+    // While the app restarts, the bridge does not answer — that
+    // silence is the restart happening, not a failure. Keep
+    // polling; the relaunched bridge serves the same record.
+    if (updater.state === "applying" && keepPolling) pollUpdateResult();
+  });
+}
+function applyUpdateRecord(j) {
+  if (j.beforeLabel) updater.fromLabel = j.beforeLabel;
+  if (j.stagedDir) updater.stagedDir = j.stagedDir;
+  if (j.command) updater.command = j.command;
+  if (j.state === "working") {
+    updater.state = "applying";
+    updater.step = j.step || "downloading";
+  } else if (j.state === "done") {
+    updater.state = "updated";
+    updater.step = "";
+    if (j.afterLabel) updater.toLabel = j.afterLabel;
+    if (updater.pollTimer) { clearTimeout(updater.pollTimer); updater.pollTimer = null; }
+  } else if (j.state === "failed") {
+    // A failure from an apply this page started — or, on the
+    // relaunched app's first paint, the failure that the restart
+    // interrupted: it surfaces while the startup check is still
+    // running, or whenever the release on offer is the very one
+    // that failed. A stale failure for a different release never
+    // buries a fresh check's offer.
+    if (updater.state === "applying" || updater.state === "applyfailed" || updater.state === "idle" || updater.state === "updated" || updater.state === "checking" || (j.tag && updater.latest && j.tag === updater.latest)) {
+      updater.state = "applyfailed";
+      updater.step = j.step || "";
+      updater.applyError = j.error || "The update failed at a step it did not name.";
+    }
+    if (updater.pollTimer) { clearTimeout(updater.pollTimer); updater.pollTimer = null; }
+  }
+}
+var UPDATE_STEPS = [["downloading", "Downloading"], ["verifying", "Verifying"], ["staging", "Staging"], ["installing", "Installing"], ["restarting", "Restarting"]];
+function updaterProgressHtml() {
+  var cur = 0;
+  UPDATE_STEPS.forEach(function (s, i) { if (s[0] === updater.step) cur = i; });
+  var parts = UPDATE_STEPS.map(function (s, i) {
+    if (i < cur) return "<span style='color:#34d399'>✓ " + s[1] + "</span>";
+    if (i === cur) return "<b style='color:var(--text)'>" + s[1] + "…</b>";
+    return "<span style='color:var(--dim)'>" + s[1] + "</span>";
+  });
+  return "<div class='card' style='margin-top:10px'><b>Updating Apex…</b><br>" +
+    "<span style='font-size:13px'>" + parts.join(" <span style='color:var(--dim)'>→</span> ") + "</span><br>" +
+    "<span style='color:var(--dim)'>Apex will restart itself when the install finishes — this page will go quiet while it does, then come back on the new version with the confirmation.</span></div>";
+}
+function updaterFallbackHtml() {
+  return "<div class='card' style='margin-top:10px'><b>Manual fallback.</b><br>" +
+    "<span style='color:var(--dim)'>The update package is staged and unpacked at</span><br><span class='mono' style='font-size:12px'>" + esc(updater.stagedDir) + "</span><br>" +
+    "<span style='color:var(--dim)'>One command finishes the job by hand — run this in a terminal:</span>" +
+    "<pre class='exec mono' style='margin:8px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-all'>" + esc(updater.command) + "</pre>" +
+    "<span style='color:var(--dim)'>The installer keeps everything that's yours — your chips, knowledge packs and their indexes, the model file, Soul and Memory, her voice, and your GitHub settings — and Apex restarts into the new version when it finishes.</span></div>";
 }
 function updaterStatusHtml() {
   if (CONFIG.backend !== "live") {
     return "<span style='color:var(--dim)'>Update checks run over the live bridge — this window is in Mock backend mode (Settings → System), so nothing is checked from here. Switch to Live and the check below asks GitHub for the project's latest release.</span>";
   }
-  if (updater.state === "checking" || updater.state === "staging") return "<span style='color:var(--dim)'>Checking GitHub for the latest release…</span>";
+  if (updater.state === "checking") return "<span style='color:var(--dim)'>Checking GitHub for the latest release…</span>";
+  if (updater.state === "applying") return "<span style='color:var(--dim)'>Updating now — the step it is on is below. Apex will restart itself when the install finishes.</span>";
   if (updater.state === "failed") return "<span style='color:#f5b544'>The last check didn't complete: " + esc(updater.error) + "</span><br><span style='color:var(--dim)'>That is all the check can honestly say — it never guesses that you are up to date.</span>";
+  if (updater.state === "applyfailed") return "<span style='color:#f5b544'>The update didn't finish: " + esc(updater.applyError) + "</span>" + (updater.stagedDir ? "<br><span style='color:var(--dim)'>The staged package is still in place — the manual fallback is below.</span>" : "");
+  if (updater.state === "updated") return "<span style='color:#34d399'>Updated <b class='mono'>" + esc(updater.fromLabel) + "</b> → <b class='mono'>" + esc(updater.toLabel) + "</b></span><br><span style='color:var(--dim)'>Confirmed from the VERSION file after the restart — the version above is the one now running.</span>";
   if (updater.state === "uptodate") return "<span style='color:var(--dim)'>You're on the latest release" + (updater.latest ? " — GitHub's newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>, the same as yours" : "") + ".</span>";
-  if (updater.state === "available" || updater.state === "staged") {
+  if (updater.state === "available") {
     var when = updater.publishedAt ? new Date(updater.publishedAt) : null;
     var whenTxt = when && !isNaN(when.getTime()) ? " · published " + when.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
     var sizeTxt = updater.assetSize ? " · " + (updater.assetSize / 1048576).toFixed(1) + " MB package" : "";
@@ -2695,12 +2774,9 @@ function updaterStatusHtml() {
   }
   return "<span style='color:var(--dim)'>Not checked yet this session. A check asks GitHub for the project's latest release and compares its tag with the version above.</span>";
 }
-function updaterStagedHtml() {
-  return "<div class='card' style='margin-top:10px'><b>Staged and ready.</b><br>" +
-    "<span style='color:var(--dim)'>The v" + esc(updater.latest.replace(/^v/i, "")) + " package is downloaded and unpacked at</span><br><span class='mono' style='font-size:12px'>" + esc(updater.stagedDir) + "</span><br>" +
-    "<span style='color:var(--dim)'>One step finishes it — run this in a terminal:</span>" +
-    "<pre class='exec mono' style='margin:8px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-all'>" + esc(updater.command) + "</pre>" +
-    "<span style='color:var(--dim)'>The installer keeps everything that's yours — your chips, knowledge packs and their indexes, the model file, Soul and Memory, her voice, and your GitHub settings — and Apex restarts into the new version when it finishes. The app never installs over itself while it runs; that last step is yours, on purpose.</span></div>";
+function updaterUpdatedHtml() {
+  return "<div class='card' style='margin-top:10px'><b>Updated " + esc(updater.fromLabel) + " → " + esc(updater.toLabel) + "</b><br>" +
+    "<span style='color:var(--dim)'>The update downloaded, installed, and restarted itself — and the version now running is the one the update promised, read from the VERSION file after the restart.</span></div>";
 }
 // Issue #17 — the first-launch race: the Chat view reads
 // llama.status as it renders (a stopped model renders the
@@ -2741,8 +2817,12 @@ function renderStatus(live) {
   // be reached — and when a check finds a newer release it lights
   // up as a warning; clicking it opens the Updater.
   var updHtml;
-  if (updater.state === "available" || updater.state === "staging" || updater.state === "staged") {
+  if (updater.state === "available" || updater.state === "applying") {
     updHtml = "<button class='stat' id='updater-warn' style='display:block;width:100%;text-align:left;background:rgba(245,181,68,.12);border:1px solid #f5b544;color:#f5b544;cursor:pointer;font:inherit' aria-label='New Version Available — open the Updater tab to apply it'><span style='color:var(--dim);font-size:11px;letter-spacing:.08em'>UPDATER</span><br><b>New Version Available</b><br><span class='v mono' style='color:var(--text)'>v" + esc(updater.latest.replace(/^v/i, "")) + " is ready — open the Updater to get it.</span></button>";
+  } else if (updater.state === "updated") {
+    updHtml = stat("UPDATER", "Updated " + updater.fromLabel + " → " + updater.toLabel, "#34d399");
+  } else if (updater.state === "applyfailed") {
+    updHtml = stat("UPDATER", "Update didn't finish — open the Updater", "#f5b544");
   } else if (updater.state === "failed") {
     updHtml = stat("UPDATER", "Couldn't check for updates", "#f5b544");
   } else if (updater.state === "checking") {
@@ -3657,10 +3737,11 @@ function render() {
     }
   } else if (view === "Updater") {
     h += "<h3>Updater</h3><div class='card'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")</span><br>" + updaterStatusHtml() + "</div>";
-    h += "<button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "staging" ? " disabled" : "") + ">" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
-    if (updater.state === "available") h += "<button class='ghost' id='up-apply'>Download &amp; stage v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
-    if (updater.state === "staging") h += "<span style='color:var(--dim)'>Downloading the release package…</span>";
-    if (updater.state === "staged") h += updaterStagedHtml();
+    h += "<button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "applying" ? " disabled" : "") + ">" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
+    if (updater.state === "available") h += "<button class='ghost' id='up-apply'>Download &amp; install v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
+    if (updater.state === "applying") h += updaterProgressHtml();
+    if (updater.state === "updated") h += updaterUpdatedHtml();
+    if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
   } else if (view === "GitHub") {
     h += githubViewHtml();
   } else if (view === "Docs") {
@@ -4556,7 +4637,7 @@ function wire() {
     var upCheck = document.getElementById("up-check");
     if (upCheck) upCheck.onclick = function () { checkForUpdates(); };
     var upApply = document.getElementById("up-apply");
-    if (upApply) upApply.onclick = function () { stageUpdate(); };
+    if (upApply) upApply.onclick = function () { applyUpdate(); };
   } else if (view === "Settings") {
     mainEl.querySelectorAll("[data-settab]").forEach(function (b) { b.onclick = function () { settingsTab = b.getAttribute("data-settab"); render(); }; });
     var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
@@ -4795,6 +4876,11 @@ if (CONFIG.backend === "live") {
   // status column's UPDATER element can light up on its own when a
   // newer release exists — the operator never has to go looking.
   checkForUpdates();
+  // And pick up the last apply's record: if this page load is the
+  // relaunched app after a one-click update, the panel's first
+  // paint already carries its "Updated vX → vY" confirmation (or
+  // the failure and its fallback).
+  fetchUpdateResult(false);
   fetch("/api/persona").then(function (r) { return r.json(); }).then(function (j) {
     if (j.soul) CONFIG.soul = j.soul;
     if (j.memory) CONFIG.memory = j.memory;

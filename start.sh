@@ -112,7 +112,13 @@ supervise_bridge &
 # because a missing sha256sum must not strand the operator.
 shell_sources_hash() {
   local dir="shell"
-  local files="Cargo.toml build.rs src/main.rs tauri.conf.json icons/icon.png README.md"
+  # Same rule as the installer's copy of this hash: the shell icon
+  # is optional — a clone install has no binary icon files, and
+  # hashing must not fail over a cosmetic file. With the icon
+  # present it is hashed in its usual place, unchanged.
+  local files="Cargo.toml build.rs src/main.rs tauri.conf.json"
+  if [ -f "$dir/icons/icon.png" ]; then files="$files icons/icon.png"; fi
+  files="$files README.md"
   local f
   for f in $files; do
     if [ ! -f "$dir/$f" ]; then echo ""; return; fi
@@ -206,7 +212,7 @@ open_browser_fallback() {
 # refusal explained only to a terminal a menu launch doesn't
 # have. A page that is NOT a Navi bridge at all still blocks
 # the open, and gets named — in the log as well as the terminal.
-BRIDGE_STAMP="2026-11-07.55"
+BRIDGE_STAMP="2026-11-07.58"
 OPENED=""
 for i in $(seq 1 40); do
   STATUS=$(curl -s --max-time 2 "http://localhost:$BRIDGE_PORT/api/status" 2>/dev/null || true)

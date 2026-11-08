@@ -289,7 +289,19 @@ $SUDO chmod +x "$INSTALL_DIR/run-llamafile.sh"
 # installer, once the install root belongs to the operator.
 $SUDO mkdir -p "$INSTALL_DIR/shell"
 $SUDO cp -r shell/* "$INSTALL_DIR/shell/"
-$SUDO cp assets/icon.png "$INSTALL_DIR/assets/icon.png"
+# The app icon is cosmetic — a missing copy must never abort an
+# install. A git clone of the repo carries none of the binary icon
+# files (they ship only inside the release zip), so a clone install
+# reaches this line with no assets/icon.png: warn in plain words
+# and carry on; the app and its menu entry use a fallback icon.
+if [ -f assets/icon.png ]; then
+  $SUDO cp assets/icon.png "$INSTALL_DIR/assets/icon.png"
+else
+  echo "    note: the app icon file (assets/icon.png) is missing from this copy of the sources."
+  echo "          That is expected when installing from a git clone — the clone does not carry"
+  echo "          the binary icon files; they ship inside the release zip. The install continues"
+  echo "          without it, and the app and its menu entry will use a fallback icon."
+fi
 if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
   $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
 fi
@@ -533,11 +545,26 @@ echo "==> Registering Apex in the application menu"
 ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
 APP_DIR="$HOME/.local/share/applications"
 mkdir -p "$ICON_DIR" "$APP_DIR"
-cp assets/icon.png "$ICON_DIR/navi-apex.png"
+# Same rule as the install-tree copy above: no icon file in this
+# copy of the sources (a git clone) means the menu entry is still
+# written — it just uses a fallback icon — and the installer's
+# report below says which of the two actually happened.
+MENU_ICON=""
+if [ -f assets/icon.png ]; then
+  cp assets/icon.png "$ICON_DIR/navi-apex.png"
+  MENU_ICON=1
+else
+  echo "    note: no app icon file in this copy of the sources (see the note above) —"
+  echo "          the menu entry is still installed, and it will use a fallback icon."
+fi
 sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" assets/navi-apex.desktop > "$APP_DIR/navi-apex.desktop"
 chmod +x "$APP_DIR/navi-apex.desktop"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" || true
-echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: navi-apex)"
+if [ -n "$MENU_ICON" ]; then
+  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: navi-apex)"
+else
+  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: fallback — no icon file in this copy of the sources)"
+fi
 
 if [ "$STARTUP" = "boot" ]; then
   echo "==> Registering the llamafile server as a systemd user service"
@@ -585,7 +612,15 @@ fi
 # made a lost stamp indistinguishable from changed sources.
 shell_sources_hash() {
   local dir="$1"
-  local files="Cargo.toml build.rs src/main.rs tauri.conf.json icons/icon.png README.md"
+  # The shell icon is optional in the hash: a git clone of the repo
+  # carries no binary icon files (they ship only in the release
+  # zip), and a missing cosmetic file must never break the shell
+  # step — hash what is there. When the icon is present it is
+  # hashed in its usual place, so a full package stamps exactly
+  # as it always has.
+  local files="Cargo.toml build.rs src/main.rs tauri.conf.json"
+  if [ -f "$dir/icons/icon.png" ]; then files="$files icons/icon.png"; fi
+  files="$files README.md"
   local f
   for f in $files; do
     if [ ! -f "$dir/$f" ]; then echo ""; return; fi
@@ -630,6 +665,22 @@ if [ -z "$FRESH" ]; then
   fi
 fi
 
+# Her window is built around its icon — the shell's own
+# icons/icon.png, which the shell's config names and its build
+# embeds. A git clone of the repo does not carry it (the binary
+# icon files ship only in the release zip), so from a clone the
+# window build genuinely cannot proceed: name it here, and the
+# build step below skips itself in plain words instead of dying
+# halfway through a cargo build. With the file present — every
+# release-zip install — this stays empty and nothing changes.
+# (The assets/ .ico/.icns renditions are never copied into the
+# install tree and the Linux shell build never reads them, so
+# they are not part of this check.)
+SHELL_ICON_MISSING=""
+if [ ! -f "$INSTALL_DIR/shell/icons/icon.png" ]; then
+  SHELL_ICON_MISSING="shell/icons/icon.png"
+fi
+
 # --- Rust toolchain (rustup) ---
 # The shell build below needs cargo. If cargo is not already here,
 # the official rustup installer fills the gap: per-user (no sudo),
@@ -644,6 +695,8 @@ fi
 echo "==> Checking for a Rust toolchain (her window needs one)"
 if [ -n "$SHELL_SKIP" ]; then
   echo "    her window is already built from these shell sources — no Rust needed this run."
+elif [ -n "$SHELL_ICON_MISSING" ]; then
+  echo "    her window cannot be built from this copy of the sources (missing icon files: $SHELL_ICON_MISSING) — no Rust needed this run; the window step below explains."
 elif command -v cargo >/dev/null 2>&1; then
   echo "    Rust found: $(cargo --version 2>/dev/null || echo cargo) — using the existing toolchain as-is."
 elif [ -x "$HOME/.cargo/bin/cargo" ]; then
@@ -703,6 +756,14 @@ echo "==> Building the standalone window (Tauri shell)"
 if [ -n "$SHELL_SKIP" ]; then
   echo "    already built from these exact shell sources — skipping the cargo build."
   echo "    (binary: $INSTALL_DIR/navi-apex-shell — pass --fresh, change the shell sources, or delete navi-apex-shell.stamp to force a rebuild)"
+elif [ -n "$SHELL_ICON_MISSING" ]; then
+  echo "    her window cannot be built from this copy of the sources: the icon files her window"
+  echo "    is built with are not here (missing: $SHELL_ICON_MISSING). A git clone of the repo does"
+  echo "    not carry the binary icon files — they ship inside the release zip — so the window"
+  echo "    build is skipped for this install, in the open, instead of failing halfway through."
+  echo "    The release zip is the complete package."
+  retire_stale_shell
+  echo "    Navi still launches: start.sh falls back to the dashboard in your browser."
 elif command -v cargo >/dev/null 2>&1; then
   if (cd "$INSTALL_DIR/shell" && cargo build --release >> "$INSTALL_DIR/shell/shell-build.log" 2>&1) && [ -x "$INSTALL_DIR/shell/target/release/navi-apex-shell" ]; then
     cp "$INSTALL_DIR/shell/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"

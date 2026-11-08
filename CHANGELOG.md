@@ -26,6 +26,12 @@ All notable changes to Apex are recorded here. Releases are alpha until the firs
 - The chat composer's placeholder follows the CLI/Navi latch as you flip it; Clear chat lives in the composer's hint row; the Chat view's stray header bar is gone.
 - When a link cannot open in the desktop shell, the app says so in a warning toast that shows the address and points you at the Web UI (http://localhost:8675), where links open normally.
 
+### Post-release hardening (shipped under the same 0.1.1 version)
+
+- The Updater now applies an update end-to-end from the click — download, verify, install, relaunch, and a version-read confirmation — instead of stopping at a staged folder plus a command to run by hand; its package verification also unwraps gzip-wrapped packages rather than refusing them.
+- The installer tolerates source trees without the binary icon files (a fresh git clone has none): it warns in plain words and continues instead of aborting the install.
+- Clone installs are documented the bash-first way (`bash install.sh`), since scripts from a clone or a source zip may not carry their executable bit.
+
 ## [0.1.0] — 2026-11-07 — First public release (alpha)
 
 Apex's first release: the standalone app, renamed from the working title

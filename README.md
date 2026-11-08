@@ -9,8 +9,8 @@ Apex is the standalone desktop app that puts Navi — a cybersecurity-tuned loca
 - Chat folds finished work into reopenable cards, and the composer completes the zsh set — recall, Ctrl+R, path completion, preview-only history expansion.
 - Syntax highlighting is tuned per theme across eleven palettes, including resource-light Dark Liquid Glass and five new themes.
 - Chips and knowledge packs publish to GitHub from the app, and Local Chips is the one home for managing them.
-- The GitHub lists reconcile what is already installed, packs wear flip cards, and pulse entries open their issues.
-- A link that fails in the desktop shell lands on an honest warning toast with the Web UI address.
+- The Updater applies updates end-to-end from one click — download, install, relaunch — and its package check now unwraps gzip-wrapped packages instead of refusing them.
+- Installing from a source tree is hardened: the installer warns and carries on when a cosmetic file like the app icon is absent, and clone installs are documented the bash-first way (`bash install.sh`).
 
 [Read the changelog](CHANGELOG.md)
 
