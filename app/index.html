@@ -20,6 +20,9 @@
   body[data-theme="contrast"] { --bg:#000000; --panel:#0c0d0f; --panel2:#14161a; --line:#7f95ab; --text:#ffffff; --dim:#d7e3ee; --cy:#2fd8ff; --am:#ffc933; --red:#ff7a7a; --green:#4ade80; --ver-alpha:#ff7a7a; --ver-beta:#ffc933; --ver-stable:#2fd8ff; --syn-cmd:#4ade80; --syn-bad:#ff9a9a; --syn-flag:#2fd8ff; --syn-str:#ffc933; --syn-path:#a5c8ff; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#fda4af; --exec-bg:#000000; }
   body[data-theme="nord"] { --bg:#2e3440; --panel:#3b4252; --panel2:#434c5e; --line:#4c566a; --text:#eceff4; --dim:#a9b4c6; --cy:#88c0d0; --am:#ebcb8b; --red:#d98a94; --green:#a3be8c; --ver-alpha:#bf616a; --ver-beta:#ebcb8b; --ver-stable:#88c0d0; --syn-cmd:#b5e48c; --syn-bad:#ffb4b4; --syn-flag:#a5f3fc; --syn-str:#fde68a; --syn-path:#bfdbfe; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#f9a8d4; --exec-bg:#242933; }
   body[data-theme="terminal"] { --bg:#000000; --panel:#020a02; --panel2:#010501; --line:#14532d; --text:#4ade80; --dim:#22c55e; --cy:#4ade80; --am:#a3e635; --red:#f87171; --green:#4ade80; --ver-alpha:#f87171; --ver-beta:#a3e635; --ver-stable:#4ade80; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#a3e635; --syn-str:#fde047; --syn-path:#2dd4bf; --syn-kw:#bef264; --syn-num:#bbf7d0; --syn-op:#f0abfc; --exec-bg:#000000; }
+  /* DHD glyph tuning (build .74): ring and wedges resolve from the theme like the other nav icons; the center stays warm red-orange in the glyph itself. */
+  body[data-theme="nord"] .nav-ico-dhd { color:#88c0d0; }
+  body[data-theme="terminal"] .nav-ico-dhd { color:#4ade80; }
   body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
   body[data-theme="nocturne"] { color-scheme:dark; --bg:#060a14; --panel:#0b1220; --panel2:#0d1526; --line:#1e3a5f; --text:#dbeafe; --dim:#9db8d9; --cy:#22d3ee; --am:#f471b5; --red:#fb7185; --green:#34d399; --ver-alpha:#fb7185; --ver-beta:#fbbf24; --ver-stable:#22d3ee; --syn-cmd:#22d3ee; --syn-bad:#ff7a93; --syn-flag:#67e8f9; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f471b5; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#04070f; }
   body[data-theme="abyss"] { color-scheme:dark; --bg:#010304; --panel:#041014; --panel2:#061a1e; --line:#0f3038; --text:#cfe3e8; --dim:#b8ccd1; --cy:#22e6ee; --am:#67e8f9; --red:#f87171; --green:#2dd4bf; --ver-alpha:#f87171; --ver-beta:#e7c65a; --ver-stable:#22e6ee; --syn-cmd:#67e8f9; --syn-bad:#ff8a8a; --syn-flag:#5eead4; --syn-str:#e7c65a; --syn-path:#cbd5e1; --syn-kw:#7dd3d8; --syn-num:#d9e8ec; --syn-op:#8be9e2; --exec-bg:#000000; }
@@ -46,6 +49,7 @@
   body[data-theme="nord"] #nav-Chips .ic { color:#ebcb8b; }
   body[data-theme="nord"] #nav-Memory .ic { color:#8fbcbb; }
   body[data-theme="nord"] #nav-RAG .ic { color:#81a1c1; }
+  body[data-theme="nord"] #nav-Vault .ic { color:#bf616a; }
   body[data-theme="nord"] #nav-Updater .ic { color:#a3be8c; }
   body[data-theme="nord"] #nav-GitHub .ic { color:#d08770; }
   body[data-theme="nord"] #nav-Settings .ic { color:#d8dee9; }
@@ -83,6 +87,7 @@
   body[data-theme="terminal"] #nav-Chips .ic { color:#34d399; }
   body[data-theme="terminal"] #nav-Memory .ic { color:#86efac; }
   body[data-theme="terminal"] #nav-RAG .ic { color:#2dd4bf; }
+  body[data-theme="terminal"] #nav-Vault .ic { color:#fde047; }
   body[data-theme="terminal"] #nav-Updater .ic { color:#bef264; }
   body[data-theme="terminal"] #nav-GitHub .ic { color:#facc15; }
   body[data-theme="terminal"] #nav-Settings .ic { color:#dcfce7; }
@@ -484,6 +489,10 @@
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
     button.act, button.ghost, a.act, a.ghost, .chipbtn { min-height:40px; }
+    /* Vault at phone widths (build .73): the files card stacks
+       full-width above the editor and every control in it meets
+       the 44px touch floor. */
+    .vault-files button, .vault-files select, .vault-files input { min-height:44px; }
     .tabbar { flex-wrap:wrap; }
     .tabbar > * { flex:1 1 30%; min-height:40px; }
     .nur-grid { grid-template-columns:repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }
@@ -537,7 +546,7 @@
 // every setting — backend included — is the operator's explicit
 // choice and is honored as saved. Chats, memory, and documents are
 // stored under separate keys and are never reset by this.
-var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.4","versionStatus":"alpha","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}}};
+var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.5","versionStatus":"alpha","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}},"dhd":{"enabled":false,"active":false,"domain":"","mode":"off","status":"off","publicUrl":"","lanIp":"","lanUrl":"","wanIp":"","wanState":"undetected","wanNote":"","publicVerified":false,"outsideReach":"none","nextStep":"","domainResolvesHere":false,"certExpiresAt":null,"certDaysLeft":null,"certPending":false,"lastError":""}};
 // Backend: this app is always Live — it talks to bridge.py, which
 // proxies the real llamafile server and runs real shell commands.
 // There is no backend switch in the shipped app (build .49): a saved
@@ -545,7 +554,7 @@ var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.4","versionStatus":
 // Live below, so it can never strand the app in a dead mode. The
 // in-page mock code remains only as the bridge-unreachable fallback
 // paths' simulator inside this file; it is never a selectable mode.
-var CONFIG = { backend: "live", version: "0.1.4", versionStatus: "alpha", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "" };
+var CONFIG = { backend: "live", version: "0.1.5", versionStatus: "alpha", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "" };
 Object.assign(CONFIG, NAVI_SETTINGS);
 try {
   var savedCfg = localStorage.getItem("navi.config");
@@ -578,7 +587,7 @@ function saveCfg() { try { localStorage.setItem("navi.config", JSON.stringify(CO
 function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nord"; }
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
 
-var NAV = ["Chat", "Voice", "Chips", "Memory", "RAG", "Updater", "GitHub", "Settings", "Docs"];
+var NAV = ["Chat", "Voice", "Chips", "Memory", "RAG", "Vault", "DHD", "Updater", "GitHub", "Settings", "Docs"];
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
 // to its rail, the icon alone identifies the view.
@@ -588,12 +597,30 @@ var NAV_ICON_PATHS = {
   Chips: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
   Memory: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
   RAG: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+  Vault: '<path d="M4 4a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2z"/><path d="M8 2v20"/><path d="M12 7h5"/><path d="M12 11h5"/>',
   Updater: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   GitHub: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
   Settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   Docs: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'
 };
+// The DHD glyph (build .74): the same dial the bench draws - an
+// outer ring, twelve plain wedge buttons, one large center circle.
+// Ring and wedges take currentColor, which the themes resolve like
+// the other nav icons (per-theme .nav-ico-dhd rules ride the theme
+// blocks); the center keeps its warm red-orange in every theme.
+function dhdGlyphSvg() {
+  var inner = "<circle cx='12' cy='12' r='11.2' fill='none' stroke='currentColor' stroke-width='1.6'/>";
+  for (var i = 0; i < 12; i++) {
+    var a0 = (i * 30 - 90 - 11) * Math.PI / 180, a1 = (i * 30 - 90 + 11) * Math.PI / 180;
+    var rO = 10.1, rI = 6.6;
+    var p = function (r, a) { return (12 + r * Math.cos(a)).toFixed(2) + " " + (12 + r * Math.sin(a)).toFixed(2); };
+    inner += "<path d='M " + p(rO, a0) + " A " + rO + " " + rO + " 0 0 1 " + p(rO, a1) + " L " + p(rI, a1) + " A " + rI + " " + rI + " 0 0 0 " + p(rI, a0) + " Z' fill='currentColor' stroke='none' opacity='0.9'/>";
+  }
+  inner += "<circle cx='12' cy='12' r='4.9' fill='#f4502a' stroke='none'/>";
+  return inner;
+}
 function navIcon(name) {
+  if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
 var view = "Chat";
@@ -634,6 +661,8 @@ var sudoWarnOpen = false;
 // dropdown is open, and which copy button last succeeded — both
 // page-level for the same reason as sudoWarnOpen above.
 var localNetOpen = false;
+var dhdDetailsOpen = false;
+var dhdUrlCopied = false;
 var localNetCopied = "";
 // The whole sudo warning, one line (operator's words).
 var SUDO_WARNING_LINE = "Sudo Mode Gives Navi Admin Privs... Be mindful so you dont learn the find out part of the fuck around equation. <3";
@@ -661,6 +690,11 @@ var micState = "unknown";    // unknown | ok | refused | unavailable — this wi
 var hardwareState = null;    // live: last GET /api/hardware answer ({profile}); mock: baked seed profile
 var hardwareMsg = "";
 var publicState = null;      // live: last /api/status publicServer report; mock: the baked CONFIG shape
+var dhdState = null;         // live: last /api/status dhd report; mock: the baked CONFIG shape (build .74)
+var dhdMsg = "";
+var dhdCodeShown = false;
+var dhdOperation = null;     // the page's current DHD operation card state
+var opPollTimers = {};       // operation id -> poll timer (chat + DHD page cards)
 // Build .65: whether the freshest bridge answer actually carried a
 // publicServer report. The Local network access section's ON face
 // is a claim about the bridge answering RIGHT NOW, so it stands
@@ -752,7 +786,7 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-08.71";
+var BRIDGE_BUILD = "2026-11-08.78";
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 // Known chats: every conversation is saved; the Memory tab switches
@@ -884,7 +918,8 @@ var GH_ITEMS = [
   { id: "settings", label: "Settings & config", blurb: "Operator name, theme, installed commands, voice choice and voice settings.", core: true },
   { id: "chips", label: "Installed chips", blurb: "The full chips — restored working, not just named." },
   { id: "rag", label: "RAG packs", blurb: "Their documents, built indexes, and which packs are active." },
-  { id: "workflows", label: "Workflows", blurb: "Her saved chains of chips." }
+  { id: "workflows", label: "Workflows", blurb: "Her saved chains of chips." },
+  { id: "vault", label: "The Vault", blurb: "The shared desk of notes — hers and yours, as plain markdown files." }
 ];
 // Soul, Memory, and Settings & config are ticked automatically
 // (build .36): every backup carries them, so any item list —
@@ -1241,8 +1276,8 @@ var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing"] },
-  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "github", "installing"] },
+  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "github", "installing"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -1918,6 +1953,305 @@ function highlightSh(code) {
 }
 
 /* ----------------------------- Markdown -------------------------------- */
+/* ------------------------------- The Vault ------------------------------- */
+// Build .72, issue #54: the shared desk. Live mode talks to the
+// bridge's /api/vault/* endpoints over the real folder at
+// config/vault/; mock mode keeps the same shape in localStorage so
+// the view is exercisable offline. Paths ride data attributes
+// URI-encoded — note paths carry apostrophes (Navi's Desk/…).
+var vaultState = null;
+var vaultSel = null;
+var vaultDraft = null;
+var vaultDraftPath = null;
+var vaultMode = "split";
+var vaultMsg = "";
+var vaultLoading = false;
+var vaultSaveTimer = null;
+var vaultRenamePath = null;
+var vaultConfirmPath = null;
+var vaultConfirmFolder = null;
+var vaultCollapsed = {};
+var vaultMissing = null;
+// The path of the note currently being dragged (build .73): tracked
+// in a variable, not only in the dataTransfer, whose custom type
+// some webviews drop. A drag that ends anywhere but on a folder
+// header or the Vault root row changes nothing.
+var vaultDragFrom = null;
+// The note whose Move picker is open (build .73): moving by touch
+// or click, no literal drag required, on any screen size.
+var vaultMovePath = null;
+var VAULT_LS_KEY = "navi.vault.v1";
+
+function vaultSeedFiles() {
+  var today = new Date().toISOString().slice(0, 10);
+  return [
+    { path: "Welcome.md", content: ["---", "tags: [vault, guide]", "---", "", "# Welcome to the Vault", "", "This folder is a shared desk: plain markdown files you can open here, in Obsidian, or in any text editor — same files, no conversion, nothing locked in.", "", "## The two areas", "", "- **Navi's Desk/** — her side of the desk. When a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note here and tells you she did.", "- **Operator/** — your side. She never edits your notes silently: she writes here only when you ask her to in chat, and she says what she filed.", "- **Daily/** — one note per day, from the Daily Note button.", "- **Templates/** — files here are offered as starting templates when you make a new note.", "", "## Conventions", "", "- Link notes with [[wikilinks]] — click one in Preview to jump (or to create the note).", "- Tag with #tags anywhere in the text.", "- YAML frontmatter at the top of a note stays exactly as written; the preview never mangles it.", "", "The vault folder rides the installer's keep-list, so updates and fresh installs preserve it. See [[Start here]] on your side of the desk, and [[First note]] on hers.", ""].join("\n"), updatedAt: today },
+    { path: "Navi's Desk/First note.md", content: ["---", "filed: " + today, "---", "", "# First note", "", "Filed " + today + " — my first note on my side of the desk.", "", "This is where I'll keep what a conversation produces that's worth more than the conversation: decisions we made and why, findings from the work, things you asked me to remember. Dated, first person, in my own words — and when one of these notes informs an answer I give you, I'll name it as a source, the way I name a RAG pack.", "", "Your notes live in [[Start here]]'s folder, and I won't touch them unless you ask. The desk is shared; the sides are respected.", "", "#navi #desk", ""].join("\n"), updatedAt: today },
+    { path: "Operator/Start here.md", content: ["# Start here", "", "Your side of the desk. Make a note with **New note**, drag notes between folders in the tree, or drop markdown files from your computer onto the vault to import them.", "", "Ask Navi in chat to file something here and she will — out loud, never silently. Her own notes live across the desk in [[First note]].", ""].join("\n"), updatedAt: today },
+    { path: "Templates/Note template.md", content: ["---", "tags: []", "---", "", "# Untitled", "", "## Notes", "", "- ", "", "## Links", "", "- [[Welcome]]", ""].join("\n"), updatedAt: today }
+  ];
+}
+function vaultMockStore() {
+  try {
+    var raw = localStorage.getItem(VAULT_LS_KEY);
+    if (raw) { var st = JSON.parse(raw); if (st && st.notes) return st; }
+  } catch (e) {}
+  var seed = { notes: vaultSeedFiles(), folders: ["Navi's Desk", "Operator", "Daily", "Templates"] };
+  vaultMockSave(seed);
+  return seed;
+}
+function vaultMockSave(st) { try { localStorage.setItem(VAULT_LS_KEY, JSON.stringify(st)); } catch (e) {} }
+function vaultTitleOf(path) { var b = path.split("/").pop() || path; return b.replace(/\.md$/i, ""); }
+function vaultLinksOf(content) {
+  var out = []; var re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g; var m;
+  while ((m = re.exec(content || "")) !== null) { var t = m[1].trim(); if (t && out.indexOf(t) === -1) out.push(t); }
+  return out;
+}
+function vaultTagsOf(content) {
+  var out = []; var re = /(?:^|\s)#([A-Za-z][A-Za-z0-9_-]*)/gm; var m;
+  while ((m = re.exec(content || "")) !== null) { if (out.indexOf(m[1]) === -1) out.push(m[1]); }
+  return out;
+}
+function vaultCompute(notes, folders) {
+  var fset = {};
+  (folders || []).forEach(function (f) { fset[f] = true; });
+  notes.forEach(function (n) {
+    var parts = n.path.split("/");
+    for (var i = 1; i < parts.length; i++) fset[parts.slice(0, i).join("/")] = true;
+    n.title = vaultTitleOf(n.path);
+    n.outgoing = vaultLinksOf(n.content);
+    n.tags = vaultTagsOf(n.content);
+  });
+  notes.forEach(function (n) {
+    n.backlinks = notes.filter(function (o) { return o.path !== n.path && o.outgoing.some(function (t) { return t.toLowerCase() === n.title.toLowerCase(); }); }).map(function (o) { return o.path; });
+  });
+  notes.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
+  return { notes: notes, folders: Object.keys(fset).sort() };
+}
+// Attribute encoding for vault paths (build .73): encodeURIComponent
+// leaves apostrophes bare, and every vault attribute is single-quoted
+// — so a path under "Navi's Desk" truncated at the ' and Open /
+// Rename / Delete / drag all acted on the fragment "Navi" instead of
+// the note. %27 keeps the attribute whole; decodeURIComponent on the
+// other side restores the apostrophe.
+function vaultEnc(s) { return encodeURIComponent(s).replace(/'/g, "%27"); }
+var vaultLoadedAt = 0;
+function vaultLoad() {
+  if (CONFIG.backend !== "live") { var st = vaultMockStore(); vaultState = vaultCompute(st.notes, st.folders); vaultLoadedAt = Date.now(); return; }
+  if (vaultLoading) return;
+  vaultLoading = true;
+  fetch("/api/vault/list").then(function (r) { return r.json(); }).then(function (j) {
+    vaultState = j; vaultLoading = false; vaultLoadedAt = Date.now();
+    if (view === "Vault") render();
+  }).catch(function () { vaultLoading = false; vaultMsg = "The vault could not be read from the bridge."; if (view === "Vault") render(); });
+}
+function vaultRefresh() { if (CONFIG.backend === "live") { vaultState = null; vaultLoad(); } else { vaultLoad(); render(); } }
+function vaultApply(kind, a, b) {
+  // kind: save {path, content} · del {path} · move {from, to} · folder {path} · delfolder {path}
+  if (CONFIG.backend === "live") {
+    var url = { save: "/api/vault/save", del: "/api/vault/delete", move: "/api/vault/move", folder: "/api/vault/folder", delfolder: "/api/vault/delete-folder" }[kind];
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok === false) vaultMsg = j.error || "That vault change was refused.";
+      if (b) b(j || {});
+      vaultRefresh();
+    }).catch(function () { vaultMsg = "The bridge did not answer — the change was not saved."; render(); });
+    return;
+  }
+  var st = vaultMockStore();
+  var err = "";
+  if (kind === "save") {
+    var ex = st.notes.filter(function (n) { return n.path === a.path; })[0];
+    if (ex) { ex.content = a.content; ex.updatedAt = new Date().toISOString(); }
+    else st.notes.push({ path: a.path, content: a.content, updatedAt: new Date().toISOString() });
+  } else if (kind === "del") {
+    st.notes = st.notes.filter(function (n) { return n.path !== a.path; });
+    if (vaultSel === a.path) vaultSel = null;
+  } else if (kind === "move") {
+    if (st.notes.some(function (n) { return n.path === a.to; })) err = "A note already exists at " + a.to + " — pick another name.";
+    else st.notes.forEach(function (n) { if (n.path === a.from) { n.path = a.to; n.updatedAt = new Date().toISOString(); } });
+  } else if (kind === "folder") {
+    if (st.folders.indexOf(a.path) === -1) st.folders.push(a.path);
+  } else if (kind === "delfolder") {
+    st.notes = st.notes.filter(function (n) { return n.path !== a.path && n.path.indexOf(a.path + "/") !== 0; });
+    st.folders = st.folders.filter(function (f) { return f !== a.path && f.indexOf(a.path + "/") !== 0; });
+    if (vaultSel && vaultSel.indexOf(a.path + "/") === 0) vaultSel = null;
+  }
+  if (err) vaultMsg = err;
+  vaultMockSave(st);
+  if (b) b({ ok: !err });
+  vaultLoad();
+  render();
+}
+function vaultSplitFm(content) {
+  var norm = String(content || "").replace(/\r\n/g, "\n");
+  if (norm.indexOf("---\n") !== 0) return { fm: null, body: norm };
+  var end = norm.indexOf("\n---\n", 4);
+  if (end === -1) return { fm: null, body: norm };
+  return { fm: norm.slice(4, end), body: norm.slice(end + 5) };
+}
+function vaultWordCount(t) { return String(t || "").split(/\s+/).filter(Boolean).length; }
+function vaultNoteHtml(n, depth) {
+  var enc = vaultEnc(n.path);
+  var h = "<div style='padding-left:" + (depth * 12) + "px'>";
+  if (vaultRenamePath === n.path) {
+    h += "<div class='row' style='margin:2px 0'><input class='grow' id='vault-rename-in' type='text' value='" + esc(n.title) + "' aria-label='New name for " + esc(n.title) + "'><button class='ghost' data-vault-renamesave='" + enc + "'>Save</button></div>";
+  } else if (vaultConfirmPath === n.path) {
+    h += "<p style='font-size:12px'>Delete <b>" + esc(n.title) + "</b>? This can't be undone. <button class='ghost' data-vault-delok='" + enc + "' style='color:#f87171'>Delete</button> <button class='ghost' data-vault-delcancel='1'>Cancel</button></p>";
+  } else if (vaultMovePath === n.path) {
+    var curDir = n.path.indexOf("/") === -1 ? "" : n.path.slice(0, n.path.lastIndexOf("/"));
+    h += "<div class='row' style='margin:2px 0'><select class='grow' id='vault-move-sel' aria-label='Move " + esc(n.title) + " to folder'><option value=''" + (curDir === "" ? " selected" : "") + ">Vault root</option>" + vaultState.folders.map(function (f) { return "<option value='" + esc(f) + "'" + (f === curDir ? " selected" : "") + ">" + esc(f) + "</option>"; }).join("") + "</select><button class='ghost' data-vault-movego='" + enc + "'>Move here</button><button class='ghost' data-vault-movecancel='1'>Cancel</button></div>";
+  } else {
+    h += "<div draggable='true' data-vault-drag='" + enc + "' style='display:flex;gap:4px;align-items:center;padding:1px 0'>" +
+      "<button class='ghost' data-vault-open='" + enc + "' style='flex:1;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" + (vaultSel === n.path ? ";border-color:var(--cy);color:var(--text);font-weight:700" : "") + "'>" + esc(n.title) + "</button>" +
+      "<button class='ghost' data-vault-move='" + enc + "' aria-label='Move " + esc(n.title) + " to another folder'>Move</button>" +
+      "<button class='ghost' data-vault-rename='" + enc + "' aria-label='Rename " + esc(n.title) + "'>Rename</button>" +
+      "<button class='ghost' data-vault-del='" + enc + "' aria-label='Delete " + esc(n.title) + "'>Delete</button></div>";
+  }
+  return h + "</div>";
+}
+function vaultFolderHtml(folder, depth) {
+  var kids = vaultState.folders.filter(function (f) { var p = f.indexOf("/") === -1 ? "" : f.slice(0, f.lastIndexOf("/")); return p === folder; });
+  var own = vaultState.notes.filter(function (n) { var d = n.path.indexOf("/") === -1 ? "" : n.path.slice(0, n.path.lastIndexOf("/")); return d === folder; });
+  var inside = vaultState.notes.filter(function (n) { return n.path.indexOf(folder + "/") === 0; }).length;
+  var enc = vaultEnc(folder);
+  var h = "";
+  if (folder) {
+    h += "<div data-vault-drop='" + enc + "' style='display:flex;gap:4px;align-items:center;padding-left:" + (depth * 12) + "px'>" +
+      "<button class='ghost' data-vault-fold='" + enc + "' aria-expanded='" + (vaultCollapsed[folder] ? "false" : "true") + "' style='flex:1;text-align:left'><b>" + (vaultCollapsed[folder] ? "▸ " : "▾ ") + esc(folder.split("/").pop()) + "</b> <span style='color:var(--dim)'>" + inside + "</span></button>" +
+      "<button class='ghost' data-vault-newin='" + enc + "'>+ Note</button>";
+    if (vaultConfirmFolder === folder) {
+      h += "<button class='ghost' data-vault-foldelok='" + enc + "' style='color:#f87171'>Delete " + inside + "?</button><button class='ghost' data-vault-foldelcancel='1'>Cancel</button>";
+    } else {
+      h += "<button class='ghost' data-vault-foldel='" + enc + "' aria-label='Delete folder " + esc(folder) + "'>Delete</button>";
+    }
+    h += "</div>";
+  }
+  if (!folder || !vaultCollapsed[folder]) {
+    own.forEach(function (n) { h += vaultNoteHtml(n, depth + (folder ? 1 : 0)); });
+    kids.forEach(function (k) { h += vaultFolderHtml(k, depth + 1); });
+  }
+  return h;
+}
+function vaultHtml() {
+  // Fresh on entry (build .73): the tree refetches when the view is
+  // shown with a stale (or never-loaded) listing, so a note Navi
+  // filed from chat is simply there — no manual app refresh.
+  if (!vaultLoading && (!vaultState || Date.now() - vaultLoadedAt > 4000)) vaultLoad();
+  var h = "<h3>Vault · the shared desk</h3>";
+  h += "<p style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
+  h += "<div class='row'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button></div>";
+  h += "<div id='vault-search-results'></div>";
+  if (vaultMsg) h += "<p role='status'>" + esc(vaultMsg) + "</p>";
+  if (vaultMissing) {
+    h += "<div class='card'>No note called <b>" + esc(vaultMissing) + "</b> yet. <button class='ghost' data-vault-createmissing='1'>Create it</button> <button class='ghost' data-vault-dismissmissing='1'>Dismiss</button></div>";
+  }
+  if (!vaultState) return h + "<p style='color:var(--dim)'>Opening the vault…</p>";
+  var templates = vaultState.notes.filter(function (n) { return n.path.indexOf("Templates/") === 0; });
+  var recent = vaultState.notes.slice().sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); }).slice(0, 5);
+  if (recent.length) {
+    h += "<div class='row' style='margin-top:8px'><span class='mono' style='font-size:10px;color:var(--dim)'>RECENT</span>" + recent.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.title) + "</button>"; }).join("") + "</div>";
+  }
+  // Obsidian-style layout (build .73): editor takes the main area,
+  // the files panel sits on the RIGHT (row-reverse keeps the tree
+  // first on narrow screens, where the pair stacks).
+  h += "<div style='display:flex;flex-direction:row-reverse;flex-wrap:wrap;gap:10px;align-items:flex-start;margin-top:10px'><div class='card vault-files' style='flex:0 1 280px;min-width:0'><div class='row'><input class='grow' id='vault-new-name' type='text' placeholder='New note name…' aria-label='New note name'>" +
+    "<select id='vault-new-folder' aria-label='New note folder'><option value=''>Vault root</option>" + vaultState.folders.map(function (f) { return "<option value='" + esc(f) + "'>" + esc(f) + "</option>"; }).join("") + "</select>" +
+    (templates.length ? "<select id='vault-new-template' aria-label='Start from a template'><option value=''>No template</option>" + templates.map(function (t) { return "<option value='" + vaultEnc(t.path) + "'>" + "Template: " + esc(t.title) + "</option>"; }).join("") + "</select>" : "") +
+    "<button class='act' id='vault-new-create'>New note</button></div>" +
+    "<div class='row' style='margin-top:6px'><input class='grow' id='vault-folder-name' type='text' placeholder='New folder…' aria-label='New folder name'><button class='ghost' id='vault-folder-add'>Add folder</button></div>" +
+    "<div data-vault-drop='' title='Drop a note here to move it to the vault root' style='margin-top:8px;border-top:1px solid var(--line);padding-top:6px'><b>▾ Vault root</b> <span style='color:var(--dim)'>" + vaultState.notes.filter(function (n) { return n.path.indexOf("/") === -1; }).length + "</span></div>" +
+    "<div style='margin-top:2px'>" + vaultFolderHtml("", 0) + "</div>" +
+    "<p class='mono' style='font-size:11px;color:var(--dim);margin-top:6px'>" + vaultState.notes.length + " notes · " + vaultState.notes.reduce(function (acc, n) { return acc + vaultWordCount(n.content); }, 0) + " words</p></div>";
+  var cur = vaultState.notes.filter(function (n) { return n.path === vaultSel; })[0];
+  if (cur) {
+    if (vaultDraftPath !== cur.path) { vaultDraft = cur.content; vaultDraftPath = cur.path; }
+    var split = vaultSplitFm(vaultDraft != null ? vaultDraft : cur.content);
+    h += "<div class='card' style='flex:1 1 340px;min-width:0'><div class='row'><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
+      ["edit", "split", "preview"].map(function (m) { return "<button class='" + (vaultMode === m ? "act" : "ghost") + "' data-vault-mode='" + m + "'>" + (m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview") + "</button>"; }).join("") + "</div>" +
+      "<p class='mono' id='vault-saved' style='font-size:11px;color:var(--dim)'>Saved · " + vaultWordCount(vaultDraft || "") + " words" + (split.fm ? " · frontmatter kept raw, exactly as written" : "") + "</p>";
+    if (vaultMode !== "preview") {
+      h += "<textarea id='vault-ed' class='mono' rows='16' spellcheck='false' style='width:100%;box-sizing:border-box' aria-label='Note editor — markdown'>" + esc(vaultDraft || "") + "</textarea>";
+    }
+    if (vaultMode !== "edit") {
+      h += "<div class='card' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body) + "</div></div>";
+    }
+    h += "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px'>" +
+      "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>BACKLINKS</p>" + (cur.backlinks.length ? cur.backlinks.map(function (b) { return "<button class='ghost' data-vault-open='" + vaultEnc(b) + "'>" + esc(b) + "</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>Nothing links here yet.</p>") + "</div>" +
+      "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>OUTGOING LINKS</p>" + (cur.outgoing.length ? cur.outgoing.map(function (t) { return "<button class='ghost' data-vault-wiki='" + vaultEnc(t) + "'>[[" + esc(t) + "]]</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>No wikilinks in this note.</p>") + "</div>" +
+      "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>TAGS</p>" + (cur.tags.length ? cur.tags.map(function (t) { return "<span class='mono' style='font-size:11px;color:var(--am)'>#" + esc(t) + "</span>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>No #tags in this note.</p>") + "</div>" +
+      "</div></div>";
+  } else {
+    h += "<div class='card' style='flex:1 1 340px;min-width:0'><p style='color:var(--dim)'>Pick a note in the tree — or make one. <b>Welcome.md</b> explains the desk. In chat, try “file a note: …” and watch her side of the desk.</p></div>";
+  }
+  return h + "</div>";
+}
+function vaultOpenPath(path) {
+  var hit = vaultState && vaultState.notes.filter(function (n) { return n.path === path; })[0];
+  if (hit) { vaultSel = path; vaultDraftPath = null; vaultMissing = null; render(); }
+  else {
+    // Never fail silently onto the placeholder (build .73): say why,
+    // in plain words, and pull a fresh listing in case the tree was
+    // stale.
+    vaultMsg = "That note couldn't be opened — “" + path + "” isn't in the vault listing. The tree has been refreshed; if it still isn't there, it was moved or deleted outside the app.";
+    vaultRefresh();
+    if (view === "Vault") render();
+  }
+}
+// One move path for drag-and-drop and the Move picker alike
+// (build .73): refuses in plain words when the note isn't in the
+// listing, expands the destination, selects the moved note, and
+// confirms where it went.
+function vaultDoMove(from, folder) {
+  if (!vaultState || !vaultState.notes.some(function (n) { return n.path === from; })) {
+    vaultMsg = "That note couldn't be moved — it isn't in the vault listing. The tree has been refreshed.";
+    vaultRefresh();
+    if (view === "Vault") render();
+    return;
+  }
+  var base = from.split("/").pop();
+  var to = (folder ? folder + "/" : "") + base;
+  if (to === from) { vaultMsg = "“" + base + "” is already in " + (folder || "the vault root") + " — nothing moved."; render(); return; }
+  if (folder) vaultCollapsed[folder] = false;
+  vaultSel = to;
+  vaultMovePath = null;
+  vaultApply("move", { from: from, to: to }, function (j) { if (!j || j.ok !== false) { vaultMsg = "Moved “" + base + "” to " + (folder || "the vault root") + "."; render(); } });
+}
+function vaultOpenWiki(title) {
+  var hit = vaultState && vaultState.notes.filter(function (n) { return n.title.toLowerCase() === String(title).toLowerCase(); })[0];
+  if (hit) vaultOpenPath(hit.path);
+  else { vaultMissing = title; render(); }
+}
+function vaultImportFiles(files, folder) {
+  Array.prototype.forEach.call(files, function (f) {
+    if (!/\.(md|markdown|txt)$/i.test(f.name)) { vaultMsg = "“" + f.name + "” isn't a text or markdown file — the vault only imports .md, .markdown, or .txt files; nothing was imported from it."; render(); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var name = f.name.replace(/\.(markdown|txt)$/i, ".md");
+      var path = (folder ? folder + "/" : "") + name;
+      var n = 2; var base = path;
+      while (vaultState && vaultState.notes.some(function (x) { return x.path === path; })) { path = base.replace(/\.md$/i, " " + n + ".md"); n++; }
+      vaultSel = path;
+      vaultApply("save", { path: path, content: String(reader.result || "") }, function () { vaultMsg = "Imported " + f.name + " as " + path + "."; });
+    };
+    reader.readAsText(f);
+  });
+}
+
+function stripLeadH1(md, rel) {
+  // The Updater panel's header already names the release, so a
+  // leading H1 that merely repeats it is skipped (build .72,
+  // issue #53); the rest of the notes render faithfully.
+  var t = String(md || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  var lines = t.split("\n"); var i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  var m = /^#\s+(.*)$/.exec((lines[i] || "").trim());
+  if (m) {
+    var h = m[1].toLowerCase();
+    var name = String((rel && (rel.releaseName || rel.latest)) || "").toLowerCase().replace(/^v/, "");
+    if (!name || h.indexOf(name) !== -1 || h.indexOf("apex") !== -1) { lines.splice(0, i + 1); return lines.join("\n").replace(/^\n+/, ""); }
+  }
+  return t;
+}
 // Navi speaks markdown; chat renders it, the Docs and README
 // previews render through the same function. Full markdown
 // (build .70, issue #51): fenced code becomes a real code block
@@ -1928,6 +2262,7 @@ function highlightSh(code) {
 // same here as it does on the GitHub wiki. Input is escaped
 // first; the transforms only ever emit the tags below.
 function mdInline(s) {
+  s = s.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, function (m, t, _p, label) { return "<a href='#' data-wikilink='" + t + "'>" + (label || t) + "</a>"; });
   s = s.replace(/`([^`\n]+)`/g, "<code class='ic'>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   s = s.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
@@ -1935,6 +2270,11 @@ function mdInline(s) {
   return s;
 }
 function mdToHtml(text) {
+  // Line endings normalize at the door (build .72, issue #53):
+  // GitHub release bodies arrive CRLF, and a trailing CR broke
+  // heading matches — headings rendered as literal text while
+  // lists survived. Every source renders the same now.
+  text = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   var lines = String(text).split("\n"), out = [], i = 0, para = [];
   function flush() { if (para.length) { out.push("<p>" + mdInline(esc(para.join(" "))) + "</p>"); para = []; } }
   while (i < lines.length) {
@@ -1963,8 +2303,8 @@ function mdToHtml(text) {
       out.push("<div class='md-twrap'><table class='md-t'><thead><tr>" + thHtml + "</tr></thead><tbody>" + trHtml + "</tbody></table></div>");
       continue;
     }
-    var hd = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (hd) { flush(); var lvl = hd[1].length + 3; out.push("<h" + lvl + " class='md-h'>" + mdInline(esc(hd[2])) + "</h" + lvl + ">"); i++; continue; }
+    var hd = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (hd) { flush(); var lvl = Math.min(6, hd[1].length + 3); out.push("<h" + lvl + " class='md-h'>" + mdInline(esc(hd[2])) + "</h" + lvl + ">"); i++; continue; }
     if (/^\s*[-*]\s+/.test(line)) {
       flush(); var items = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push("<li>" + mdInline(esc(lines[i].replace(/^\s*[-*]\s+/, ""))) + "</li>"); i++; }
@@ -2122,6 +2462,20 @@ var DOC_PAGES = [
   "<li>the documents under <span class='mono'>documents/</span>, and</li>" +
   "<li><span class='mono'>index.json</span> — the built index, shipped as the pack's reference copy.</li></ul>" +
   "<p>Install downloads the documents (Markdown, text, and PDF files anywhere in the repo) and builds the index fresh on that machine. A release with a bigger tag offers everyone an update.</p></div>" },
+  { id: "vault", title: "The Vault", related: ["rag", "settings"], html:
+    "<div class='doc-sec'><h4>A shared desk of plain markdown</h4>" +
+  "<p>The <b>Vault</b> is a folder of markdown notes you and Navi share — her desk, open to you. It lives at <span class='mono'>config/vault/</span> inside the install folder: ordinary <span class='mono'>.md</span> files in ordinary folders, no database, no proprietary format.</p>" +
+  "<p><b>Obsidian compatible, by construction:</b></p><ul>" +
+  "<li>Open <span class='mono'>config/vault/</span> in Obsidian as a vault and everything just works — the same files, both ways.</li>" +
+  "<li>YAML frontmatter is preserved exactly as written; the editor shows it raw and the preview never mangles it.</li>" +
+  "<li><span class='mono'>[[wikilinks]]</span> and <span class='mono'>#tags</span> are first-class text: clicking a wikilink in Preview jumps to that note, or offers to create it.</li></ul></div>" +
+    "<div class='doc-sec'><h4>Working in it, and how Navi uses it</h4>" +
+  "<p><b>In the Vault view:</b></p><ol>" +
+  "<li>The file tree sits on the right, Obsidian-style, and carries New note, New folder, Rename, Delete (with a confirm), and Move. Drag a note onto a folder header — targets light up while you drag, and a drop anywhere else changes nothing — or use the note's Move button and pick the folder, which is how it works by touch. Drop markdown files from your computer onto the vault to import them — other file types are refused in plain words.</li>" +
+  "<li>The editor autosaves as you type and says when it saved; Edit, Split, and Preview modes sit on one toggle, rendered by the same markdown renderer as chat and these Docs.</li>" +
+  "<li>The side panel shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
+  "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
+  "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -2131,11 +2485,48 @@ var DOC_PAGES = [
   "<li><b>Kokoro</b> — an 82M-parameter voice model, Apache-2.0 — speaks the answer back, sentence by sentence as it arrives, so she starts talking before she's finished thinking.</li></ol>" +
   "<p><b>Piper</b> is the lighter fallback engine. Nothing you say is recorded anywhere but this machine.</p>" +
   "<p>The <b>Voice tab</b> holds the pipeline and the call itself — her settings (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>) live in <b>Settings → Voice</b>: a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
+  { id: "dhd", title: "DHD — Apex from anywhere", related: ["settings", "installing", "troubleshooting"], html:
+    "<div class='doc-sec'><h4>What DHD is</h4>" +
+  "<p><b>DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
+  "<p>Everything is Apex's own work, assembled and managed by Apex itself — no Tailscale, no tunnel or proxy service, no Certbot:</p><ul>" +
+  "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
+  "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
+  "<li>The <b>same access code</b> as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
+  "<p>DHD has its own page in the menu (after the Vault, before the Updater), and the status column's <b>Servers</b> group shows it beside Llamafile and Apex Node [local], each row with its own pulsing dot and its own dropdown of details. The Apex Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+    "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
+  "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
+  "<li>Flip the <b>master switch</b>. That is the click.</li>" +
+  "<li>Apex does the rest in order: it generates the certificate, brings its proxy up on 80/443 in front of the bridge, and runs a local reachability check — the proxy must answer on 443 from this machine (answered on this machine; the local half only). The page then reports the live state, the LAN address under its own label, and the public address when there is one.</li>" +
+  "<li>Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the <b>access code</b> (shown on the DHD page, on this machine only), and you are in — a full session, Updater included: a remote session can run the one-click update end to end, exactly like sitting at the machine.</li></ol>" +
+  "<p>If a step fails, the page names the step in plain words — the proxy could not take its ports, the certificate could not be prepared, the self-check did not answer — and the previous state is left completely untouched. Nothing ever half-opens. One Linux note: ports below 1024 are reserved, so if the proxy step names them, grant the bridge the low-port capability once (<span class='mono'>sudo setcap 'cap_net_bind_service=+ep'</span> on the python3 binary it runs with) and flip the switch again.</p></div>" +
+    "<div class='doc-sec'><h4>Addresses — domain, public IP, and LAN</h4>" +
+  "<p>DHD works with <b>three different addresses</b>, and the page never mixes them up:</p><ul>" +
+  "<li><b>Your domain</b> — the public address once it is live: set an <b>A record</b> for the name at your DNS host pointing at your home's public IP, forward <b>443 and 80</b> on your router to this machine, and Apex's ACME client issues the name's real certificate. Only then — name resolving to this machine, certificate live — does Apex say <b>outside reach verified</b>, and only then does the status dropdown say from anywhere.</li>" +
+  "<li><b>Your public IP (WAN)</b> — the address the internet sees for your home, detected with a small HTTPS echo lookup (cached; it never blocks anything). With no domain this is the public address shown, marked <b>outside reach unverified</b>: Apex cannot prove your router forwards reach it until the path is proven. If the detected address is itself private or a carrier-NAT address (100.64.0.0/10), the page says plainly that this machine sits <b>behind another router/NAT</b>. If detection fails, the page says it <b>could not detect</b> the address — never a guess.</li>" +
+  "<li><b>Your LAN address</b> — an address like <span class='mono'>192.168.1.x</span>. It works <b>only on this network</b> and lives in its own labeled home: <b>On this network (LAN)</b>. It is never shown under a public label.</li></ul>" +
+  "<p><b>What the state lines mean.</b> <i>On — listening, outside reach unverified</i> means the proxy is up on this machine but the outside path is not proven; the page names the next step (forward 443 + 80 on the router to this machine, or add your domain). The ladder's last step is a <b>local check</b> — answered on this machine — and is labeled that way. <b>Reachable anywhere</b> appears only for a verified domain setup. And when the listener on 80/443 is Apex's own proxy, the availability rows read <b>In use by Apex's DHD proxy — this door working</b>: a healthy state, never a port problem.</p></div>" +
+    "<div class='doc-sec'><h4>Prerequisites, installs, and operation cards</h4>" +
+  "<p><b>The prerequisites ship with Apex.</b> Everything the DHD stack needs — the OpenSSL binary, a writable certificate home under <span class='mono'>config/dhd/</span>, the proxy component (part of the bridge itself) — is installed by the normal Apex installer, on every distro family, whether or not DHD is ever turned on. An update installs them too: the Updater runs the full installer, and its step ladder and update log show <b>DHD prerequisites</b> as its own named step. The added weight is small: OpenSSL is a roughly 1 MB package usually already present (when present, the step costs milliseconds and downloads nothing), the certificate home is one empty directory, and the low-port capability grant is file metadata. And the certificate home is on the installer's keep-list: a <span class='mono'>--fresh</span> reinstall preserves <span class='mono'>config/dhd/</span>, so a real certificate is never wiped and forced to re-issue.</p>" +
+  "<p><b>The safety net.</b> If a prerequisite later goes missing, the DHD page lists it under <b>Prerequisites</b> and the enable offers an <b>Install</b> action right there: one click installs the missing piece through the same distro-aware machinery the installer uses, shows progress on the operation card, and continues the enable on its own. A missing dependency is never a dead-end refusal.</p>" +
+  "<p><b>When a fix has to be yours, the commands are exact.</b> If an install fails, or any ladder step has a manual remedy, the failure state shows the literal command lines — complete and correct for your detected distro family — in one copyable block with a <b>Copy commands</b> button, ready to paste into Apex chat (CLI mode runs them) or a terminal.</p>" +
+  "<p><b>Operations live in chat as cards.</b> Ask in chat to turn DHD on and the thread shows a live operation card — prerequisites, certificate, proxy, reachability — each step marked as it goes, output expandable inline, exact commands inline on failure. The card is driven entirely by the bridge's deterministic step state: <b>no model generation happens while an operation runs</b>. The finished card stays in the thread as the record, the DHD page shows the same operation, and nothing on a card depends on opening an external file or handler.</p></div>" +
+    "<div class='doc-sec'><h4>The parts you may still handle by hand</h4>" +
+  "<p>One click covers everything on the machine. Two things live outside it, in your router and your domain, and they are yours:</p><ul>" +
+  "<li><b>Router port forwarding.</b> Forward ports <b>80</b> and <b>443</b> (TCP) on your router to the machine Apex runs on. Without the forward, the internet cannot reach the proxy at all, and in domain mode port 80 is also how the certificate proof arrives — the DHD page will tell you plainly: port 80 isn't reaching this machine — check the router forward.</li>" +
+  "<li><b>Pointing your domain here.</b> At your domain's DNS host, set an <b>A record</b> for the name (for example <span class='mono'>apex.example.com</span>) to your home's public IP address. <b>Dynamic IP caveat:</b> most home connections change address from time to time; when yours does, the name stops resolving here until the record follows. A dynamic-DNS hostname avoids the manual step — you can put a DDNS name in the domain field just as well.</li></ul>" +
+  "<p>The domain is <b>optional and addable at any time</b>: leave the field empty as long as you like. Adding one later changes nothing about the door except its certificate — the page holds the domain as certificate pending until the ACME step completes, and the self-signed door keeps answering meanwhile.</p></div>" +
+    "<div class='doc-sec'><h4>Certificates — the warning, the real one, and renewal</h4>" +
+  "<p><b>The self-signed warning is expected.</b> Until a domain is added, Apex serves a certificate it signed itself. Your browser cannot verify a self-signed certificate with any public authority, so it warns. That warning means no authority vouches for this certificate, not that the connection is unencrypted: the traffic is still TLS-encrypted, and the access code is still the door's lock. It is the normal state of a no-domain DHD.</p>" +
+  "<p><b>With a domain, the warning goes away.</b> Apex's built-in ACME client talks to Let's Encrypt directly: it places an order, proves you control the domain by serving the HTTP-01 challenge through its own proxy on port 80, finalizes, downloads the certificate, installs it, and reloads the proxy. No Certbot, no external ACME tool.</p>" +
+  "<p><b>Renewal is automatic.</b> Let's Encrypt certificates live 90 days. Apex checks the expiry when the bridge starts and once a day after that, and renews on its own when 30 days or fewer remain — same ACME flow, no operator action. The DHD page always shows the current expiry.</p></div>" +
+    "<div class='doc-sec'><h4>Turning it off</h4>" +
+  "<p>Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.</p>" +
+  "<p>Turning DHD off does not touch Apex Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.</p></div>" },
   { id: "settings", title: "Settings & persona", related: ["installing", "voice", "github"], html:
     "<div class='doc-sec'><h4>Her persona — Soul and Memory</h4>" +
   "<p>Navi's personality is two documents in <span class='mono'>config/</span>: <span class='mono'>soul.md</span> (who she is) and <span class='mono'>memory.md</span> (what she carries). The bridge builds her system prompt from them on every chat. Both are editable in Settings, along with what she calls you. Nothing overwrites them once they exist: updates, reinstalls, and even a --fresh install stash and restore them, along with her installed chips and the llamafile. Only a first install creates them fresh.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p><b>Memory</b> holds local memory entries and the known chats. <b>RAG</b> holds her knowledge packs (the section above). The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<p><b>Memory</b> holds local memory entries and the known chats. <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
   "<li><b>Operator &amp; Persona</b> — what she calls you, and the Soul and Memory editors.</li>" +
   "<li><b>Appearance</b> — the theme picker.</li>" +
   "<li><b>Voice</b> — her voice settings.</li>" +
@@ -2156,8 +2547,8 @@ var DOC_PAGES = [
   "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li></ul>" +
   "<p>Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
   "<p><b>Hardware profile.</b> Settings' System tab shows the profile the installer made of your machine: what it detected (the CPU and its core count, how much memory, the graphics chip — separate or built in, and its memory), and the settings it chose from that — threads, context size, batch size, and graphics layers. Her settings are picked from <i>your</i> machine at install, never copied from the developer's: a modest laptop gets the proven gentle numbers, a strong machine gets more room. Type your own numbers to override them, or press <b>Re-detect</b> to profile the machine again and return to the automatic choice. The installer writes what it found and why it chose it to <span class='mono'>hardware-profile.log</span> in the install folder.</p></div>" +
-    "<div class='doc-sec'><h4>Local server — Apex on your phone or tablet</h4>" +
-  "<p>Settings' System tab also holds the <b>Local server</b> toggle. It is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>local network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
+    "<div class='doc-sec'><h4>Apex Node — Apex on your phone or tablet</h4>" +
+  "<p>The <b>DHD page</b> holds the <b>Apex Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
   "<p>If a restart ever fails, the row says so in plain words: it names the step that failed (the old bridge would not stop, the new bridge did not answer, or the answering bridge's bind does not match your choice), states the state that is <b>actually live</b> — the old bridge keeps serving its old setting, untouched, until a new one is confirmed — and offers the fallbacks: press <b>Restart bridge</b> to try again, or quit Apex fully and relaunch. A restart never leaves a half-state behind.</p>" +
   "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits is asked for the code once; its browser is remembered after that. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: every phone let in with the old one is shut out and will be asked again.</p>" +
   "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. The code is the only lock on that door. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
@@ -2202,7 +2593,7 @@ var DOC_PAGES = [
   "<li>It also offers her voice, and sets up the tool that builds her window, the same way — say no and she still works; she just cannot talk out loud yet.</li>" +
   "<li>It looks at your machine — the processor and its cores, how much memory, the graphics chip — and picks her thinking settings to fit it: how many threads, how big a context, how much she reads at once, and whether the graphics chip helps. A modest machine gets the gentle, proven numbers; a strong one gets more. It writes what it found and why into <span class='mono'>hardware-profile.log</span>, and you can see or change the result later in Settings.</li>" +
   "<li>Open <b>Apex</b> from your app menu. Her own window opens — no web browser. That window is the app.</li></ol>" +
-  "<p>On Linux she installs into <span class='mono'>/opt/navi-apex</span>. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
+  "<p>On Linux she installs into <span class='mono'>/opt/navi-apex</span>. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, the Vault, the DHD certificate home (<span class='mono'>config/dhd/</span> — a real certificate there is never wiped by a reinstall), her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
   "<p><b>One installer, every major Linux family.</b> The installer reads your distro from <span class='mono'>/etc/os-release</span> and says out loud which family it found. Only its dependency step changes with the family — the same development libraries and base tools, under each family's own package names:</p><ul>" +
   "<li><b>Debian family</b> (Debian, Ubuntu, Pop!_OS, Mint and their kin) — installed with <span class='mono'>apt</span>.</li>" +
   "<li><b>Fedora</b> and Fedora-based distros — installed with <span class='mono'>dnf</span>.</li>" +
@@ -2210,11 +2601,11 @@ var DOC_PAGES = [
   "<li><b>Bazzite</b> — Fedora-based but immutable, so it is its own case (below).</li></ul>" +
   "<p>Everything else — profiling your machine, the model download, what an update keeps, the startup choice — is the same on every family. On <b>Bazzite</b> the installer never layers packages onto the system with <span class='mono'>rpm-ostree</span> and never asks for a reboot: her window is built inside a Fedora <b>distrobox</b> when you have one, and when you don't, the window build is skipped — in plain words, during the install — and you get the complete core install: the bridge and the dashboard, which <span class='mono'>start.sh</span> opens in your browser. Create a Fedora distrobox later and re-run the installer to add the window. And if your distro isn't one the installer recognizes, it says so, guesses no package manager, installs everything it can user-space, and completes the core install just the same.</p>" +
   "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
-  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the status column lights up <b>New Version Available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.3a → v0.1.4a</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
-  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and optionally a build status after it — like <span class='mono'>0.1.4 alpha</span>, which is what the current release carries (the status word can be <span class='mono'>alpha</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means stable). It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release, and the dashboard shows it at the bottom of the side menu (under a divider, in the lower-left corner) as <b>Ver. + number + a one-letter status tag</b> — alpha wears <span class='mono'>a</span>, beta wears <span class='mono'>b</span>, stable wears none, the same letter style Python's PEP 440 versioning uses. So this alpha reads <b>Ver. 0.1.4a</b> and a stable build reads <b>Ver. 0.1.4</b>. With the side menu collapsed to its icon rail, the footer narrows with it: just the number and its tag, centered, in the same status color — the full <b>Ver.</b> form returns when the menu opens again. The number-and-tag is colored by status in every theme: red for alpha, yellow for beta, blue for stable (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's UPDATER element carries no number — it reads <b>Not checked yet</b> until the first real check runs, <b>Up to date</b> once one has run clean, the plain words <b>Couldn't check for updates</b> when GitHub couldn't be reached, and it switches to a lit <b>New Version Available</b> warning when a check finds a newer one. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
+  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.4a → v0.1.5a</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
+  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and optionally a build status after it — like <span class='mono'>0.1.5 alpha</span>, which is what the current release carries (the status word can be <span class='mono'>alpha</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means stable). It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release, and the dashboard shows it at the bottom of the side menu (under a divider, in the lower-left corner) as <b>Ver. + number + a one-letter status tag</b> — alpha wears <span class='mono'>a</span>, beta wears <span class='mono'>b</span>, stable wears none, the same letter style Python's PEP 440 versioning uses. So this alpha reads <b>Ver. 0.1.5a</b> and a stable build reads <b>Ver. 0.1.5</b>. With the side menu collapsed to its icon rail, the footer narrows with it: just the number and its tag, centered, in the same status color — the full <b>Ver.</b> form returns when the menu opens again. The number-and-tag is colored by status in every theme: red for alpha, yellow for beta, blue for stable (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
-  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open Settings → System and turn on <b>Local server</b> — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
+  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
   "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still running after a reinstall. Quit the app fully and relaunch.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
@@ -2323,7 +2714,10 @@ function liveChat(text, speak) {
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model" }; });
+    .then(function (j) { vaultLoadedAt = 0; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null }; });
+}
+function isDhdChatIntent(text) {
+  return /dhd/i.test(text || "") && /(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)/i.test(text || "") && !/^s*(how|what|why|explain)/i.test(text || "");
 }
 function liveShell(cmd) {
   return fetch("/api/shell", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: cmd, sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
@@ -2701,7 +3095,7 @@ function cyclePresence() {
 setTimeout(cyclePresence, 120000 + Math.random() * 120000);
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 function renderLlama() {
-  var h = "<div class='stat'><span class='dot' style='background:" + (llama.status === "running" ? "#34d399" : "#f87171") + "'></span><span style='color:var(--dim)'>LLAMAFILE</span><br>";
+  var h = "<div class='stat'><span class='dot" + (llama.status === "running" ? " pdot" : "") + "' style='background:" + (llama.status === "running" ? "#34d399" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>LLAMAFILE</span><br>";
   if (llama.status === "running") {
     h += "<span class='mono' style='color:#34d399;font-weight:700'>Running</span><details style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Server details</summary><div style='margin-top:2px'><div style='color:var(--text);font-size:12px;font-weight:700'>Local Llamafile Server</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:8080</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Apex Web UI</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:" + BRIDGE_PORT + "</div></div></details><button class='ghost' id='llama-disc' style='margin-top:6px'>Disconnect</button>";
   } else {
@@ -2741,7 +3135,7 @@ function renderLocalNetwork() {
   var hasCode = !!(ps.accessCode);
   var dot = pending ? "#f5b544" : live ? "#34d399" : "#9fb3c8";
   var stateText = pending ? "Switching\u2026" : live ? "On your network" : "This machine only";
-  var h = "<div class='stat'><span class='dot' style='background:" + dot + "'></span><span style='color:var(--dim)'>LOCAL NETWORK ACCESS</span><br>" +
+  var h = "<div class='stat'><span class='dot' style='background:" + dot + "'></span><span style='color:var(--dim)'>APEX NODE</span> <span style='border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px;color:var(--dim)'>[local]</span><br>" +
     "<span class='v mono' style='font-weight:700'>" + esc(stateText) + "</span>" +
     "<details id='local-net-details'" + (localNetOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Access details</summary><div style='margin-top:6px'>";
   if (live) {
@@ -2752,15 +3146,438 @@ function renderLocalNetwork() {
     if (hasCode) {
       h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>ACCESS CODE</div>" +
         "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:6px 10px;font-weight:700;letter-spacing:.2em'>" + esc(ps.accessCode) + "</span>" +
-        "<button class='ghost' id='local-net-copy-code' aria-label='Copy the Local server access code' style='min-height:40px'>" + (localNetCopied === "code" ? "Copied" : "Copy code") + "</button></div>";
+        "<button class='ghost' id='local-net-copy-code' aria-label='Copy the Apex Node access code' style='min-height:40px'>" + (localNetCopied === "code" ? "Copied" : "Copy code") + "</button></div>";
     }
   } else {
-    h += "<div style='color:var(--dim);font-size:12px'>Local network hosting is off. To enable it, check the Settings menu under System and turn on Local server.</div>";
+    h += "<div style='color:var(--dim);font-size:12px'>Apex Node is off. Its controls live on the DHD page, under the DHD options.</div>";
   }
-  h += "<button class='ghost' id='local-net-settings' aria-label='Open Settings System for the Local server toggle and Regenerate' style='margin-top:8px;display:block;width:100%;text-align:center;font-weight:700;min-height:40px'>Settings \u2192 System</button>" +
-    (live ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The Local server toggle and Regenerate live there.</div>" : "") +
+  h += "<button class='ghost' id='local-net-settings' aria-label='Open the DHD page for the Apex Node toggle and Regenerate' style='margin-top:8px;display:block;width:100%;text-align:center;font-weight:700;min-height:40px'>Open DHD page</button>" +
+    (live ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The Apex Node toggle and Regenerate live there.</div>" : "") +
     "</div></details></div>";
   return h;
+}
+function commandBlockHtml(commands, label) {
+  if (!commands || !commands.length) return "";
+  var text = commands.join("\n");
+  return "<div style='margin-top:8px'><div style='color:var(--dim);font-size:12px'>" + esc(label || "Manual commands — paste into Apex chat (CLI mode) or a terminal") + "</div>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>" + esc(text) + "</pre>" +
+    "<button type='button' class='ghost cmd-copy' data-copy=\"" + encodeURIComponent(text) + "\" aria-label='Copy the manual commands' style='min-height:40px'>Copy commands</button></div>";
+}
+function wireCommandBlocks(root) {
+  var scope = root || document;
+  var buttons = scope.querySelectorAll ? scope.querySelectorAll(".cmd-copy") : [];
+  buttons.forEach(function (b) {
+    if (b.dataset.wired) return;
+    b.dataset.wired = "1";
+    b.onclick = function () {
+      var text = decodeURIComponent(b.getAttribute("data-copy") || "");
+      var done = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy commands"; }, 1800); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(function () { done(); });
+      else {
+        var ta = document.createElement("textarea");
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+    };
+  });
+}
+function operationCardHtml(op) {
+  if (!op) return "";
+  var icons = { done: ["✓", "var(--green)"], running: ["●", "var(--cy)"], waiting: ["◐", "#f5b544"], failed: ["✕", "#f87171"], pending: ["○", "var(--dim)"] };
+  var h = "<section class='card op-card' data-op-id='" + esc(op.id) + "' aria-label='" + esc(op.title || "Operation") + "' style='margin-top:8px'><b>" + esc(op.title || "Operation") + "</b>";
+  h += "<div style='color:var(--dim);font-size:12px;margin-top:2px'>" + (op.state === "done" ? "Complete" : op.state === "failed" ? "Failed" : op.state === "waiting" ? "Waiting for an action" : "Working") + (op.detail ? " — " + esc(op.detail) : "") + "</div>";
+  (op.steps || []).forEach(function (s) {
+    var ic = icons[s.state] || icons.pending;
+    h += "<div style='display:flex;gap:8px;margin-top:8px;align-items:flex-start'><span aria-hidden='true' style='color:" + ic[1] + ";font-weight:700;line-height:1.4'>" + ic[0] + "</span><div style='min-width:0;flex:1'><b style='font-size:13px'>" + esc(s.name) + "</b>";
+    if (s.detail) h += "<div style='color:var(--dim);font-size:12px'>" + esc(s.detail) + "</div>";
+    if (s.output) h += "<details style='margin-top:4px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Step output</summary><pre class='exec mono' style='margin-top:6px;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>" + esc(s.output) + "</pre></details>";
+    if (s.commands && s.commands.length && (s.state === "failed" || s.state === "waiting")) h += commandBlockHtml(s.commands);
+    if (s.id === "prerequisites" && s.state === "waiting") h += "<button type='button' class='act' data-op-install='" + esc(op.id) + "' aria-label='Install the missing DHD prerequisites' style='min-height:44px;margin-top:8px'>Install missing prerequisites</button>";
+    h += "</div></div>";
+  });
+  return h + "</section>";
+}
+function wireOperationCards(root) {
+  wireCommandBlocks(root);
+  var scope = root || document;
+  if (!scope.querySelectorAll) return;
+  scope.querySelectorAll("[data-op-install]").forEach(function (b) {
+    if (b.dataset.wired) return;
+    b.dataset.wired = "1";
+    b.onclick = function () {
+      b.disabled = true; b.textContent = "Installing…";
+      fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.dhd) dhdState = j.dhd;
+          if (j && !j.ok) {
+            // The waiting operation is released as failed by the
+            // bridge and its card repaints with commands; refresh
+            // once more so the failure is what stays in view.
+          }
+          refreshOperation(b.getAttribute("data-op-install"));
+        })
+        .catch(function () { b.disabled = false; b.textContent = "Install missing prerequisites"; });
+    };
+  });
+}
+function refreshOperation(opId) {
+  if (!opId || CONFIG.backend !== "live") return;
+  fetch("/api/operations/" + encodeURIComponent(opId))
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j || !j.operation) return;
+      var op = j.operation;
+      if (dhdOperation && dhdOperation.id === opId) dhdOperation = op;
+      messages.forEach(function (m) { if (m.operation && m.operation.id === opId) m.operation = op; });
+      persist();
+      document.querySelectorAll("[data-op-id='" + opId + "']").forEach(function (el) {
+        var tmp = document.createElement("div");
+        tmp.innerHTML = operationCardHtml(op);
+        var fresh = tmp.firstElementChild;
+        if (fresh) { el.replaceWith(fresh); wireOperationCards(fresh); }
+      });
+      if (view === "DHD" && dhdOperation && dhdOperation.id === opId && op.state !== "running" && op.state !== "waiting") {
+        fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) { if (s && s.dhd) { dhdState = s.dhd; dhdMsg = op.detail || ""; } render(); }).catch(function () { render(); });
+        return;
+      }
+      if (op.state === "running" || op.state === "waiting") {
+        if (opPollTimers[opId]) clearTimeout(opPollTimers[opId]);
+        opPollTimers[opId] = setTimeout(function () { refreshOperation(opId); }, 800);
+      }
+    })
+    .catch(function () {
+      if (opPollTimers[opId]) clearTimeout(opPollTimers[opId]);
+      opPollTimers[opId] = setTimeout(function () { refreshOperation(opId); }, 1500);
+    });
+}
+function watchOperation(opId) {
+  if (!opId) return;
+  if (opPollTimers[opId]) clearTimeout(opPollTimers[opId]);
+  opPollTimers[opId] = setTimeout(function () { refreshOperation(opId); }, 350);
+}
+function dhdPrereqCardHtml(d) {
+  var p = d.prereqs;
+  if (!p || !p.items) return "";
+  var missing = p.items.filter(function (i) { return !i.ok; });
+  var h = "<div class='card'><b>Prerequisites</b><p style='color:var(--dim)'>Installed with Apex on " + esc(p.label || "this machine") + " and checked again here. If a piece is ever removed, Apex can install it in this flow and then continue.</p>";
+  p.items.forEach(function (i) {
+    h += "<div style='display:flex;gap:8px;margin-top:7px;align-items:flex-start'><span class='dot' style='background:" + (i.ok ? "#34d399" : "#f5b544") + ";margin-top:5px'></span><div style='min-width:0'><b style='font-size:13px'>" + esc(i.name) + "</b><div style='color:var(--dim);font-size:12px'>" + esc(i.detail) + "</div>";
+    if (!i.ok) h += commandBlockHtml(i.commands, i.installable ? "If the install does not work, run these exact commands" : "Manual remedy — exact commands for this machine");
+    h += "</div></div>";
+  });
+  if (missing.some(function (i) { return i.installable; })) h += "<button class='act' id='dhd-install' aria-label='Install the missing DHD prerequisites' style='min-height:44px;margin-top:10px'>Install missing prerequisites</button>";
+  var op = dhdOperation || d.lastOperation;
+  if (op) { dhdOperation = op; h += operationCardHtml(op); }
+  return h + "</div>";
+}
+function apexNodeCardHtml() {
+  // Apex Node (the home-network door; display name decided
+  // 2026-11-08): its controls live on the DHD page, under the
+  // DHD options - Settings keeps only a pointer. Same config
+  // keys, same API paths, same fluid bridge-restart activation
+  // as the control always had; only the home moved.
+  var h = "";
+      var ps = publicState || CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
+      var rst = ps.restart || { status: "idle", step: "", message: "" };
+      // Build .65: the row's live claim follows the same rule as
+      // the status column's section — a last-known report from a
+      // bridge that has stopped answering never reads as live.
+      var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
+      h += "<div class='card'><h3>Apex Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>";
+      h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
+      h += "<p style='color:var(--am)'><b>Warning:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. Share the code like a house key.</p>";
+      h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Apex Node toggle'>" + (ps.enabled ? "Apex Node: On" : "Apex Node: Off") + "</button></p>";
+      h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
+      if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
+      else if (rst.status === "failed") h += "<br><span style='color:#f87171'><b>Restart failed — step: " + esc(rst.step === "stop" ? "stopping the old bridge" : rst.step === "verify" ? "checking the new bridge's bind" : "the new bridge answering") + ".</b> " + esc(rst.message || "") + "</span>";
+      else if (rst.status === "confirmed" && !ps.pending) h += "<br><span style='color:var(--green)'>" + esc(rst.message || "Live — the bridge that answers runs the saved choice.") + "</span>";
+      else if (ps.pending) h += "<br><span style='color:var(--am)'>The saved choice is not live yet — the running bridge still uses the old setting. Press Restart bridge and Apex applies it herself.</span>";
+      else h += "<br>The running bridge matches the saved choice.";
+      h += "</p>";
+      if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Apex Node choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
+      if (ps.enabled || rowLive) {
+        h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Apex Node access code'>Regenerate</button></p>";
+        h += "<p style='color:var(--dim)'>A phone visiting Apex is asked for this code once; its browser is remembered after that. Regenerating makes a new code and shuts out every phone the old one let in.</p>";
+        if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
+        h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
+      }
+      if (publicMsg) h += "<p style='color:var(--dim)'>" + esc(publicMsg) + "</p>";
+      h += "</div>";
+  return h;
+}
+function dhdHtml() {
+  var d = dhdViewState();
+  var ps = publicState || CONFIG.publicServer || { accessCode: "" };
+  var code = d.accessCode || ps.accessCode || "";
+  var modeLine = !d.active ? "Off" : d.mode === "domain" ? "Domain certificate (Let's Encrypt)" : "Self-signed certificate";
+  var h = "<h3>DHD - the way home</h3>";
+  h += "<p style='color:var(--dim);max-width:640px'>DHD takes the same Apex you use at home and gives it a public door: Apex itself stands up a reverse proxy with TLS on this machine - no Tailscale, no tunnel service, no Certbot - and you reach her from anywhere with one address and the access code. One click is the whole setup.</p>";
+  h += "<div class='card'><div class='row' style='justify-content:space-between'><b>DHD - public access <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[public]</span></b>" +
+    "<button class='ghost' id='dhd-toggle' role='switch' aria-checked='" + (d.enabled ? "true" : "false") + "' aria-label='DHD - public access to Apex from anywhere' style='min-width:64px;min-height:44px;font-weight:700;border-color:" + (d.enabled ? "var(--green)" : "var(--line)") + ";color:" + (d.enabled ? "var(--green)" : "var(--dim)") + "'>" + (d.enabled ? "ON" : "OFF") + "</button></div>" +
+    "<p class='mono' style='font-weight:700;color:" + (d.active ? "var(--green)" : "var(--text)") + "'>" + (d.active ? "On - " + modeLine : d.enabled ? "Saved on - bringing the door up..." : "Off") + "</p>";
+  if (dhdMsg) h += "<p style='color:var(--dim)'>" + esc(dhdMsg) + "</p>";
+  if (d.lastError) h += "<p style='color:#f5b544'>" + esc(d.lastError) + "</p>";
+  h += "<p><button class='ghost' id='dhd-docs' aria-label='Open the DHD documentation page' style='min-height:40px'>Read the DHD guide in Docs</button></p></div>";
+  h += dhdPrereqCardHtml(d);
+  h += "<div class='card'><b>Status</b><div class='mono' style='margin-top:8px;font-size:12px;line-height:1.9'>" +
+    "MODE<br><span style='color:var(--text);font-size:14px'>" + esc(modeLine) + "</span><br>" +
+    "PUBLIC ADDRESS<br>" + (d.publicVerified && d.publicUrl ? "<span style='color:var(--cy);font-size:14px;word-break:break-all'>" + esc(d.publicUrl) + "</span> <span style='color:var(--green);font-size:12px'>- outside reach verified</span>" : d.publicUrl ? "<span style='color:var(--cy);font-size:14px;word-break:break-all'>" + esc(d.publicUrl) + "</span> <span style='color:var(--am);font-size:12px'>- outside reach unverified</span>" : d.active ? "<span style='color:var(--text);font-size:14px'>No public address yet - the outside door is not set up</span>" : "<span style='color:var(--text);font-size:14px'>- DHD is off</span>") + "<br>" +
+    "ON THIS NETWORK (LAN)<br>" + (d.lanUrl ? "<span style='color:var(--cy);font-size:14px;word-break:break-all'>" + esc(d.lanUrl) + "</span> <span style='color:var(--dim);font-size:12px'>- works only on this network</span>" : "<span style='color:var(--text);font-size:14px'>-</span>") + "<br>" +
+    "OUTSIDE REACH<br><span style='color:var(--text);font-size:14px'>" + (d.publicVerified ? "Verified - the domain resolves to this machine and its certificate is live." : d.active ? "Unverified - " + esc(d.nextStep || "Forward ports 443 and 80 on your router to this machine, or add your domain.") + (d.wanNote ? " " + esc(d.wanNote) : "") : "-") + "</span><br>" +
+    "CERTIFICATE<br><span style='color:var(--text);font-size:14px'>" + (d.active ? (d.certPending ? "Domain saved - certificate pending (door answering on the self-signed certificate meanwhile)" : d.certExpiresAt ? "Expires " + esc(String(d.certExpiresAt).slice(0, 10)) + (d.certDaysLeft != null ? " - " + d.certDaysLeft + " days left" : "") + (d.mode === "domain" ? " - Apex renews it on its own at 30 days or less" : "") : "Self-signed, generated by Apex") : "-") + "</span><br>" +
+    "THE DOOR ITSELF<br><span style='color:var(--text);font-size:14px'>Proxy on 80/443, forwarding to the bridge on 127.0.0.1:" + BRIDGE_PORT + ". In DHD mode the bridge never binds publicly - the proxy is the only public face, and it serves nothing before the code.</span></div></div>";
+  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex Node and DHD use the same access code and the same acceptance cookie. It is shown only here, on the machine Apex runs on. Anyone who has the code can use Apex in full, from anywhere - share it like a house key. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
+    "<div class='row'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:8px 12px;font-weight:700;letter-spacing:.2em;font-size:16px'>" + (code ? (dhdCodeShown ? esc(code) : "••••-••••") : "No code yet - it is generated when a door first opens") + "</span>" +
+    "<button class='ghost' id='dhd-code-show' aria-label='" + (dhdCodeShown ? "Hide the access code" : "Show the access code") + "' style='min-height:40px'>" + (dhdCodeShown ? "Hide" : "Show") + "</button>" +
+    "<button class='ghost' id='dhd-code-regen' aria-label='Regenerate the access code - every accepted remote client is signed out' style='min-height:40px'>Regenerate</button></div>" +
+    "<p style='color:var(--dim);font-size:12px'>Regenerating signs out every accepted visitor at once - the cookie is a hash of the code.</p></div>";
+  h += "<div class='card'><b>Your domain - optional, any time</b><p style='color:var(--dim)'>DHD never needs a domain: without one it runs on the self-signed certificate and your browser shows a warning that is expected (the Docs page explains it). Add your own domain whenever you like and Apex obtains its real Let's Encrypt certificate with its own built-in ACME client - no Certbot - proving the domain over port 80, then renewing on its own. Your router still has to forward 80/443 to this machine; the guide walks through it.</p>" +
+    "<div class='row'><input class='grow' id='dhd-domain' type='text' placeholder='e.g. apex.example.com - blank is fine' aria-label='Custom domain for DHD' value='" + esc(d.domain || "") + "' style='min-height:44px'><button class='act' id='dhd-domain-save' aria-label='Save the DHD domain' style='min-height:44px'>Save domain</button></div>" +
+    (d.domain && d.certPending ? "<p style='margin-top:8px'><button class='act' id='dhd-cert' aria-label='Run the certificate step for the saved domain' style='min-height:40px'>Get " + esc(d.domain) + "'s certificate</button></p><p style='color:var(--dim);font-size:12px'>The certificate step: account key, order, HTTP-01 challenge served through the Apex proxy on port 80, finalize, install, proxy reloads with the real certificate.</p>" : "") +
+    "</div>";
+  if (CONFIG.backend !== "live") h += "<div class='card'>In mock mode this page is simulated - the live bridge runs the proxy, certificates, and ACME client for real.</div>";
+  h += apexNodeCardHtml();
+  return h;
+}
+function wireDhd() {
+  wireOperationCards(document);
+  wireApexNode();
+  if (dhdOperation && (dhdOperation.state === "running" || dhdOperation.state === "waiting")) watchOperation(dhdOperation.id);
+  var install = document.getElementById("dhd-install");
+  if (install) install.onclick = function () {
+    if (CONFIG.backend !== "live") { dhdMsg = "Simulated: prerequisites installed; the enable can continue."; render(); return; }
+    install.disabled = true; install.textContent = "Installing…";
+    fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.dhd) dhdState = j.dhd;
+        if (j && j.operation) { dhdOperation = j.operation; watchOperation(j.operation.id); }
+        dhdMsg = j && j.ok ? "Prerequisites installed and verified." : "A prerequisite install failed — its exact manual commands are in the Prerequisites card.";
+        render();
+      })
+      .catch(function () { dhdMsg = "The bridge did not answer."; render(); });
+  };
+  var t = document.getElementById("dhd-toggle");
+  if (t) t.onclick = function () {
+    var d = dhdViewState();
+    var next = !d.enabled;
+    if (CONFIG.backend !== "live") {
+      CONFIG.dhd = CONFIG.dhd || { enabled: false, active: false, domain: "", mode: "off", status: "off", publicUrl: "", lanIp: "", lanUrl: "", wanIp: "", wanState: "undetected", wanNote: "", publicVerified: false, outsideReach: "none", nextStep: "", domainResolvesHere: false, certExpiresAt: null, certDaysLeft: null, certPending: false, lastError: "" };
+      CONFIG.dhd.enabled = next;
+      CONFIG.dhd.active = next;
+      CONFIG.dhd.mode = next ? (CONFIG.dhd.domain ? "domain" : "self-signed") : "off";
+      CONFIG.dhd.status = next ? (CONFIG.dhd.domain && CONFIG.dhd.certPending ? "degraded" : "healthy") : "off";
+      CONFIG.dhd.domainResolvesHere = next && !!CONFIG.dhd.domain && !CONFIG.dhd.certPending;
+      CONFIG.dhd.publicVerified = next && CONFIG.dhd.mode === "domain" && CONFIG.dhd.domainResolvesHere;
+      CONFIG.dhd.lanIp = next ? "192.168.1.50" : "";
+      CONFIG.dhd.lanUrl = next ? "https://192.168.1.50" : "";
+      CONFIG.dhd.wanIp = next ? "192.0.2.44" : "";
+      CONFIG.dhd.wanState = next ? "public" : "undetected";
+      CONFIG.dhd.wanNote = "";
+      CONFIG.dhd.outsideReach = next ? (CONFIG.dhd.publicVerified ? "verified" : "unverified") : "none";
+      CONFIG.dhd.nextStep = next && !CONFIG.dhd.publicVerified ? "Forward ports 443 and 80 on your router to this machine, or add your domain - outside reach stays unverified until the public path is proven." : "";
+      CONFIG.dhd.publicUrl = next ? "https://" + (CONFIG.dhd.publicVerified ? CONFIG.dhd.domain : "192.0.2.44") : "";
+      dhdState = CONFIG.dhd;
+      dhdMsg = next ? "Simulated: the proxy answers on 443 and the local check passed (answered on this machine). Outside reach is shown separately in Status." : "DHD is off.";
+      render();
+      return;
+    }
+    fetch("/api/dhd/toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next, sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.dhd) dhdState = j.dhd;
+        if (next && j && j.operation) {
+          dhdOperation = j.operation;
+          dhdMsg = "Working — the operation card below is the live record.";
+          render();
+          watchOperation(j.operation.id);
+        } else {
+          dhdOperation = null;
+          dhdMsg = "DHD is off.";
+          render();
+        }
+      })
+      .catch(function () { dhdMsg = "The bridge did not answer - is it running?"; render(); });
+  };
+  var docs = document.getElementById("dhd-docs");
+  if (docs) docs.onclick = function () { docsPage = "dhd"; view = "Docs"; render(); };
+  var show = document.getElementById("dhd-code-show");
+  if (show) show.onclick = function () { dhdCodeShown = !dhdCodeShown; render(); };
+  var regen = document.getElementById("dhd-code-regen");
+  if (regen) regen.onclick = function () {
+    if (CONFIG.backend !== "live") { dhdMsg = "Simulated: the code is regenerated from Settings in mock mode."; render(); return; }
+    fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.publicServer) publicState = j.publicServer; dhdMsg = "New code saved - every visitor the old code let in is shut out and will be asked again."; render(); })
+      .catch(function () { dhdMsg = "The bridge did not answer."; render(); });
+  };
+  var save = document.getElementById("dhd-domain-save");
+  if (save) save.onclick = function () {
+    var inp = document.getElementById("dhd-domain");
+    var domain = inp ? inp.value.trim() : "";
+    if (CONFIG.backend !== "live") {
+      CONFIG.dhd = CONFIG.dhd || { enabled: false, active: false, domain: "", mode: "off", status: "off", publicUrl: "", lanIp: "", lanUrl: "", wanIp: "", wanState: "undetected", wanNote: "", publicVerified: false, outsideReach: "none", nextStep: "", domainResolvesHere: false, certExpiresAt: null, certDaysLeft: null, certPending: false, lastError: "" };
+      CONFIG.dhd.domain = domain;
+      if (CONFIG.dhd.active && domain) CONFIG.dhd.certPending = true;
+      dhdState = CONFIG.dhd;
+      dhdMsg = domain ? "Domain saved: " + domain + " (simulated)." : "Domain cleared (simulated).";
+      render();
+      return;
+    }
+    fetch("/api/dhd/domain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain: domain }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.dhd) dhdState = j.dhd; dhdMsg = domain ? "Domain saved: " + domain + ". Its certificate step runs in the background while the door keeps answering." : "Domain cleared."; render(); })
+      .catch(function () { dhdMsg = "The bridge did not answer."; render(); });
+  };
+  var cert = document.getElementById("dhd-cert");
+  if (cert) cert.onclick = function () {
+    if (CONFIG.backend !== "live") {
+      CONFIG.dhd.certPending = false; CONFIG.dhd.mode = "domain"; CONFIG.dhd.status = "healthy";
+      CONFIG.dhd.certExpiresAt = new Date(Date.now() + 90 * 86400000).toISOString(); CONFIG.dhd.certDaysLeft = 90;
+      dhdState = CONFIG.dhd; dhdMsg = "Simulated: certificate installed and the proxy reloaded with it."; render(); return;
+    }
+    dhdMsg = "Running the certificate step - order, challenge on port 80, finalize, install...";
+    render();
+    fetch("/api/dhd/cert", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.dhd) dhdState = j.dhd; dhdMsg = j && j.ok ? "Certificate installed - the proxy reloaded with the real certificate." : (dhdState && dhdState.lastError) || "The certificate step did not finish - see the status line."; render(); })
+      .catch(function () { dhdMsg = "The bridge did not answer."; render(); });
+  };
+}
+function dhdViewState() {
+  return dhdState || CONFIG.dhd || { enabled: false, active: false, domain: "", mode: "off", status: "off", publicUrl: "", lanIp: "", lanUrl: "", wanIp: "", wanState: "undetected", wanNote: "", publicVerified: false, outsideReach: "none", nextStep: "", domainResolvesHere: false, certExpiresAt: null, certDaysLeft: null, certPending: false, lastError: "" };
+}
+function renderDhdStatus() {
+  var d = dhdViewState();
+  var dot = d.status === "healthy" ? "#34d399" : (d.status === "degraded" || d.status === "starting") ? "#f5b544" : "#9fb3c8";
+  var line = !d.active ? "Off - no public door" : d.status === "degraded" ? "On - domain saved, certificate pending" : d.publicVerified ? "On - " + d.domain + ", reachable anywhere" : "On - listening, outside reach unverified";
+  var h = "<div class='stat'><span class='dot" + (d.active ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>DHD</span> <span style='border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px;color:var(--dim)'>[public]</span><br>" +
+    "<span class='v mono' style='font-weight:700'>" + esc(line) + "</span>";
+  h += "<details id='dhd-details'" + (dhdDetailsOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Access details</summary><div style='margin-top:6px'>";
+  if (d.active && d.publicVerified && d.publicUrl) {
+    h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>FROM ANYWHERE, OPEN THIS ADDRESS</div>" +
+      "<button class='ghost' id='dhd-copy-url' aria-label='Copy the public DHD address " + esc(d.publicUrl) + "' style='margin-top:4px;display:block;width:100%;text-align:left;font-weight:700;color:var(--cy);border-color:var(--cy);word-break:break-all;min-height:44px'>" + (dhdUrlCopied ? "Copied \u2014 " : "") + esc(d.publicUrl) + "</button>";
+  } else if (d.active && d.publicUrl) {
+    h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>PUBLIC ADDRESS - OUTSIDE REACH NOT YET PROVEN</div>" +
+      "<button class='ghost' id='dhd-copy-url' aria-label='Copy the public DHD address " + esc(d.publicUrl) + "' style='margin-top:4px;display:block;width:100%;text-align:left;font-weight:700;color:var(--cy);border-color:var(--cy);word-break:break-all;min-height:44px'>" + (dhdUrlCopied ? "Copied \u2014 " : "") + esc(d.publicUrl) + "</button>" +
+      "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(d.nextStep || "") + "</div>";
+  } else if (d.active) {
+    h += "<div style='color:var(--dim);font-size:12px'>No public address yet - outside reach unverified. " + esc(d.nextStep || "") + "</div>";
+  } else {
+    h += "<div style='color:var(--dim);font-size:12px'>Not set up yet - DHD is off, so there is no public address. Turn it on from the DHD page and the address will live here.</div>";
+  }
+  if (d.active && d.lanUrl) {
+    h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>ON THIS NETWORK (LAN)</div>" +
+      "<button class='ghost' id='dhd-copy-lan' aria-label='Copy the LAN DHD address " + esc(d.lanUrl) + "' style='margin-top:4px;display:block;width:100%;text-align:left;font-weight:700;color:var(--cy);border-color:var(--cy);word-break:break-all;min-height:44px'>" + esc(d.lanUrl) + "</button>" +
+      "<div style='color:var(--dim);font-size:12px;margin-top:2px'>Works only on this network.</div>";
+  }
+  var modeLine = !d.active ? "Off" : d.mode === "domain" ? "Domain certificate (Let's Encrypt)" : "Self-signed certificate";
+  var certLine = !d.active ? "-" : d.certPending ? "Domain saved - certificate pending; the self-signed door answers meanwhile" : d.certExpiresAt ? "Expires " + String(d.certExpiresAt).slice(0, 10) + (d.certDaysLeft != null ? " - " + d.certDaysLeft + " days left" : "") : "Self-signed, generated by Apex";
+  h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>MODE</div><div class='mono' style='font-size:12px'>" + esc(modeLine) + "</div>" +
+    "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>CERTIFICATE</div><div style='font-size:12px'>" + esc(certLine) + "</div>" +
+    "</div></details>";
+  h += "<button class='ghost' id='dhd-open' aria-label='Open the DHD page - public access to Apex' style='margin-top:6px;display:block;width:100%;text-align:center;font-weight:700;min-height:44px'>Open DHD</button></div>";
+  return h;
+}
+function wireApexNode() {
+    // Apex Node card (build .59; fluid activation .61): the
+    // toggle saves the choice through the bridge AND starts the
+    // bridge restart that applies it; the row then polls for the
+    // relaunched bridge's confirmation (pollPublicRestart).
+    // Regenerate persists the same way it always did.
+    var pubToggle = document.getElementById("pub-toggle");
+    if (pubToggle) pubToggle.onclick = function () {
+      var ps = publicState || CONFIG.publicServer || { enabled: false };
+      var next = !ps.enabled;
+      if (CONFIG.backend !== "live") {
+        CONFIG.publicServer = CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
+        CONFIG.publicServer.enabled = next;
+        CONFIG.publicServer.pending = next !== CONFIG.publicServer.activePublic;
+        if (next && !CONFIG.publicServer.accessCode) CONFIG.publicServer.accessCode = "SIMULATED";
+        if (CONFIG.publicServer.pending) {
+          CONFIG.publicServer.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
+          publicMsg = "Restarting the bridge… (mock mode — simulated).";
+          render();
+          var target = next;
+          setTimeout(function () {
+            CONFIG.publicServer.activePublic = target;
+            CONFIG.publicServer.bindHost = target ? "0.0.0.0" : "127.0.0.1";
+            CONFIG.publicServer.pending = false;
+            CONFIG.publicServer.restart = { status: "confirmed", step: "", message: target ? "Restart complete — the bridge that answers now reports Apex Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+            saveCfg();
+            publicMsg = CONFIG.publicServer.restart.message;
+            render();
+          }, 1200);
+        } else {
+          CONFIG.publicServer.restart = { status: "confirmed", step: "", message: "The bridge that answers already runs this choice — no restart was needed." };
+          saveCfg();
+          publicMsg = CONFIG.publicServer.restart.message;
+          render();
+        }
+        return;
+      }
+      fetch("/api/settings/public", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }) }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = publicState && publicState.pending ? "Restarting the bridge…" : "Saved — the bridge that answers already runs this choice."; render(); if (publicState && publicState.pending) pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubRestart = document.getElementById("pub-restart");
+    if (pubRestart) pubRestart.onclick = function () {
+      if (CONFIG.backend !== "live") {
+        var cps = CONFIG.publicServer || { enabled: false, activePublic: false };
+        cps.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
+        publicMsg = "Restarting the bridge… (mock mode — simulated).";
+        render();
+        setTimeout(function () {
+          cps.activePublic = cps.enabled;
+          cps.bindHost = cps.enabled ? "0.0.0.0" : "127.0.0.1";
+          cps.pending = false;
+          cps.restart = { status: "confirmed", step: "", message: cps.enabled ? "Restart complete — the bridge that answers now reports Apex Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+          saveCfg();
+          publicMsg = cps.restart.message;
+          render();
+        }, 1200);
+        return;
+      }
+      fetch("/api/settings/public/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "Restarting the bridge…"; render(); pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubRegen = document.getElementById("pub-regen");
+    if (pubRegen) pubRegen.onclick = function () {
+      if (CONFIG.backend !== "live") {
+        CONFIG.publicServer = CONFIG.publicServer || { enabled: true, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "" };
+        CONFIG.publicServer.accessCode = "MOCK-" + Math.floor(1000 + Math.random() * 9000);
+        saveCfg();
+        publicMsg = "New code (mock mode — simulated). Every phone the old code let in would be shut out.";
+        render();
+        return;
+      }
+      fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "New code saved — every phone the old code let in is shut out and will be asked again."; render(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubLan = document.getElementById("pub-lan");
+    if (pubLan) pubLan.onclick = function () {
+      var url = pubLan.getAttribute("data-url") || "";
+      var done = function () { publicMsg = "Copied " + url + " — open it on your phone, on the same network, and enter the access code."; render(); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(function () { publicMsg = url; render(); });
+      else { publicMsg = url; render(); }
+    };
+}
+function wireDhdStatus() {
+  var b = document.getElementById("dhd-open");
+  if (b) b.onclick = function () { view = "DHD"; dockOpen = false; render(); };
+  var det = document.getElementById("dhd-details");
+  if (det) det.addEventListener("toggle", function () { dhdDetailsOpen = det.open; });
+  var cp = document.getElementById("dhd-copy-url");
+  if (cp) cp.onclick = function () {
+    var d = dhdViewState();
+    if (!d.publicUrl) return;
+    var done = function () { dhdUrlCopied = true; render(); setTimeout(function () { if (dhdUrlCopied) { dhdUrlCopied = false; render(); } }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.publicUrl).then(done).catch(function () {});
+  };
+  var cpl = document.getElementById("dhd-copy-lan");
+  if (cpl) cpl.onclick = function () {
+    var d = dhdViewState();
+    if (!d.lanUrl) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.lanUrl).catch(function () {});
+  };
 }
 function wireLocalNetwork() {
   var det = document.getElementById("local-net-details");
@@ -2774,7 +3591,7 @@ function wireLocalNetwork() {
   var codeBtn = document.getElementById("local-net-copy-code");
   if (codeBtn) codeBtn.onclick = function () { var ps = publicState || CONFIG.publicServer || {}; if (ps.accessCode) copyWith(ps.accessCode, "code"); };
   var setBtn = document.getElementById("local-net-settings");
-  if (setBtn) setBtn.onclick = function () { settingsTab = "system"; view = "Settings"; dockOpen = false; render(); };
+  if (setBtn) setBtn.onclick = function () { view = "DHD"; dockOpen = false; render(); };
 }
 function renderSudo() {
   var needsAuth = CONFIG.sudo && CONFIG.backend === "live" && !sudoAuthed;
@@ -3181,6 +3998,7 @@ function applyUpdateRecord(j) {
   if (j.beforeLabel) updater.fromLabel = j.beforeLabel;
   if (j.stagedDir) updater.stagedDir = j.stagedDir;
   if (j.command) updater.command = j.command;
+  if (j.dhdPrereqs) updater.dhdPrereqs = j.dhdPrereqs;
   if (j.state === "working") {
     updater.state = "applying";
     updater.step = j.step || "downloading";
@@ -3204,7 +4022,7 @@ function applyUpdateRecord(j) {
     if (updater.pollTimer) { clearTimeout(updater.pollTimer); updater.pollTimer = null; }
   }
 }
-var UPDATE_STEPS = [["downloading", "Downloading"], ["verifying", "Verifying"], ["staging", "Staging"], ["installing", "Installing"], ["restarting", "Restarting"]];
+var UPDATE_STEPS = [["downloading", "Downloading"], ["verifying", "Verifying"], ["staging", "Staging"], ["installing", "Installing"], ["dhd-prereqs", "DHD prerequisites"], ["restarting", "Restarting"]];
 function updaterProgressHtml() {
   var cur = 0;
   UPDATE_STEPS.forEach(function (s, i) { if (s[0] === updater.step) cur = i; });
@@ -3254,11 +4072,17 @@ function updaterNotesHtml() {
   var src = updater.notesSource === "changelog"
     ? "<br><span style='color:var(--dim);font-size:12px'>The release page itself carried no notes, so these are the changelog's section for this version — the same words, from CHANGELOG.md.</span>" : "";
   return "<div class='card' style='margin-top:10px'><b>What's in v" + esc(updater.latest.replace(/^v/i, "")) + "</b>" + src +
-    "<div class='md' style='margin-top:6px'>" + mdToHtml(updater.notes) + "</div></div>";
+    "<div class='md' style='margin-top:6px'>" + mdToHtml(stripLeadH1(updater.notes, updater)) + "</div></div>";
 }
 function updaterUpdatedHtml() {
+  var log = "### Update log\n\n" +
+    "- **Downloaded** the package and verified it against the release.\n" +
+    "- **Staged and installed** it — everything that's yours (chips, knowledge packs and their indexes, the Vault, the model file, Soul and Memory, her voice, your GitHub settings) rode the keep-list across.\n" +
+    "- **DHD prerequisites** — " + (updater.dhdPrereqs || "installed by the update's installer run as their own named step") + ".\n" +
+    "- **Restarted and confirmed** from the VERSION file: " + updater.fromLabel + " → " + updater.toLabel + ".\n";
   return "<div class='card' style='margin-top:10px'><b>Updated " + esc(updater.fromLabel) + " → " + esc(updater.toLabel) + "</b><br>" +
-    "<span style='color:var(--dim)'>The update downloaded, installed, and restarted itself — and the version now running is the one the update promised, read from the VERSION file after the restart.</span></div>";
+    "<span style='color:var(--dim)'>The update downloaded, installed, and restarted itself — and the version now running is the one the update promised, read from the VERSION file after the restart.</span>" +
+    "<div class='md' style='margin-top:6px'>" + mdToHtml(log) + "</div></div>";
 }
 // Issue #17 — the first-launch race: the Chat view reads
 // llama.status as it renders (a stopped model renders the
@@ -3290,29 +4114,26 @@ function llamaTransitionHeal(prevStatus) {
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
-  // The UPDATER element is the update warning system — a plain
-  // status, no number (the version number itself lives at the
-  // foot of the side menu, read from the VERSION file). It reads
-  // what the real check last found: "Up to date" only after a
-  // check has actually run clean, "Not checked yet" before the
-  // first one, the failed check's own words when GitHub couldn't
-  // be reached — and when a check finds a newer release it lights
-  // up as a warning; clicking it opens the Updater.
+  // The Updater line (owner's spec): directly under Navi's
+  // status, bracketed by the column's separators, and nothing
+  // else — one line that flips state. Green "Up to date" when a
+  // check has run clean; yellow "Update available" when one
+  // found a newer release, and the line then opens the Updater.
+  // No label above it, no subtext beneath it; the honest
+  // in-between states keep their own single plain words.
   var updHtml;
   if (updater.state === "available" || updater.state === "applying") {
-    updHtml = "<button class='stat' id='updater-warn' style='display:block;width:100%;text-align:left;background:rgba(245,181,68,.12);border:1px solid #f5b544;color:#f5b544;cursor:pointer;font:inherit' aria-label='New Version Available — open the Updater tab to apply it'><span style='color:var(--dim);font-size:11px;letter-spacing:.08em'>UPDATER</span><br><b>New Version Available</b><br><span class='v mono' style='color:var(--text)'>v" + esc(updater.latest.replace(/^v/i, "")) + " is ready — open the Updater to get it.</span></button>";
-  } else if (updater.state === "updated") {
-    updHtml = stat("UPDATER", "Updated " + updater.fromLabel + " → " + updater.toLabel, "#34d399");
+    updHtml = "<button id='updater-warn' style='display:block;width:100%;text-align:left;background:none;border:0;color:#f5b544;cursor:pointer;font:inherit;font-weight:700;padding:2px 0' aria-label='Update available — open the Updater tab to apply it'>Update available</button>";
   } else if (updater.state === "applyfailed") {
-    updHtml = stat("UPDATER", "Update didn't finish — open the Updater", "#f5b544");
+    updHtml = "<button id='updater-warn' style='display:block;width:100%;text-align:left;background:none;border:0;color:#f5b544;cursor:pointer;font:inherit;font-weight:700;padding:2px 0' aria-label='Update didn't finish — open the Updater tab'>Update didn't finish</button>";
   } else if (updater.state === "failed") {
-    updHtml = stat("UPDATER", "Couldn't check for updates", "#f5b544");
+    updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>Couldn't check for updates</div>";
   } else if (updater.state === "checking") {
-    updHtml = stat("UPDATER", "Checking for updates…", "#9fb3c8");
-  } else if (updater.state === "uptodate") {
-    updHtml = stat("UPDATER", "Up to date", "#34d399");
+    updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>Checking for updates\u2026</div>";
+  } else if (updater.state === "uptodate" || updater.state === "updated") {
+    updHtml = "<div class='mono' style='font-weight:700;color:#34d399'>Up to date</div>";
   } else {
-    updHtml = stat("UPDATER", CONFIG.backend === "live" ? "Not checked yet" : "Live bridge only", "#9fb3c8");
+    updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>" + (CONFIG.backend === "live" ? "Not checked yet" : "Live bridge only") + "</div>";
   }
   statusEl.innerHTML =
     "<h3>Status</h3>" +
@@ -3320,20 +4141,23 @@ function renderStatus(live) {
     (bridgeStale && CONFIG.backend === "live"
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +
+    "<div class='stat' style='border-bottom:1px solid var(--line);padding:8px 0 10px'>" + updHtml + "</div>" +
+    "<div class='stat' style='border:0;padding-bottom:0'><span style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700'>SERVERS</span></div>" +
     renderLlama() +
     renderLocalNetwork() +
+    renderDhdStatus() +
     renderSudo() +
     renderVoiceStatus() +
     stat("MEMORY", memory.length + " entries (local)", "#34d399") +
     stat("RAG", CONFIG.backend === "live" ? (ragPacksState ? ragPacksState.filter(function (p) { return p.active; }).length + " of " + ragPacksState.length + " packs active" : "…") : "simulated (mock mode)", "#34d399") +
-    stat("BACKUP", githubState ? ghBackupSummary(githubState) : "…", githubState && githubState.lastBackupAt ? "#34d399" : "#9fb3c8") +
-    updHtml;
+    stat("BACKUP", githubState ? ghBackupSummary(githubState) : "…", githubState && githubState.lastBackupAt ? "#34d399" : "#9fb3c8");
   // No threat-level element: the operator took it out — it was a
   // decorative selector with no mechanics behind it, and this
   // column carries only statuses that mean something.
   wireSudo();
   wireLlama();
   wireLocalNetwork();
+  wireDhdStatus();
   wireVoiceStatus();
   var uw = document.getElementById("updater-warn");
   if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
@@ -3883,7 +4707,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -3923,6 +4747,7 @@ function render() {
           h += "<details class='foldcard' data-fold='" + esc(foldKey + ":exec") + "'" + openAttr2 + "><summary>" + cmdTokensHtml(m.exec.command) + " · " + esc(info.label) + " · " + esc(firstHintLine(execOutputClean(m.exec), false)) + "</summary>" + execChatHtml(m.exec) + "</details>";
         } else h += execChatHtml(m.exec);
       }
+      if (m.operation) h += operationCardHtml(m.operation);
       h += "</div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='who'>NAVI</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div>";
@@ -4168,6 +4993,10 @@ function render() {
     h += "<h3 style='margin-top:16px'>Memory · local only</h3><div id='memlist'>" + memory.map(function (m, i) { return "<div class='card'>" + esc(m) + " <button class='ghost' data-del='" + i + "'>Forget</button></div>"; }).join("") + "</div>";
     h += "<div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div>";
     h += "<h3 style='margin-top:16px'>Uploaded files</h3>" + (uploads.length ? uploads.map(function (u, i) { return "<div class='card'>" + esc(u.name) + " <span style='color:var(--dim);font-size:12px'>" + esc(u.kind) + (u.chat ? " · in " + esc(u.chat) : "") + (u.at ? " · " + esc(String(u.at).slice(0, 10)) : "") + "</span> <button class='ghost' data-delupload='" + i + "' aria-label='Delete uploaded file " + esc(u.name) + "'>Delete</button></div>"; }).join("") : "<p style='color:var(--dim)'>Nothing uploaded yet — attach a picture or a text file from the chat composer and it is indexed here.</p>");
+  } else if (view === "Vault") {
+    h += vaultHtml();
+  } else if (view === "DHD") {
+    h += dhdHtml();
   } else if (view === "RAG") {
     h += "<h3>RAG · knowledge packs</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='RAG sections' style='margin-bottom:10px'><button class='" + (ragTab === "packs" ? "act" : "ghost") + "' data-ragtab='packs' aria-label='Knowledge packs tab'>Packs</button><button class='" + (ragTab === "studio" ? "act" : "ghost") + "' data-ragtab='studio' aria-label='RAG Studio tab'>RAG Studio</button></div>";
@@ -4177,7 +5006,7 @@ function render() {
       if (CONFIG.backend !== "live") h += "<div class='card'>RAG Studio packages through the live bridge — switch the backend to Live in Settings. The form below is the shape of it.</div>";
       if (ragForgeMsg) h += "<p>" + esc(ragForgeMsg) + "</p>";
       if (ragEdit) h += "<div class='card' style='border-color:var(--cy)'><b>Editing · " + esc(ragEditPrefill ? ragEditPrefill.name : ragEdit.slug) + "</b>" + (ragEdit.sourceKey ? " <span class='mono' style='color:#f5b544;font-size:11px'>INSTALLED FROM " + esc(ragEdit.sourceKey) + " — SAVING MARKS IT EDITED LOCALLY</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>Remove documents, add more below, adjust the name and description — saving writes the new set into this pack's folder and rebuilds its index. Export it from the Packs list to publish your version.</span> <button class='ghost' id='rf-new' aria-label='Stop editing and start a new pack'>New pack instead</button></div>";
-      h += "<div class='row'><input class='grow' id='rf-name' type='text' placeholder='Pack name — e.g. Home Network Notes' aria-label='Pack name'" + (ragEditPrefill ? " value='" + esc(ragEditPrefill.name) + "'" : "") + "></div>";
+      h += "<div class='row'><input class='grow' id='rf-name' type='text' placeholder='Pack name — e.g. Home Notes' aria-label='Pack name'" + (ragEditPrefill ? " value='" + esc(ragEditPrefill.name) + "'" : "") + "></div>";
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='rf-desc' type='text' placeholder='Description — what this pack knows, in one line' aria-label='Pack description'" + (ragEditPrefill ? " value='" + esc(ragEditPrefill.description) + "'" : "") + "></div>";
       h += "<div id='rf-drop' tabindex='0' role='button' aria-label='Drop documents here or activate to upload' style='margin-top:10px;border:1px dashed " + (ragDragOver ? "var(--accent)" : "var(--line)") + ";border-radius:8px;padding:18px 12px;text-align:center;cursor:pointer;background:" + (ragDragOver ? "rgba(88,166,255,.12)" : "transparent") + "'><b>" + (ragDragOver ? "Drop the documents to add them" : "Drag documents here") + "</b><br><span style='color:var(--dim);font-size:12px'>.md / .txt / .pdf, as many as you like — or click to upload</span><input id='rf-files' type='file' accept='.md,.txt,.pdf,text/markdown,text/plain,application/pdf' multiple style='display:none' aria-label='Upload documents'></div>";
       if (ragForgeDocs.length && ragEdit) h += ragForgeDocs.map(function (d, i) { return "<div class='card' style='margin-top:6px;padding:8px'><div class='row'><b class='mono grow' style='font-size:12px'>" + esc(d.title) + "</b><span style='color:var(--dim);font-size:11px'>" + (d.pdf_base64 ? "PDF — text extracted on save" : (d.body ? d.body.length + " chars" : "")) + "</span><button class='ghost' data-rfremove='" + i + "' aria-label='Remove document " + esc(d.title) + "'>Remove</button></div>" + (d.pdf_base64 ? "" : "<textarea class='rf-doc-body mono' data-rfdoc='" + i + "' rows='4' style='margin-top:6px;font-size:12px' aria-label='Document text for " + esc(d.title) + "'>" + esc(d.body || "") + "</textarea>") + "</div>"; }).join("");
@@ -4250,48 +5079,13 @@ function render() {
       }).join("") + "</div>";
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nordic dark is the default. Nordic is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup mode is chosen during install — the installer asks whether the llamafile server loads on app launch or at system boot, and records it in config/navi.config.json.</p></div>";
-    // Local server (build .59; corrected in .60; fluid activation
-    // in .61): the toggle, the code, and the LAN address. State
-    // comes from the bridge's own report (the /api/status
-    // publicServer block): saved choice beside the running bridge's
-    // actual bind, so the row never claims a state the bridge is
-    // not in. Flipping the toggle saves the choice AND restarts the
-    // bridge (the exit-75 handshake); the row shows the restart in
-    // progress, then the confirmed live state — or, on failure, the
-    // named step, the state actually live, and the Restart bridge
-    // retry. The access controls (code, Regenerate, LAN address)
-    // render while the saved choice OR the running bridge is
-    // public — in the pending-off window the bridge is still
-    // serving the network, so the code guarding it stays visible
-    // and regenerable until the restart lands.
-    if (settingsTab === "system") (function () {
-      var ps = publicState || CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
-      var rst = ps.restart || { status: "idle", step: "", message: "" };
-      // Build .65: the row's live claim follows the same rule as
-      // the status column's section — a last-known report from a
-      // bridge that has stopped answering never reads as live.
-      var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
-      h += "<div class='card'><h3>Local server</h3>";
-      h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
-      h += "<p style='color:var(--am)'><b>Warning:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. Share the code like a house key.</p>";
-      h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Local server toggle'>" + (ps.enabled ? "Local server: On" : "Local server: Off") + "</button></p>";
-      h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
-      if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
-      else if (rst.status === "failed") h += "<br><span style='color:#f87171'><b>Restart failed — step: " + esc(rst.step === "stop" ? "stopping the old bridge" : rst.step === "verify" ? "checking the new bridge's bind" : "the new bridge answering") + ".</b> " + esc(rst.message || "") + "</span>";
-      else if (rst.status === "confirmed" && !ps.pending) h += "<br><span style='color:var(--green)'>" + esc(rst.message || "Live — the bridge that answers runs the saved choice.") + "</span>";
-      else if (ps.pending) h += "<br><span style='color:var(--am)'>The saved choice is not live yet — the running bridge still uses the old setting. Press Restart bridge and Apex applies it herself.</span>";
-      else h += "<br>The running bridge matches the saved choice.";
-      h += "</p>";
-      if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Local server choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
-      if (ps.enabled || rowLive) {
-        h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Local server access code'>Regenerate</button></p>";
-        h += "<p style='color:var(--dim)'>A phone visiting Apex is asked for this code once; its browser is remembered after that. Regenerating makes a new code and shuts out every phone the old one let in.</p>";
-        if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
-        h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
-      }
-      if (publicMsg) h += "<p style='color:var(--dim)'>" + esc(publicMsg) + "</p>";
-      h += "</div>";
-    })();
+    // Apex Node (build .59 as the Local server; renamed and
+    // relocated in the DHD round): the controls themselves live
+    // on the DHD page now (apexNodeCardHtml) — Settings → System
+    // keeps only this pointer, so no duplicate control exists.
+    if (settingsTab === "system") h += "<div class='card'><h3>Apex Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
+      "<p style='color:var(--dim)'>The Apex Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
+      "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
     // Hardware profile (build .34): what the installer detected on
     // this machine and the runtime settings it chose from it.
     if (settingsTab === "system") (function () {
@@ -4354,6 +5148,8 @@ function render() {
   mainEl.classList.toggle("chat-view", view === "Chat");
   wire();
   if (view === "Chat") {
+    wireOperationCards(mainEl);
+    messages.forEach(function (m) { if (m.operation && (m.operation.state === "running" || m.operation.state === "waiting")) watchOperation(m.operation.id); });
     var msgsEl = document.getElementById("msgs");
     if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
     if (keepChatFocus) {
@@ -4398,6 +5194,15 @@ function sendChat(text) {
       if (llama.status !== "running" || _rr.kind === "cli") cliHistoryAppend(_rr.command || String(text).replace(/^\$\s*/, ""));
     }
   } catch (e) {}
+  if (CONFIG.backend === "live" && isDhdChatIntent(text)) {
+    // DHD chat operations are bridge work, not model work: they
+    // route to /api/chat even while the model is disconnected, so
+    // command-line mode cannot swallow the request as a shell line.
+    naviThinking = true; render();
+    liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null }); persist(); render(); })
+      .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that DHD operation.", exec: null }); persist(); render(); });
+    return;
+  }
   if (llama.status !== "running") {
     // Command-line mode: no model connected — the text IS the command.
     // Chips are local code, though: an invocation still runs its chip,
@@ -4426,7 +5231,7 @@ function sendChat(text) {
     // A CLI-routed line files as a bare terminal block — the raw
     // output, no model framing around it.
     if (r.mode === "cli" || r.mode === "command-line") messages.push({ who: "SHELL", text: "", exec: r.exec });
-    else messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null });
+    else messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null });
     persist(); render(); if (CONFIG.backend !== "live" && CONFIG.speakReplies && r.text) mockSpeak(r.text);
   };
   if (CONFIG.backend === "live") liveChat(text, CONFIG.speakReplies).then(done).catch(function (e) { done({ text: "Live backend error: " + e.message + (bridgeStale ? " — the bridge answering on port " + BRIDGE_PORT + " is an older build than this dashboard (see BRIDGE OUT OF DATE in the status column): fully quit the app and relaunch it so the current bridge takes over." : " — is bridge.py and the llamafile server running?"), exec: null }); });
@@ -5074,6 +5879,135 @@ function wire() {
     mainEl.querySelectorAll("[data-delupload]").forEach(function (b) { b.onclick = function () { uploads.splice(Number(b.getAttribute("data-delupload")), 1); persistUploads(); render(); }; });
     var memAdd = document.getElementById("mem-add");
     if (memAdd) memAdd.onclick = function () { var inp = document.getElementById("mem-in"); var v = inp ? inp.value.trim() : ""; if (!v) return; memory.push(v); persist(); render(); };
+  } else if (view === "DHD") {
+    wireDhd();
+  } else if (view === "Vault") {
+    var vq = function (sel) { return mainEl.querySelector(sel); };
+    var vqa = function (sel) { return mainEl.querySelectorAll(sel); };
+    vqa("[data-vault-open]").forEach(function (b) { b.onclick = function () { vaultOpenPath(decodeURIComponent(b.getAttribute("data-vault-open"))); }; });
+    vqa("[data-vault-wiki]").forEach(function (b) { b.onclick = function () { vaultOpenWiki(decodeURIComponent(b.getAttribute("data-vault-wiki"))); }; });
+    vqa("[data-wikilink]").forEach(function (b) { b.onclick = function (ev) { ev.preventDefault(); vaultOpenWiki(b.getAttribute("data-wikilink")); }; });
+    vqa("[data-vault-fold]").forEach(function (b) { b.onclick = function () { var f = decodeURIComponent(b.getAttribute("data-vault-fold")); vaultCollapsed[f] = !vaultCollapsed[f]; render(); }; });
+    vqa("[data-vault-rename]").forEach(function (b) { b.onclick = function () { vaultRenamePath = decodeURIComponent(b.getAttribute("data-vault-rename")); render(); }; });
+    vqa("[data-vault-move]").forEach(function (b) { b.onclick = function () { vaultMovePath = decodeURIComponent(b.getAttribute("data-vault-move")); render(); }; });
+    vqa("[data-vault-movecancel]").forEach(function (b) { b.onclick = function () { vaultMovePath = null; render(); }; });
+    vqa("[data-vault-movego]").forEach(function (b) { b.onclick = function () { var from = decodeURIComponent(b.getAttribute("data-vault-movego")); var sel = document.getElementById("vault-move-sel"); vaultDoMove(from, sel ? sel.value : ""); }; });
+    vqa("[data-vault-renamesave]").forEach(function (b) { b.onclick = function () {
+      var from = decodeURIComponent(b.getAttribute("data-vault-renamesave"));
+      var inp = document.getElementById("vault-rename-in"); var name = inp ? inp.value.trim().replace(/\.md$/i, "") : "";
+      vaultRenamePath = null;
+      if (!name) { render(); return; }
+      var dir = from.indexOf("/") === -1 ? "" : from.slice(0, from.lastIndexOf("/"));
+      var to = (dir ? dir + "/" : "") + name + ".md";
+      if (to !== from) { vaultSel = to; vaultApply("move", { from: from, to: to }); } else render();
+    }; });
+    vqa("[data-vault-del]").forEach(function (b) { b.onclick = function () { vaultConfirmPath = decodeURIComponent(b.getAttribute("data-vault-del")); render(); }; });
+    vqa("[data-vault-delok]").forEach(function (b) { b.onclick = function () { var p = decodeURIComponent(b.getAttribute("data-vault-delok")); vaultConfirmPath = null; vaultApply("del", { path: p }); }; });
+    vqa("[data-vault-delcancel]").forEach(function (b) { b.onclick = function () { vaultConfirmPath = null; render(); }; });
+    vqa("[data-vault-foldel]").forEach(function (b) { b.onclick = function () { vaultConfirmFolder = decodeURIComponent(b.getAttribute("data-vault-foldel")); render(); }; });
+    vqa("[data-vault-foldelok]").forEach(function (b) { b.onclick = function () { var f = decodeURIComponent(b.getAttribute("data-vault-foldelok")); vaultConfirmFolder = null; vaultApply("delfolder", { path: f }); }; });
+    vqa("[data-vault-foldelcancel]").forEach(function (b) { b.onclick = function () { vaultConfirmFolder = null; render(); }; });
+    vqa("[data-vault-newin]").forEach(function (b) { b.onclick = function () { var sel = document.getElementById("vault-new-folder"); if (sel) sel.value = decodeURIComponent(b.getAttribute("data-vault-newin")); var nm = document.getElementById("vault-new-name"); if (nm) nm.focus(); }; });
+    vqa("[data-vault-mode]").forEach(function (b) { b.onclick = function () { vaultMode = b.getAttribute("data-vault-mode"); render(); }; });
+    vqa("[data-vault-createmissing]").forEach(function (b) { b.onclick = function () { var t = vaultMissing; vaultMissing = null; if (t) { vaultSel = t + ".md"; vaultApply("save", { path: t + ".md", content: "# " + t + "\n\n" }); } }; });
+    vqa("[data-vault-dismissmissing]").forEach(function (b) { b.onclick = function () { vaultMissing = null; render(); }; });
+    // Drag and drop (build .73 hardening): the drag source is tracked
+    // in vaultDragFrom, every real target (folder headers + the Vault
+    // root row) outlines itself the moment a drag starts and fills in
+    // under the pointer, and a drop anywhere else — on a note, on
+    // empty tree space, on the editor — does nothing at all. Before
+    // this round the whole tree sat inside the root drop zone, so a
+    // missed drop silently filed the note at the top of the list.
+    var vaultClearDropMarks = function () { vqa("[data-vault-drop]").forEach(function (t) { t.style.outline = ""; t.style.background = ""; }); };
+    vqa("[data-vault-drag]").forEach(function (el) {
+      el.addEventListener("dragstart", function (ev) {
+        vaultDragFrom = decodeURIComponent(el.getAttribute("data-vault-drag"));
+        el.style.opacity = "0.45";
+        if (ev.dataTransfer) { ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/x-vault-path", vaultDragFrom); ev.dataTransfer.setData("text/plain", vaultDragFrom); }
+        vqa("[data-vault-drop]").forEach(function (t) { t.style.outline = "1px dashed var(--cy)"; t.style.outlineOffset = "-1px"; });
+      });
+      el.addEventListener("dragend", function () { vaultDragFrom = null; el.style.opacity = ""; vaultClearDropMarks(); });
+    });
+    vqa("[data-vault-drop]").forEach(function (el) {
+      el.addEventListener("dragover", function (ev) { ev.preventDefault(); ev.stopPropagation(); if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move"; el.style.outline = "2px solid var(--cy)"; el.style.background = "rgba(127,127,127,0.14)"; });
+      el.addEventListener("dragleave", function (ev) { if (!el.contains(ev.relatedTarget)) { el.style.outline = vaultDragFrom ? "1px dashed var(--cy)" : ""; el.style.background = ""; } });
+      el.addEventListener("drop", function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        var folder = decodeURIComponent(el.getAttribute("data-vault-drop") || "");
+        vaultClearDropMarks();
+        if (ev.dataTransfer.files && ev.dataTransfer.files.length) { vaultDragFrom = null; vaultImportFiles(ev.dataTransfer.files, folder); return; }
+        var from = vaultDragFrom || (ev.dataTransfer ? ev.dataTransfer.getData("text/x-vault-path") : "");
+        vaultDragFrom = null;
+        if (!from) return;
+        vaultDoMove(from, folder);
+      });
+    });
+    if (!mainEl._vaultDropBound) {
+      mainEl._vaultDropBound = true;
+      mainEl.addEventListener("dragover", function (ev) { if (view === "Vault" && ev.dataTransfer && ev.dataTransfer.types && Array.prototype.indexOf.call(ev.dataTransfer.types, "Files") !== -1) ev.preventDefault(); });
+      mainEl.addEventListener("drop", function (ev) { if (view === "Vault" && ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) { ev.preventDefault(); vaultImportFiles(ev.dataTransfer.files, ""); } });
+    }
+    var searchIn = vq("#vault-search");
+    if (searchIn) searchIn.oninput = function () {
+      var q = searchIn.value.trim().toLowerCase(); var box = document.getElementById("vault-search-results");
+      if (!box || !vaultState) return;
+      if (!q) { box.innerHTML = ""; return; }
+      var hits = vaultState.notes.filter(function (n) { return n.title.toLowerCase().indexOf(q) !== -1 || n.content.toLowerCase().indexOf(q) !== -1; });
+      box.innerHTML = "<div class='card'>" + (hits.length ? hits.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.path) + "</button>"; }).join(" ") : "<span style='color:var(--dim)'>Nothing in the vault matches.</span>") + "</div>";
+      box.querySelectorAll("[data-vault-open]").forEach(function (b) { b.onclick = function () { vaultOpenPath(decodeURIComponent(b.getAttribute("data-vault-open"))); }; });
+    };
+    var createBtn = vq("#vault-new-create");
+    if (createBtn) createBtn.onclick = function () {
+      var nm = document.getElementById("vault-new-name"); var name = nm ? nm.value.trim().replace(/\.md$/i, "") : "";
+      if (!name) return;
+      var fo = document.getElementById("vault-new-folder"); var folder = fo ? fo.value : "";
+      var tp = document.getElementById("vault-new-template");
+      var content = "# " + name + "\n\n";
+      if (tp && tp.value) { var tpl = vaultState.notes.filter(function (n) { return n.path === decodeURIComponent(tp.value); })[0]; if (tpl) content = tpl.content.split("Untitled").join(name); }
+      var path = (folder ? folder + "/" : "") + name + ".md";
+      vaultSel = path;
+      vaultApply("save", { path: path, content: content });
+    };
+    var folderBtn = vq("#vault-folder-add");
+    if (folderBtn) folderBtn.onclick = function () { var fi = document.getElementById("vault-folder-name"); var name = fi ? fi.value.trim() : ""; if (name) vaultApply("folder", { path: name }); };
+    var dailyBtn = vq("#vault-daily");
+    if (dailyBtn) dailyBtn.onclick = function () {
+      var today = new Date().toISOString().slice(0, 10); var path = "Daily/" + today + ".md";
+      if (vaultState && vaultState.notes.some(function (n) { return n.path === path; })) vaultOpenPath(path);
+      else { vaultSel = path; vaultApply("save", { path: path, content: "# " + today + "\n\n## Today\n\n- \n" }); }
+    };
+    var exportBtn = vq("#vault-export");
+    if (exportBtn) exportBtn.onclick = function () {
+      if (CONFIG.backend === "live") { window.open("/api/vault/export", "_blank"); vaultMsg = "Exported the vault as a .zip of the folder — unzip it and Obsidian opens it as-is."; render(); return; }
+      var bundle = vaultState.notes.map(function (n) { return "<!-- " + n.path + " -->\n\n" + n.content; }).join("\n\n---\n\n");
+      var url = URL.createObjectURL(new Blob([bundle], { type: "text/markdown" }));
+      var a = document.createElement("a"); a.href = url; a.download = "apex-vault-export.md"; a.click(); URL.revokeObjectURL(url);
+      vaultMsg = "Mock mode exports a single markdown bundle; the live bridge exports the real .zip of the folder.";
+      render();
+    };
+    var ed = vq("#vault-ed");
+    if (ed) ed.oninput = function () {
+      vaultDraft = ed.value;
+      var saved = document.getElementById("vault-saved");
+      if (saved) saved.textContent = "Edited — autosaving… · " + vaultWordCount(vaultDraft) + " words";
+      if (vaultSaveTimer) clearTimeout(vaultSaveTimer);
+      vaultSaveTimer = setTimeout(function () {
+        var path = vaultSel; var content = vaultDraft;
+        if (CONFIG.backend === "live") {
+          fetch("/api/vault/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: path, content: content }) }).then(function () {
+            var el2 = document.getElementById("vault-saved");
+            if (el2 && vaultSel === path) el2.textContent = "Saved · " + new Date().toLocaleTimeString() + " · " + vaultWordCount(content) + " words";
+            vaultState = null; vaultLoad();
+          }).catch(function () {});
+        } else {
+          var st = vaultMockStore();
+          st.notes.forEach(function (n) { if (n.path === path) { n.content = content; n.updatedAt = new Date().toISOString(); } });
+          vaultMockSave(st); vaultLoad();
+          var el3 = document.getElementById("vault-saved");
+          if (el3 && vaultSel === path) el3.textContent = "Saved · " + new Date().toLocaleTimeString() + " · " + vaultWordCount(content) + " words";
+        }
+      }, 900);
+    };
   } else if (view === "RAG") {
     mainEl.querySelectorAll("[data-ragtab]").forEach(function (b) { b.onclick = function () { ragTab = b.getAttribute("data-ragtab"); render(); }; });
     // Pack flip cards (issue #23): the same flip discipline as
@@ -5240,83 +6174,9 @@ function wire() {
       if (CONFIG.backend !== "live") { hardwareMsg = "Re-detect needs the live bridge — switch Backend to Live."; render(); return; }
       fetch("/api/hardware/redetect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { hardwareState = j; hardwareMsg = j && j.profile ? "Re-detected this machine and returned to auto settings — they apply the next time the model server starts." : "Re-detect failed: " + ((j && j.error) || "unknown error"); render(); }).catch(function () { hardwareMsg = "The bridge did not answer — is it running?"; render(); });
     };
-    // Local server card (build .59; fluid activation .61): the
-    // toggle saves the choice through the bridge AND starts the
-    // bridge restart that applies it; the row then polls for the
-    // relaunched bridge's confirmation (pollPublicRestart).
-    // Regenerate persists the same way it always did.
-    var pubToggle = document.getElementById("pub-toggle");
-    if (pubToggle) pubToggle.onclick = function () {
-      var ps = publicState || CONFIG.publicServer || { enabled: false };
-      var next = !ps.enabled;
-      if (CONFIG.backend !== "live") {
-        CONFIG.publicServer = CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
-        CONFIG.publicServer.enabled = next;
-        CONFIG.publicServer.pending = next !== CONFIG.publicServer.activePublic;
-        if (next && !CONFIG.publicServer.accessCode) CONFIG.publicServer.accessCode = "SIMULATED";
-        if (CONFIG.publicServer.pending) {
-          CONFIG.publicServer.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
-          publicMsg = "Restarting the bridge… (mock mode — simulated).";
-          render();
-          var target = next;
-          setTimeout(function () {
-            CONFIG.publicServer.activePublic = target;
-            CONFIG.publicServer.bindHost = target ? "0.0.0.0" : "127.0.0.1";
-            CONFIG.publicServer.pending = false;
-            CONFIG.publicServer.restart = { status: "confirmed", step: "", message: target ? "Restart complete — the bridge that answers now reports Local — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
-            saveCfg();
-            publicMsg = CONFIG.publicServer.restart.message;
-            render();
-          }, 1200);
-        } else {
-          CONFIG.publicServer.restart = { status: "confirmed", step: "", message: "The bridge that answers already runs this choice — no restart was needed." };
-          saveCfg();
-          publicMsg = CONFIG.publicServer.restart.message;
-          render();
-        }
-        return;
-      }
-      fetch("/api/settings/public", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }) }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = publicState && publicState.pending ? "Restarting the bridge…" : "Saved — the bridge that answers already runs this choice."; render(); if (publicState && publicState.pending) pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
-    };
-    var pubRestart = document.getElementById("pub-restart");
-    if (pubRestart) pubRestart.onclick = function () {
-      if (CONFIG.backend !== "live") {
-        var cps = CONFIG.publicServer || { enabled: false, activePublic: false };
-        cps.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
-        publicMsg = "Restarting the bridge… (mock mode — simulated).";
-        render();
-        setTimeout(function () {
-          cps.activePublic = cps.enabled;
-          cps.bindHost = cps.enabled ? "0.0.0.0" : "127.0.0.1";
-          cps.pending = false;
-          cps.restart = { status: "confirmed", step: "", message: cps.enabled ? "Restart complete — the bridge that answers now reports Local — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
-          saveCfg();
-          publicMsg = cps.restart.message;
-          render();
-        }, 1200);
-        return;
-      }
-      fetch("/api/settings/public/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "Restarting the bridge…"; render(); pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
-    };
-    var pubRegen = document.getElementById("pub-regen");
-    if (pubRegen) pubRegen.onclick = function () {
-      if (CONFIG.backend !== "live") {
-        CONFIG.publicServer = CONFIG.publicServer || { enabled: true, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "" };
-        CONFIG.publicServer.accessCode = "MOCK-" + Math.floor(1000 + Math.random() * 9000);
-        saveCfg();
-        publicMsg = "New code (mock mode — simulated). Every phone the old code let in would be shut out.";
-        render();
-        return;
-      }
-      fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "New code saved — every phone the old code let in is shut out and will be asked again."; render(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
-    };
-    var pubLan = document.getElementById("pub-lan");
-    if (pubLan) pubLan.onclick = function () {
-      var url = pubLan.getAttribute("data-url") || "";
-      var done = function () { publicMsg = "Copied " + url + " — open it on your phone, on the same network, and enter the access code."; render(); };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(function () { publicMsg = url; render(); });
-      else { publicMsg = url; render(); }
-    };
+    wireApexNode();
+    var pubPointer = document.getElementById("pub-pointer");
+    if (pubPointer) pubPointer.onclick = function () { view = "DHD"; dockOpen = false; render(); };
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
     var soulSave = document.getElementById("soul-save");
     if (soulSave) soulSave.onclick = function () { var ta = document.getElementById("soul-doc"); if (ta) CONFIG.soul = ta.value; savePersona(); };

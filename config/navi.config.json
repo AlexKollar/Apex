@@ -12,6 +12,11 @@
     "enabled": false,
     "access_code": "T6BB-HS8Q"
   },
+  "dhd": {
+    "enabled": false,
+    "domain": "",
+    "acme_directory": "https://acme-v02.api.letsencrypt.org/directory"
+  },
   "startup": "on-ui-launch",
   "install_dir": "/opt/navi-apex",
   "sudo_mode": false,
@@ -105,7 +110,8 @@
       "settings",
       "chips",
       "rag",
-      "workflows"
+      "workflows",
+      "vault"
     ],
     "backup_interval_days": 1,
     "last_backup_at": null,
@@ -113,6 +119,6 @@
     "last_import_at": null,
     "last_import_result": ""
   },
-  "version": "0.1.4",
+  "version": "0.1.5",
   "version_status": "alpha"
 }

@@ -2,6 +2,39 @@
 
 All notable changes to Apex are recorded here. Releases are alpha until the first stable release.
 
+## 0.1.5 (alpha)
+
+Release tag: v0.1.5a. The DHD release: Apex gains its public door — and the door tells the truth about its address. The honest public-address model (#59) and the installer/packaging fixes (#60) land here, and the Vault and markdown rounds (#53/#54), whose fixes shipped in earlier builds, close at this release.
+
+### Fix — honest DHD addresses (#59, from the Build 10 field test)
+
+- **A LAN address is never a public address again.** The DHD state now carries three separate addresses: the domain (the public address once its certificate is live and the name resolves to this machine), the detected public IP, and the LAN address — which lives in its own labeled home, **On this network (LAN)**, on the DHD page and in the status dropdown, and never under a public label.
+- **WAN detection.** The bridge learns this home's public IP with a small cached HTTPS echo lookup that degrades to "couldn't detect" instead of ever blocking an enable. A detected address that is itself private or carrier-NAT (100.64.0.0/10) is reported plainly as **behind another router/NAT**.
+- **"Reachable anywhere" is earned.** It appears only when the public path is proven — domain set, resolving to this machine, ACME certificate live. Otherwise a running DHD reads **on/listening, outside reach unverified** and names the next step (forward 443 + 80 on the router to this machine, or add your domain). The ladder's last step is labeled a **local check** — "answered on this machine."
+- **Its own proxy is a healthy state.** When 80/443 are held by Apex's own DHD proxy, the availability rows read **"In use by Apex's DHD proxy — this door working"** and re-enabling treats its own listener as success — never "port is not free."
+
+### Installer and packaging fixes (#60)
+
+- **A --fresh reinstall keeps your DHD certificate.** The certificate home (config/dhd/) joins the installer's keep-list: it is stashed before the fresh wipe and restored after it, the same treatment the Vault already had — a real certificate survives a fresh reinstall instead of being wiped and re-issued.
+- **The package's docs install with the app.** The installer now copies the package's docs/ into the installed tree, so docs/DHD.md sits on the machine beside everything it documents, and the shipped tree and the installed tree agree.
+- **A fresh package starts with the DHD off.** The packaged config defaults ship dhd.enabled=false no matter what state the machine that generated the package was in — package defaults never inherit live session state, and the door opens only when the operator clicks it on.
+
+### DHD — Apex from anywhere
+
+- **DHD** (Dial-Home Device — the way home) is a new top-level menu destination, after the Vault and before the Updater, with a theme-tuned dial glyph. It extends Apex Node's same dashboard to a genuinely public address on your own machine — everything self-contained: no Tailscale, no external tunnel or proxy service, no Certbot.
+- **One click.** The DHD page's master switch does everything: Apex generates a certificate, brings up its own reverse proxy on 80/443 in front of the bridge (the bridge itself binds loopback only in DHD mode — the proxy is the only public face), runs a reachability self-check, and reports the live state and URL — or names the failed step in plain words, leaving the previous state untouched.
+- **TLS from the first click**: a self-signed certificate Apex generates when no domain is set; when you add a domain — optional, free-form, addable at any time — Apex's own built-in ACME client obtains a real Let's Encrypt certificate (HTTP-01 through the Apex proxy) and renews it automatically at 30 days remaining or less.
+- The door keeps the **existing access code** (same code, same cookie as Apex Node), now with public-side throttling: progressive delays and a five-minute lockout after five wrong codes. A session through DHD is a full session — the one-click Updater works from it end to end.
+- The status column gains a **Servers** group — Llamafile, Apex Node [local], DHD [public] — each with a pulsing green/amber/grey status dot and its own dropdown of details; directly under Navi's status, bracketed by separators, a single update line reads a green **Up to date** or a yellow **Update available**. The Apex Node controls live on the DHD page, under the DHD options; Settings → System keeps only a pointer to them.
+- Docs gain a DHD page (and docs/DHD.md): the one-click flow plus the backend you may still handle by hand — router forwarding for 80/443, DNS and dynamic-IP caveats, the self-signed warning, renewal, and turning it off.
+- **Prerequisites ship with the install.** The installer lands everything DHD needs (OpenSSL, the certificate home, the low-port capability check) on every distro family at install and update time, DHD on or not — and the Updater's ladder shows "DHD prerequisites" as its own named step, installed by the update's own installer run.
+- **Self-healing safety net.** If a prerequisite later goes missing, the DHD page detects it and offers the install in the flow; one click installs it and the enable continues automatically. If an install — or any ladder step with a manual remedy — fails, the failure card shows the exact distro-correct commands in a copyable block.
+- **Operation cards in chat.** Multi-step work (the DHD enable first) renders in the chat thread as a live step card driven entirely by the bridge's deterministic state — no model generation while an operation runs — fully self-contained (commands and output inline, nothing to open elsewhere), and the finished card persists in the thread.
+
+### Also closing at this release
+
+- **Markdown everywhere (#53)** and **the Vault (#54)** shipped in earlier builds and close here: static text across the app renders as markdown (the Updater's release notes and update log included, headings whole at every line ending), and the Vault — an Obsidian-compatible folder of plain markdown at config/vault/ with its own menu destination, editor and file tree, and Navi's own desk inside it — sits on the installer's keep-list beside everything else that is yours.
+
 ## 0.1.4 (alpha)
 
 Release tag: v0.1.4a. The next major update, live-confirmed by Alex before this release was cut: the Updater release notes (#47), full Linux support (#48), and the docs formatting pass (#51).
@@ -27,9 +60,9 @@ Release tag: v0.1.4a. The next major update, live-confirmed by Alex before this 
 
 Release tag: v0.1.3a. Everything from the phone round (builds .62–.68), live-confirmed by Alex on his phone and desktop before this release was cut.
 
-### Local server and phone chrome
+### Apex Node and phone chrome
 
-- **Local server**: it serves only your local network, never the outside world. Turning it on is one flip: the choice saves, Apex restarts her bridge bound for the network, and the Settings row confirms the live state from the answering bridge.
+- **Apex Node** [local]: it serves only your home network, never the outside world. Its controls live on the DHD page. Turning it on is one flip: the choice saves, Apex restarts her bridge bound for the network, and the row confirms the live state from the answering bridge.
 - The Local network access passcode is served only to connections from Apex's own machine — a phone on the LAN receives no code from the status sidebar; you read it off the desktop and type it into the phone.
 - A "Local network access" section sits in the status sidebar under the Llamafile block — indicator, the LAN link, and the passcode when it is yours to see; off reads "This machine only" with a plain pointer to Settings → System.
 - Phone chrome: a persistent top bar with the menu button and "Apex | Powered by Navi" clustered left and the status toggle alone at the right edge; the main menu slides in from the left and the status sidebar from the right, both full phone-screen width, and both menus hide themselves once you pick a page. The menu button is a compact square that never stretches.

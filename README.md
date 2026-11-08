@@ -6,13 +6,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.4 (alpha) — tag v0.1.4a
+## Latest release — 0.1.5 (alpha) — tag v0.1.5a
 
-- Release notes on the Updater screen: read what changed — the GitHub release body, or the matching changelog section — before you press Download & install.
-- One installer for every major Linux family, each announced in plain words: the Debian family via apt, Fedora via dnf, Arch via pacman.
-- Bazzite gets its own user-space path — no layering and no reboot; her window builds inside a Fedora distrobox when one is there, and the core install completes either way.
-- Docs, formatted properly: full markdown in the in-app Docs, real lists where lists belong, numbered steps for instructions, and code highlighting in every theme.
-- An unrecognized distro is warned in plain words and still completes the core install — no mid-install dead ends.
+- The DHD tells the truth about its public address: your domain once its certificate is verified, or your detected public IP — the LAN address is labeled house-only and never shown as public.
+- "Reachable anywhere" is claimed only when a verified domain setup proves it; otherwise the DHD page names the true state and the next step.
+- A --fresh reinstall keeps your DHD certificate — config/dhd/ is preserved across the wipe, like the Vault.
+- The DHD starts off in a fresh package; one click on the DHD page enables it when you want it.
+- The package's docs install with the app, so docs/DHD.md lands in the tree it documents.
 
 [Read the changelog](CHANGELOG.md)
 

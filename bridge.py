@@ -301,10 +301,13 @@ incumbent instead of landing the operator on the wrong UI.
 import atexit
 import base64
 import binascii
+import datetime
 import gzip
 import hashlib
+import http.client
 import importlib.util
 import io
+import ipaddress
 import calendar
 import json
 import math
@@ -314,6 +317,7 @@ import secrets
 import select
 import socket
 import shutil
+import ssl
 import struct
 import subprocess
 import sys
@@ -349,12 +353,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.4"
+SHIPPED_VERSION = "0.1.5"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-08.71"
+BRIDGE_BUILD = "2026-11-08.78"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -533,6 +537,73 @@ def lan_ipv4():
     return "127.0.0.1"
 
 
+# --- WAN detection (build .76, #59) ---------------------------------
+# The honest address model: a LAN address is never a public address.
+# The bridge learns this home's public (WAN) address with a small
+# HTTPS echo lookup - the same class of outbound call the update
+# check already makes - cached for five minutes, failure-tolerant:
+# any failure degrades to "undetected" and never blocks an enable.
+# APEX_DHD_WAN_IP is a diagnostics/test override only; unset in
+# normal operation.
+WAN_CACHE = {"ip": "", "state": "undetected", "at": 0.0}
+WAN_ECHO_URLS = ("https://api.ipify.org", "https://checkip.amazonaws.com", "https://icanhazip.com")
+
+
+def _ip_is_private_or_cgnat(ip):
+    try:
+        addr = ipaddress.ip_address(str(ip or "").strip())
+    except Exception:
+        return True
+    if not isinstance(addr, ipaddress.IPv4Address):
+        return True
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+        return True
+    try:
+        if addr in ipaddress.ip_network("100.64.0.0/10"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def wan_ipv4(force=False):
+    # Returns (ip, state): state is "public" (a routable address was
+    # seen), "behind-nat" (the echo answered with an RFC1918 or CGNAT
+    # 100.64.0.0/10 address - this machine sits behind another router
+    # or carrier NAT), or "undetected" (no echo answered).
+    now = time.time()
+    if not force and WAN_CACHE["at"] and (now - WAN_CACHE["at"] < 300):
+        return WAN_CACHE["ip"], WAN_CACHE["state"]
+    override = str(os.environ.get("APEX_DHD_WAN_IP", "")).strip()
+    found = ""
+    if override:
+        try:
+            ipaddress.IPv4Address(override)
+            found = override
+        except Exception:
+            found = ""
+    else:
+        for url in WAN_ECHO_URLS:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Apex-DHD"})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    text = resp.read().decode("utf-8", "replace").strip()
+                cand = text.split()[0].strip() if text.split() else ""
+                ipaddress.IPv4Address(cand)
+                found = cand
+                break
+            except Exception:
+                continue
+    if not found:
+        ip, state = "", "undetected"
+    elif _ip_is_private_or_cgnat(found):
+        ip, state = found, "behind-nat"
+    else:
+        ip, state = found, "public"
+    WAN_CACHE["ip"], WAN_CACHE["state"], WAN_CACHE["at"] = ip, state, now
+    return ip, state
+
+
 def public_state_payload(cfg, for_loopback):
     ps = public_settings(cfg)
     active_public = ACTIVE_BIND_HOST == "0.0.0.0"
@@ -572,6 +643,1346 @@ def gate_page_html(error=""):
         "</form></body></html>"
     )
 
+
+# --- DHD (build .74) ------------------------------------------------
+# DHD — Dial-Home Device, the way home: the SAME dashboard, extended
+# to a genuinely public address on the operator's own machine.
+# Everything is Apex's own work: no Tailscale, no external tunnel or
+# proxy service, no Certbot. PROXY CHOICE (recorded in the build
+# log, as directed): the smallest dependable approach this codebase
+# supports is a reverse proxy inside this bridge process — Python
+# standard library only. Two threaded listeners: port 80 serves the
+# ACME HTTP-01 challenge path and redirects everything else to
+# HTTPS; port 443 terminates TLS and forwards to the bridge on
+# 127.0.0.1:8675. No new daemon, no nginx/caddy to install, and the
+# openssl the installer already requires covers certificate work.
+# The proxy is the ONLY public face: while DHD is enabled the
+# bridge binds loopback only (main() enforces it), even when the
+# Local server choice is on. There is no hand-edited proxy config:
+# the proxy's behavior is derived from the config's dhd block on
+# every start. TLS from the first click: no domain — Apex generates
+# a self-signed certificate into config/dhd/; a domain — Apex's own
+# ACME v2 client (below) obtains a real Let's Encrypt certificate
+# and renews it automatically (checked at bridge start and daily;
+# renewed at 30 days remaining or less). The gate rides the proxy:
+# the SAME access code and acceptance cookie as the Local server,
+# required before ANY dashboard or API content is served through
+# the proxy — and public mode adds throttling the LAN door does not
+# have: a progressive delay per wrong code and a temporary lockout
+# after repeated failures. A passcode-authenticated session through
+# the proxy is a full session: the proxy forwards the whole API,
+# the Updater included — remote origin excludes nothing.
+DHD_DIR = os.path.join(ROOT, "config", "dhd")
+DHD_CERT_PATH = os.path.join(DHD_DIR, "cert.pem")
+DHD_KEY_PATH = os.path.join(DHD_DIR, "key.pem")
+DHD_META_PATH = os.path.join(DHD_DIR, "cert-meta.json")
+DHD_CHALLENGE_DIR = os.path.join(DHD_DIR, "acme-challenge")
+DHD_ACCOUNT_KEY = os.path.join(DHD_DIR, "acme-account.key")
+DHD_STATE = {"running": False, "starting": False, "mode": "off", "last_error": ""}
+DHD_SERVERS = []
+DHD_THROTTLE = {}
+DHD_LOCK = threading.Lock()
+DHD_LOCKOUT_FAILS = 5
+DHD_LOCKOUT_SECONDS = 300
+
+
+def dhd_settings(cfg):
+    d = cfg.get("dhd") if isinstance(cfg, dict) else None
+    if not isinstance(d, dict):
+        d = {}
+    return {
+        "enabled": d.get("enabled") is True,
+        "domain": str(d.get("domain") or "").strip().lower(),
+        "acme_directory": str(d.get("acme_directory") or "https://acme-v02.api.letsencrypt.org/directory").strip(),
+    }
+
+
+def dhd_save(cfg, patch):
+    block = cfg.get("dhd") if isinstance(cfg.get("dhd"), dict) else {}
+    block = dict(block)
+    block.update(patch)
+    cfg["dhd"] = block
+    save_config(cfg)
+
+
+def dhd_cert_meta():
+    try:
+        with open(DHD_META_PATH) as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
+
+
+def dhd_write_meta(mode, domain):
+    os.makedirs(DHD_DIR, exist_ok=True)
+    with open(DHD_META_PATH, "w") as f:
+        json.dump({"mode": mode, "domain": domain}, f)
+
+
+def dhd_cert_expiry():
+    # The certificate's notAfter, read with openssl; (iso, days) or
+    # (None, None). The meta file says which kind of cert it is;
+    # openssl is the authority on when it ends.
+    if not os.path.exists(DHD_CERT_PATH):
+        return None, None
+    try:
+        out = subprocess.run(
+            ["openssl", "x509", "-in", DHD_CERT_PATH, "-noout", "-enddate"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.strip()
+        raw = out.split("=", 1)[1].strip()
+        dt = datetime.datetime.strptime(raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=datetime.timezone.utc)
+        days = max(0, int((dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds() // 86400))
+        return dt.isoformat(), days
+    except Exception:
+        return None, None
+
+
+def dhd_generate_self_signed(domain=""):
+    os.makedirs(DHD_DIR, exist_ok=True)
+    sans = ["DNS:localhost", "IP:127.0.0.1"]
+    if domain:
+        sans.append("DNS:" + domain)
+    try:
+        ip = lan_ipv4()
+        if ip and ip != "127.0.0.1":
+            sans.append("IP:" + ip)
+    except Exception:
+        pass
+    cmd = [
+        "openssl", "req", "-x509", "-newkey", "rsa:2048",
+        "-keyout", DHD_KEY_PATH, "-out", DHD_CERT_PATH,
+        "-days", "365", "-nodes", "-subj", "/CN=Apex DHD",
+        "-addext", "subjectAltName=" + ",".join(sans),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError("openssl could not generate the self-signed certificate: " + (r.stderr or "").strip()[:200])
+    dhd_write_meta("self-signed", domain)
+
+
+def dhd_ensure_server_key():
+    if os.path.exists(DHD_KEY_PATH):
+        return
+    os.makedirs(DHD_DIR, exist_ok=True)
+    r = subprocess.run(["openssl", "genrsa", "-out", DHD_KEY_PATH, "2048"], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError("openssl could not generate the server key: " + (r.stderr or "").strip()[:200])
+
+
+# -- The built-in ACME v2 client -------------------------------------
+# Account key, order, HTTP-01 challenge served through the Apex
+# proxy on port 80, finalize, download, install. JWS signing shells
+# to openssl (RS256); HTTP is urllib. The directory URL comes from
+# the config's dhd block, so the client can be pointed at Let's
+# Encrypt staging or a local stub directory unchanged.
+
+def _b64u(data):
+    if isinstance(data, str):
+        data = data.encode()
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _acme_http(method, url, body=None, ctype=None):
+    req = urllib.request.Request(url, data=body, method=method)
+    if ctype:
+        req.add_header("Content-Type", ctype)
+    req.add_header("User-Agent", "apex-dhd-acme")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
+
+
+def _der_read_len(buf, i):
+    b = buf[i]
+    i += 1
+    if b < 0x80:
+        return b, i
+    n = b & 0x7F
+    v = 0
+    for _ in range(n):
+        v = (v << 8) | buf[i]
+        i += 1
+    return v, i
+
+
+def _der_read_tlv(buf, i):
+    tag = buf[i]
+    i += 1
+    ln, i = _der_read_len(buf, i)
+    return tag, buf[i:i + ln], i + ln
+
+
+def _rsa_jwk_from_private_key(key_path):
+    # The account key's JWK (for the thumbprint): pull the public
+    # numbers out of the SubjectPublicKeyInfo DER with a minimal
+    # ASN.1 walk — modulus and exponent are all a thumbprint needs.
+    r = subprocess.run(["openssl", "rsa", "-in", key_path, "-pubout", "-outform", "DER"], capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError("openssl could not read the ACME account key")
+    buf = r.stdout
+    _t, spki, _e = _der_read_tlv(buf, 0)
+    i = 0
+    _t, _alg, i = _der_read_tlv(spki, i)
+    _t, bits, i = _der_read_tlv(spki, i)
+    _t, rsaseq, _e = _der_read_tlv(bits[1:], 0)
+    j = 0
+    _t, n_bytes, j = _der_read_tlv(rsaseq, j)
+    _t, e_bytes, j = _der_read_tlv(rsaseq, j)
+    strip = lambda b: b[1:] if len(b) > 1 and b[0] == 0 else b
+    return {"e": _b64u(strip(e_bytes)), "kty": "RSA", "n": _b64u(strip(n_bytes))}
+
+
+def _acme_jws(key_path, url, payload, nonce, kid=None, jwk=None):
+    protected = {"alg": "RS256", "nonce": nonce, "url": url}
+    if kid:
+        protected["kid"] = kid
+    else:
+        protected["jwk"] = jwk
+    p64 = _b64u(json.dumps(protected, separators=(",", ":")))
+    body = "" if payload is None else json.dumps(payload, separators=(",", ":"))
+    b64 = _b64u(body)
+    signing = (p64 + "." + b64).encode()
+    fd, tmp = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(signing)
+        r = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key_path, tmp], capture_output=True, timeout=30)
+        if r.returncode != 0:
+            raise RuntimeError("openssl could not sign the ACME request")
+        sig = r.stdout
+    finally:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+    return json.dumps({"protected": p64, "payload": b64, "signature": _b64u(sig)}, separators=(",", ":")).encode()
+
+
+def acme_obtain(domain, directory_url):
+    # One full issuance for the domain. Raises RuntimeError with a
+    # plain-words step name on failure; installs the certificate
+    # and reloads the proxy on success.
+    os.makedirs(DHD_CHALLENGE_DIR, exist_ok=True)
+    if not os.path.exists(DHD_ACCOUNT_KEY):
+        r = subprocess.run(["openssl", "genrsa", "-out", DHD_ACCOUNT_KEY, "2048"], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError("ACME step 'account key' failed: openssl could not generate the account key")
+    jwk = _rsa_jwk_from_private_key(DHD_ACCOUNT_KEY)
+    thumb = _b64u(hashlib.sha256(json.dumps(
+        {"e": jwk["e"], "kty": "RSA", "n": jwk["n"]}, separators=(",", ":"), sort_keys=True,
+    ).encode()).digest())
+    _s, _h, raw = _acme_http("GET", directory_url)
+    try:
+        directory = json.loads(raw.decode())
+        new_nonce_url = directory["newNonce"]
+        new_account_url = directory["newAccount"]
+        new_order_url = directory["newOrder"]
+    except Exception:
+        raise RuntimeError("ACME step 'directory' failed: the ACME directory did not answer as expected at " + directory_url)
+    state = {"nonce": ""}
+
+    def fresh_nonce():
+        _s, h, _b = _acme_http("HEAD", new_nonce_url)
+        state["nonce"] = h.get("Replay-Nonce", "")
+
+    def post(url, payload, kid=None, use_jwk=False):
+        fresh_nonce()
+        body = _acme_jws(DHD_ACCOUNT_KEY, url, payload, state["nonce"], kid=kid, jwk=(jwk if use_jwk else None))
+        status, headers, raw = _acme_http("POST", url, body=body, ctype="application/jose+json")
+        if headers.get("Replay-Nonce"):
+            state["nonce"] = headers["Replay-Nonce"]
+        data = None
+        try:
+            data = json.loads(raw.decode()) if raw else None
+        except Exception:
+            data = None
+        return status, headers, data, raw
+
+    status, headers, _d, _r = post(new_account_url, {"termsOfServiceAgreed": True}, use_jwk=True)
+    account_url = headers.get("Location", "")
+    if status not in (200, 201) or not account_url:
+        raise RuntimeError("ACME step 'account' failed: the ACME server refused the account (HTTP " + str(status) + ")")
+    status, order_headers, order, _r = post(new_order_url, {"identifiers": [{"type": "dns", "value": domain}]}, kid=account_url)
+    if status not in (200, 201) or not isinstance(order, dict):
+        raise RuntimeError("ACME step 'order' failed: the ACME server refused the order (HTTP " + str(status) + ")")
+    order_url = order_headers.get("Location", "")
+    authz_urls = order.get("authorizations") or []
+    finalize_url = order.get("finalize", "")
+    if not authz_urls or not finalize_url:
+        raise RuntimeError("ACME step 'order' failed: the order carried no authorization")
+    status, _h, authz, _r = post(authz_urls[0], None, kid=account_url)
+    if not isinstance(authz, dict):
+        raise RuntimeError("ACME step 'challenge' failed: the authorization did not load")
+    challenge = None
+    for c in authz.get("challenges") or []:
+        if c.get("type") == "http-01":
+            challenge = c
+            break
+    if not challenge:
+        raise RuntimeError("ACME step 'challenge' failed: no HTTP-01 challenge was offered")
+    token = str(challenge.get("token") or "")
+    key_auth = token + "." + thumb
+    with open(os.path.join(DHD_CHALLENGE_DIR, token), "w") as f:
+        f.write(key_auth)
+    status, _h, _d, _r = post(str(challenge.get("url") or ""), {}, kid=account_url)
+    if status not in (200, 201):
+        raise RuntimeError("ACME step 'challenge' failed: the ACME server refused the challenge response (HTTP " + str(status) + ")")
+    valid = False
+    for _ in range(30):
+        time.sleep(1)
+        _s, _h, a2, _r = post(authz_urls[0], None, kid=account_url)
+        if isinstance(a2, dict) and a2.get("status") == "valid":
+            valid = True
+            break
+        if isinstance(a2, dict) and a2.get("status") == "invalid":
+            break
+    if not valid:
+        raise RuntimeError("ACME step 'challenge' failed: the domain proof did not validate — the usual cause is port 80 not reaching this machine (check the router forward) or the domain not resolving here yet")
+    dhd_ensure_server_key()
+    fd, csr_path = tempfile.mkstemp()
+    os.close(fd)
+    try:
+        r = subprocess.run(
+            ["openssl", "req", "-new", "-key", DHD_KEY_PATH, "-subj", "/CN=" + domain,
+             "-addext", "subjectAltName=DNS:" + domain, "-outform", "DER", "-out", csr_path],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            raise RuntimeError("ACME step 'finalize' failed: openssl could not build the certificate request")
+        with open(csr_path, "rb") as f:
+            csr_b64 = _b64u(f.read())
+    finally:
+        try:
+            os.unlink(csr_path)
+        except Exception:
+            pass
+    status, _h, order2, _r = post(finalize_url, {"csr": csr_b64}, kid=account_url)
+    if status not in (200, 201) or not isinstance(order2, dict):
+        raise RuntimeError("ACME step 'finalize' failed: the ACME server refused the finalize (HTTP " + str(status) + ")")
+    cert_url = order2.get("certificate", "")
+    for _ in range(30):
+        if cert_url:
+            break
+        if not order_url:
+            break
+        time.sleep(1)
+        _s, _h, o3, _r = post(order_url, None, kid=account_url)
+        if isinstance(o3, dict):
+            cert_url = o3.get("certificate", "") or cert_url
+            if o3.get("status") == "invalid":
+                break
+    if not cert_url:
+        raise RuntimeError("ACME step 'download' failed: the order never produced a certificate")
+    status, _h, _d, raw = post(cert_url, None, kid=account_url)
+    if status != 200 or b"BEGIN CERTIFICATE" not in raw:
+        raise RuntimeError("ACME step 'download' failed: the certificate did not download (HTTP " + str(status) + ")")
+    os.makedirs(DHD_DIR, exist_ok=True)
+    with open(DHD_CERT_PATH, "wb") as f:
+        f.write(raw)
+    dhd_write_meta("domain", domain)
+    return True
+
+
+# -- The proxy itself --------------------------------------------------
+
+def dhd_gate_page_html(error=""):
+    err = ""
+    if error:
+        err = "<p style='color:#f87171;font-size:14px'>" + error + "</p>"
+    return (
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>"
+        "<title>Apex - access code</title></head>"
+        "<body style='font-family:ui-monospace,Menlo,monospace;background:#0a0e12;color:#e6f1f5;display:flex;min-height:100dvh;align-items:center;justify-content:center;margin:0'>"
+        "<form method='POST' action='/__gate' style='max-width:320px;width:90%'>"
+        "<h1 style='font-size:18px'>Apex · DHD</h1>"
+        "<p style='color:#9fb3c8;font-size:14px'>You reached this Apex from the internet, through its DHD door. The door is locked with a code - type the access code from the DHD page, on the machine Apex runs on.</p>"
+        + err
+        + "<label style='font-size:14px'>Access code<br>"
+        "<input name='code' autocomplete='off' autocapitalize='characters' style='width:100%;padding:10px;margin-top:6px;background:#10161d;color:#e6f1f5;border:1px solid #22303d;border-radius:6px;box-sizing:border-box'></label>"
+        "<button type='submit' style='margin-top:12px;width:100%;padding:10px;background:#22d3ee;color:#000;border:0;border-radius:6px;font-weight:bold'>Open Apex</button>"
+        "</form></body></html>"
+    )
+
+
+def dhd_throttle_state(ip):
+    with DHD_LOCK:
+        st = DHD_THROTTLE.get(ip)
+        if not st:
+            return 0, 0.0
+        return st.get("fails", 0), st.get("lock_until", 0.0)
+
+
+def dhd_throttle_fail(ip):
+    with DHD_LOCK:
+        st = DHD_THROTTLE.setdefault(ip, {"fails": 0, "lock_until": 0.0})
+        st["fails"] = st.get("fails", 0) + 1
+        fails = st["fails"]
+        if fails >= DHD_LOCKOUT_FAILS:
+            st["lock_until"] = time.time() + DHD_LOCKOUT_SECONDS
+        return fails
+
+
+def dhd_throttle_clear(ip):
+    with DHD_LOCK:
+        DHD_THROTTLE.pop(ip, None)
+
+
+class DhdProxyHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "ApexDHD"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send_raw(self, code, body, ctype="text/html; charset=utf-8", extra=None):
+        if isinstance(body, str):
+            body = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if extra:
+            for k, v in extra.items():
+                self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            try:
+                self.wfile.write(body)
+            except Exception:
+                pass
+
+    def _client_ip(self):
+        try:
+            return str(self.client_address[0] or "")
+        except Exception:
+            return ""
+
+    def _accepted(self):
+        code = public_settings(load_config())["access_code"]
+        if not code:
+            return False
+        want = PUBLIC_COOKIE + "=" + public_token(code)
+        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
+        return want in parts
+
+    def _serve_challenge(self, path):
+        token = path.rsplit("/", 1)[-1]
+        if not token or "/" in token or ".." in token:
+            self._send_raw(404, "not found", "text/plain")
+            return
+        fp = os.path.join(DHD_CHALLENGE_DIR, token)
+        try:
+            with open(fp) as f:
+                body = f.read()
+            self._send_raw(200, body, "text/plain")
+        except Exception:
+            self._send_raw(404, "not found", "text/plain")
+
+    def _forward(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length > 0 else None
+        headers = {}
+        for k, v in self.headers.items():
+            lk = k.lower()
+            if lk in ("host", "connection", "content-length", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"):
+                continue
+            headers[k] = v
+        headers["Host"] = "127.0.0.1:" + str(BRIDGE_PORT)
+        headers["X-Forwarded-For"] = self._client_ip()
+        headers["X-Forwarded-Proto"] = "https"
+        headers["X-Apex-Via"] = "dhd"
+        conn = http.client.HTTPConnection("127.0.0.1", BRIDGE_PORT, timeout=60)
+        try:
+            conn.request(self.command, self.path, body=body, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            out_headers = {}
+            for k, v in resp.getheaders():
+                lk = k.lower()
+                if lk in ("connection", "content-length", "keep-alive", "transfer-encoding"):
+                    continue
+                out_headers[k] = v
+            self._send_raw(resp.status, data, resp.getheader("Content-Type") or "application/octet-stream", extra=out_headers)
+        except Exception:
+            self._send_raw(502, "Apex is not answering behind the DHD door right now.", "text/plain")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _gate_post(self):
+        ip = self._client_ip()
+        _fails, lock_until = dhd_throttle_state(ip)
+        if lock_until > time.time():
+            wait = int(lock_until - time.time())
+            self._send_raw(429, dhd_gate_page_html("Too many wrong codes - this door is locked for a few minutes. Try again in about " + str(max(1, wait // 60 + 1)) + " minute(s)."))
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
+            given = (form.get("code") or [""])[0].strip()
+        except Exception:
+            given = ""
+        want = public_settings(load_config())["access_code"]
+        if want and given.upper() == want.upper():
+            dhd_throttle_clear(ip)
+            cookie = PUBLIC_COOKIE + "=" + public_token(want) + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE) + "; Path=/; HttpOnly; Secure; SameSite=Lax"
+            self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": cookie})
+            return
+        fails = dhd_throttle_fail(ip)
+        if fails >= DHD_LOCKOUT_FAILS:
+            self._send_raw(429, dhd_gate_page_html("Too many wrong codes - this door is now locked for " + str(DHD_LOCKOUT_SECONDS // 60) + " minutes."))
+            return
+        # Progressive delay: each wrong code makes the next answer
+        # slower (1s, 2s, 4s, capped at 8s).
+        time.sleep(min(2 ** (fails - 1), 8))
+        self._send_raw(200, dhd_gate_page_html("That code did not open the door."))
+
+    def _handle(self):
+        path = self.path.split("?")[0]
+        is_tls = isinstance(self.connection, ssl.SSLSocket)
+        if not is_tls:
+            # Port 80: the ACME challenge path, and nothing else
+            # but a redirect behind it.
+            if path.startswith("/.well-known/acme-challenge/"):
+                self._serve_challenge(path)
+                return
+            host = self.headers.get("Host") or ""
+            target = "https://" + host + self.path if host else "/"
+            self._send_raw(301, "", "text/plain", extra={"Location": target})
+            return
+        if path.startswith("/.well-known/acme-challenge/"):
+            self._serve_challenge(path)
+            return
+        if path == "/__gate":
+            if self.command == "POST":
+                self._gate_post()
+            else:
+                self._send_raw(200, dhd_gate_page_html())
+            return
+        if not self._accepted():
+            if path.startswith("/api/"):
+                self._send_raw(403, json.dumps({"error": "access code required"}), "application/json")
+            else:
+                self._send_raw(200, dhd_gate_page_html())
+            return
+        self._forward()
+
+    do_GET = _handle
+    do_POST = _handle
+    do_PUT = _handle
+    do_DELETE = _handle
+    do_PATCH = _handle
+    do_HEAD = _handle
+
+
+def dhd_start_proxy():
+    # Brings both listeners up with the certificate on disk.
+    # Raises RuntimeError naming the step on failure.
+    global DHD_SERVERS
+    dhd_stop_proxy()
+    if not os.path.exists(DHD_CERT_PATH):
+        raise RuntimeError("DHD could not start at the TLS step: no certificate is on disk")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    try:
+        ctx.load_cert_chain(DHD_CERT_PATH, DHD_KEY_PATH)
+    except Exception as e:
+        raise RuntimeError("DHD could not start at the TLS step: the certificate could not be loaded (" + str(e) + ")")
+    try:
+        http_server = ThreadingHTTPServer(("0.0.0.0", 80), DhdProxyHandler)
+    except PermissionError:
+        raise RuntimeError("DHD could not start at the proxy step: ports below 1024 are reserved on Linux - grant the bridge the low-port capability once (sudo setcap 'cap_net_bind_service=+ep' on the python3 binary), then flip the switch again")
+    except OSError as e:
+        raise RuntimeError("DHD could not start at the proxy step: port 80 is not free (" + str(e) + ") - something else on this machine is using it")
+    try:
+        https_server = ThreadingHTTPServer(("0.0.0.0", 443), DhdProxyHandler)
+        https_server.socket = ctx.wrap_socket(https_server.socket, server_side=True)
+    except PermissionError:
+        try:
+            http_server.server_close()
+        except Exception:
+            pass
+        raise RuntimeError("DHD could not start at the proxy step: ports below 1024 are reserved on Linux - grant the bridge the low-port capability once (sudo setcap 'cap_net_bind_service=+ep' on the python3 binary), then flip the switch again")
+    except OSError as e:
+        try:
+            http_server.server_close()
+        except Exception:
+            pass
+        raise RuntimeError("DHD could not start at the proxy step: port 443 is not free (" + str(e) + ") - something else on this machine is using it")
+    DHD_SERVERS = [http_server, https_server]
+    for srv in DHD_SERVERS:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    DHD_STATE["running"] = True
+    return True
+
+
+def dhd_stop_proxy():
+    global DHD_SERVERS
+    for srv in DHD_SERVERS:
+        try:
+            srv.shutdown()
+        except Exception:
+            pass
+        try:
+            srv.server_close()
+        except Exception:
+            pass
+    DHD_SERVERS = []
+    DHD_STATE["running"] = False
+
+
+def dhd_self_check():
+    # After the proxy starts: it must answer on 443 from this
+    # machine. The gate page answering IS the healthy answer for
+    # an unauthenticated local probe.
+    try:
+        ctx = ssl._create_unverified_context()
+        conn = http.client.HTTPSConnection("127.0.0.1", 443, timeout=10, context=ctx)
+        conn.request("GET", "/__gate")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def dhd_domain_resolves_here(domain):
+    try:
+        infos = socket.getaddrinfo(domain, 443, proto=socket.IPPROTO_TCP)
+        ips = set()
+        for info in infos:
+            ips.add(str(info[4][0]))
+        wan_ip, _wan_state = wan_ipv4()
+        return lan_ipv4() in ips or "127.0.0.1" in ips or (bool(wan_ip) and wan_ip in ips)
+    except Exception:
+        return False
+
+
+def dhd_bring_up(cfg, reason="enable", progress=None):
+    # The one-click ladder, in order: certificate, proxy, check.
+    # A failed step records its name and leaves the previous live
+    # state untouched - a proxy already running keeps running. The
+    # optional progress callback is the operation-card feed: the
+    # same ladder, reported step by step, never a second path.
+    ds = dhd_settings(cfg)
+    domain = ds["domain"]
+    stage = "certificate"
+    DHD_STATE["starting"] = True
+
+    def mark(step, state, detail="", commands=None):
+        if progress:
+            progress(step, state, detail, commands or [])
+
+    try:
+        mark("certificate", "running", "Preparing the certificate.")
+        meta = dhd_cert_meta()
+        _exp, days_left = dhd_cert_expiry()
+        have_domain_cert = meta.get("mode") == "domain" and meta.get("domain") == domain and os.path.exists(DHD_CERT_PATH)
+        if domain and not have_domain_cert:
+            try:
+                acme_obtain(domain, ds["acme_directory"])
+            except Exception as e:
+                # The door still opens today on a self-signed
+                # certificate; the failure is named, not hidden.
+                DHD_STATE["last_error"] = str(e)
+                if not os.path.exists(DHD_CERT_PATH) or meta.get("mode") == "domain":
+                    dhd_generate_self_signed(domain)
+        elif domain and have_domain_cert and days_left is not None and days_left <= 30:
+            try:
+                acme_obtain(domain, ds["acme_directory"])
+            except Exception as e:
+                DHD_STATE["last_error"] = "Renewal attempt failed (the current certificate still has " + str(days_left) + " days): " + str(e)
+        elif not domain:
+            if not os.path.exists(DHD_CERT_PATH) or meta.get("mode") != "self-signed":
+                dhd_generate_self_signed("")
+        mark("certificate", "done", DHD_STATE["last_error"] if domain and not have_domain_cert else "Certificate ready.")
+        stage = "proxy"
+        mark("proxy", "running", "Starting Apex's reverse proxy on ports 80 and 443.")
+        was_running = DHD_STATE["running"]
+        if was_running and reason == "enable":
+            # Re-enable with Apex's own proxy already listening is a
+            # healthy state, never a port problem (#59): the door is
+            # already working, so there is nothing to restart.
+            mark("proxy", "done", "Apex's DHD proxy is already listening on 80/443 - this door working.")
+        else:
+            try:
+                dhd_start_proxy()
+            except Exception:
+                if was_running:
+                    # Reload failed; try to restore the previous face.
+                    try:
+                        dhd_start_proxy()
+                    except Exception:
+                        pass
+                raise
+            mark("proxy", "done", "The proxy is listening and forwarding to the bridge on loopback.")
+        stage = "reachability"
+        mark("reachability", "running", "Local check: confirming the proxy answers on 443 from this machine (answered on this machine proves the local half only - outside reach is reported separately).")
+        meta = dhd_cert_meta()
+        DHD_STATE["mode"] = meta.get("mode", "self-signed")
+        if not dhd_self_check():
+            raise RuntimeError("DHD started, but the reachability self-check failed: the proxy did not answer on 443 from this machine")
+        if domain and DHD_STATE["mode"] != "domain":
+            # Certificate pending is a degraded state, named here
+            # so the page and the Servers dot can show it.
+            if not DHD_STATE["last_error"]:
+                DHD_STATE["last_error"] = "Domain saved - its certificate is still pending."
+        elif DHD_STATE["mode"] == "domain":
+            DHD_STATE["last_error"] = ""
+        return True
+    except Exception as e:
+        DHD_STATE["last_error"] = str(e)
+        mark(stage, "failed", str(e), dhd_failure_commands(stage, str(e), domain))
+        return False
+    finally:
+        DHD_STATE["starting"] = False
+
+
+def _dhd_on_summary(payload):
+    # One honest sentence about a live DHD, shared by the operation
+    # cards, the chat replies, and the bridge's own startup line.
+    mode = payload.get("mode", "self-signed")
+    if payload.get("publicVerified"):
+        return "DHD is on at " + payload["publicUrl"] + " (" + mode + ") - outside reach verified."
+    if payload.get("publicUrl"):
+        return "DHD is on (" + mode + "). On this network: " + (payload.get("lanUrl") or "this machine") + ". Public address " + payload["publicUrl"] + " - outside reach unverified: " + (payload.get("nextStep") or "")
+    return "DHD is on (" + mode + "). On this network: " + (payload.get("lanUrl") or "this machine") + ". No public address yet - outside reach unverified: " + (payload.get("nextStep") or "")
+
+
+def dhd_state_payload(cfg, for_loopback):
+    ds = dhd_settings(cfg)
+    meta = dhd_cert_meta()
+    expires, days_left = dhd_cert_expiry()
+    active = bool(DHD_STATE["running"])
+    mode = "off" if not ds["enabled"] else (meta.get("mode", "self-signed") if active else "off")
+    cert_pending = bool(ds["domain"]) and mode != "domain"
+    if not ds["enabled"]:
+        status = "off"
+    elif DHD_STATE["starting"]:
+        status = "starting"
+    elif not active:
+        status = "degraded"
+    elif cert_pending:
+        status = "degraded"
+    else:
+        status = "healthy"
+    # The honest address model (build .76, #59). Three different
+    # addresses, never conflated: the LAN address (this network
+    # only), the detected WAN address (this home's public IP, seen
+    # by an outside echo - shown, but outside reach stays
+    # UNVERIFIED until it is proven), and the domain (the public
+    # address once its certificate is live AND the name resolves
+    # to this machine - only then is outside reach verified).
+    lan_ip = lan_ipv4()
+    lan_url = ("https://" + lan_ip) if (ds["enabled"] and active) else ""
+    wan_ip, wan_state = "", "undetected"
+    if ds["enabled"] and active:
+        wan_ip, wan_state = wan_ipv4()
+    domain_live = bool(ds["domain"]) and mode == "domain"
+    resolves_here = dhd_domain_resolves_here(ds["domain"]) if domain_live else False
+    public_verified = bool(domain_live and resolves_here)
+    public_url = ""
+    if ds["enabled"] and active:
+        if public_verified:
+            public_url = "https://" + ds["domain"]
+        elif wan_state == "public" and wan_ip:
+            public_url = "https://" + wan_ip
+    if public_verified:
+        outside_reach = "verified"
+        next_step = ""
+        wan_note = ""
+    elif not (ds["enabled"] and active):
+        outside_reach = "none"
+        next_step = ""
+        wan_note = ""
+    else:
+        outside_reach = "unverified"
+        if wan_state == "behind-nat":
+            wan_note = "The address the internet sees for this home (" + wan_ip + ") is itself a private or carrier-NAT address - this machine sits behind another router/NAT, so it is not directly reachable from outside."
+            next_step = "Forward ports 443 and 80 on the outer router to this machine, or add your domain - outside reach stays unverified until the public path is proven."
+        elif wan_state == "undetected":
+            wan_note = "Apex could not detect this home's public address (the echo lookup did not answer)."
+            next_step = "Forward ports 443 and 80 on your router to this machine, or add your domain - outside reach stays unverified until the public path is proven."
+        else:
+            wan_note = ""
+            next_step = "Forward ports 443 and 80 on your router to this machine (" + lan_ip + "), or add your domain - outside reach stays unverified until the public path is proven."
+    return {
+        "enabled": ds["enabled"],
+        "active": active,
+        "domain": ds["domain"],
+        "mode": mode,
+        "status": status,
+        "publicUrl": public_url,
+        "lanIp": lan_ip,
+        "lanUrl": lan_url,
+        "wanIp": wan_ip,
+        "wanState": wan_state,
+        "wanNote": wan_note,
+        "publicVerified": public_verified,
+        "outsideReach": outside_reach,
+        "nextStep": next_step,
+        "domainResolvesHere": resolves_here,
+        "certExpiresAt": expires,
+        "certDaysLeft": days_left,
+        "certPending": cert_pending and ds["enabled"],
+        "lastError": DHD_STATE["last_error"],
+        "accessCode": public_settings(cfg)["access_code"] if for_loopback else None,
+        "prereqs": dhd_prereq_check(),
+        "lastOperation": op_latest("dhd-enable"),
+    }
+
+
+def dhd_renewal_loop():
+    # Renewal is automatic: checked when the bridge starts (this
+    # thread's first pass) and daily after that. A domain cert at
+    # 30 days remaining or less is renewed with no operator
+    # action; a self-signed cert is regenerated the same way.
+    while True:
+        try:
+            cfg = load_config()
+            ds = dhd_settings(cfg)
+            if ds["enabled"] and DHD_STATE["running"]:
+                _exp, days_left = dhd_cert_expiry()
+                if days_left is not None and days_left <= 30:
+                    dhd_bring_up(cfg, reason="renewal")
+        except Exception:
+            pass
+        time.sleep(86400)
+
+
+# -- DHD prerequisites, remedies, and operation cards (build .74) --
+# The installer lands DHD's prerequisites up front; this section is
+# the safety net and the shared operation engine. A check names
+# each missing piece, an install action uses the same distro-family
+# package step as the installer, and every failure that has a
+# manual remedy carries the exact copy-ready commands for this
+# machine's family. Operations are deterministic bridge state: no
+# model call is made while one runs, steps and outputs stay inline,
+# and a finished operation is persisted so its card remains in the
+# chat thread after the work ends. APEX_DHD_MISSING and
+# APEX_DHD_INSTALL_FAIL are diagnostics/test overrides only; unset
+# in normal operation.
+
+OPS_PATH = os.path.join(ROOT, "config", "operations.json")
+OPS = {}
+OPS_LOADED = False
+OPS_LOCK = threading.Lock()
+OP_EVENTS = {}
+OP_RESUME = {}
+
+
+def _dhd_env_set(name):
+    out = set()
+    for part in str(os.environ.get(name, "")).split(","):
+        part = part.strip().lower().replace("_", "-")
+        if part:
+            out.add(part)
+    return out
+
+
+DHD_SIM_MISSING = _dhd_env_set("APEX_DHD_MISSING")
+DHD_SIM_INSTALL_FAIL = _dhd_env_set("APEX_DHD_INSTALL_FAIL")
+
+
+def detect_distro_family():
+    data = {}
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    data[k] = v.strip().strip('"')
+    except Exception:
+        pass
+    distro_id = str(data.get("ID", "")).lower()
+    like = str(data.get("ID_LIKE", "")).lower()
+    label = str(data.get("PRETTY_NAME") or distro_id or "Unrecognized Linux")
+    if distro_id == "bazzite":
+        return "bazzite", label
+    if distro_id in ("debian", "ubuntu", "pop", "linuxmint", "raspbian") or "debian" in like or "ubuntu" in like:
+        return "debian", label
+    if distro_id in ("fedora", "rhel", "centos") or "fedora" in like:
+        return "fedora", label
+    if distro_id in ("arch", "manjaro", "endeavouros") or "arch" in like:
+        return "arch", label
+    return "unknown", label
+
+
+def _python3_path():
+    p = shutil.which("python3") or sys.executable or "python3"
+    try:
+        return os.path.realpath(p)
+    except Exception:
+        return p
+
+
+def dhd_lowport_commands():
+    return ["sudo setcap 'cap_net_bind_service=+ep' " + chr(34) + _python3_path() + chr(34)]
+
+
+def dhd_manual_commands(piece, family=None):
+    if family is None:
+        family, _label = detect_distro_family()
+    if piece == "openssl":
+        if family == "debian":
+            return ["sudo apt-get update", "sudo apt-get install -y openssl"]
+        if family == "fedora":
+            return ["sudo dnf install -y openssl"]
+        if family == "arch":
+            return ["sudo pacman -S --needed openssl"]
+        if family == "bazzite":
+            return [
+                "# Bazzite does not layer host packages; use its Fedora distrobox for the remedy:",
+                "distrobox enter fedora -- sudo dnf install -y openssl",
+            ]
+        return [
+            "# Install the openssl package with this distro's package manager, for example:",
+            "sudo apt-get install -y openssl",
+        ]
+    if piece == "proxy":
+        return [
+            "# The DHD proxy is built into bridge.py; there is no separate proxy package to install.",
+            "# Reinstall or update Apex so bridge.py is whole, then flip the DHD switch again.",
+        ]
+    if piece == "certhome":
+        return [
+            'sudo install -d -o "$USER" -g "$(id -gn)" "' + DHD_DIR + '"',
+            'chmod -R u+rwX "' + DHD_DIR + '"',
+        ]
+    if piece == "lowport":
+        return dhd_lowport_commands()
+    if piece in ("port80", "port443"):
+        port = "80" if piece == "port80" else "443"
+        return [
+            "sudo ss -ltnp 'sport = :" + port + "'",
+            "# Stop the process named above (or move it to another port), then flip the DHD switch again.",
+        ]
+    return []
+
+
+def dhd_failure_commands(stage, error, domain=""):
+    text = str(error or "")
+    low = text.lower()
+    family, _label = detect_distro_family()
+    if "cap_net_bind_service" in low or "ports below 1024" in low or "permission" in low and ("proxy step" in low or "port" in low):
+        return dhd_lowport_commands()
+    if "port 80 is not free" in low:
+        return dhd_manual_commands("port80", family)
+    if "port 443 is not free" in low:
+        return dhd_manual_commands("port443", family)
+    if "openssl" in low or "certificate" in low or "acme step" in low:
+        return dhd_manual_commands("openssl", family)
+    if stage == "reachability" and domain:
+        return [
+            'dig +short "' + domain + '"',
+            'curl -I "http://' + domain + '/.well-known/acme-challenge/test"',
+            "# The first command should return this machine's public IP; the second should reach Apex on port 80.",
+        ]
+    if stage == "proxy":
+        return dhd_manual_commands("proxy", family)
+    return []
+
+
+def _dhd_port_state(port):
+    if DHD_STATE.get("running"):
+        return "ok", "In use by Apex's DHD proxy - this door working."
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind(("0.0.0.0", port))
+        return "ok", "Port " + str(port) + " is free."
+    except PermissionError:
+        return "permission", "Port " + str(port) + " needs the low-port capability on this Linux setup."
+    except OSError as e:
+        return "busy", "Port " + str(port) + " is already in use (" + str(e) + ")."
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
+def dhd_prereq_check():
+    family, label = detect_distro_family()
+    out = []
+    proxy_ok = "DhdProxyHandler" in globals() and hasattr(ssl, "SSLContext") and "proxy" not in DHD_SIM_MISSING
+    out.append({
+        "id": "proxy", "name": "Reverse proxy component", "ok": bool(proxy_ok),
+        "detail": "Built into bridge.py and present." if proxy_ok else "The proxy component did not pass Apex's self-test.",
+        "installable": True, "commands": dhd_manual_commands("proxy", family),
+    })
+    openssl_path = shutil.which("openssl")
+    openssl_ok = bool(openssl_path) and "openssl" not in DHD_SIM_MISSING
+    openssl_detail = "Not found on PATH."
+    if openssl_path:
+        try:
+            v = subprocess.run([openssl_path, "version"], capture_output=True, text=True, timeout=10).stdout.strip()
+            openssl_detail = (v or openssl_path) + " is present."
+        except Exception:
+            openssl_detail = openssl_path + " is present."
+    if not openssl_ok and openssl_path:
+        openssl_detail = "Apex's prerequisite check is holding openssl as missing (diagnostics override)."
+    out.append({
+        "id": "openssl", "name": "OpenSSL binary", "ok": bool(openssl_ok),
+        "detail": openssl_detail,
+        "installable": family in ("debian", "fedora", "arch"),
+        "commands": dhd_manual_commands("openssl", family),
+    })
+    cert_ok = "certhome" not in DHD_SIM_MISSING and "cert-home" not in DHD_SIM_MISSING
+    cert_detail = "Certificate home is writable: " + DHD_DIR
+    if cert_ok:
+        try:
+            os.makedirs(DHD_DIR, exist_ok=True)
+            probe = os.path.join(DHD_DIR, ".apex-write-test-" + str(os.getpid()) + "-" + str(threading.get_ident()) + "-" + str(time.time_ns()))
+            with open(probe, "w") as f:
+                f.write("ok")
+            os.unlink(probe)
+        except Exception as e:
+            cert_ok = False
+            cert_detail = "Certificate home is not writable: " + str(e)
+    else:
+        cert_detail = "Apex's prerequisite check is holding the certificate home as unavailable (diagnostics override)."
+    out.append({
+        "id": "certhome", "name": "Certificate home", "ok": bool(cert_ok),
+        "detail": cert_detail, "installable": True,
+        "commands": dhd_manual_commands("certhome", family),
+    })
+    for port, piece in ((80, "port80"), (443, "port443")):
+        state, detail = _dhd_port_state(port)
+        commands = dhd_lowport_commands() if state == "permission" else dhd_manual_commands(piece, family)
+        out.append({
+            "id": piece, "name": "Port " + str(port) + " availability", "ok": state == "ok",
+            "detail": detail, "installable": False, "commands": commands,
+        })
+    return {"family": family, "label": label, "items": out}
+
+
+def _dhd_install_argv(piece, family):
+    if piece == "openssl":
+        if family == "debian":
+            return ["apt-get update", "apt-get install -y openssl"]
+        if family == "fedora":
+            return ["dnf install -y openssl"]
+        if family == "arch":
+            return ["pacman -S --needed --noconfirm openssl"]
+    return []
+
+
+def _dhd_run_install_command(command, sudo_password=""):
+    if os.geteuid() == 0:
+        r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300, cwd=shell_cwd())
+        return r.returncode, (r.stdout + r.stderr).strip()
+    result = run_shell("sudo " + command, timeout=300, sudo=True, sudo_password=sudo_password)
+    return int(result.get("exit_code", 1)), str(result.get("output", "")).strip()
+
+
+def dhd_install_prereqs(pieces=None, sudo_password=""):
+    check = dhd_prereq_check()
+    by_id = {item["id"]: item for item in check["items"]}
+    wanted = pieces or [item["id"] for item in check["items"] if not item["ok"] and item["installable"]]
+    results = []
+    for piece in wanted:
+        item = by_id.get(piece)
+        if item is None:
+            continue
+        if item["ok"]:
+            results.append({"id": piece, "ok": True, "detail": item["name"] + " is already present.", "output": "", "commands": item["commands"]})
+            continue
+        if piece in DHD_SIM_INSTALL_FAIL:
+            results.append({"id": piece, "ok": False, "detail": "The install step for " + item["name"] + " failed (diagnostics override). Nothing else was changed.", "output": "Apex forced this install to fail so the manual remedy can be verified.", "commands": item["commands"]})
+            continue
+        output = ""
+        ok = False
+        try:
+            if piece == "proxy":
+                ok = "DhdProxyHandler" in globals() and hasattr(ssl, "SSLContext")
+                if ok:
+                    DHD_SIM_MISSING.discard("proxy")
+                output = "Proxy component self-test passed." if ok else "Proxy component self-test still fails."
+            elif piece == "openssl":
+                commands = _dhd_install_argv(piece, check["family"])
+                if not commands:
+                    output = "This distro family has no automatic package step in Apex."
+                else:
+                    codes = []
+                    chunks = []
+                    for command in commands:
+                        code, text = _dhd_run_install_command(command, sudo_password)
+                        codes.append(code)
+                        if text:
+                            chunks.append(text[-1200:])
+                    output = "\n".join(chunks)
+                    ok = all(code == 0 for code in codes) and bool(shutil.which("openssl"))
+                    if ok:
+                        DHD_SIM_MISSING.discard("openssl")
+            elif piece == "certhome":
+                try:
+                    os.makedirs(DHD_DIR, exist_ok=True)
+                    probe = os.path.join(DHD_DIR, ".apex-write-test-" + str(os.getpid()) + "-" + str(threading.get_ident()) + "-" + str(time.time_ns()))
+                    with open(probe, "w") as f:
+                        f.write("ok")
+                    os.unlink(probe)
+                    ok = True
+                    output = "Certificate home created and verified writable."
+                except Exception:
+                    if os.geteuid() != 0 or sudo_password:
+                        cmd = "install -d -o " + str(os.getuid()) + " -g " + str(os.getgid()) + ' "' + DHD_DIR + '"' 
+                        code, text = _dhd_run_install_command(cmd, sudo_password)
+                        output = text
+                        if code == 0:
+                            DHD_SIM_MISSING.discard("certhome")
+                            DHD_SIM_MISSING.discard("cert-home")
+                            return dhd_install_prereqs([piece], sudo_password)
+                    else:
+                        output = "The bridge could not create or write the certificate home."
+                if ok:
+                    DHD_SIM_MISSING.discard("certhome")
+                    DHD_SIM_MISSING.discard("cert-home")
+            else:
+                output = "This prerequisite has no automatic install step."
+        except Exception as e:
+            output = str(e)
+            ok = False
+        results.append({
+            "id": piece, "ok": bool(ok),
+            "detail": (item["name"] + " installed and verified.") if ok else ("The install step for " + item["name"] + " failed. Nothing else was changed."),
+            "output": output[-2400:], "commands": item["commands"],
+        })
+    return {"ok": all(r["ok"] for r in results) if results else True, "results": results, "prereqs": dhd_prereq_check()}
+
+
+def _ops_load():
+    global OPS_LOADED
+    if OPS_LOADED:
+        return
+    OPS_LOADED = True
+    try:
+        with open(OPS_PATH) as f:
+            data = json.load(f)
+        rows = data.get("operations", []) if isinstance(data, dict) else []
+        for op in rows:
+            if isinstance(op, dict) and op.get("id"):
+                OPS[op["id"]] = op
+    except Exception:
+        pass
+
+
+def _ops_save():
+    try:
+        os.makedirs(os.path.dirname(OPS_PATH), exist_ok=True)
+        rows = list(OPS.values())[-25:]
+        tmp = OPS_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"operations": rows}, f)
+        os.replace(tmp, OPS_PATH)
+    except Exception:
+        pass
+
+
+def op_snapshot(op_id):
+    _ops_load()
+    with OPS_LOCK:
+        op = OPS.get(op_id)
+        return json.loads(json.dumps(op)) if op else None
+
+
+def op_latest(kind=None):
+    _ops_load()
+    with OPS_LOCK:
+        rows = list(OPS.values())
+        if kind:
+            rows = [op for op in rows if op.get("kind") == kind]
+        return json.loads(json.dumps(rows[-1])) if rows else None
+
+
+def op_new(kind, title, step_defs, source=""):
+    _ops_load()
+    op_id = "op-" + str(int(time.time() * 1000)) + "-" + secrets.token_hex(2)
+    op = {
+        "id": op_id, "kind": kind, "title": title, "source": source,
+        "state": "running", "detail": "", "createdAt": int(time.time() * 1000),
+        "updatedAt": int(time.time() * 1000),
+        "steps": [{"id": sid, "name": name, "state": "pending", "detail": "", "commands": [], "output": ""} for sid, name in step_defs],
+    }
+    with OPS_LOCK:
+        OPS[op_id] = op
+        _ops_save()
+    return op_id
+
+
+def op_set(op_id, step_id, state, detail=None, commands=None, output=None, op_state=None):
+    _ops_load()
+    with OPS_LOCK:
+        op = OPS.get(op_id)
+        if not op:
+            return
+        for step in op.get("steps", []):
+            if step.get("id") == step_id:
+                step["state"] = state
+                if detail is not None:
+                    step["detail"] = detail
+                if commands is not None:
+                    step["commands"] = commands
+                if output is not None:
+                    step["output"] = output[-2400:]
+                break
+        if op_state:
+            op["state"] = op_state
+        op["updatedAt"] = int(time.time() * 1000)
+        _ops_save()
+
+
+def op_finish(op_id, state, detail):
+    _ops_load()
+    with OPS_LOCK:
+        op = OPS.get(op_id)
+        if not op:
+            return
+        op["state"] = state
+        op["detail"] = detail
+        op["updatedAt"] = int(time.time() * 1000)
+        _ops_save()
+
+
+def _dhd_op_fail(op_id, step_id, detail, commands=None):
+    op_set(op_id, step_id, "failed", detail, commands=commands or [])
+    op_finish(op_id, "failed", detail)
+
+
+def _dhd_release_waiting_ops(ok, detail, commands=None):
+    _ops_load()
+    with OPS_LOCK:
+        candidates = [op for op in OPS.values() if op.get("kind") == "dhd-enable" and op.get("state") == "waiting"]
+    for op in candidates:
+        OP_RESUME[op["id"]] = {"ok": bool(ok), "detail": detail, "commands": commands or []}
+        event = OP_EVENTS.get(op["id"])
+        if event:
+            event.set()
+
+
+def _run_dhd_enable_op(op_id, sudo_password=""):
+    try:
+        cfg = load_config()
+        if dhd_settings(cfg)["enabled"] and DHD_STATE.get("running"):
+            for step_id in ("prerequisites", "certificate", "proxy", "reachability"):
+                op_set(op_id, step_id, "done", "Already live.")
+            op_finish(op_id, "done", "DHD is already on.")
+            return
+        op_set(op_id, "prerequisites", "running", "Checking the proxy component, OpenSSL, certificate home, and ports 80/443.")
+        check = dhd_prereq_check()
+        missing = [item for item in check["items"] if not item["ok"]]
+        installable = [item for item in missing if item["installable"]]
+        blockers = [item for item in missing if not item["installable"]]
+        if installable:
+            names = ", ".join(item["name"] for item in installable)
+            event = threading.Event()
+            OP_EVENTS[op_id] = event
+            op_set(op_id, "prerequisites", "waiting", "Missing: " + names + ". Use Install on this card or the DHD page; the enable continues automatically afterward.", op_state="waiting")
+            event.wait()
+            resume = OP_RESUME.pop(op_id, {"ok": False, "detail": "The install step did not report a result.", "commands": []})
+            OP_EVENTS.pop(op_id, None)
+            if not resume.get("ok"):
+                _dhd_op_fail(op_id, "prerequisites", resume.get("detail") or "A prerequisite install failed.", resume.get("commands") or [])
+                return
+            check = dhd_prereq_check()
+            missing = [item for item in check["items"] if not item["ok"]]
+            blockers = [item for item in missing if not item["installable"]]
+            installable = [item for item in missing if item["installable"]]
+            if installable:
+                commands = []
+                for item in installable:
+                    commands.extend(item["commands"])
+                _dhd_op_fail(op_id, "prerequisites", "A prerequisite is still missing after the install step: " + ", ".join(item["name"] for item in installable), commands)
+                return
+        if blockers:
+            commands = []
+            detail_bits = []
+            for item in blockers:
+                commands.extend(item["commands"])
+                detail_bits.append(item["name"] + ": " + item["detail"])
+            _dhd_op_fail(op_id, "prerequisites", " ".join(detail_bits), commands)
+            return
+        op_set(op_id, "prerequisites", "done", "Every prerequisite is present.")
+        cfg = load_config()
+        dhd_save(cfg, {"enabled": True})
+        ensure_access_code(cfg)
+        cfg = load_config()
+        if ACTIVE_BIND_HOST == "0.0.0.0":
+            op_set(op_id, "certificate", "waiting", "The bridge is restarting onto loopback-only before the public proxy opens.", op_state="waiting")
+            op_finish(op_id, "waiting", "Bridge restart requested; this operation resumes when the new bridge answers.")
+            schedule_bridge_restart()
+            return
+
+        def progress(step_id, state, detail, commands=None):
+            op_set(op_id, step_id, state, detail, commands=commands or [])
+
+        ok = dhd_bring_up(cfg, progress=progress)
+        cfg = load_config()
+        payload = dhd_state_payload(cfg, True)
+        if ok:
+            op_set(op_id, "reachability", "done", "Local check passed: the proxy answered on 443 on this machine (answered on this machine). Outside reach is reported separately on the DHD page." + (" The domain certificate is still pending; the door is answering on the self-signed certificate meanwhile." if payload.get("certPending") else ""))
+            summary = _dhd_on_summary(payload)
+            op_finish(op_id, "done", summary)
+        else:
+            detail = DHD_STATE.get("last_error") or "DHD did not come up."
+            op_finish(op_id, "failed", detail)
+    except Exception as e:
+        op_finish(op_id, "failed", "DHD enable failed: " + str(e))
+
+
+def dhd_start_enable_operation(source, sudo_password=""):
+    existing = op_latest("dhd-enable")
+    if existing and existing.get("state") in ("running", "waiting"):
+        return existing["id"]
+    op_id = op_new("dhd-enable", "Turn on DHD", [
+        ("prerequisites", "Prerequisites"), ("certificate", "Certificate"),
+        ("proxy", "Reverse proxy"), ("reachability", "Reachability check"),
+    ], source=source)
+    threading.Thread(target=_run_dhd_enable_op, args=(op_id, sudo_password), daemon=True).start()
+    return op_id
+
+
+def dhd_resume_enable_operation():
+    op = op_latest("dhd-enable")
+    if not op or op.get("state") not in ("waiting", "running"):
+        return
+    cfg = load_config()
+    if not dhd_settings(cfg)["enabled"]:
+        return
+    if DHD_STATE.get("running"):
+        payload = dhd_state_payload(cfg, True)
+        op_set(op["id"], "prerequisites", "done", "Every prerequisite is present.")
+        op_set(op["id"], "certificate", "done", "Certificate ready (" + payload.get("mode", "self-signed") + ").")
+        op_set(op["id"], "proxy", "done", "The proxy is listening on 80/443.")
+        op_set(op["id"], "reachability", "done", "Local check passed: the proxy answered on 443 on this machine (answered on this machine).")
+        op_finish(op["id"], "done", _dhd_on_summary(payload))
+    elif DHD_STATE.get("last_error"):
+        detail = DHD_STATE["last_error"]
+        stage = "proxy" if "proxy step" in detail else "reachability" if "self-check" in detail else "certificate"
+        op_set(op["id"], stage, "failed", detail, commands=dhd_failure_commands(stage, detail, dhd_settings(cfg)["domain"]))
+        op_finish(op["id"], "failed", detail)
+
+
+def dhd_chat_intent(text):
+    raw = str(text or "").strip()
+    low = " " + re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip() + " "
+    if " dhd " not in low:
+        return None
+    if re.match(r"\s*(how|what|why|explain)\b", raw, re.I):
+        return None
+    if re.search(r"\b(turn off|switch off|disable|stop|shut off)\b", low):
+        return "disable"
+    if re.search(r"\b(turn on|switch on|enable|start|open|activate|set up|setup)\b", low):
+        return "enable"
+    return None
 
 def read_file(path):
     try:
@@ -1275,7 +2686,7 @@ def latest_release():
         "name": str(rel.get("name") or ""),
         "url": str(rel.get("html_url") or ""),
         "publishedAt": str(rel.get("published_at") or ""),
-        "notes": str(rel.get("body") or ""),
+        "notes": str(rel.get("body") or "").replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10)),
         "asset": asset,
     }
 
@@ -1286,7 +2697,7 @@ def changelog_section_for(tag):
     # empty body, the panel still deserves the notes, so the
     # bridge reads the project's CHANGELOG.md from the repo and
     # cuts out the section for the release's version — the
-    # "## 0.1.4 (alpha)" heading down to the next "## " heading.
+    # "## 0.1.5 (alpha)" heading down to the next "## " heading.
     # Any failure (offline, no such section) returns "" and the
     # panel simply shows no notes; it never invents any.
     number, _status = _tag_parts(tag)
@@ -1355,7 +2766,7 @@ def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
     # letter (a for alpha, b for beta, none for stable) — the form
     # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.3a → v0.1.4a".
+    # "Updated v0.1.4a → v0.1.5a".
     return "v" + str(number) + (
         "a" if status == "alpha" else "b" if status == "beta" else "")
 
@@ -1585,6 +2996,26 @@ def main():
         relaunch()
         return
 
+    # The installer's DHD prerequisite step is a named ladder
+    # step of its own: its summary line is read back from the
+    # install log the helper just captured, so the panel shows
+    # the step because the installer really ran it — never as a
+    # file-copy shortcut or a relabelled install phase.
+    dhd_prereq_detail = ""
+    try:
+        with open(job["installLog"], "rb") as log:
+            install_text = log.read().decode("utf-8", "replace")
+        for line in install_text.splitlines():
+            if line.startswith("DHD-PREREQS:"):
+                dhd_prereq_detail = line.split(":", 1)[1].strip()
+                break
+    except Exception:
+        dhd_prereq_detail = ""
+    write_result({
+        "state": "working", "step": "dhd-prereqs",
+        "dhdPrereqs": dhd_prereq_detail or "This installer did not report a DHD prerequisite step.",
+    })
+    time.sleep(1)
     write_result({"state": "working", "step": "restarting"})
     relaunch()
     target = tuple(job["targetTuple"])
@@ -1978,7 +3409,7 @@ def save_download_payload(data):
 GITHUB_TOKEN_PATH = os.path.join(ROOT, "config", "github-auth.json")
 GITHUB_REPO_URL = "https://github.com/AlexKollar/Apex"
 GITHUB_API_BASE = "https://api.github.com/repos/AlexKollar/Apex"
-GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows"]
+GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault"]
 # The always-ticked core (build .36): Soul, Memory, and Settings &
 # config ride in every backup automatically — they are what makes
 # an imported Navi *her*, so github_settings folds them into the
@@ -2395,6 +3826,15 @@ def github_collect_backup(cfg, dashboard=None):
                             files["rag-packs/" + slug + "/" + name] = f.read()
     if "workflows" in items:
         files["chips/workflows.json"] = (read_file(WORKFLOWS_FILE) or "[]").encode()
+    if "vault" in items and os.path.isdir(VAULT_DIR):
+        for base, dirs, names in os.walk(VAULT_DIR):
+            dirs.sort()
+            for name in sorted(names):
+                fpath = os.path.join(base, name)
+                if os.path.isfile(fpath):
+                    rel = os.path.relpath(fpath, VAULT_DIR).replace(os.sep, "/")
+                    with open(fpath, "rb") as f:
+                        files["vault/" + rel] = f.read()
     # The manifest's app name is the product name, "Apex" — it is
     # written into navi-backup.json in the operator's backup repo,
     # where it is read as identity, never matched as a token. (The
@@ -2440,7 +3880,7 @@ def github_run_backup(cfg, dashboard=None):
         st, created = github_api("POST", "https://api.github.com/user/repos", token, {
             "name": repo,
             "private": s["backup_private"],
-            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows).",
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault).",
             "auto_init": True,
         })
         if st not in (200, 201):
@@ -2504,7 +3944,7 @@ def github_fetch_backup(cfg):
     }
     files = {}
     for path, sha in blobs.items():
-        if path in fixed or path.startswith("rag-packs/") or (path.startswith("chips/") and path.endswith(".png")):
+        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or (path.startswith("chips/") and path.endswith(".png")):
             bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
             if bst == 200 and isinstance(blob, dict) and blob.get("content"):
                 try:
@@ -2530,6 +3970,7 @@ def github_import_changes(cfg, fetched, dashboard=None):
         "chips": "Installed chips",
         "rag": "RAG packs",
         "workflows": "Workflows",
+        "vault": "The Vault",
     }
     changes = []
     if "soul" in items:
@@ -2629,6 +4070,18 @@ def github_import_changes(cfg, fetched, dashboard=None):
             "detail": "Would restore " + str(len(backed) if isinstance(backed, list) else 0) + " workflows from the backup. This machine currently holds " + str(len(cur)) + ".",
             "willChange": backed_names != cur_names,
         })
+    if "vault" in items:
+        backed_paths = sorted(p for p in files if p.startswith("vault/"))
+        cur_paths = []
+        if os.path.isdir(VAULT_DIR):
+            for base, dirs, names in os.walk(VAULT_DIR):
+                for name in names:
+                    cur_paths.append("vault/" + os.path.relpath(os.path.join(base, name), VAULT_DIR).replace(os.sep, "/"))
+        changes.append({
+            "item": "vault", "label": labels["vault"],
+            "detail": "Would restore " + str(len(backed_paths)) + " vault notes from the backup — the whole shared desk. This machine currently holds " + str(len(cur_paths)) + ".",
+            "willChange": backed_paths != sorted(cur_paths),
+        })
     return changes, items
 
 
@@ -2712,6 +4165,19 @@ def github_apply_import(cfg, fetched):
         with open(WORKFLOWS_FILE, "wb") as f:
             f.write(files["chips/workflows.json"])
         applied.append("Workflows")
+    if "vault" in items:
+        wrote = False
+        for path, data in files.items():
+            if path.startswith("vault/"):
+                rel = vault_join(path[len("vault/"):])
+                if rel:
+                    full = os.path.join(VAULT_DIR, *rel.split("/"))
+                    os.makedirs(os.path.dirname(full), exist_ok=True)
+                    with open(full, "wb") as f:
+                        f.write(data)
+                    wrote = True
+        if wrote:
+            applied.append("The Vault")
     dashboard_out = None
     if "dashboard.json" in files:
         try:
@@ -4353,6 +5819,318 @@ def rag_pack_documents(slug):
     }
 
 
+# ------------------------------- The Vault -------------------------------
+# Build .72, issue #54: a shared desk of plain markdown notes at
+# config/vault/ inside the install — real .md files in subfolders,
+# YAML frontmatter preserved, [[wikilinks]] and #tags as plain text,
+# so the operator can open the same folder in Obsidian and
+# everything works. Every path is jailed to the vault root; writes
+# land atomically (temp file + rename); the seed runs only when the
+# folder does not exist yet and never touches an existing file.
+
+VAULT_DIR = os.path.join(ROOT, "config", "vault")
+
+
+def _vault_seed_files():
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    welcome = "\n".join([
+        "---", "tags: [vault, guide]", "---", "",
+        "# Welcome to the Vault", "",
+        "This folder is a shared desk: plain markdown files you can open here, in Obsidian, or in any text editor — same files, no conversion, nothing locked in.", "",
+        "## The two areas", "",
+        "- **Navi's Desk/** — her side of the desk. When a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note here and tells you she did.",
+        "- **Operator/** — your side. She never edits your notes silently: she writes here only when you ask her to in chat, and she says what she filed.",
+        "- **Daily/** — one note per day, from the Daily Note button.",
+        "- **Templates/** — files here are offered as starting templates when you make a new note.", "",
+        "## Conventions", "",
+        "- Link notes with [[wikilinks]] — click one in Preview to jump (or to create the note).",
+        "- Tag with #tags anywhere in the text.",
+        "- YAML frontmatter at the top of a note stays exactly as written; the preview never mangles it.", "",
+        "The vault folder rides the installer's keep-list, so updates and fresh installs preserve it. See [[Start here]] on your side of the desk, and [[First note]] on hers.", "",
+    ])
+    first = "\n".join([
+        "---", "filed: " + today, "---", "",
+        "# First note", "",
+        "Filed " + today + " — my first note on my side of the desk.", "",
+        "This is where I'll keep what a conversation produces that's worth more than the conversation: decisions we made and why, findings from the work, things you asked me to remember. Dated, first person, in my own words — and when one of these notes informs an answer I give you, I'll name it as a source, the way I name a RAG pack.", "",
+        "Your notes live in [[Start here]]'s folder, and I won't touch them unless you ask. The desk is shared; the sides are respected.", "",
+        "#navi #desk", "",
+    ])
+    start = "\n".join([
+        "# Start here", "",
+        "Your side of the desk. Make a note with **New note**, drag notes between folders in the tree, or drop markdown files from your computer onto the vault to import them.", "",
+        "Ask Navi in chat to file something here and she will — out loud, never silently. Her own notes live across the desk in [[First note]].", "",
+    ])
+    template = "\n".join([
+        "---", "tags: []", "---", "",
+        "# Untitled", "",
+        "## Notes", "", "- ", "",
+        "## Links", "", "- [[Welcome]]", "",
+    ])
+    return [
+        ("Welcome.md", welcome),
+        ("Navi's Desk/First note.md", first),
+        ("Operator/Start here.md", start),
+        ("Templates/Note template.md", template),
+    ]
+
+
+def vault_join(rel):
+    # The jail: normalize a vault-relative path, or return None for
+    # anything that escapes the vault root (.., absolute, empty).
+    rel = str(rel or "").replace(chr(92), "/").strip()
+    if not rel or rel.startswith("/"):
+        return None
+    parts = []
+    for seg in rel.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return None
+        parts.append(seg)
+    if not parts:
+        return None
+    root = os.path.abspath(VAULT_DIR)
+    full = os.path.abspath(os.path.join(root, *parts))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    return "/".join(parts)
+
+
+def vault_fs_path(rel):
+    return os.path.join(VAULT_DIR, *rel.split("/"))
+
+
+def vault_write(rel, content):
+    full = vault_fs_path(rel)
+    parent = os.path.dirname(full)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = full + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(str(content))
+    os.replace(tmp, full)
+
+
+def vault_ensure_seed():
+    # First run only: if the folder already exists, the operator's
+    # desk is theirs — seeding never writes into it again.
+    if os.path.isdir(VAULT_DIR):
+        return
+    os.makedirs(VAULT_DIR, exist_ok=True)
+    for rel, content in _vault_seed_files():
+        if not os.path.exists(vault_fs_path(rel)):
+            vault_write(rel, content)
+
+
+def _vault_links(content):
+    out = []
+    for m in re.finditer(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", content or ""):
+        t = m.group(1).strip()
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def _vault_tags(content):
+    out = []
+    for m in re.finditer(r"(?m)(?:^|\s)#([A-Za-z][A-Za-z0-9_-]*)", content or ""):
+        t = m.group(1)
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def vault_notes_raw():
+    vault_ensure_seed()
+    notes = []
+    if os.path.isdir(VAULT_DIR):
+        for base, dirs, files in os.walk(VAULT_DIR):
+            dirs.sort()
+            for name in sorted(files):
+                if not name.lower().endswith(".md"):
+                    continue
+                full = os.path.join(base, name)
+                rel = os.path.relpath(full, VAULT_DIR).replace(os.sep, "/")
+                try:
+                    with open(full, encoding="utf-8") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                notes.append({
+                    "path": rel,
+                    "content": content,
+                    "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(full))),
+                })
+    notes.sort(key=lambda n: n["path"])
+    return notes
+
+
+def vault_list_payload():
+    notes = vault_notes_raw()
+    folders = set()
+    if os.path.isdir(VAULT_DIR):
+        for base, dirs, files in os.walk(VAULT_DIR):
+            for d in dirs:
+                rel = os.path.relpath(os.path.join(base, d), VAULT_DIR).replace(os.sep, "/")
+                folders.add(rel)
+    for n in notes:
+        parts = n["path"].split("/")
+        title = parts[-1][:-3] if parts[-1].lower().endswith(".md") else parts[-1]
+        n["title"] = title
+        n["outgoing"] = _vault_links(n["content"])
+        n["tags"] = _vault_tags(n["content"])
+    for n in notes:
+        n["backlinks"] = [
+            o["path"] for o in notes
+            if o["path"] != n["path"]
+            and any(t.lower() == n["title"].lower() for t in o["outgoing"])
+        ]
+    return {"notes": notes, "folders": sorted(folders)}
+
+
+def vault_search(query, limit=2):
+    words = set(w for w in re.findall(r"[a-z0-9][a-z0-9_-]{3,}", (query or "").lower()))
+    if not words:
+        return []
+    scored = []
+    for n in vault_notes_raw():
+        title = n["path"].split("/")[-1].lower()
+        tags = [t.lower() for t in _vault_tags(n["content"])]
+        body = n["content"].lower()
+        score = 0
+        for w in words:
+            if w in title:
+                score += 3
+            if w in tags:
+                score += 2
+            if w in body:
+                score += 1
+        if score > 0:
+            prose = re.sub(r"^---\n.*?\n---\n", "", n["content"], flags=re.S)
+            lines = [ln.strip() for ln in prose.split("\n") if ln.strip() and not ln.strip().startswith("#")]
+            scored.append({"path": n["path"], "score": score, "excerpt": " ".join(lines)[:400]})
+    scored.sort(key=lambda h: -h["score"])
+    return scored[:limit]
+
+
+def vault_file_from_chat(text, history=None):
+    # Her note-taking from chat (issue #54): a filing request lands
+    # on her side of the desk — Navi's Desk/, dated, first person —
+    # unless the operator names their own side. The note is ABOUT
+    # something: the thing just discussed. A bare request ("make a
+    # note about that up there") names no subject, so the recent
+    # conversation rides along (build .73, field report: the first
+    # version filed an empty note under a promising name): the note
+    # says what it is about and quotes the exchange it came from —
+    # above all the latest terminal output. Returns (path, err).
+    raw = (text or "").strip()
+    to_operator = bool(re.search(r"\b(?:in|to|under)\s+(?:my|the\s+operator|operator)\b", raw, re.I))
+    body = raw.split(":", 1)[1].strip() if ":" in raw else raw
+    body = re.sub(r"^(?:please\s+)?(?:file|write|save|make|take)\s+(?:a\s+|this\s+)?note\b", "", body, flags=re.I).strip()
+    body = re.sub(r"\bnote\s+(?:this|that)\s+down\b", "", body, flags=re.I).strip() or raw
+    # The subject as the operator phrased it, with the politeness and
+    # the filing verbs stripped: "Can you make a note about X" -> "X".
+    subject = body
+    subject = re.sub(r"^(?:please\s+)?(?:can|could|would)\s+you\s+", "", subject, flags=re.I).strip()
+    subject = re.sub(r"^(?:please\s+)?(?:file|write|save|make|take)\s+(?:a\s+|this\s+)?note\s+(?:about|on|of)\s+", "", subject, flags=re.I).strip()
+    subject = re.sub(r"^(?:please\s+)?(?:file|write|save|make|take)\s+(?:a\s+|this\s+)?note\b\s*", "", subject, flags=re.I).strip(" .?:")
+    # Recent conversation, newest first, skipping the request itself.
+    ctx = []
+    for item in reversed(history or []):
+        if not isinstance(item, dict):
+            continue
+        c = str(item.get("content") or "").strip()
+        if not c or c == raw:
+            continue
+        ctx.append(c)
+        if len(ctx) >= 3:
+            break
+    term = ""
+    for c in ctx:
+        if "terminal" in c.lower() or c.startswith("$ "):
+            term = c
+            break
+    term_cmd = ""
+    if term:
+        for ln in term.split("\n"):
+            ln = ln.strip()
+            if ln.startswith("$ "):
+                term_cmd = ln[2:].strip()
+                break
+    vague = (not subject) or len(subject.split()) < 2 or bool(re.match(r"(?i)^(that|this|it|the above|up there)\b", subject))
+    # Her titles name the SUBJECT, never the operator's ask (field
+    # report: a filing named "Can you make a note" after his literal
+    # words). A vague ask over a terminal result titles the note for
+    # what the terminal showed — for a listing, the place listed and
+    # the first thing in it.
+    if not vague:
+        title_src = subject
+    elif term_cmd:
+        title_src = ""
+        m_ls = re.match(r"ls\s+(?:-\S+\s+)*(\S+)", term_cmd)
+        if m_ls:
+            seg = m_ls.group(1).rstrip("/").split("/")[-1] or "root"
+            first_entry = ""
+            seen_cmd = False
+            for ln in term.split("\n"):
+                s_ln = ln.strip()
+                if s_ln.startswith("$ "):
+                    seen_cmd = True
+                    continue
+                if seen_cmd and s_ln:
+                    tok = s_ln.split()[0]
+                    if not tok.endswith(":"):
+                        first_entry = tok
+                        break
+            title_src = seg + " listing - " + first_entry if first_entry else seg + " listing"
+        if not title_src:
+            title_src = "Terminal - " + term_cmd
+    elif ctx:
+        title_src = ctx[-1]
+    else:
+        title_src = subject or body
+    if len(title_src) > 80:
+        title_src = " ".join(title_src.split()[:6])
+    title = " ".join(title_src.replace("#", "").split()).strip(" .:") or "Untitled note"
+    title = title.replace("/", "-").replace(chr(92), "-")
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    folder = "Operator" if to_operator else "Navi's Desk"
+    rel = folder + "/" + today + " " + title + ".md"
+    n = 2
+    while os.path.exists(vault_fs_path(rel)):
+        rel = folder + "/" + today + " " + title + " " + str(n) + ".md"
+        n += 1
+    if to_operator:
+        content = "# " + title + "\n\n" + body + "\n"
+    else:
+        lines = [
+            "---", "filed: " + today, "---", "",
+            "# " + title, "",
+            "Alex asked me to keep a note of this, " + today + " — in his words: “" + raw + "”", "",
+            "## What it's about", "",
+        ]
+        if not vague:
+            lines += [subject[0].upper() + subject[1:] if subject else subject, ""]
+        elif term_cmd:
+            lines += ["The terminal output from just before he asked — the “" + term_cmd + "” run, kept below so the note stands on its own.", ""]
+        elif ctx:
+            lines += ["The exchange just before he asked, kept below so the note stands on its own.", ""]
+        else:
+            lines += ["He asked with nothing else on the table — the request itself is the record, and this line is me saying so instead of filing an empty page.", ""]
+        if ctx:
+            lines += ["## From the conversation", ""]
+            for c in reversed(ctx):
+                excerpt = c if len(c) <= 900 else c[:900] + "\n... [trimmed]"
+                for ln in excerpt.split("\n"):
+                    lines.append("    " + ln)
+                lines.append("")
+        lines += ["— filed by Navi from chat, " + today + ".", ""]
+        content = "\n".join(lines)
+    vault_write(rel, content)
+    return rel, None
+
+
 def rag_retrieve(question, limit=2):
     # Only active packs feed her answers. Only the question is
     # embedded here — every chunk vector was computed when its pack
@@ -5697,7 +7475,15 @@ class Handler(BaseHTTPRequestHandler):
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
+                "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
             })
+        elif self.path.startswith("/api/operations/"):
+            _op_id = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
+            _op = op_snapshot(_op_id)
+            if _op:
+                self._send(200, {"ok": True, "operation": _op})
+            else:
+                self._send(404, {"ok": False, "error": "operation not found"})
         elif self.path == "/api/hardware":
             self._send(200, {"profile": hardware_profile_view(load_config())})
         elif self.path == "/api/commands":
@@ -5816,6 +7602,26 @@ class Handler(BaseHTTPRequestHandler):
                     "fetchedAt": None,
                     "packs": [],
                 })
+        elif self.path == "/api/vault/list":
+            # The Vault (build .72, issue #54): every note with its
+            # exact text, plus folders, wikilinks, tags, backlinks.
+            self._send(200, vault_list_payload())
+        elif self.path.split("?")[0] == "/api/vault/search":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send(200, {"hits": vault_search((qs.get("q") or [""])[0], 8)})
+        elif self.path == "/api/vault/export":
+            # The whole folder as a .zip — unzip it and Obsidian
+            # opens the result as a vault, exactly as it lies here.
+            vault_ensure_seed()
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                if os.path.isdir(VAULT_DIR):
+                    for base, dirs, files in os.walk(VAULT_DIR):
+                        dirs.sort()
+                        for name in sorted(files):
+                            full = os.path.join(base, name)
+                            z.write(full, os.path.relpath(full, VAULT_DIR).replace(os.sep, "/"))
+            self._send(200, buf.getvalue(), "application/zip")
         elif self.path == "/api/rag/packs":
             self._send(200, {"packs": local_rag_packs()})
         elif self.path.split("?")[0] == "/api/rag/pack-source":
@@ -5977,6 +7783,86 @@ class Handler(BaseHTTPRequestHandler):
                 set_public_restart(cfg, "restarting", "restart", "Restarting the bridge…")
                 self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
                 schedule_bridge_restart()
+        elif self.path == "/api/dhd/toggle":
+            # The DHD master switch (build .74) — one click: the
+            # choice is saved and the whole ladder runs in this
+            # process (certificate, proxy, self-check) with no
+            # bridge restart, because the proxy is threads, not the
+            # bridge's own bind. The one exception: if the Local
+            # server currently binds this bridge publicly, DHD mode
+            # requires the bridge on loopback only, so enabling
+            # records the choice and rides the exit-75 supervisor
+            # restart — the relaunched bridge binds loopback and
+            # brings the proxy up in main(). A failed step names
+            # itself and leaves the previous state untouched.
+            data = self._body()
+            want = bool(data.get("enabled"))
+            if not want:
+                dhd_save(cfg, {"enabled": False})
+                ensure_access_code(cfg)
+                cfg = load_config()
+                dhd_stop_proxy()
+                DHD_STATE["last_error"] = ""
+                self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
+            else:
+                # Enabling is an operation: the page and chat
+                # render the same persisted step card while the
+                # bridge runs prerequisites, certificate, proxy,
+                # and reachability — no model work is involved.
+                _op_id = dhd_start_enable_operation("page", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+                self._send(200, {"ok": True, "operationId": _op_id, "operation": op_snapshot(_op_id), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/dhd/install":
+            # The safety-net install action: install the named
+            # missing prerequisites (or every missing installable
+            # one) through the detected distro family's package
+            # step, then release any DHD enable operation waiting
+            # on them so it continues automatically. An install
+            # failure returns the step's exact manual commands.
+            data = self._body()
+            _pieces = data.get("pieces") if isinstance(data.get("pieces"), list) else None
+            _result = dhd_install_prereqs(_pieces, str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+            _failed = [r for r in _result["results"] if not r["ok"]]
+            if _failed:
+                _commands = []
+                for r in _failed:
+                    _commands.extend(r.get("commands") or [])
+                _detail = " ".join(r.get("detail", "") for r in _failed)
+                _dhd_release_waiting_ops(False, _detail, _commands)
+                self._send(200, {"ok": False, "install": _result, "commands": _commands, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                _dhd_release_waiting_ops(True, "Prerequisites installed.")
+                _op_id = None
+                _cfg_now = load_config()
+                if dhd_settings(_cfg_now)["enabled"] and not DHD_STATE.get("running"):
+                    _op_id = dhd_start_enable_operation("install", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+                self._send(200, {"ok": True, "install": _result, "operationId": _op_id, "operation": op_snapshot(_op_id) if _op_id else op_latest("dhd-enable"), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/dhd/domain":
+            # The optional custom domain: free-form, saved in the
+            # dhd block so it survives restarts and updates. When
+            # DHD is live, saving a domain starts the certificate
+            # step in the background (ACME can take a few seconds);
+            # the door keeps answering on the current certificate
+            # meanwhile and the state reads certificate-pending
+            # until the real one is installed.
+            data = self._body()
+            domain = str(data.get("domain") or "").strip().lower()
+            domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+            dhd_save(cfg, {"domain": domain})
+            cfg = load_config()
+            if domain and dhd_settings(cfg)["enabled"] and DHD_STATE["running"]:
+                threading.Thread(target=lambda: dhd_bring_up(load_config()), daemon=True).start()
+            self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
+        elif self.path == "/api/dhd/cert":
+            # The certificate step on its own: obtain (or renew)
+            # the saved domain's certificate now, via the built-in
+            # ACME client, and reload the proxy with it.
+            cfg_now = load_config()
+            ds_now = dhd_settings(cfg_now)
+            if not ds_now["domain"]:
+                self._send(200, {"ok": False, "error": "No domain is saved yet - add one first.", "dhd": dhd_state_payload(cfg_now, self._client_is_loopback())})
+            else:
+                ok = dhd_bring_up(cfg_now)
+                self._send(200, {"ok": ok, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
         elif self.path == "/api/settings/public/restart":
             # The row's Restart bridge control: the retry/fallback
             # for a saved choice that is not live (a failed restart,
@@ -6413,6 +8299,46 @@ class Handler(BaseHTTPRequestHandler):
                         "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
                     })
                     return
+            # DHD operations from chat: a direct request to turn
+            # DHD on or off is deterministic bridge work, decided
+            # before any model or CLI route. Enabling starts the
+            # same operation the DHD page uses; the reply carries
+            # its snapshot and the dashboard renders the live card
+            # in this thread. No model generation happens while
+            # the operation runs.
+            _dhd_intent = dhd_chat_intent(last or "")
+            if _dhd_intent == "enable":
+                if dhd_settings(cfg)["enabled"] and DHD_STATE.get("running"):
+                    _reply = _dhd_on_summary(dhd_state_payload(cfg, True))
+                    _op = None
+                else:
+                    _op_id = dhd_start_enable_operation("chat", sudo_password)
+                    _op = op_snapshot(_op_id)
+                    _reply = "Starting DHD now. The card below is the live record — prerequisites, certificate, proxy, and the reachability check — and it stays in this thread when it finishes."
+                payload = {
+                    "reply": _reply, "exec": None, "mode": "operation",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    "operation": _op,
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_reply, cfg)
+                self._send(200, payload)
+                return
+            if _dhd_intent == "disable":
+                dhd_save(cfg, {"enabled": False})
+                ensure_access_code(cfg)
+                dhd_stop_proxy()
+                DHD_STATE["last_error"] = ""
+                _reply = "DHD is off. Apex answers only on this machine and your home network again; the domain and certificate stay saved for the next one-click start."
+                payload = {
+                    "reply": _reply, "exec": None, "mode": "operation",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    "operation": None,
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_reply, cfg)
+                self._send(200, payload)
+                return
             # CLI-first routing: with the model connected, a line
             # whose first word is a system command runs right here —
             # no model call, no waiting on her to orchestrate it —
@@ -6440,6 +8366,21 @@ class Handler(BaseHTTPRequestHandler):
                     payload["spoken"] = speak_reply(_result["output"], cfg)
                 self._send(200, payload)
                 return
+            _vfiling = re.search(r"(?:file|write|save|make|take)\s+(?:a\s+|this\s+)?note\b", (last or ""), re.I) or re.search(r"\bnote\s+(?:this|that)\s+down\b", (last or ""), re.I) or re.match(r"\s*note\s*:", (last or ""), re.I)
+            if _vfiling:
+                _vpath, _verr = vault_file_from_chat(last or "", messages)
+                if _vpath:
+                    _own = _vpath.startswith("Operator/")
+                    payload = {
+                        "reply": ("Filed it on your side of the desk — **" + _vpath + "** in the Vault. You can edit it there any time; I won't touch it again unless you ask.") if _own else ("Filed it on my side of the desk — **" + _vpath + "** in the Vault. It's mine to keep faithfully now: dated, in my own words, and I'll name it when it informs an answer."),
+                        "exec": None,
+                        "mode": "model",
+                        "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    }
+                    if data.get("speak"):
+                        payload["spoken"] = speak_reply(payload["reply"], cfg)
+                    self._send(200, payload)
+                    return
             if not llamafile_alive(endpoint):
                 # Command-line mode: no model is connected, so the
                 # message itself is the command. A leading "$" is
@@ -6483,6 +8424,16 @@ class Handler(BaseHTTPRequestHandler):
             # as data (the payload's "rag" field, below) — never as
             # words in her reply.
             _hits = rag_retrieve(last)
+            _vhits = vault_search(last or "", 2)
+            _vmentions = bool(re.search(r"\b(vault|notes?)\b", (last or ""), re.I))
+            if _vhits and not _vmentions and _vhits[0]["score"] < 6:
+                _vhits = []
+            if _vhits:
+                _vctx = "\n\n".join("[Vault · " + h["path"] + "] " + h["excerpt"] for h in _vhits)
+                messages = messages + [{
+                    "role": "system",
+                    "content": "Material from the shared Vault — the operator's and your own notes. Use it where it answers the question, in your own words. Do not name or cite the sources in your reply — the dashboard shows them under your message on its own:\n" + _vctx,
+                }]
             if _hits:
                 _ctx = "\n\n".join(
                     "[" + h["pack"] + " · " + h["document"] + "] " + h["text"]
@@ -6516,6 +8467,13 @@ class Handler(BaseHTTPRequestHandler):
                         if _s not in _srcs:
                             _srcs.append(_s)
                     payload["rag"] = _srcs
+                if _vhits:
+                    _all = payload.get("rag") or []
+                    for h in _vhits:
+                        _s = {"pack": "Vault", "document": h["path"]}
+                        if _s not in _all:
+                            _all.append(_s)
+                    payload["rag"] = _all
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(reply, cfg)
                 self._send(200, payload)
@@ -6537,6 +8495,66 @@ class Handler(BaseHTTPRequestHandler):
                     "output": result["output"],
                     "exit_code": result["exit_code"],
                 })
+        elif self.path == "/api/vault/save":
+            # Create or update a note (the editor's autosave lands
+            # here). Jailed to the vault; frontmatter rides as text.
+            data = self._body()
+            rel = vault_join(str(data.get("path") or ""))
+            if not rel or not rel.lower().endswith(".md"):
+                self._send(200, {"ok": False, "error": "That path escapes the vault — notes live inside the vault folder only, as .md files."})
+            else:
+                vault_write(rel, str(data.get("content") or "")[:200000])
+                self._send(200, {"ok": True})
+        elif self.path == "/api/vault/delete":
+            data = self._body()
+            rel = vault_join(str(data.get("path") or ""))
+            if not rel:
+                self._send(200, {"ok": False, "error": "That path escapes the vault."})
+            elif not os.path.isfile(vault_fs_path(rel)):
+                # Never a silent no-op (build .73): if the note isn't
+                # on disk, the operator hears about it in plain words.
+                self._send(200, {"ok": False, "error": "That note no longer exists — it may have been moved or deleted outside the app. The tree has been refreshed."})
+            else:
+                os.remove(vault_fs_path(rel))
+                self._send(200, {"ok": True})
+        elif self.path == "/api/vault/move":
+            # Rename / drag-and-drop move. Never overwrites.
+            data = self._body()
+            src = vault_join(str(data.get("from") or ""))
+            dst = vault_join(str(data.get("to") or ""))
+            if not src or not dst or not dst.lower().endswith(".md"):
+                self._send(200, {"ok": False, "error": "That path escapes the vault — notes live inside the vault folder only, as .md files."})
+            elif os.path.exists(vault_fs_path(dst)):
+                self._send(200, {"ok": False, "error": "A note already exists at " + dst + " — pick another name."})
+            elif not os.path.isfile(vault_fs_path(src)):
+                self._send(200, {"ok": False, "error": "That note no longer exists."})
+            else:
+                parent = os.path.dirname(vault_fs_path(dst))
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                os.replace(vault_fs_path(src), vault_fs_path(dst))
+                self._send(200, {"ok": True})
+        elif self.path == "/api/vault/folder":
+            data = self._body()
+            rel = vault_join(str(data.get("path") or ""))
+            if not rel:
+                self._send(200, {"ok": False, "error": "That folder path escapes the vault."})
+            else:
+                os.makedirs(vault_fs_path(rel), exist_ok=True)
+                self._send(200, {"ok": True})
+        elif self.path == "/api/vault/delete-folder":
+            data = self._body()
+            rel = vault_join(str(data.get("path") or ""))
+            if not rel:
+                self._send(200, {"ok": False, "error": "That folder path escapes the vault."})
+            else:
+                full = vault_fs_path(rel)
+                count = 0
+                if os.path.isdir(full):
+                    for base, dirs, files in os.walk(full):
+                        count += len([f for f in files if f.lower().endswith(".md")])
+                    shutil.rmtree(full)
+                self._send(200, {"ok": True, "deletedNotes": count})
         elif self.path == "/api/chips/save":
             # Chip Studio saving an edit: re-forge the chip file
             # with the new code inside it.
@@ -7372,7 +9390,14 @@ if __name__ == "__main__":
     # the LAN can reach the port; OFF keeps the loopback-only
     # bind Apex has always had. Internal callers poll 127.0.0.1,
     # which answers on either bind, so nothing else changes.
-    if public_settings(cfg)["enabled"]:
+    if dhd_settings(cfg)["enabled"]:
+        # DHD mode (build .74): the bridge NEVER binds publicly -
+        # Apex's own proxy is the only public face, forwarding to
+        # this loopback bind. This wins over the Local server
+        # choice, which is about the LAN door on the bridge port.
+        ensure_access_code(cfg)
+        ACTIVE_BIND_HOST = "127.0.0.1"
+    elif public_settings(cfg)["enabled"]:
         ensure_access_code(cfg)
         ACTIVE_BIND_HOST = "0.0.0.0"
     else:
@@ -7423,4 +9448,19 @@ if __name__ == "__main__":
         print("Local server is ON: the dashboard also answers on the local network at "
               + public_state_payload(load_config(), True)["lanUrl"]
               + " - visitors from other machines need the access code from Settings.", flush=True)
+    # DHD (build .74): if the saved choice is on, bring the public
+    # door up now - certificate, proxy, self-check - and start the
+    # daily renewal watch. A failed bring-up names itself in the
+    # DHD state the dashboard reads; the bridge itself serves on.
+    if dhd_settings(cfg)["enabled"]:
+        threading.Thread(target=dhd_renewal_loop, daemon=True).start()
+        if dhd_bring_up(load_config()):
+            _dp = dhd_state_payload(load_config(), True)
+            print("DHD is ON: " + _dhd_on_summary(_dp)
+                  + " The proxy on 80/443 is the only public face; visitors need the access code.", flush=True)
+        else:
+            print("DHD is saved ON but did not come up: " + DHD_STATE["last_error"], flush=True)
+        # If an enable operation was waiting on this restart, its
+        # persisted card now reconciles with the live state.
+        dhd_resume_enable_operation()
     server.serve_forever()

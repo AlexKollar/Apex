@@ -24,7 +24,8 @@
 # --fresh reinstalls the app from scratch — everything in the install
 # location is removed and reinstalled — EXCEPT the operator's own
 # state: the llamafile binary, the installed chips (the whole chips/
-# folder), her knowledge packs (rag-packs/), and the Soul/Memory
+# folder), her knowledge packs (rag-packs/), the DHD certificate
+# home (config/dhd/), and the Soul/Memory
 # documents are stashed before the wipe
 # and restored after it, so a fresh install never costs Navi her
 # chips or who she is. Her voice venv is stashed and restored too,
@@ -246,6 +247,95 @@ install_system_deps() {
 }
 install_system_deps
 
+# --- DHD prerequisites (build .74) --------------------------------
+# Everything the DHD stack needs lands HERE, at install/update time,
+# whether or not the operator ever turns DHD on — so enabling it
+# later is genuinely one click with nothing left to fetch. The stack
+# itself is bridge.py (stdlib proxy + built-in ACME client), so the
+# prerequisites are small: the openssl binary (certificate work and
+# ACME signing), a cert home inside the install's config, and —
+# best-effort — the low-port capability that lets the bridge bind
+# 80/443 without running as root. Added weight is honest: openssl is
+# a ~1 MB package that most systems already carry (it rides along
+# with curl/python3), the cert home is an empty directory, and the
+# capability is metadata — when openssl is already present this step
+# costs a few milliseconds and zero downloads. The step prints a
+# machine-readable DHD-PREREQS: summary line; the updater's apply
+# helper reads it back so the update ladder can show this step by
+# name. The in-app DHD flow re-checks the same prerequisites as a
+# safety net (a piece removed later gets an Install offer there).
+DHD_CERT_HOME="$INSTALL_DIR/config/dhd"
+install_dhd_prereqs() {
+  echo "==> DHD prerequisites (the public door's pieces, installed whether or not DHD is ever turned on)"
+  local ossl="missing"
+  if command -v openssl >/dev/null 2>&1; then
+    ossl="$(openssl version 2>/dev/null | head -1)"
+    echo "    openssl: present ($ossl)."
+  else
+    case "$DISTRO_FAMILY" in
+      debian)
+        $PKG_SUDO apt-get update -y >/dev/null 2>&1 || true
+        if $PKG_SUDO apt-get install -y openssl >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+          ossl="$(openssl version 2>/dev/null | head -1)"
+          echo "    openssl: installed with apt ($ossl)."
+        else
+          echo "  *** openssl did not install — DHD's certificate steps need it. By hand: sudo apt-get install -y openssl" >&2
+        fi
+        ;;
+      fedora)
+        if $PKG_SUDO dnf install -y openssl >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+          ossl="$(openssl version 2>/dev/null | head -1)"
+          echo "    openssl: installed with dnf ($ossl)."
+        else
+          echo "  *** openssl did not install — DHD's certificate steps need it. By hand: sudo dnf install -y openssl" >&2
+        fi
+        ;;
+      arch)
+        if $PKG_SUDO pacman -S --needed --noconfirm openssl >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+          ossl="$(openssl version 2>/dev/null | head -1)"
+          echo "    openssl: installed with pacman ($ossl)."
+        else
+          echo "  *** openssl did not install — DHD's certificate steps need it. By hand: sudo pacman -S --needed openssl" >&2
+        fi
+        ;;
+      bazzite)
+        echo "    openssl: Bazzite installs nothing on the host; openssl ships in the host image —" >&2
+        echo "    if it is ever missing there, DHD's own page offers the distrobox remedy with exact commands." >&2
+        ;;
+      *)
+        echo "  *** openssl is not on this machine and the distro is unrecognized, so nothing was guessed at." >&2
+        echo "  *** DHD's certificate steps need the openssl package from your distro; DHD's page names the step if it is missing." >&2
+        ;;
+    esac
+  fi
+  mkdir -p "$DHD_CERT_HOME" 2>/dev/null || true
+  local home_state="not created"
+  if [ -d "$DHD_CERT_HOME" ]; then home_state="ready"; fi
+  echo "    cert home: $DHD_CERT_HOME ($home_state)."
+  local cap_state="not granted"
+  local pybin=""
+  pybin="$(command -v python3 2>/dev/null || true)"
+  if [ -n "$pybin" ]; then
+    pybin="$(readlink -f "$pybin" 2>/dev/null || echo "$pybin")"
+    if command -v getcap >/dev/null 2>&1 && getcap "$pybin" 2>/dev/null | grep -q cap_net_bind_service; then
+      cap_state="already granted"
+    elif command -v setcap >/dev/null 2>&1; then
+      if $PKG_SUDO setcap 'cap_net_bind_service=+ep' "$pybin" 2>/dev/null; then
+        cap_state="granted"
+      fi
+    fi
+  fi
+  if [ "$cap_state" = "granted" ] || [ "$cap_state" = "already granted" ]; then
+    echo "    low ports: the bridge's python3 may bind 80/443 without root ($cap_state)."
+  else
+    echo "    low ports: capability not granted here — DHD still works when the bridge runs with"
+    echo "    permission for ports 80/443; the exact one-line remedy (a setcap command) lives on"
+    echo "    the DHD page and in Docs -> DHD, and the enable flow shows it if the step ever bites."
+  fi
+  echo "DHD-PREREQS: openssl=$ossl; cert-home=$home_state; low-port-capability=$cap_state"
+}
+install_dhd_prereqs
+
 # A file that starts with an HTML doctype is a web page, not the
 # llamafile binary (older installs could end up holding the Hugging
 # Face repo page under this name). Such a file is never treated as an
@@ -302,13 +392,18 @@ if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
     $SUDO cp -r "$OLD_DIR/chips" "$INSTALL_DIR/chips"
     echo "    installed chips carried across from the old location"
   fi
+  if [ -d "$OLD_DIR/config/vault" ] && [ ! -d "$INSTALL_DIR/config/vault" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$OLD_DIR/config/vault" "$INSTALL_DIR/config/vault"
+    echo "    the Vault carried across from the old location"
+  fi
 fi
 
 $SUDO mkdir -p "$INSTALL_DIR"
 
 if [ -n "$FRESH" ]; then
   echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
-  echo "    (the llamafile, your installed chips, and your Soul/Memory documents are kept)"
+  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, and your Soul/Memory documents are kept)"
   # Stash the operator's own state before the wipe: the installed
   # chips (chips, installs, workflows) and the Soul/Memory
   # documents. A first install has none of these — the stash stays
@@ -319,6 +414,18 @@ if [ -n "$FRESH" ]; then
   fi
   if [ -d "$INSTALL_DIR/rag-packs" ]; then
     $SUDO cp -r "$INSTALL_DIR/rag-packs" "$STASH_DIR/rag-packs" 2>/dev/null || true
+  fi
+  # The Vault (config/vault/) rides the same keep-list (build .72):
+  # the shared desk of notes survives the wipe like everything else
+  # that is hers and yours.
+  if [ -d "$INSTALL_DIR/config/vault" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/vault" "$STASH_DIR/vault" 2>/dev/null || true
+  fi
+  # The DHD certificate home (config/dhd/) rides the same keep-list
+  # (build .77, issue #60): a real ACME certificate lives there, and
+  # a fresh reinstall must never wipe it and force re-issuance.
+  if [ -d "$INSTALL_DIR/config/dhd" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/dhd" "$STASH_DIR/dhd" 2>/dev/null || true
   fi
   # Her downloaded speech models and her call log are hers too —
   # they ride the same keep-list. The voice venv rides along as
@@ -351,6 +458,16 @@ if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
   if [ -d "$STASH_DIR/rag-packs" ]; then
     $SUDO cp -r "$STASH_DIR/rag-packs" "$INSTALL_DIR/rag-packs"
     echo "    her knowledge packs restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/vault" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/vault" "$INSTALL_DIR/config/vault"
+    echo "    the Vault (your shared desk of notes) restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/dhd" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/dhd" "$INSTALL_DIR/config/dhd"
+    echo "    the DHD certificate home (config/dhd/) restored across the fresh install"
   fi
   if [ -d "$STASH_DIR/voice-models" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/voice"
@@ -450,6 +567,11 @@ $SUDO chmod +x "$INSTALL_DIR/run-llamafile.sh"
 # installer, once the install root belongs to the operator.
 $SUDO mkdir -p "$INSTALL_DIR/shell"
 $SUDO cp -r shell/* "$INSTALL_DIR/shell/"
+# The package's docs land in the installed tree too (build .77,
+# issue #60): the shipped tree and the installed tree agree, so
+# docs/DHD.md is on the machine beside everything else it documents.
+$SUDO mkdir -p "$INSTALL_DIR/docs"
+$SUDO cp -r docs/* "$INSTALL_DIR/docs/"
 # The app icon is cosmetic — a missing copy must never abort an
 # install. A git clone of the repo carries none of the binary icon
 # files (they ship only inside the release zip), so a clone install
