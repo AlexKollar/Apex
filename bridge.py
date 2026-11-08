@@ -302,6 +302,7 @@ import atexit
 import base64
 import binascii
 import gzip
+import hashlib
 import importlib.util
 import io
 import calendar
@@ -309,7 +310,9 @@ import json
 import math
 import os
 import re
+import secrets
 import select
+import socket
 import shutil
 import struct
 import subprocess
@@ -346,12 +349,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.1"
+SHIPPED_VERSION = "0.1.3"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-07.58"
+BRIDGE_BUILD = "2026-11-08.69"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -402,6 +405,172 @@ def load_config():
             return json.load(f)
     except Exception:
         return {"live": {"llamafile_endpoint": "http://localhost:8080/v1"}}
+
+
+def save_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(cfg, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+# --- Local server (build .59; fluid activation .61) ---------------
+# Settings -> System's toggle: OFF (the default) the bridge binds
+# 127.0.0.1:8675 exactly as it always has; ON it binds 0.0.0.0:8675
+# at launch, so a phone or tablet on the same network can open the
+# dashboard. The flag is read once, here at startup — a bind is
+# never hot-swapped. Build .61 makes the flip itself do the
+# restarting: saving the toggle records a restart request in the
+# config block and this process exits with code 75, the handshake
+# the launcher's supervise_bridge loop already relaunches on (the
+# same one an install takeover uses). The relaunched bridge reads
+# the saved flag, binds accordingly, and reconciles the recorded
+# request against its own actual bind (ACTIVE_BIND_HOST): a match
+# marks the restart confirmed; a mismatch marks it failed at the
+# verify step, in plain words, with the live state named. The
+# Settings row reads all of it from the bridge that actually
+# answers, so it never lies about which state is live, and a
+# restart that never completes is reported by the dashboard's
+# confirmation polling as a named failure — never a silent
+# pending. While the public bind is active, any request from a
+# NON-loopback address must carry the access code's acceptance
+# cookie before anything beyond the gate page is served —
+# dashboard and API alike. Loopback is never gated, so every
+# internal caller that polls 127.0.0.1 (launchers, the shell,
+# status probes) works unchanged in both modes. One code, stored
+# in the config's public_server block; the cookie's value is a
+# hash of the code, so regenerating the code invalidates every
+# previously accepted client at once.
+ACTIVE_BIND_HOST = "127.0.0.1"
+PUBLIC_COOKIE = "navi_public"
+PUBLIC_COOKIE_MAX_AGE = 31536000
+
+
+def public_settings(cfg):
+    ps = cfg.get("public_server") if isinstance(cfg, dict) else None
+    if not isinstance(ps, dict):
+        ps = {}
+    restart = ps.get("restart") if isinstance(ps.get("restart"), dict) else {}
+    return {
+        "enabled": ps.get("enabled") is True,
+        "access_code": str(ps.get("access_code") or "").strip(),
+        "restart_status": str(restart.get("status") or "idle"),
+        "restart_step": str(restart.get("step") or ""),
+        "restart_message": str(restart.get("message") or ""),
+    }
+
+
+def set_public_restart(cfg, status, step, message):
+    block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+    block = dict(block)
+    if "enabled" not in block:
+        block["enabled"] = False
+    block["restart"] = {"status": status, "step": step, "message": message}
+    cfg["public_server"] = block
+    save_config(cfg)
+
+
+def schedule_bridge_restart():
+    # Exit 75 after the response has had a moment to flush: the
+    # launcher's supervisor relaunches the bridge on 75, and the
+    # new process binds per the saved Local server choice. If no
+    # supervisor is listening (a bridge started by hand from a
+    # since-closed terminal), the process simply stops and the
+    # dashboard's confirmation polling names that failure and tells
+    # the operator to relaunch Apex — a sentence, not a mystery.
+    def _go():
+        time.sleep(0.6)
+        os._exit(75)
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def generate_access_code():
+    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    raw = "".join(secrets.choice(alphabet) for _ in range(8))
+    return raw[:4] + "-" + raw[4:]
+
+
+def ensure_access_code(cfg):
+    code = public_settings(cfg)["access_code"]
+    if code:
+        return code
+    code = generate_access_code()
+    block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+    block = dict(block)
+    block["access_code"] = code
+    if "enabled" not in block:
+        block["enabled"] = False
+    cfg["public_server"] = block
+    save_config(cfg)
+    return code
+
+
+def public_token(code):
+    return hashlib.sha256(("navi-public:" + str(code)).encode()).hexdigest()
+
+
+def lan_ipv4():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    try:
+        ip = socket.gethostbyname(socket.gethostname())
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+def public_state_payload(cfg, for_loopback):
+    ps = public_settings(cfg)
+    active_public = ACTIVE_BIND_HOST == "0.0.0.0"
+    ip = lan_ipv4()
+    return {
+        "enabled": ps["enabled"],
+        "activePublic": active_public,
+        "bindHost": ACTIVE_BIND_HOST,
+        "pending": ps["enabled"] != active_public,
+        "lanIp": ip,
+        "lanUrl": "http://" + ip + ":" + str(BRIDGE_PORT),
+        "accessCode": ps["access_code"] if for_loopback else None,
+        "restart": {
+            "status": ps["restart_status"],
+            "step": ps["restart_step"],
+            "message": ps["restart_message"],
+        },
+    }
+
+
+def gate_page_html(error=""):
+    err = ""
+    if error:
+        err = "<p style='color:#f87171;font-size:14px'>" + error + "</p>"
+    return (
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>"
+        "<title>Apex - access code</title></head>"
+        "<body style='font-family:ui-monospace,Menlo,monospace;background:#0a0e12;color:#e6f1f5;display:flex;min-height:100dvh;align-items:center;justify-content:center;margin:0'>"
+        "<form method='POST' action='/__gate' style='max-width:320px;width:90%'>"
+        "<h1 style='font-size:18px'>Apex</h1>"
+        "<p style='color:#9fb3c8;font-size:14px'>This Apex is open to its local network, and the door is locked with a code. Type the access code - you will find it in Settings, on the machine Apex runs on.</p>"
+        + err
+        + "<label style='font-size:14px'>Access code<br>"
+        "<input name='code' autocomplete='off' autocapitalize='characters' style='width:100%;padding:10px;margin-top:6px;background:#10161d;color:#e6f1f5;border:1px solid #22303d;border-radius:6px;box-sizing:border-box'></label>"
+        "<button type='submit' style='margin-top:12px;width:100%;padding:10px;background:#22d3ee;color:#000;border:0;border-radius:6px;font-weight:bold'>Open Apex</button>"
+        "</form></body></html>"
+    )
 
 
 def read_file(path):
@@ -1136,7 +1305,7 @@ def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
     # letter (a for alpha, b for beta, none for stable) — the form
     # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.0a → v0.1.1a".
+    # "Updated v0.1.1a → v0.1.3a".
     return "v" + str(number) + (
         "a" if status == "alpha" else "b" if status == "beta" else "")
 
@@ -5411,7 +5580,40 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def _client_is_loopback(self):
+        try:
+            host = str(self.client_address[0] or "")
+        except Exception:
+            return False
+        return host == "::1" or host.startswith("127.")
+
+    def _public_gate_blocks(self):
+        # The gate exists only while the bridge is actually bound
+        # publicly (public mode was ON at launch). Loopback callers
+        # are never gated. Everyone else needs the acceptance
+        # cookie whose value is a hash of the current access code.
+        if ACTIVE_BIND_HOST != "0.0.0.0":
+            return False
+        if self._client_is_loopback():
+            return False
+        code = public_settings(load_config())["access_code"]
+        if not code:
+            return True
+        want = PUBLIC_COOKIE + "=" + public_token(code)
+        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
+        return want not in parts
+
     def do_GET(self):
+        _path = self.path.split("?")[0]
+        if _path == "/__gate":
+            self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+            return
+        if self._public_gate_blocks():
+            if _path.startswith("/api/"):
+                self._send(403, {"error": "access code required"})
+            else:
+                self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+            return
         if self.path.split("?")[0] in ("/", "/index.html"):
             with open(os.path.join(ROOT, "app", "index.html"), "rb") as f:
                 html = f.read()
@@ -5444,6 +5646,7 @@ class Handler(BaseHTTPRequestHandler):
                 "model": "navi",
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
+                "publicServer": public_state_payload(cfg, self._client_is_loopback()),
             })
         elif self.path == "/api/hardware":
             self._send(200, {"profile": hardware_profile_view(load_config())})
@@ -5662,7 +5865,94 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         cfg = load_config()
-        if self.path == "/api/shell":
+        if self.path.split("?")[0] == "/__gate":
+            # The gate page's form: a remote visitor proving the
+            # code. Success sets the long-lived acceptance cookie
+            # (a hash of the code — regenerate the code and every
+            # cookie stops matching) and sends them to the door
+            # they asked for. Failure serves the gate page again
+            # with the reason, and nothing else.
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+            form = urllib.parse.parse_qs(raw)
+            given = (form.get("code") or [""])[0].strip().upper()
+            want = public_settings(cfg)["access_code"]
+            if want and given == want.upper():
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.send_header(
+                    "Set-Cookie",
+                    PUBLIC_COOKIE + "=" + public_token(want)
+                    + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE)
+                    + "; Path=/; HttpOnly; SameSite=Lax",
+                )
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self._send(
+                    200,
+                    gate_page_html(
+                        "That code did not open the door - check the code in Settings on the machine Apex runs on, and try again."
+                    ).encode(),
+                    "text/html; charset=utf-8",
+                )
+            return
+        if self._public_gate_blocks():
+            self._send(403, {"error": "access code required"})
+            return
+        if self.path == "/api/settings/public":
+            # The Local server toggle itself (build .61 — one
+            # action): persist the choice in the config block AND
+            # restart this bridge so the choice takes effect. The
+            # restart rides the exit-75 handshake: the request is
+            # recorded in the block, the response goes out, and this
+            # process exits 75 — the launcher's supervisor relaunches
+            # it, and the new bridge binds per the saved choice and
+            # verifies its own bind against it. The running bridge
+            # never hot-swaps its bind. Flipping to the state already
+            # live needs no restart and confirms on the spot.
+            data = self._body()
+            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+            block = dict(block)
+            block["enabled"] = bool(data.get("enabled"))
+            cfg["public_server"] = block
+            ensure_access_code(cfg)
+            save_config(cfg)
+            want_public = bool(data.get("enabled"))
+            live_public = ACTIVE_BIND_HOST == "0.0.0.0"
+            if want_public == live_public:
+                set_public_restart(cfg, "confirmed", "", "The bridge that answers already runs this choice — no restart was needed.")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                set_public_restart(cfg, "restarting", "restart", "Restarting the bridge…")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+                schedule_bridge_restart()
+        elif self.path == "/api/settings/public/restart":
+            # The row's Restart bridge control: the retry/fallback
+            # for a saved choice that is not live (a failed restart,
+            # or a pending state left by an older build). Same flow
+            # as the toggle: record the request, exit 75, let the
+            # supervisor relaunch, and let the new bridge verify.
+            cfg_now = load_config()
+            if not public_state_payload(cfg_now, True)["pending"]:
+                self._send(200, {"ok": True, "publicServer": public_state_payload(cfg_now, self._client_is_loopback())})
+            else:
+                set_public_restart(cfg_now, "restarting", "restart", "Restarting the bridge…")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+                schedule_bridge_restart()
+        elif self.path == "/api/settings/public/regenerate":
+            # A fresh code. Because the acceptance cookie is a
+            # hash of the code, this invalidates every client the
+            # old code let in — they will be asked again.
+            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+            block = dict(block)
+            block["access_code"] = generate_access_code()
+            if "enabled" not in block:
+                block["enabled"] = False
+            cfg["public_server"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/shell":
             data = self._body()
             try:
                 self._send(200, run_shell(
@@ -7027,13 +7317,35 @@ if __name__ == "__main__":
     # runs whether a backup is due on the operator's chosen interval,
     # and runs it when signed in. Daemon thread; dies with the bridge.
     threading.Thread(target=github_auto_backup_loop, daemon=True).start()
+    # Local server (build .59): the saved choice picks the bind
+    # for THIS process, once, here. ON binds every interface so
+    # the LAN can reach the port; OFF keeps the loopback-only
+    # bind Apex has always had. Internal callers poll 127.0.0.1,
+    # which answers on either bind, so nothing else changes.
+    if public_settings(cfg)["enabled"]:
+        ensure_access_code(cfg)
+        ACTIVE_BIND_HOST = "0.0.0.0"
+    else:
+        ACTIVE_BIND_HOST = "127.0.0.1"
+    # Local server restart reconciliation (build .61): if the
+    # previous bridge recorded a restart request before exiting,
+    # this bridge is its answer — verify this process's actual bind
+    # against the saved choice and record the verdict where the
+    # Settings row reads it. A match confirms; a mismatch fails at
+    # the verify step and names the state that is actually live.
+    _ps = public_settings(cfg)
+    if _ps["restart_status"] == "restarting":
+        if _ps["enabled"] == (ACTIVE_BIND_HOST == "0.0.0.0"):
+            set_public_restart(cfg, "confirmed", "", "Restart complete — the bridge that answers now reports " + ("Local — on your network." if _ps["enabled"] else "This machine only."))
+        else:
+            set_public_restart(cfg, "failed", "verify", "A bridge answered after the restart, but its bind does not match the saved choice, so the change is not confirmed. Still live: " + ("Local — on your network (the old setting)." if ACTIVE_BIND_HOST == "0.0.0.0" else "This machine only — 127.0.0.1 (the old setting).") + " Press Restart bridge in Settings to try again, or quit Apex fully and relaunch.")
     # Threading: a connect that starts the server can wait minutes
     # for the model to load; it must not block status and chat.
     server = None
     deadline = time.time() + 30
     while server is None:
         try:
-            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            server = ThreadingHTTPServer((ACTIVE_BIND_HOST, port), Handler)
         except OSError:
             if time.time() >= deadline:
                 # Name the actual incumbent — an older Navi bridge
@@ -7057,4 +7369,8 @@ if __name__ == "__main__":
                 sys.exit(1)
             time.sleep(1)
     print("Navi bridge (build " + BRIDGE_BUILD + ") on http://localhost:" + str(port), flush=True)
+    if ACTIVE_BIND_HOST == "0.0.0.0":
+        print("Local server is ON: the dashboard also answers on the local network at "
+              + public_state_payload(load_config(), True)["lanUrl"]
+              + " - visitors from other machines need the access code from Settings.", flush=True)
     server.serve_forever()

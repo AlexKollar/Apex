@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Apex</title>
 <style>
   :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
@@ -145,6 +145,19 @@
   #app.closed nav button:hover .nav-tip, #app.closed nav button:focus-visible .nav-tip { opacity:1; }
   @media (prefers-reduced-motion: reduce) { .nav-tip { transition:none; } }
   #nav-toggle { color:var(--dim); border:1px solid var(--line); margin-bottom:8px; }
+  /* The destination buttons and the version footer live in one
+     container so the small-screen rules can lift them out of the
+     top bar as a single overlay panel; on desktop the container is
+     display:contents, so the nav's flex column sees exactly the
+     children it always had. The dock toggle is phone chrome only:
+     hidden here, shown by the small-screen block. */
+  #nav-menu { display:contents; }
+  #dock-toggle { display:none; }
+  /* The phone top bar's center line — "Apex | powered by Navi" on
+     one line between the hamburger and the dock toggle. Phone
+     chrome only: the small-screen block shows it and puts the
+     stacked wordmark/tagline away; desktop never renders it. */
+  .bar-title { display:none; }
   main { padding:16px; min-width:0; height:100%; min-height:0; overflow-y:auto; }
   main.chat-view { display:flex; flex-direction:column; overflow:hidden; }
   main.chat-view > h3, main.chat-view > .card { flex:0 0 auto; }
@@ -194,6 +207,44 @@
   .doc-topic-inner { overflow:hidden; min-height:0; }
   @media (prefers-reduced-motion: reduce) { .doc-topic-pages, .doc-chev { transition:none; } }
   .modehint span { color:var(--dim); font-size:11px; }
+  /* Composer cleanup (build .66): the composer's whole zone — the
+     chips row, the bar itself, the mode-toggle row — is one dock,
+     not a stack: a hairline top border, the lifted panel tone
+     (--panel stands off the --bg message area in all eleven
+     themes), and bottom padding that clears the phone safe area.
+     It bleeds to the frame's edges (the negative margins cancel
+     main's padding; the padding inside restores the inset). One
+     geometry inside: 44px targets, a 6px radius on the bar and
+     the square action buttons, full-round reserved for the chip
+     pills and the CLI | Navi toggle. */
+  .composer { border-top:1px solid var(--line); background:var(--panel); margin:10px -16px -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .composer .row { align-items:stretch; }
+  /* Slim chips (build .66): the shelf's pills are 32px tall with
+     smaller text and tight 8px gaps, scrolling sideways when the
+     shelf outgrows the bar; the CHIPS label centers on the row.
+     No chips installed, no row at all (the render omits it). */
+  .chipsrow { display:flex; align-items:center; gap:8px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
+  .chips-label { color:var(--dim); font-size:11px; letter-spacing:.14em; flex:0 0 auto; }
+  .chipbtn.chippill { height:32px; min-height:32px; margin:0; padding:0 12px; font-size:12px; display:inline-flex; align-items:center; flex:0 0 auto; }
+  .composer #chat-in { height:44px; border-radius:6px; }
+  .composer #chat-upload, .composer #chat-mic { width:44px; height:44px; min-height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; flex:0 0 auto; }
+  #chat-call { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:44px; min-height:44px; padding:0 14px; border-radius:6px; flex:0 0 auto; }
+  /* Mode feels alive (build .66): CLI latched, the bar takes the
+     terminal green (--green in every theme) for its edge; Navi
+     latched keeps the line color it has always had, under her
+     cyan toggle. The class rides the autocomplete wrap, toggled
+     by the same paint pass that dresses the toggle buttons. */
+  .ac-wrap.cli-mode #chat-in { border-color:var(--green); }
+  /* The relocated hint (build .66): plain muted words beside the
+     toggle — "| Press enter to send." — never a button, never a
+     paragraph of its own again. */
+  .modehint .press-hint { color:var(--dim); font-size:12px; }
+  .modehint .modegroup button { padding:4px 12px; }
+  /* Docs page picker (build .66): phone widths only — the topic
+     list hides and this one full-width select, grouped by the
+     same topics, chooses the page instead. Desktop never sees
+     it; the media block below turns it on. */
+  .docs-picker { display:none; }
   input[type=text], textarea, select { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:8px; width:100%; }
   /* Native <select> widgets in some webviews (the Tauri shell's
      WebKitGTK among them) paint a white bar and ignore the themed
@@ -205,6 +256,21 @@
   select { appearance:none; -webkit-appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239fb3c8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 8px center; background-size:10px 6px; padding-right:26px; }
   select option { background:var(--panel2); color:var(--text); }
   ::placeholder { color:var(--dim); opacity:1; }
+  /* No focus zoom (Alex's rule, every view): mobile browsers zoom
+     in whenever a focused field's text is under 16px — tapping the
+     chat bar lurched the whole page. The viewport pins
+     maximum-scale=1 with scaling off, manipulation touch-action
+     kills double-tap zoom, and on touch devices every editable
+     control renders at 16px, the threshold below which the focus
+     zoom triggers. The composer's highlight layer (.hlayer) steps
+     up with its input so the pair stay aligned; the Studio code
+     editor is excluded because it sizes itself (16px by default
+     on touch) in step with its own highlight layer. */
+  html { touch-action:manipulation; }
+  @media (pointer:coarse) {
+    input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not(#st-code), textarea:not(#st-code), select { font-size:16px !important; }
+    .hlayer { font-size:16px !important; }
+  }
   .row { display:flex; gap:8px; } .row > * { flex:0 1 auto; } .row .grow { flex:1 1 auto; }
   .row > button, .ed-bar button { white-space:nowrap; flex:0 0 auto; }
   /* Shared tab bar (Alex's rule, every tabbed view): the bar spans
@@ -356,7 +422,89 @@
   .ptt.rec { background:var(--red); border-color:var(--red); color:#000; }
   @media (prefers-reduced-motion: reduce) { .wave i { animation:none; } }
   @media (prefers-reduced-motion: reduce) { .tdots i, .pdot { animation:none; } main.view-in { animation:none; } #app { transition:none; } .glitching { animation:none; } }
-  @media (max-width:800px) { #app, #app.closed { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr) auto; } nav { display:flex; flex-wrap:wrap; gap:4px; height:auto; } nav .logo { width:100%; } nav .tagline { width:100%; padding-bottom:4px; } nav button { width:auto; } #app.closed nav button { justify-content:flex-start; } #app.closed nav button .lbl { display:inline; } #app.closed .nav-tip { display:none; } #nav-version { width:100%; margin-top:4px; } main { height:auto; min-height:0; } aside { border-left:0; border-top:1px solid var(--line); height:auto; max-height:34dvh; min-height:0; overflow-y:auto; overscroll-behavior:contain; } }
+  /* Small screens — everything in this block is breakpoint-scoped;
+     the desktop frame above it is untouched. Build .61 removed the
+     fixed 100dvh grid (the cause of the old STATUS-over-chips
+     overlap) for a normal-flow column. Build .64 (the mobile chrome
+     round, #46's remaining scope) finishes the phone frame Alex
+     directed: the nav is a slim PERSISTENT top bar — pinned by
+     position:sticky, always on screen — carrying the center line
+     "Apex | powered by Navi" between two toggles: the hamburger
+     (#nav-toggle, the existing collapse state) on the left and the
+     dock toggle (#dock-toggle) on the right. The menu overlay
+     slides in from the left and the status dock from the right,
+     each from its own toggle's side. The
+     destinations live in #nav-menu as a full-phone-width overlay
+     under the bar (on desktop that container is display:contents
+     and nothing changes); the status column leaves the page flow
+     entirely and opens from the dock toggle as a full-phone-width
+     overlay in its locked order. Choosing a destination, following
+     a link out of the dock, or tapping back into the content closes
+     whichever overlay is open — the resting state on any page is
+     content only, under the bar. Chat keeps its own frame — thread
+     scrolling, composer pinned — sized to the viewport under the
+     bar. Touch targets are finger-sized, and wide children wrap or
+     scroll inside themselves, so nothing scrolls sideways at
+     360–430px. Build .65 (Alex's Build 5 field test on his
+     iPhone): the hamburger wraps only its icon — flex:0 0 auto,
+     a square ≥44px target exactly like the dock toggle's, never
+     flex-growing (the base nav-button width:100% is overridden
+     here) — keeps the ☰ glyph whether the menu is open or
+     closed (the ✕ swap is gone), and while the menu is open it
+     takes the dock toggle's own open-state highlight (accent
+     border, accent glyph), so the two bar buttons read as a
+     pair. With the button compact, the one-line title beside it
+     shows in full at 360–430px. */
+  @media (max-width:800px) {
+    html, body { height:auto; overflow:auto; }
+    #app, #app.closed { display:flex; flex-direction:column; height:auto; min-height:100dvh; overflow:visible; }
+    nav { position:sticky; top:0; z-index:90; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:6px; height:60px; overflow:visible; padding:6px 10px; border-right:0; border-bottom:1px solid var(--line); background:var(--panel2); }
+    nav .logo, nav .tagline { display:none; }
+    .bar-title { display:block; flex:1 1 auto; min-width:0; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:13px; letter-spacing:.04em; }
+    #nav-toggle { order:-1; flex:0 0 auto; width:auto; margin:0; min-width:44px; min-height:44px; padding:8px 10px; font-size:16px; justify-content:center; }
+    #app:not(.closed) #nav-toggle { color:var(--cy); border-color:var(--cy); }
+    #dock-toggle { display:flex; align-items:center; justify-content:center; width:auto; flex:0 0 auto; margin-left:auto; min-width:44px; min-height:44px; padding:8px 10px; color:var(--dim); border:1px solid var(--line); background:none; border-radius:4px; cursor:pointer; }
+    #app.dock-open #dock-toggle { color:var(--cy); border-color:var(--cy); }
+    nav button { min-height:44px; }
+    #nav-menu { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; display:flex; flex-direction:column; gap:4px; padding:10px; overflow-y:auto; background:var(--panel2); transform:translateX(-104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
+    #app:not(.closed) #nav-menu { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
+    #nav-menu button[id^="nav-"] { flex:0 0 auto; width:100%; min-height:48px; justify-content:flex-start; }
+    #app.closed nav button .lbl { display:inline; }
+    #app.closed .nav-tip { display:none; }
+    .nav-tip { display:none; }
+    #nav-version { width:100%; margin-top:auto; }
+    #app.closed #nav-version { text-align:left; padding:9px 8px 0; }
+    #app.closed #nav-version .nv-pre { display:inline; }
+    main { height:auto; min-height:0; overflow:visible; padding:12px; }
+    main.chat-view { height:calc(100dvh - 60px); min-height:0; overflow:hidden; }
+    aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
+    #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
+    button.act, button.ghost, a.act, a.ghost, .chipbtn { min-height:40px; }
+    .tabbar { flex-wrap:wrap; }
+    .tabbar > * { flex:1 1 30%; min-height:40px; }
+    .nur-grid { grid-template-columns:repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }
+    .flip-main, .lchip-main { flex-basis:7.5rem; }
+    pre, .md-code, pre.out { max-width:100%; overflow-x:auto; }
+    table { max-width:100%; }
+    input, select, textarea { max-width:100%; }
+    /* Composer cleanup at phone widths (build .66): the dock
+       bleeds to the smaller main padding; the chip pills keep
+       their slim 32px against the 40px floor the other buttons
+       get; and Call goes icon-only — the word returns above
+       800px — handing the bar back its ~55px so the placeholder
+       fits at 360–430px. */
+    .composer { margin:10px -12px -12px; padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+    .chipbtn.chippill { height:32px; min-height:32px; }
+    #chat-call { width:44px; padding:0; }
+    #chat-call .call-label { display:none; }
+    /* Docs picker at phone widths (build .66): the topic list
+       and its cards never render here — one grouped select picks
+       the page, the page renders full-width beneath it. */
+    .docs-picker { display:block; width:100%; min-height:44px; margin:0 0 12px; font-size:14px; }
+    .docs-wiki-nav { display:none; }
+    .docs-wiki-body { min-width:0; }
+  }
+  @media (max-width:800px) and (prefers-reduced-motion: reduce) { #nav-menu, aside { transition:none; } }
 </style>
 </head>
 <body>
@@ -364,6 +512,7 @@
   <nav id="nav">
     <div class="logo mono">APEX</div>
     <div class="tagline mono" id="tagline">Powered by Navi</div>
+    <div class="bar-title mono">Apex | powered by Navi</div>
   </nav>
   <main id="main"></main>
   <aside id="status"></aside>
@@ -384,7 +533,7 @@
 // every setting — backend included — is the operator's explicit
 // choice and is honored as saved. Chats, memory, and documents are
 // stored under separate keys and are never reset by this.
-var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.1","versionStatus":"alpha","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"}};
+var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.3","versionStatus":"alpha","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}}};
 // Backend: this app is always Live — it talks to bridge.py, which
 // proxies the real llamafile server and runs real shell commands.
 // There is no backend switch in the shipped app (build .49): a saved
@@ -392,7 +541,7 @@ var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.1","versionStatus":
 // Live below, so it can never strand the app in a dead mode. The
 // in-page mock code remains only as the bridge-unreachable fallback
 // paths' simulator inside this file; it is never a selectable mode.
-var CONFIG = { backend: "live", version: "0.1.0", versionStatus: "alpha", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "" };
+var CONFIG = { backend: "live", version: "0.1.3", versionStatus: "alpha", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "" };
 Object.assign(CONFIG, NAVI_SETTINGS);
 try {
   var savedCfg = localStorage.getItem("navi.config");
@@ -445,7 +594,21 @@ function navIcon(name) {
 }
 var view = "Chat";
 var navClosed = false;
-try { navClosed = localStorage.getItem("navi.navClosed") === "1"; } catch (e) {}
+try {
+  var savedNavClosed = localStorage.getItem("navi.navClosed");
+  if (savedNavClosed !== null) navClosed = savedNavClosed === "1";
+  // Small screens (build .61): with no saved preference, the menu
+  // starts closed — the compact top bar (logo, tagline, one Menu
+  // button) — instead of opening as the full destination stack.
+  // A saved preference wins on every screen size, and desktops are
+  // unaffected (the rail default there is open, as always).
+  else if (window.matchMedia && window.matchMedia("(max-width: 800px)").matches) navClosed = true;
+} catch (e) {}
+// The status dock (build .64): on small screens the status column
+// lives behind the dock toggle in the top bar, as a full-width
+// overlay. Closed is the resting state on every screen size; it is
+// never persisted — a page always comes up content-only.
+var dockOpen = false;
 // navi.llamafile connection state, driven by the status element: it
 // starts stopped ("Disconnected. Click to Connect."); only a successful
 // connect probe flips it to running. While stopped, chat is a plain
@@ -463,13 +626,26 @@ var sudoAuthError = null;
 // Whether the Sudo Mode Warning dropdown is open — render() rebuilds
 // the status column, so the open state lives here, not on the element.
 var sudoWarnOpen = false;
+// Local network access (build .62): whether its Access details
+// dropdown is open, and which copy button last succeeded — both
+// page-level for the same reason as sudoWarnOpen above.
+var localNetOpen = false;
+var localNetCopied = "";
 // The whole sudo warning, one line (operator's words).
 var SUDO_WARNING_LINE = "Sudo Mode Gives Navi Admin Privs... Be mindful so you dont learn the find out part of the fuck around equation. <3";
 // The chat composer's latched mode (its CLI / Navi press-once
 // toggles): unmarked lines route this way until the other toggle
 // is pressed or a line's $ / > prefix flips it. Page-level because
-// render() rebuilds the composer on every state change.
+// render() rebuilds the composer on every state change. Persisted
+// (build .67) in localStorage navi.chatMode: the latch is restored
+// on load — toggle state, the bar's mode tint, and the placeholder
+// all read chatMode at render — and every change (a toggle press
+// or a line's $ / > prefix) writes it back, so the mode survives
+// sends, view switches, and reopening the app. Navi is the
+// default when nothing is saved.
 var chatMode = "navi";
+try { var savedChatMode = localStorage.getItem("navi.chatMode"); if (savedChatMode === "cli" || savedChatMode === "navi") chatMode = savedChatMode; } catch (e) {}
+function persistChatMode() { try { localStorage.setItem("navi.chatMode", chatMode); } catch (e) {} }
 // Her voice: the last /api/voice answer (settings + engine
 // availability), the live call as this page drives it (turns mirror
 // the bridge's record), and the push-to-talk recorder. In mock mode
@@ -480,6 +656,72 @@ var voiceState = null;       // live: last GET /api/voice answer
 var micState = "unknown";    // unknown | ok | refused | unavailable — this window's own mic experience, shown on the Voice page
 var hardwareState = null;    // live: last GET /api/hardware answer ({profile}); mock: baked seed profile
 var hardwareMsg = "";
+var publicState = null;      // live: last /api/status publicServer report; mock: the baked CONFIG shape
+// Build .65: whether the freshest bridge answer actually carried a
+// publicServer report. The Local network access section's ON face
+// is a claim about the bridge answering RIGHT NOW, so it stands
+// only while this is true — a last-known report from a bridge that
+// has since stopped answering (it exited to apply the OFF choice,
+// flipped from the phone itself) must not keep "On your network",
+// the LAN address, or the access code alive on screen.
+var publicReportLive = false;
+var publicMsg = "";
+var publicRestartPolling = false; // a toggle/restart confirmation poll is running (build .61)
+// Confirmation polling for a Local server restart (build .61):
+// after the toggle (or Restart bridge) saves, the bridge exits and
+// the supervisor relaunches it — this page polls /api/status until
+// the bridge that answers reports the saved choice live with the
+// restart confirmed, or the window runs out. Running out is a
+// NAMED failure (step: the new bridge answering), never a silent
+// pending: the row says the bridge did not come back and offers
+// Restart bridge and the quit-and-relaunch fallback.
+function pollPublicRestart() {
+  if (publicRestartPolling) return;
+  publicRestartPolling = true;
+  var tries = 0;
+  var tick = function () {
+    tries++;
+    fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) {
+      publicReportLive = !!(j && j.publicServer);
+      if (j && j.publicServer) publicState = j.publicServer;
+      var ps = publicState;
+      if (ps && !ps.pending && ps.restart && ps.restart.status === "confirmed") {
+        publicRestartPolling = false;
+        publicMsg = ps.restart.message || "Restart complete — the live state matches your choice.";
+        render();
+        return;
+      }
+      if (ps && ps.restart && ps.restart.status === "failed") {
+        publicRestartPolling = false;
+        render();
+        return;
+      }
+      if (tries >= 25) {
+        publicRestartPolling = false;
+        if (publicState) {
+          publicState.restart = { status: "failed", step: "answer", message: "The new bridge did not answer in time, so the saved choice could not be confirmed live. Still live: " + (publicState.activePublic ? "Local — on your network (the old bridge, untouched)." : "This machine only — 127.0.0.1:" + BRIDGE_PORT + " (the old bridge, untouched).") + " Press Restart bridge to try again, or quit Apex fully and relaunch." };
+        }
+        render();
+        return;
+      }
+      setTimeout(tick, 1000);
+    }).catch(function () {
+      // The bridge is mid-restart (or gone): that is the expected
+      // silence while it swaps. Keep polling inside the window.
+      publicReportLive = false;
+      if (tries >= 25) {
+        publicRestartPolling = false;
+        if (publicState) {
+          publicState.restart = { status: "failed", step: "answer", message: "The bridge did not come back — nothing answers at this address, so no new state is live. Relaunch Apex; if Apex was started from a terminal that has since closed, nothing was left running to relaunch the bridge for it." };
+        }
+        render();
+        return;
+      }
+      setTimeout(tick, 1000);
+    });
+  };
+  setTimeout(tick, 800);
+}
 function fetchHardware(thenRender) {
   if (CONFIG.backend !== "live") { hardwareState = { profile: (CONFIG.hardwareProfile || null) }; if (thenRender) render(); return; }
   fetch("/api/hardware").then(function (r) { return r.json(); }).then(function (j) { hardwareState = j; if (thenRender) render(); }).catch(function () { hardwareState = { profile: null, error: "The bridge did not answer /api/hardware — a bridge from before build .34 has no hardware profile. Relaunch after reinstalling." }; if (thenRender) render(); });
@@ -506,7 +748,7 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-07.58";
+var BRIDGE_BUILD = "2026-11-08.69";
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 // Known chats: every conversation is saved; the Memory tab switches
@@ -1035,8 +1277,19 @@ function docsWikiHtml() {
     return "<div style='" + (gi === 0 ? "" : "margin-top:12px") + "'><button type='button' class='doc-topic-head' data-doctopic='" + g.id + "' aria-expanded='" + (open ? "true" : "false") + "' aria-label='" + (open ? "Collapse" : "Expand") + " the " + esc(g.title) + " topic'><span>" + esc(g.title) + "</span><span class='doc-chev' aria-hidden='true'>▾</span></button>"
       + "<div class='doc-topic-pages" + (open ? "" : " closed") + "' data-doctopic-pages='" + g.id + "'><div class='doc-topic-inner'><ul style='list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:4px'>" + items + "</ul></div></div></div>";
   }).join("");
-  return "<div style='display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap'><nav aria-label='Documentation pages' style='min-width:190px'>" + nav + "</nav>"
-    + "<div style='flex:1;min-width:260px'>" + dp.html
+  // The phone page picker (build .66): one grouped select naming
+  // every page under its topic — rendered always, shown only at
+  // phone widths, where the topic list beside it hides (the CSS
+  // owns both halves). Its value is the open page; choosing one
+  // navigates exactly like the list's buttons do.
+  var picker = "<select id='docs-picker' class='docs-picker' aria-label='Choose a documentation page'>" + DOC_GROUPS.map(function (g) {
+    return "<optgroup label='" + esc(g.title) + "'>" + g.pages.map(function (pid) {
+      var x = DOC_PAGES.filter(function (y) { return y.id === pid; })[0];
+      return x ? "<option value='" + x.id + "'" + (x.id === dp.id ? " selected" : "") + ">" + esc(x.title) + "</option>" : "";
+    }).join("") + "</optgroup>";
+  }).join("") + "</select>";
+  return picker + "<div style='display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap'><nav class='docs-wiki-nav' aria-label='Documentation pages' style='min-width:190px'>" + nav + "</nav>"
+    + "<div class='docs-wiki-body' style='flex:1;min-width:260px'>" + dp.html
     + "<p style='color:var(--dim)'>See also: " + dp.related.map(function (r) { return "<button class='ghost' data-docpage='" + r + "' aria-label='Open the " + esc(docsPageTitle(r)) + " documentation page'>" + esc(docsPageTitle(r)) + "</button>"; }).join(" ") + "</p></div></div>";
 }
 function docsPoppedOut() { return docsShellOut || !!(docsPopWin && !docsPopWin.closed); }
@@ -1105,6 +1358,8 @@ function renderDocsPop() {
     + docsWikiHtml();
   mainEl.querySelectorAll("[data-docpage]").forEach(function (b) { b.onclick = function () { docsPage = b.getAttribute("data-docpage") || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} renderDocsPop(); }; });
   wireDocTopics(mainEl);
+  var popPicker = document.getElementById("docs-picker");
+  if (popPicker) popPicker.onchange = function () { docsPage = popPicker.value || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} renderDocsPop(); };
   var back = document.getElementById("docs-pop-back");
   if (back) back.onclick = function () {
     try { localStorage.setItem("navi.docs.page", docsPage); localStorage.setItem("navi.docs.dock", String(Date.now())); } catch (e) {}
@@ -1152,7 +1407,7 @@ setInterval(function () {
 }, 800);
 var studioFs = false;        // studio editor fullscreen
 var studioWrap = false;      // studio editor word wrap
-var studioZoom = 12.5;       // studio editor font size (px)
+var studioZoom = (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ? 16 : 12.5; // studio editor font size (px); touch starts at 16 so focusing the editor never triggers the browser's focus zoom
 var studioExtras = [];       // studio editor extra caret offsets (multi-cursor)
 var studioPal = false;       // studio command palette open
 var studioPalQuery = "";
@@ -1720,7 +1975,7 @@ var DOC_PAGES = [
   { id: "chat-cli", title: "Chat & CLI mode", related: ["chips-guide", "voice"], html:
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
-  "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; the hint inside the chat bar always matches the mode you are in. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under <b>Memory → Uploaded files</b>, where you can find it later and delete it.</p>" +
+  "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under <b>Memory → Uploaded files</b>, where you can find it later and delete it.</p>" +
   "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Conversations are saved as known chats — switch in Memory.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode</h4>" +
@@ -1815,7 +2070,12 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
   "<p><b>Memory</b> holds local memory entries and the known chats. <b>RAG</b> holds her knowledge packs (the section above). The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one: <b>Operator &amp; Persona</b> (what she calls you, and the Soul and Memory editors), <b>Appearance</b> (the theme picker), <b>Voice</b> (her voice settings), <b>GitHub &amp; Backup</b> (sign-in and the backup/import block), and <b>System</b> — the hardware profile (the detected profile, its override, and re-detect), plus installed commands. There is no backend switch: the app always talks Live to the real bridge and llamafile, and the llamafile's Running state in the status column is the live signal.</p>" +
   "<p><b>Themes.</b> Settings' Appearance tab holds the theme picker: eleven palettes over the same colors the whole app is built from, so every screen — dropdowns and typing boxes included — changes together. <b>Nordic dark</b> comes first and is the default: the Nord family — Polar Night backgrounds in steps, pale Snow Storm words, and Frost-blue highlights with muted Aurora colors. In Nordic, each menu icon gets its own color from that palette — Chat is Frost blue, Voice Aurora purple, Chips Aurora yellow, and so on — the same color everywhere it appears, even in the collapsed rail, and her written answers dress the same way: Snow Storm words, Frost headings and links, and code sitting on the deepest Polar Night step. <b>Dark Liquid Glass</b> comes second: frosted dark glass — deep near-black blue panels you can half see through, with a cheap blur on the big surfaces only (the side menu, the status column, the bar you type in), so it stays smooth on modest graphics; where blur or see-through panels are unavailable it falls back gracefully to the same colors, solid. <b>Terminal</b> is green on black, the classic console. <b>Signature dark</b> is her original console, cyan on near-black. <b>Light</b> is the same console on pale slate. <b>High contrast</b> is pure black with white words and bright signals. <b>Nocturne Row</b> is a rain-slick Rockport night — blue-black streets with neon cyan and magenta signs. <b>Abyss</b> is the deep sea off her app icon — near-black and quiet, with one bioluminescent cyan, the anglerfish lure, as the only loud color. <b>Case File</b> is a light theme — warm paper, ink-black words, evidence-red string accents, and terminal blocks set like a typewriter. <b>Blood Moon</b> is crimson over black with gold thread for highlights. <b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling. Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
-  "<p><b>Hardware profile.</b> Settings' System tab shows the profile the installer made of your machine: what it detected (the CPU and its core count, how much memory, the graphics chip — separate or built in, and its memory), and the settings it chose from that — threads, context size, batch size, and graphics layers. Her settings are picked from <i>your</i> machine at install, never copied from the developer's: a modest laptop gets the proven gentle numbers, a strong machine gets more room. Type your own numbers to override them, or press <b>Re-detect</b> to profile the machine again and return to the automatic choice. The installer writes what it found and why it chose it to <span class='mono'>hardware-profile.log</span> in the install folder.</p></div>" },
+  "<p><b>Hardware profile.</b> Settings' System tab shows the profile the installer made of your machine: what it detected (the CPU and its core count, how much memory, the graphics chip — separate or built in, and its memory), and the settings it chose from that — threads, context size, batch size, and graphics layers. Her settings are picked from <i>your</i> machine at install, never copied from the developer's: a modest laptop gets the proven gentle numbers, a strong machine gets more room. Type your own numbers to override them, or press <b>Re-detect</b> to profile the machine again and return to the automatic choice. The installer writes what it found and why it chose it to <span class='mono'>hardware-profile.log</span> in the install folder.</p></div>" +
+    "<div class='doc-sec'><h4>Local server — Apex on your phone or tablet</h4>" +
+  "<p>Settings' System tab also holds the <b>Local server</b> toggle. It is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>local network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
+  "<p>If a restart ever fails, the row says so in plain words: it names the step that failed (the old bridge would not stop, the new bridge did not answer, or the answering bridge's bind does not match your choice), states the state that is <b>actually live</b> — the old bridge keeps serving its old setting, untouched, until a new one is confirmed — and offers the fallbacks: press <b>Restart bridge</b> to try again, or quit Apex fully and relaunch. A restart never leaves a half-state behind.</p>" +
+  "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits is asked for the code once; its browser is remembered after that. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: every phone let in with the old one is shut out and will be asked again.</p>" +
+  "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. The code is the only lock on that door. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
   { id: "github", title: "GitHub — the pulse, issues & backups", related: ["settings", "installing"], html:
     "<div class='doc-sec'><h4>The pulse — a peek into the project</h4>" +
   "<p>The <b>GitHub</b> item in the side menu is her window into the project itself: <span class='mono'>AlexKollar/Apex</span>, the repo this rebuild lives in (the original Navi she grew from stays at SaintsSec/Navi as the legacy archive). The section has four tabs. <b>Overview</b> is the pulse: the repo's description, its stars, forks, and watchers, the latest release, the most recent commits, the open-issue count, and when it last moved — read live from GitHub through the bridge, with a Refresh button, and honest about it when a read fails. <b>Issues</b> is the repo's current open-issues list — number, title, labels, author, when it last changed — also live, also refreshable. <b>Roadmap</b> is Alex's project board for Apex and <b>Discussions</b> are the project's open forum: in her desktop window each opens as a webview in its own window — GitHub will not be framed inside a web page, so where no webview exists the tab says so and links out to GitHub instead of showing a blank frame. At the bottom of the Issues, Roadmap, and Discussions tabs sits one quiet link to the matching place on GitHub — file an issue, open the board, start a discussion. <b>Looking needs no account at all</b>, in any tab. Clicking an issue opens its log in a window of its own — in her desktop window, a native window of the app like the Roadmap and Discussions windows; in a plain browser, a new tab — never framed inside her window. Filing an issue happens on GitHub's own pages too: when you write one, GitHub asks you to sign in there, with your own account. That is GitHub's door, not Navi's — she never stands between you and it. Account things — sign-in, backup, import — live in <b>Settings → GitHub &amp; Backup</b>; this section is for looking at the project.</p></div>" +
@@ -1851,9 +2111,10 @@ var DOC_PAGES = [
   "<p>On Linux she installs into <span class='mono'>/opt/navi-apex</span>. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
   "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
   "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the status column lights up <b>New Version Available</b>. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.0a → v0.1.1a</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
-  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and optionally a build status after it — like <span class='mono'>0.1.1 alpha</span>, which is what the current release carries (the status word can be <span class='mono'>alpha</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means stable). It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release, and the dashboard shows it at the bottom of the side menu (under a divider, in the lower-left corner) as <b>Ver. + number + a one-letter status tag</b> — alpha wears <span class='mono'>a</span>, beta wears <span class='mono'>b</span>, stable wears none, the same letter style Python's PEP 440 versioning uses. So this alpha reads <b>Ver. 0.1.1a</b> and a stable build reads <b>Ver. 0.1.1</b>. With the side menu collapsed to its icon rail, the footer narrows with it: just the number and its tag, centered, in the same status color — the full <b>Ver.</b> form returns when the menu opens again. The number-and-tag is colored by status in every theme: red for alpha, yellow for beta, blue for stable (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's UPDATER element carries no number — it reads <b>Not checked yet</b> until the first real check runs, <b>Up to date</b> once one has run clean, the plain words <b>Couldn't check for updates</b> when GitHub couldn't be reached, and it switches to a lit <b>New Version Available</b> warning when a check finds a newer one. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
+  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and optionally a build status after it — like <span class='mono'>0.1.3 alpha</span>, which is what the current release carries (the status word can be <span class='mono'>alpha</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means stable). It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release, and the dashboard shows it at the bottom of the side menu (under a divider, in the lower-left corner) as <b>Ver. + number + a one-letter status tag</b> — alpha wears <span class='mono'>a</span>, beta wears <span class='mono'>b</span>, stable wears none, the same letter style Python's PEP 440 versioning uses. So this alpha reads <b>Ver. 0.1.3a</b> and a stable build reads <b>Ver. 0.1.3</b>. With the side menu collapsed to its icon rail, the footer narrows with it: just the number and its tag, centered, in the same status color — the full <b>Ver.</b> form returns when the menu opens again. The number-and-tag is colored by status in every theme: red for alpha, yellow for beta, blue for stable (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's UPDATER element carries no number — it reads <b>Not checked yet</b> until the first real check runs, <b>Up to date</b> once one has run clean, the plain words <b>Couldn't check for updates</b> when GitHub couldn't be reached, and it switches to a lit <b>New Version Available</b> warning when a check finds a newer one. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
+  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open Settings → System and turn on <b>Local server</b> — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
   "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still running after a reinstall. Quit the app fully and relaunch.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
@@ -1977,10 +2238,18 @@ function liveShell(cmd) {
 // live mode change (build .52, issue #12): the placeholder used
 // to be picked only at render time, so flipping the CLI/Navi
 // latch left the old mode's words sitting in the bar.
+// Phone widths (build .67): at ≤800px the bar shares its row
+// with the 44px clip/mic/call buttons, leaving ~165–195px of
+// text room — the full teaching placeholders clipped mid-word
+// in Alex's field photo even though every box measured fine.
+// The narrow variants are short enough to sit fully visible
+// with room to spare at 360px; desktop keeps the long forms.
 function chatPlaceholder() {
-  if (call) return "You're on a call — type what you'd say…";
-  if (llama.status !== "running" || chatMode === "cli") return "Type a command — ls, ps, help…";
-  return "Ask Navi — try: show me the contents of /home/name/";
+  var narrow = false;
+  try { narrow = window.innerWidth <= 800; } catch (e) {}
+  if (call) return narrow ? "Type what you'd say…" : "You're on a call — type what you'd say…";
+  if (llama.status !== "running" || chatMode === "cli") return narrow ? "Run a command…" : "Run a command — try: ls";
+  return narrow ? "Ask Navi…" : "Ask Navi — try: show me the contents of /home/name/";
 }
 
 /* ----------------------------- autocomplete ----------------------------- */
@@ -2031,6 +2300,7 @@ function attachAutocomplete(input, opts) {
   }
   function latchMode(m) {
     chatMode = m;
+    persistChatMode();
     input.placeholder = chatPlaceholder();
     var v = input.value;
     if (m === "cli" && (v.trim() === ">" || v.indexOf("> ") === 0)) input.value = v.replace(/^>\s*/, "");
@@ -2076,6 +2346,9 @@ function attachAutocomplete(input, opts) {
       layer.innerHTML = html;
       layer.scrollLeft = input.scrollLeft;
     }
+    // The bar dresses for the latch (build .66): CLI latched, its
+    // edge takes the terminal green; Navi latched, it lets go.
+    wrap.classList.toggle("cli-mode", chatMode === "cli");
     if (opts.hintEl) {
       var btn = opts.hintEl.querySelector("button.pill");
       if (btn) {
@@ -2228,20 +2501,62 @@ var toggleBtn = document.createElement("button");
 toggleBtn.id = "nav-toggle";
 toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
 toggleBtn.setAttribute("aria-label", "Collapse or expand the side menu");
-toggleBtn.textContent = navClosed ? "»" : "« Menu";
+toggleBtn.textContent = navClosed ? (window.innerWidth <= 800 ? "☰" : "»") : (window.innerWidth <= 800 ? "☰" : "« Menu");
 toggleBtn.onclick = function () {
   navClosed = !navClosed;
+  // Opening the menu puts the dock away (build .64): on a phone
+  // only one overlay is ever up.
+  if (!navClosed) dockOpen = false;
   try { localStorage.setItem("navi.navClosed", navClosed ? "1" : "0"); } catch (e) {}
   render();
 };
 navEl.appendChild(toggleBtn);
+// The destinations and the version footer ride in one container:
+// display:contents on desktop (the nav's flex column is unchanged),
+// the full-width overlay panel on small screens.
+var navMenu = document.createElement("div");
+navMenu.id = "nav-menu";
+navEl.appendChild(navMenu);
 NAV.forEach(function (name) {
   var b = document.createElement("button");
   b.id = "nav-" + name;
   b.setAttribute("aria-label", name);
   b.innerHTML = "<span class='ic'>" + navIcon(name) + "</span><span class='lbl'>" + name + "</span><span class='nav-tip' aria-hidden='true'>" + name + "</span>";
-  b.onclick = function () { view = name; render(); if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); } };
-  navEl.appendChild(b);
+  b.onclick = function () { view = name; if (window.innerWidth <= 800) { navClosed = true; dockOpen = false; } render(); if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); } };
+  navMenu.appendChild(b);
+});
+// The dock toggle (build .64): the opposing end of the phone top
+// bar from the hamburger. It opens the whole status column as a
+// full-width overlay; the small-screen CSS shows it, the desktop
+// CSS keeps it display:none — the desktop frame never grows one.
+var dockBtn = document.createElement("button");
+dockBtn.id = "dock-toggle";
+dockBtn.type = "button";
+dockBtn.innerHTML = "<svg aria-hidden='true' focusable='false' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='5' width='7' height='14' rx='2'></rect><rect x='13' y='5' width='8' height='14' rx='2'></rect></svg>";
+dockBtn.setAttribute("aria-label", "Open the status dock");
+dockBtn.setAttribute("aria-expanded", "false");
+dockBtn.onclick = function () {
+  dockOpen = !dockOpen;
+  if (dockOpen) navClosed = true;
+  render();
+};
+navEl.appendChild(dockBtn);
+// Tapping back into the content dismisses whichever overlay is up
+// (build .64) — reachable whenever an overlay leaves content
+// exposed, and the same gesture on the bar's own toggles.
+mainEl.addEventListener("click", function () {
+  if (window.innerWidth <= 800 && (dockOpen || !navClosed)) {
+    dockOpen = false;
+    navClosed = true;
+    render();
+  }
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && window.innerWidth <= 800 && (dockOpen || !navClosed)) {
+    dockOpen = false;
+    navClosed = true;
+    render();
+  }
 });
 // The version at the foot of the menu, under its divider: baked
 // from the package's VERSION file at build time, then kept current
@@ -2255,7 +2570,7 @@ navVer.className = "mono";
 navVer.setAttribute("aria-label", "Apex version " + CONFIG.version);
 navVer.innerHTML = "<span class='nv-num' id='nav-version-num'><span class='nv-pre'>Ver. </span><span class='nv-val' id='nav-version-val'>" + esc(CONFIG.version) + verTag(CONFIG.versionStatus) + "</span></span>";
 navVer.classList.add("st-" + (CONFIG.versionStatus || "stable"));
-navEl.appendChild(navVer);
+navMenu.appendChild(navVer);
 /* ------------------------- Her living details ------------------------- */
 // The tagline under the wordmark is one static line — "Powered by
 // Navi" — baked into the dashboard HTML; it never cycles. Her
@@ -2311,6 +2626,55 @@ function wireLlama() {
   };
   var disc = document.getElementById("llama-disc");
   if (disc) disc.onclick = function () { llama.status = "stopped"; llama.error = null; render(); };
+}
+function renderLocalNetwork() {
+  var ps = publicState || CONFIG.publicServer || { enabled: false, activePublic: false, pending: false, lanUrl: "", accessCode: "" };
+  // Build .65: the ON face — the face line, the address, the code —
+  // stands only on a live report that the answering bridge is
+  // serving the LAN right now. The saved choice alone no longer
+  // opens the details (it kept the last-used address and code on
+  // screen while the server was off), and in live mode a
+  // last-known report from a bridge that has stopped answering
+  // does not count either (publicReportLive above).
+  var live = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
+  var pending = !!ps.pending;
+  var hasCode = !!(ps.accessCode);
+  var dot = pending ? "#f5b544" : live ? "#34d399" : "#9fb3c8";
+  var stateText = pending ? "Switching\u2026" : live ? "On your network" : "This machine only";
+  var h = "<div class='stat'><span class='dot' style='background:" + dot + "'></span><span style='color:var(--dim)'>LOCAL NETWORK ACCESS</span><br>" +
+    "<span class='v mono' style='font-weight:700'>" + esc(stateText) + "</span>" +
+    "<details id='local-net-details'" + (localNetOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Access details</summary><div style='margin-top:6px'>";
+  if (live) {
+    if (ps.lanUrl) {
+      h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>ON YOUR PHONE, OPEN THIS ADDRESS</div>" +
+        "<button class='ghost' id='local-net-copy-lan' aria-label='Copy the local network address " + esc(ps.lanUrl) + "' style='margin-top:4px;display:block;width:100%;text-align:left;font-weight:700;color:var(--cy);border-color:var(--cy);word-break:break-all;min-height:40px'>" + (localNetCopied === "lan" ? "Copied \u2014 " : "") + esc(ps.lanUrl) + "</button>";
+    }
+    if (hasCode) {
+      h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>ACCESS CODE</div>" +
+        "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:6px 10px;font-weight:700;letter-spacing:.2em'>" + esc(ps.accessCode) + "</span>" +
+        "<button class='ghost' id='local-net-copy-code' aria-label='Copy the Local server access code' style='min-height:40px'>" + (localNetCopied === "code" ? "Copied" : "Copy code") + "</button></div>";
+    }
+  } else {
+    h += "<div style='color:var(--dim);font-size:12px'>Local network hosting is off. To enable it, check the Settings menu under System and turn on Local server.</div>";
+  }
+  h += "<button class='ghost' id='local-net-settings' aria-label='Open Settings System for the Local server toggle and Regenerate' style='margin-top:8px;display:block;width:100%;text-align:center;font-weight:700;min-height:40px'>Settings \u2192 System</button>" +
+    (live ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The Local server toggle and Regenerate live there.</div>" : "") +
+    "</div></details></div>";
+  return h;
+}
+function wireLocalNetwork() {
+  var det = document.getElementById("local-net-details");
+  if (det) det.addEventListener("toggle", function () { localNetOpen = det.open; });
+  var copyWith = function (text, which) {
+    var done = function () { localNetCopied = which; render(); setTimeout(function () { if (localNetCopied === which) { localNetCopied = ""; render(); } }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(function () {});
+  };
+  var lanBtn = document.getElementById("local-net-copy-lan");
+  if (lanBtn) lanBtn.onclick = function () { var ps = publicState || CONFIG.publicServer || {}; if (ps.lanUrl) copyWith(ps.lanUrl, "lan"); };
+  var codeBtn = document.getElementById("local-net-copy-code");
+  if (codeBtn) codeBtn.onclick = function () { var ps = publicState || CONFIG.publicServer || {}; if (ps.accessCode) copyWith(ps.accessCode, "code"); };
+  var setBtn = document.getElementById("local-net-settings");
+  if (setBtn) setBtn.onclick = function () { settingsTab = "system"; view = "Settings"; dockOpen = false; render(); };
 }
 function renderSudo() {
   var needsAuth = CONFIG.sudo && CONFIG.backend === "live" && !sudoAuthed;
@@ -2431,7 +2795,7 @@ function renderVoiceStatus() {
 }
 function wireVoiceStatus() {
   var b = document.getElementById("voice-open");
-  if (b) b.onclick = function () { view = "Voice"; render(); };
+  if (b) b.onclick = function () { view = "Voice"; dockOpen = false; render(); };
 }
 function playWavB64(b64) {
   return new Promise(function (resolve) {
@@ -2839,6 +3203,7 @@ function renderStatus(live) {
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +
     renderLlama() +
+    renderLocalNetwork() +
     renderSudo() +
     renderVoiceStatus() +
     stat("MEMORY", memory.length + " entries (local)", "#34d399") +
@@ -2850,9 +3215,10 @@ function renderStatus(live) {
   // column carries only statuses that mean something.
   wireSudo();
   wireLlama();
+  wireLocalNetwork();
   wireVoiceStatus();
   var uw = document.getElementById("updater-warn");
-  if (uw) uw.onclick = function () { view = "Updater"; render(); };
+  if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
   if (CONFIG.backend === "live" && !voiceState && !voiceFetching && !naviThinking) refreshVoice(false);
   if (CONFIG.backend === "live" && !ragPacksState && !ragPacksFetching && !naviThinking) refreshRagPacks(false);
   if (!githubState && !githubFetching) fetchGithub(false);
@@ -3385,16 +3751,21 @@ function render() {
     try { var p = localStorage.getItem("navi.docs.page"); if (p) docsPage = p; } catch (e) {}
   }
   appEl.classList.toggle("closed", navClosed);
-  toggleBtn.textContent = navClosed ? "»" : "« Menu";
-  toggleBtn.title = navClosed ? "Expand the side menu" : "Collapse the side menu";
+  appEl.classList.toggle("dock-open", dockOpen);
+  var smallScreen = window.innerWidth <= 800;
+  toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
+  toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
+  toggleBtn.setAttribute("aria-label", smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : "Collapse or expand the side menu");
   toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
+  dockBtn.setAttribute("aria-expanded", dockOpen ? "true" : "false");
+  dockBtn.setAttribute("aria-label", dockOpen ? "Close the status dock" : "Open the status dock");
   NAV.forEach(function (n) { document.getElementById("nav-" + n).className = n === view ? "on" : ""; });
   ensureLiveCommands();
   // While she is generating, the dashboard does no background
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -3449,8 +3820,12 @@ function render() {
     // simulator's set; live mode's is the chips in chips/ —
     // which starts empty and fills only with real installs.
     var pillChips = CONFIG.backend === "live" ? (wfData ? wfData.chips.map(function (c) { return { id: String(c.file || "").replace(/.png$/i, ""), name: c.name }; }) : []) : CHIP_DEFS;
+    // The composer dock (build .66): everything under the thread —
+    // the chips shelf, the bar, the toggle row — renders inside
+    // one .composer zone so it reads as a single docked unit.
+    h += "<div class='composer'>";
     if (pillChips.length) {
-      h += "<div style='margin-top:6px'><span style='color:var(--dim);font-size:11px;margin-right:4px'>CHIPS</span>" + pillChips.map(function (c) { return "<button class='chipbtn' data-chip-pill='" + esc(c.id) + "' aria-label='Run chip " + esc(c.name) + "'>▸ " + esc(c.name) + "</button>"; }).join("") + "</div>";
+      h += "<div class='chipsrow'><span class='chips-label'>CHIPS</span>" + pillChips.map(function (c) { return "<button class='chipbtn chippill' data-chip-pill='" + esc(c.id) + "' aria-label='Run chip " + esc(c.name) + "'>▸ " + esc(c.name) + "</button>"; }).join("") + "</div>";
     }
     if (voiceMsg) h += "<div style='color:#f5b544;font-size:12px;margin:4px 0'>" + esc(voiceMsg) + "</div>";
     // The call, in the chat window: a call started here (or in
@@ -3469,10 +3844,10 @@ function render() {
     // every composer state, instead of floating at the thread's
     // foot. Same button, same id, same wiring — new seat.
     var clearChatBtn = (messages.length ? "<button class='ghost' id='chat-clear' aria-label='Clear this chat and start fresh' style='margin-left:auto'>Clear chat</button>" : "") + "<span id='hist-note'></span>";
-    h += "<div class='row'><span class='grow ac-wrap'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat' style='display:inline-flex;align-items:center;gap:6px'>" + phoneSvg() + "Call</button>" : "") + "</div>" +
+    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
-      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span>Command-line mode — Enter runs the command · <span class='mono'>&gt;</span> flips back to Navi</span>" + clearChatBtn + "</div>"
-      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span>Enter sends to Navi · <span class='mono'>$</span> flips to a command · terminal output becomes her context</span>" + clearChatBtn + "</div>");
+      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + clearChatBtn + "</div>"
+      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + clearChatBtn + "</div>") + "</div>";
   } else if (view === "Chips") {
     h += "<h3>Chips</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='Chips sections' style='margin-bottom:10px'><button class='" + (chipsTab === "management" ? "act" : "ghost") + "' data-ctab='management' aria-label='Navi User Repo tab'>Navi User Repo (NUR)</button><button class='" + (chipsTab === "studio" ? "act" : "ghost") + "' data-ctab='studio' aria-label='Chip studio tab'>Chip Studio</button><button class='" + (chipsTab === "workflows" ? "act" : "ghost") + "' data-ctab='workflows' aria-label='Chip workflows tab'>Workflows</button></div>";
@@ -3756,6 +4131,48 @@ function render() {
       }).join("") + "</div>";
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nordic dark is the default. Nordic is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup mode is chosen during install — the installer asks whether the llamafile server loads on app launch or at system boot, and records it in config/navi.config.json.</p></div>";
+    // Local server (build .59; corrected in .60; fluid activation
+    // in .61): the toggle, the code, and the LAN address. State
+    // comes from the bridge's own report (the /api/status
+    // publicServer block): saved choice beside the running bridge's
+    // actual bind, so the row never claims a state the bridge is
+    // not in. Flipping the toggle saves the choice AND restarts the
+    // bridge (the exit-75 handshake); the row shows the restart in
+    // progress, then the confirmed live state — or, on failure, the
+    // named step, the state actually live, and the Restart bridge
+    // retry. The access controls (code, Regenerate, LAN address)
+    // render while the saved choice OR the running bridge is
+    // public — in the pending-off window the bridge is still
+    // serving the network, so the code guarding it stays visible
+    // and regenerable until the restart lands.
+    if (settingsTab === "system") (function () {
+      var ps = publicState || CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
+      var rst = ps.restart || { status: "idle", step: "", message: "" };
+      // Build .65: the row's live claim follows the same rule as
+      // the status column's section — a last-known report from a
+      // bridge that has stopped answering never reads as live.
+      var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
+      h += "<div class='card'><h3>Local server</h3>";
+      h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
+      h += "<p style='color:var(--am)'><b>Warning:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. Share the code like a house key.</p>";
+      h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Local server toggle'>" + (ps.enabled ? "Local server: On" : "Local server: Off") + "</button></p>";
+      h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
+      if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
+      else if (rst.status === "failed") h += "<br><span style='color:#f87171'><b>Restart failed — step: " + esc(rst.step === "stop" ? "stopping the old bridge" : rst.step === "verify" ? "checking the new bridge's bind" : "the new bridge answering") + ".</b> " + esc(rst.message || "") + "</span>";
+      else if (rst.status === "confirmed" && !ps.pending) h += "<br><span style='color:var(--green)'>" + esc(rst.message || "Live — the bridge that answers runs the saved choice.") + "</span>";
+      else if (ps.pending) h += "<br><span style='color:var(--am)'>The saved choice is not live yet — the running bridge still uses the old setting. Press Restart bridge and Apex applies it herself.</span>";
+      else h += "<br>The running bridge matches the saved choice.";
+      h += "</p>";
+      if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Local server choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
+      if (ps.enabled || rowLive) {
+        h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Local server access code'>Regenerate</button></p>";
+        h += "<p style='color:var(--dim)'>A phone visiting Apex is asked for this code once; its browser is remembered after that. Regenerating makes a new code and shuts out every phone the old one let in.</p>";
+        if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
+        h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
+      }
+      if (publicMsg) h += "<p style='color:var(--dim)'>" + esc(publicMsg) + "</p>";
+      h += "</div>";
+    })();
     // Hardware profile (build .34): what the installer detected on
     // this machine and the runtime settings it chose from it.
     if (settingsTab === "system") (function () {
@@ -3852,6 +4269,7 @@ function sendChat(text) {
   // switch and the toggles never disagree afterwards.
   if (text.charAt(0) === "$") chatMode = "cli";
   else if (text === ">" || text.indexOf("> ") === 0) chatMode = "navi";
+  persistChatMode();
   messages.push({ who: "YOU", text: text, exec: null });
   persist(); render();
   try {
@@ -3898,6 +4316,8 @@ function sendChat(text) {
 function wire() {
   mainEl.querySelectorAll("[data-docpage]").forEach(function (b) { b.onclick = function () { docsPage = b.getAttribute("data-docpage") || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} if (view !== "Docs") view = "Docs"; render(); }; });
   wireDocTopics(mainEl);
+  var docsPicker = document.getElementById("docs-picker");
+  if (docsPicker) docsPicker.onchange = function () { docsPage = docsPicker.value || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} if (view !== "Docs") view = "Docs"; render(); };
   var docsOut = document.getElementById("docs-pop-out");
   if (docsOut) docsOut.onclick = function () { popOutDocs(); render(); };
   var docsIn = document.getElementById("docs-pop-in");
@@ -4700,6 +5120,83 @@ function wire() {
     if (hwRedetect) hwRedetect.onclick = function () {
       if (CONFIG.backend !== "live") { hardwareMsg = "Re-detect needs the live bridge — switch Backend to Live."; render(); return; }
       fetch("/api/hardware/redetect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { hardwareState = j; hardwareMsg = j && j.profile ? "Re-detected this machine and returned to auto settings — they apply the next time the model server starts." : "Re-detect failed: " + ((j && j.error) || "unknown error"); render(); }).catch(function () { hardwareMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    // Local server card (build .59; fluid activation .61): the
+    // toggle saves the choice through the bridge AND starts the
+    // bridge restart that applies it; the row then polls for the
+    // relaunched bridge's confirmation (pollPublicRestart).
+    // Regenerate persists the same way it always did.
+    var pubToggle = document.getElementById("pub-toggle");
+    if (pubToggle) pubToggle.onclick = function () {
+      var ps = publicState || CONFIG.publicServer || { enabled: false };
+      var next = !ps.enabled;
+      if (CONFIG.backend !== "live") {
+        CONFIG.publicServer = CONFIG.publicServer || { enabled: false, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "", restart: { status: "idle", step: "", message: "" } };
+        CONFIG.publicServer.enabled = next;
+        CONFIG.publicServer.pending = next !== CONFIG.publicServer.activePublic;
+        if (next && !CONFIG.publicServer.accessCode) CONFIG.publicServer.accessCode = "SIMULATED";
+        if (CONFIG.publicServer.pending) {
+          CONFIG.publicServer.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
+          publicMsg = "Restarting the bridge… (mock mode — simulated).";
+          render();
+          var target = next;
+          setTimeout(function () {
+            CONFIG.publicServer.activePublic = target;
+            CONFIG.publicServer.bindHost = target ? "0.0.0.0" : "127.0.0.1";
+            CONFIG.publicServer.pending = false;
+            CONFIG.publicServer.restart = { status: "confirmed", step: "", message: target ? "Restart complete — the bridge that answers now reports Local — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+            saveCfg();
+            publicMsg = CONFIG.publicServer.restart.message;
+            render();
+          }, 1200);
+        } else {
+          CONFIG.publicServer.restart = { status: "confirmed", step: "", message: "The bridge that answers already runs this choice — no restart was needed." };
+          saveCfg();
+          publicMsg = CONFIG.publicServer.restart.message;
+          render();
+        }
+        return;
+      }
+      fetch("/api/settings/public", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }) }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = publicState && publicState.pending ? "Restarting the bridge…" : "Saved — the bridge that answers already runs this choice."; render(); if (publicState && publicState.pending) pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubRestart = document.getElementById("pub-restart");
+    if (pubRestart) pubRestart.onclick = function () {
+      if (CONFIG.backend !== "live") {
+        var cps = CONFIG.publicServer || { enabled: false, activePublic: false };
+        cps.restart = { status: "restarting", step: "restart", message: "Restarting the bridge…" };
+        publicMsg = "Restarting the bridge… (mock mode — simulated).";
+        render();
+        setTimeout(function () {
+          cps.activePublic = cps.enabled;
+          cps.bindHost = cps.enabled ? "0.0.0.0" : "127.0.0.1";
+          cps.pending = false;
+          cps.restart = { status: "confirmed", step: "", message: cps.enabled ? "Restart complete — the bridge that answers now reports Local — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+          saveCfg();
+          publicMsg = cps.restart.message;
+          render();
+        }, 1200);
+        return;
+      }
+      fetch("/api/settings/public/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "Restarting the bridge…"; render(); pollPublicRestart(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubRegen = document.getElementById("pub-regen");
+    if (pubRegen) pubRegen.onclick = function () {
+      if (CONFIG.backend !== "live") {
+        CONFIG.publicServer = CONFIG.publicServer || { enabled: true, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "" };
+        CONFIG.publicServer.accessCode = "MOCK-" + Math.floor(1000 + Math.random() * 9000);
+        saveCfg();
+        publicMsg = "New code (mock mode — simulated). Every phone the old code let in would be shut out.";
+        render();
+        return;
+      }
+      fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "New code saved — every phone the old code let in is shut out and will be asked again."; render(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+    var pubLan = document.getElementById("pub-lan");
+    if (pubLan) pubLan.onclick = function () {
+      var url = pubLan.getAttribute("data-url") || "";
+      var done = function () { publicMsg = "Copied " + url + " — open it on your phone, on the same network, and enter the access code."; render(); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(function () { publicMsg = url; render(); });
+      else { publicMsg = url; render(); }
     };
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
     var soulSave = document.getElementById("soul-save");

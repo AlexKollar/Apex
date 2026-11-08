@@ -1,6 +1,6 @@
 [package]
 name = "navi-apex-shell"
-version = "0.1.0"
+version = "0.1.3"
 description = "Apex — standalone window (Tauri shell over the local bridge dashboard)"
 edition = "2021"
 
