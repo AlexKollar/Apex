@@ -2,6 +2,27 @@
 
 All notable changes to Apex are recorded here. Releases are alpha until the first stable release.
 
+## 0.1.6 (alpha)
+
+Release tag: v0.1.6a. The polish release: the Enter Code gate (#64), the Vault tree menus (#65), and the Servers collapse with the tag-form menu footer (#66) are first published here, together with two fixes from the v0.1.5a field test — the Servers group's missing spacer (#67) and the Vault navigation panel's move to the right, rebuilt so it cannot drift again (#68).
+
+### The Enter Code window (#64)
+
+- **One gate, both doors.** The two bare code-entry snippets — one for the Apex Node (LAN) door, one for the DHD door — are replaced by a single shared gate page in the bridge, parameterized by door, so there is no second copy to drift. The contract is unchanged: the same POST to /__gate, the same acceptance cookie, the same redirect into the dashboard; loopback is never gated and the API's 403 answers are untouched. The page still serves nothing before the code — one self-contained HTML page, inline CSS and SVG only, no external assets, fonts, or scripts — and no version string appears anywhere on it.
+- **The look.** A deep-space backdrop — layered nebula gradients and a fine starfield — behind a glassy card. The DHD dial glyph, twelve chevrons around a glowing core, turns slowly above the APEX wordmark on the DHD door and rests calm and dimmer on the Apex Node door; all motion honors prefers-reduced-motion. The card names the door being knocked on — the domain for DHD, the machine's hostname at home. The page ends at the card: no footer tagline (Alex's ruling on the mockup).
+- **The field and the failures.** The code box autofocuses on load, accepts one-time-code autocomplete, renders at full phone size with no focus zoom, and Enter submits as before. A wrong code re-renders the same page with the error in place, the field cleared and refocused, and a shake on the card. The DHD door now shows the throttle it always enforced: attempts remaining before lockout, and — while locked — the form disabled with the remaining lockout time. The Apex Node door's copy is corrected: the code is found on the DHD page of the machine Apex runs on.
+
+### The Vault — tree menus and the right-side panel (#65, #68)
+
+- **The Vault tree gets its names back (#65).** On the live field screenshot the file-tree panel's header controls were crushed into two-letter stubs and every note row spent most of its width on permanent Move / Rename / Delete buttons while the note names truncated. Now the create controls wrap to two lines with full labels instead of truncating, and each note and folder carries a single ⋯ menu (a 44px touch target, keyboard-reachable) holding its actions — Move, Rename, and Delete-with-confirm for notes; New note and Delete for folders. The names take the row's width; drag-and-drop, the touch Move picker, import, search, and templates are unchanged.
+- **The navigation panel sits on the right — by placement, not by reversal (#68).** The editor/tree pair claimed the right side since build .73 through a reversed flex row, and the operator's live read diverged twice: at shell and browser widths alike the pair could sit left-anchored mid-page, its placement hostage to how each engine resolves a reversed, wrapping flex line. The pair is now an explicit two-column grid that spans the full width of the view: the editor is assigned the first column, the files panel the second (280px), each by name, in the shell's webview and in a browser alike. On phones (≤800px) nothing changes: the panel stacks full-width above the editor, exactly as before.
+
+### Servers — a parent, with its spacer (#66, #67)
+
+- **Servers is a parent now (#66).** The status column's Servers header collapses and expands the whole group — Llamafile, Apex Node [local], DHD [public] — and remembers the operator's choice across re-renders, exactly like the per-row dropdowns it parents. Shut, the header still carries one dot per server in that row's own colors, so collapsing never hides a problem. Rows, dots, and dropdown contents are untouched.
+- **The spacer is back (#67).** The Servers parent was the one status block without the column's standard boundary, so in the expanded default state Sudo rendered flush against the DHD row. The block now carries the same boundary as every other status block — the same gap, padding, and divider — in the expanded and collapsed states alike. Section order and the collapse behavior are unchanged.
+- **The menu footer reads like GitHub (#66).** The version at the foot of the side menu is centered and written in tag form — **v0.1.6a** — in the same status colors as before (alpha red, beta yellow, stable blue, no tag on stable); the collapsed rail keeps the same whole string, centered, unclipped. Display only: the VERSION file, the bridge's reporting, and the Updater's comparisons are untouched.
+
 ## 0.1.5 (alpha)
 
 Release tag: v0.1.5a. The DHD release: Apex gains its public door — and the door tells the truth about its address. The honest public-address model (#59) and the installer/packaging fixes (#60) land here, and the Vault and markdown rounds (#53/#54), whose fixes shipped in earlier builds, close at this release.

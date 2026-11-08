@@ -1,4 +1,6 @@
-# Apex — local app package
+# Apex — Powered by [Navi](https://github.com/SaintsSec/Navi)
+
+Apex — local app package
 
 Project home: https://github.com/AlexKollar/Apex — the fresh repo for this rebuild. (Navi was born at SaintsSec/Navi; that repo stays as the legacy archive of the original.)
 
@@ -6,13 +8,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.5 (alpha) — tag v0.1.5a
+## Latest release — 0.1.6 (alpha) — tag v0.1.6a
 
-- The DHD tells the truth about its public address: your domain once its certificate is verified, or your detected public IP — the LAN address is labeled house-only and never shown as public.
-- "Reachable anywhere" is claimed only when a verified domain setup proves it; otherwise the DHD page names the true state and the next step.
-- A --fresh reinstall keeps your DHD certificate — config/dhd/ is preserved across the wipe, like the Vault.
-- The DHD starts off in a fresh package; one click on the DHD page enables it when you want it.
-- The package's docs install with the app, so docs/DHD.md lands in the tree it documents.
+- One Enter Code gate for both doors (#64): a Stargate-style page for Apex Node at home and DHD from anywhere, with the public door's throttle state shown on the page.
+- The Vault tree gives note and folder names their full width — every action lives behind one ⋯ menu per row, and the create row wraps instead of crushing (#65).
+- The status column's Servers group collapses as one parent, a dot per server in its header — and keeps the standard spacer before Sudo in both states (#66, #67).
+- The Vault's navigation panel sits on the right of the editor by explicit placement — a full-width two-column layout that renders the same in the app window and a browser (#68).
+- The side-menu footer reads in GitHub tag form: v0.1.6a.
 
 [Read the changelog](CHANGELOG.md)
 
@@ -250,11 +252,14 @@ fallback, served by the bridge at the same address.
 - config/navi.config.json — backend mode, paths, ports, startup mode,
   and the settings this package was exported with (sudo mode, threat
   level, operator name, installed commands) — the app ships as the
-  project stands. Its public_server block holds the Local server
-  toggle (Settings → System): off by default; on, the bridge binds
+  project stands. Its public_server block holds the Apex Node
+  toggle (on the DHD page): off by default; on, the bridge binds
   0.0.0.0:8675 at launch and non-loopback visitors must enter the
   block's access code (the bridge generates one per install) before
   anything beyond the code-entry page is served.
+- docs/DHD.md — the DHD guide as prepared wiki markdown: what DHD
+  is, the one-click flow, and the backend the operator may still
+  handle by hand (router forwarding, DNS, certificates, renewal).
 - config/soul.md + config/memory.md — Navi's persona (see below).
   Yours to edit. No install ever overwrites them once they exist:
   updates and reinstalls leave them alone, and even a --fresh install
@@ -285,6 +290,35 @@ Edit them in Settings (the dashboard writes the same files through
 bridge.py) or directly as files. bridge.py builds her system prompt
 from both on every chat. Settings also holds what Navi calls you —
 the operator name her persona uses when she addresses you.
+
+## DHD — Apex from anywhere
+
+DHD (Dial-Home Device — the way home) is Apex's public door, its own
+menu page in the dashboard. Apex Node serves Apex on your home
+network; DHD extends the same dashboard to a genuinely public address
+on your own machine, and everything is Apex's own work — no Tailscale,
+no external tunnel or proxy service, no Certbot. One click on the DHD
+page does it all: Apex generates a certificate, brings up its own
+reverse proxy (inside bridge.py) on ports 80/443 in front of the
+bridge — in DHD mode the bridge binds 127.0.0.1:8675 only, so the
+proxy is the only public face — runs a reachability self-check, and
+reports the live address, or names the failed step in plain words.
+TLS is on from the first click: a self-signed certificate Apex
+generates into config/dhd/ when no domain is set (the browser warning
+is expected — the Docs' DHD page explains it), or a real Let's Encrypt
+certificate from Apex's built-in ACME client when you add a domain in
+the page's optional field (addable any time, never required), renewed
+automatically at 30 days remaining or less. The door uses the same
+access code as the home network, with public-side throttling
+(progressive delays; a five-minute lockout after five wrong codes),
+and a session through DHD is a full session — the Updater included.
+What stays yours: forwarding ports 80/443 on your router to this
+machine, and pointing your domain's DNS at your home IP if you use
+one. The in-app Docs → DHD page (also docs/DHD.md in this package)
+walks through all of it. On Linux, ports below 1024 are reserved: if
+the proxy step names them, grant the bridge the low-port capability
+once — sudo setcap 'cap_net_bind_service=+ep' on the python3 binary
+the bridge runs with — and flip the switch again.
 
 ## Command autocomplete
 

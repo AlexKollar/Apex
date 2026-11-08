@@ -353,12 +353,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.5"
+SHIPPED_VERSION = "0.1.6"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-08.78"
+BRIDGE_BUILD = "2026-11-08.80"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -624,23 +624,199 @@ def public_state_payload(cfg, for_loopback):
     }
 
 
-def gate_page_html(error=""):
-    err = ""
+def _gate_escape(text):
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
+def _gate_stars_svg():
+    # A fine starfield: 42 points placed by a fixed arithmetic
+    # scatter, so the page is identical on every serve and carries
+    # no external asset.
+    dots = ""
+    for i in range(42):
+        x = (i * 97 + 31) % 400
+        y = (i * 57 + 13) % 400
+        r = "1.5" if i % 7 == 0 else "1"
+        o = "0.9" if i % 5 == 0 else "0.5"
+        dots += "<circle cx='" + str(x) + "' cy='" + str(y) + "' r='" + r + "' opacity='" + o + "'/>"
+    return (
+        "<svg class='stars' viewBox='0 0 400 400' preserveAspectRatio='xMidYMid slice' aria-hidden='true'>"
+        + dots
+        + "</svg>"
+    )
+
+
+def _gate_ring_svg():
+    # The DHD dial glyph as the page centerpiece: twelve chevron
+    # wedges around a glowing core, drawn once as inline SVG (the
+    # same glyph family as the app's DHD icon - outer ring, twelve
+    # wedges, one warm center).
+    wedges = ""
+    for i in range(12):
+        wedges += (
+            "<g transform='rotate(" + str(i * 30) + " 100 100)'>"
+            "<path class='chev' d='M100 12 L117 36 L100 28 L83 36 Z'/></g>"
+        )
+    return (
+        "<svg class='ring' viewBox='0 0 200 200' role='img' aria-label='Apex dial ring'>"
+        "<circle class='ring-track' cx='100' cy='100' r='88'/>"
+        "<circle class='ring-track2' cx='100' cy='100' r='62'/>"
+        + wedges
+        + "<circle class='core-glow' cx='100' cy='100' r='34'/>"
+        "<circle class='core' cx='100' cy='100' r='24'/>"
+        "</svg>"
+    )
+
+
+_GATE_CSS = (
+    "*{box-sizing:border-box}"
+    "html,body{margin:0;padding:0}"
+    "body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
+    "background-color:#04060d;color:#e6f1f5;min-height:100dvh;display:flex;"
+    "align-items:center;justify-content:center;padding:20px 16px;position:relative;overflow-x:hidden;"
+    "background-image:radial-gradient(900px 600px at 15% 10%,rgba(34,211,238,.16),transparent 60%),"
+    "radial-gradient(800px 600px at 85% 90%,rgba(244,113,181,.12),transparent 60%),"
+    "radial-gradient(600px 400px at 50% 45%,rgba(56,89,199,.10),transparent 65%)}"
+    ".stars{position:fixed;inset:0;width:100%;height:100%;fill:#cfe9ff;pointer-events:none}"
+    ".card{position:relative;width:100%;max-width:400px;background:rgba(11,17,26,.94);"
+    "border:1px solid rgba(34,211,238,.38);border-radius:14px;padding:26px 24px 20px;"
+    "box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 32px rgba(34,211,238,.12)}"
+    "@supports (backdrop-filter:blur(1px)){.card{background:rgba(11,17,26,.66);"
+    "backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}}"
+    ".ring-wrap{width:min(190px,52vw);margin:2px auto 4px}"
+    ".ring{width:100%;height:auto;display:block;overflow:visible;transform-origin:50% 50%}"
+    ".ring-track{fill:none;stroke:rgba(34,211,238,.35);stroke-width:1.5}"
+    ".ring-track2{fill:none;stroke:rgba(34,211,238,.18);stroke-width:1}"
+    ".chev{fill:rgba(34,211,238,.75)}"
+    ".core{fill:#f4502a}"
+    ".core-glow{fill:rgba(244,80,42,.35);transform-box:fill-box;transform-origin:center}"
+    ".door-dhd .ring{animation:gate-spin 140s linear infinite}"
+    ".door-dhd .core-glow{animation:gate-pulse 3.4s ease-in-out infinite}"
+    ".door-node .ring-wrap{opacity:.62}"
+    ".door-node .core-glow{animation:gate-pulse 6s ease-in-out infinite}"
+    "@keyframes gate-spin{to{transform:rotate(360deg)}}"
+    "@keyframes gate-pulse{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.28);opacity:.95}}"
+    ".shake{animation:gate-shake .45s ease}"
+    "@keyframes gate-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-7px)}"
+    "40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}"
+    ".word{margin:10px 0 0;text-align:center;font-size:34px;font-weight:700;letter-spacing:.42em;padding-left:.42em}"
+    ".powered{margin:5px 0 0;text-align:center;font-size:11px;letter-spacing:.22em;color:#9fb3c8;text-transform:uppercase}"
+    ".doorline{margin:14px 0 0;text-align:center;font-size:13px;line-height:1.5;color:#9fb3c8}"
+    ".knock{margin:3px 0 0;text-align:center;font-size:13px;color:#22d3ee;word-break:break-all}"
+    ".hint{margin:8px 0 0;text-align:center;font-size:12px;line-height:1.55;color:#9fb3c8}"
+    "form{margin-top:16px}"
+    "label{display:block;font-size:11px;letter-spacing:.2em;color:#9fb3c8;text-transform:uppercase}"
+    "input{width:100%;margin-top:7px;padding:14px 12px;min-height:54px;font:inherit;font-size:18px;"
+    "letter-spacing:.3em;text-align:center;text-transform:uppercase;background:rgba(3,6,11,.85);"
+    "color:#e6f1f5;border:1px solid #22303d;border-radius:8px}"
+    "input:focus{outline:none;border-color:#22d3ee;box-shadow:0 0 0 3px rgba(34,211,238,.28),0 0 20px rgba(34,211,238,.30)}"
+    "input:disabled{opacity:.45}"
+    "button{width:100%;margin-top:12px;padding:14px;min-height:54px;font:inherit;font-size:16px;font-weight:700;"
+    "color:#08131c;background:linear-gradient(120deg,#22d3ee,#f471b5);border:0;border-radius:8px;cursor:pointer}"
+    "button:disabled{opacity:.45;cursor:default}"
+    ".err{margin:14px 0 0;padding:10px 12px;font-size:13px;line-height:1.5;text-align:center;color:#fca5a5;"
+    "background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.4);border-radius:8px}"
+    ".meta{margin:10px 0 0;text-align:center;font-size:12px;color:#f5b544}"
+    "@media (max-width:380px){.card{padding:22px 16px 18px}.word{font-size:29px}}"
+    "@media (prefers-reduced-motion:reduce){.door-dhd .ring,.door-dhd .core-glow,"
+    ".door-node .core-glow,.shake{animation:none}}"
+)
+
+
+def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock_seconds=None):
+    # ONE gate page for both doors (build .79, issue #64): the Apex
+    # Node (LAN) door and the DHD (public) door render from this
+    # single function, parameterized by door - there is no second
+    # copy. Self-contained by design: inline CSS and SVG only, no
+    # external asset, font, or script referenced, because the gate
+    # serves nothing else before the code. No version string
+    # appears anywhere on the page. The form contract is unchanged:
+    # POST /__gate with the field named "code".
+    is_dhd = door == "dhd"
+    if not name:
+        if is_dhd:
+            try:
+                name = dhd_settings(load_config())["domain"]
+            except Exception:
+                name = ""
+        else:
+            try:
+                name = socket.gethostname()
+            except Exception:
+                name = ""
+    door_line = (
+        "Dial-Home Device · you reached this Apex from the internet"
+        if is_dhd
+        else "Apex Node · on this network"
+    )
+    locked = lock_seconds is not None
+    err_html = ""
     if error:
-        err = "<p style='color:#f87171;font-size:14px'>" + error + "</p>"
+        err_html = "<p class='err' role='alert'>" + _gate_escape(error) + "</p>"
+    meta_html = ""
+    if locked:
+        mins = max(1, int((int(lock_seconds) + 59) // 60))
+        meta_html = (
+            "<p class='meta'>This door is locked - try again in about "
+            + str(mins)
+            + " minute"
+            + ("" if mins == 1 else "s")
+            + ".</p>"
+        )
+    elif attempts_remaining is not None:
+        n = int(attempts_remaining)
+        meta_html = (
+            "<p class='meta'>"
+            + str(n)
+            + " attempt"
+            + ("" if n == 1 else "s")
+            + " remaining before this door locks.</p>"
+        )
+    dis = " disabled" if locked else ""
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>"
-        "<title>Apex - access code</title></head>"
-        "<body style='font-family:ui-monospace,Menlo,monospace;background:#0a0e12;color:#e6f1f5;display:flex;min-height:100dvh;align-items:center;justify-content:center;margin:0'>"
-        "<form method='POST' action='/__gate' style='max-width:320px;width:90%'>"
-        "<h1 style='font-size:18px'>Apex</h1>"
-        "<p style='color:#9fb3c8;font-size:14px'>This Apex is open to its local network, and the door is locked with a code. Type the access code - you will find it in Settings, on the machine Apex runs on.</p>"
-        + err
-        + "<label style='font-size:14px'>Access code<br>"
-        "<input name='code' autocomplete='off' autocapitalize='characters' style='width:100%;padding:10px;margin-top:6px;background:#10161d;color:#e6f1f5;border:1px solid #22303d;border-radius:6px;box-sizing:border-box'></label>"
-        "<button type='submit' style='margin-top:12px;width:100%;padding:10px;background:#22d3ee;color:#000;border:0;border-radius:6px;font-weight:bold'>Open Apex</button>"
-        "</form></body></html>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Apex - access code</title><style>"
+        + _GATE_CSS
+        + "</style></head>"
+        "<body class='"
+        + ("door-dhd" if is_dhd else "door-node")
+        + "'>"
+        + _gate_stars_svg()
+        + "<main class='"
+        + ("card shake" if error else "card")
+        + "'>"
+        "<div class='ring-wrap'>"
+        + _gate_ring_svg()
+        + "</div>"
+        "<h1 class='word'>APEX</h1>"
+        "<p class='powered'>Powered by Navi</p>"
+        "<p class='doorline'>"
+        + door_line
+        + "</p>"
+        + ("<p class='knock'>" + _gate_escape(name) + "</p>" if name else "")
+        + "<p class='hint'>Type the access code - you will find it on the DHD page, on the machine Apex runs on.</p>"
+        + err_html
+        + "<form method='POST' action='/__gate'>"
+        "<label for='gate-code'>Access code</label>"
+        "<input id='gate-code' name='code' autocomplete='one-time-code' autocapitalize='characters' autofocus"
+        + dis
+        + ">"
+        "<button type='submit'"
+        + dis
+        + ">"
+        + ("Locked" if locked else "Open Apex")
+        + "</button>"
+        "</form>"
+        + meta_html
+        + "</main></body></html>"
     )
 
 
@@ -989,24 +1165,30 @@ def acme_obtain(domain, directory_url):
 
 # -- The proxy itself --------------------------------------------------
 
-def dhd_gate_page_html(error=""):
-    err = ""
-    if error:
-        err = "<p style='color:#f87171;font-size:14px'>" + error + "</p>"
-    return (
-        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>"
-        "<title>Apex - access code</title></head>"
-        "<body style='font-family:ui-monospace,Menlo,monospace;background:#0a0e12;color:#e6f1f5;display:flex;min-height:100dvh;align-items:center;justify-content:center;margin:0'>"
-        "<form method='POST' action='/__gate' style='max-width:320px;width:90%'>"
-        "<h1 style='font-size:18px'>Apex · DHD</h1>"
-        "<p style='color:#9fb3c8;font-size:14px'>You reached this Apex from the internet, through its DHD door. The door is locked with a code - type the access code from the DHD page, on the machine Apex runs on.</p>"
-        + err
-        + "<label style='font-size:14px'>Access code<br>"
-        "<input name='code' autocomplete='off' autocapitalize='characters' style='width:100%;padding:10px;margin-top:6px;background:#10161d;color:#e6f1f5;border:1px solid #22303d;border-radius:6px;box-sizing:border-box'></label>"
-        "<button type='submit' style='margin-top:12px;width:100%;padding:10px;background:#22d3ee;color:#000;border:0;border-radius:6px;font-weight:bold'>Open Apex</button>"
-        "</form></body></html>"
-    )
+def dhd_gate_page(handler):
+    # The DHD door's gate page, rendered through the ONE shared
+    # renderer with the door's throttle state surfaced: attempts
+    # remaining before lockout, and - while locked - the form
+    # disabled with the remaining lockout time. The throttle itself
+    # is unchanged; this only shows what it already knows.
+    ip = handler._client_ip()
+    fails, lock_until = dhd_throttle_state(ip)
+    host = handler.headers.get("Host") or ""
+    if lock_until > time.time():
+        return gate_page_html(
+            "Too many wrong codes - this door is locked.",
+            door="dhd",
+            name=host,
+            lock_seconds=int(lock_until - time.time()),
+        )
+    if fails > 0:
+        return gate_page_html(
+            "",
+            door="dhd",
+            name=host,
+            attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails),
+        )
+    return gate_page_html("", door="dhd", name=host)
 
 
 def dhd_throttle_state(ip):
@@ -1121,7 +1303,7 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         _fails, lock_until = dhd_throttle_state(ip)
         if lock_until > time.time():
             wait = int(lock_until - time.time())
-            self._send_raw(429, dhd_gate_page_html("Too many wrong codes - this door is locked for a few minutes. Try again in about " + str(max(1, wait // 60 + 1)) + " minute(s)."))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=wait))
             return
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b""
@@ -1138,12 +1320,12 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return
         fails = dhd_throttle_fail(ip)
         if fails >= DHD_LOCKOUT_FAILS:
-            self._send_raw(429, dhd_gate_page_html("Too many wrong codes - this door is now locked for " + str(DHD_LOCKOUT_SECONDS // 60) + " minutes."))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is now locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=DHD_LOCKOUT_SECONDS))
             return
         # Progressive delay: each wrong code makes the next answer
         # slower (1s, 2s, 4s, capped at 8s).
         time.sleep(min(2 ** (fails - 1), 8))
-        self._send_raw(200, dhd_gate_page_html("That code did not open the door."))
+        self._send_raw(200, gate_page_html("That code did not open the door.", door="dhd", name=self.headers.get("Host") or "", attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails)))
 
     def _handle(self):
         path = self.path.split("?")[0]
@@ -1165,13 +1347,13 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 self._gate_post()
             else:
-                self._send_raw(200, dhd_gate_page_html())
+                self._send_raw(200, dhd_gate_page(self))
             return
         if not self._accepted():
             if path.startswith("/api/"):
                 self._send_raw(403, json.dumps({"error": "access code required"}), "application/json")
             else:
-                self._send_raw(200, dhd_gate_page_html())
+                self._send_raw(200, dhd_gate_page(self))
             return
         self._forward()
 
@@ -2015,7 +2197,7 @@ def app_version(cfg=None):
     # The VERSION file is the source of truth (see VERSION_PATH).
     # The reported number never carries the status word — the
     # status rides separately as versionStatus, and the dashboard
-    # renders the two together ("Ver. 0.1.0a"). When the file is
+    # renders the two together ("v0.1.0a"). When the file is
     # missing, the release this bridge shipped in answers. The
     # config's recorded version is NOT a fallback: the config is
     # preserved across installs, so its version is whichever build
@@ -2697,7 +2879,7 @@ def changelog_section_for(tag):
     # empty body, the panel still deserves the notes, so the
     # bridge reads the project's CHANGELOG.md from the repo and
     # cuts out the section for the release's version — the
-    # "## 0.1.5 (alpha)" heading down to the next "## " heading.
+    # "## 0.1.6 (alpha)" heading down to the next "## " heading.
     # Any failure (offline, no such section) returns "" and the
     # panel simply shows no notes; it never invents any.
     number, _status = _tag_parts(tag)
@@ -2766,7 +2948,7 @@ def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
     # letter (a for alpha, b for beta, none for stable) — the form
     # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.4a → v0.1.5a".
+    # "Updated v0.1.5a → v0.1.6a".
     return "v" + str(number) + (
         "a" if status == "alpha" else "b" if status == "beta" else "")
 
@@ -7748,7 +7930,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(
                     200,
                     gate_page_html(
-                        "That code did not open the door - check the code in Settings on the machine Apex runs on, and try again."
+                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again."
                     ).encode(),
                     "text/html; charset=utf-8",
                 )
