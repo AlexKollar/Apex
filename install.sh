@@ -446,6 +446,14 @@ if [ -n "$FRESH" ]; then
   if [ -d "$INSTALL_DIR/config/dhd" ]; then
     $SUDO cp -r "$INSTALL_DIR/config/dhd" "$STASH_DIR/dhd" 2>/dev/null || true
   fi
+  # The Mesh identity home (config/mesh/) rides the same keep-list
+  # (build .85): the node keypair and Mesh certificate live there,
+  # and a fresh reinstall must never wipe the node's identity —
+  # losing it would silently orphan every pairing this machine
+  # holds. The ledger rides with it; it is metadata, not content.
+  if [ -d "$INSTALL_DIR/config/mesh" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/mesh" "$STASH_DIR/mesh" 2>/dev/null || true
+  fi
   # Her downloaded speech models and her call log are hers too —
   # they ride the same keep-list. The voice venv rides along as
   # well: the voice step below checks whether her voice is already
@@ -487,6 +495,11 @@ if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/config"
     $SUDO cp -r "$STASH_DIR/dhd" "$INSTALL_DIR/config/dhd"
     echo "    the DHD certificate home (config/dhd/) restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/mesh" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/mesh" "$INSTALL_DIR/config/mesh"
+    echo "    the Mesh identity home (config/mesh/) restored across the fresh install"
   fi
   if [ -d "$STASH_DIR/voice-models" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/voice"

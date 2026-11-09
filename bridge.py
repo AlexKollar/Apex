@@ -366,7 +366,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.84"
+BRIDGE_BUILD = "2026-11-09.87"
+# Edge build sequence (build .86): this package is its Edge
+# version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
+# Build 1. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 1
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -416,7 +420,30 @@ def load_config():
         with open(CONFIG_PATH) as f:
             return json.load(f)
     except Exception:
-        return {"live": {"llamafile_endpoint": "http://localhost:8080/v1"}}
+        return {
+            "live": {"llamafile_endpoint": "http://localhost:8080/v1"},
+            # Navi Mesh defaults (see the Mesh section below): an
+            # absent mesh block reads as exactly this — master off,
+            # borrowing on under the master (R1), lending off.
+            "mesh": {
+                "enabled": False,
+                "role": "both",
+                "nodeName": "",
+                "borrow": {"enabled": True, "graceMs": 2000, "peers": []},
+                "lend": {
+                    "enabled": False,
+                    "maxSharePercent": 25,
+                    "maxGenerationsPerHour": 20,
+                    "perPeerPerHour": 10,
+                    "idleOnly": True,
+                    "idleAfterSeconds": 60,
+                },
+                "port": 8765,
+                "nodeId": "",
+                "ledger": True,
+                "ledgerInBackup": False,
+            },
+        }
 
 
 def save_config(cfg):
@@ -1323,7 +1350,7 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         want = public_settings(load_config())["access_code"]
         if want and given.upper() == want.upper():
             dhd_throttle_clear(ip)
-            cookie = PUBLIC_COOKIE + "=" + public_token(want) + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE) + "; Path=/; HttpOnly; Secure; SameSite=Lax"
+            cookie = PUBLIC_COOKIE + "=" + public_token(want) + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE) + "; Path=/; HttpOnly; SameSite=Lax"
             self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": cookie})
             return
         fails = dhd_throttle_fail(ip)
@@ -1356,6 +1383,14 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
                 self._gate_post()
             else:
                 self._send_raw(200, dhd_gate_page(self))
+            return
+        if path.startswith("/mesh/"):
+            # Build .86: Mesh NEVER rides the DHD door. Mesh has
+            # its own dedicated TLS listener (the mesh port, its
+            # own certificate) in every configuration, so the
+            # proxy refuses /mesh/* outright — it never serves it
+            # and never forwards it to the dashboard.
+            self._send_raw(403, json.dumps({"ok": False, "reason": "unauthorized"}), "application/json")
             return
         if not self._accepted():
             if path.startswith("/api/"):
@@ -2174,6 +2209,1266 @@ def dhd_chat_intent(text):
         return "enable"
     return None
 
+
+# --- Navi Mesh — Ring 1 (build .85, issue #78) -------------------
+# Navi Mesh is pooled inference across the operator's own machines:
+# a stronger machine answers for a weaker one. Routing is whole-
+# request: the borrower assembles the prompt exactly as it would
+# for its own model (persona, Vault, RAG, history) and a paired
+# lender's model writes the whole reply. Alex's rulings from the
+# design call govern the defaults: borrowing is AUTOMATIC for
+# paired peers once Mesh is on, with an off switch (R1); nothing
+# anywhere is tied to a specific operator, machine, or domain —
+# every name and address comes from config and peer cards (R2);
+# a lender that drops mid-answer raises a notice AND the request
+# falls back to a fresh local reply, never spliced prose (R3);
+# lending is automatic when idle with an off switch that aborts
+# an in-flight borrowed generation immediately (R4); a busy
+# refusal gets a short configurable grace before local fallback,
+# and the lender is only ever claimed on the NEXT request (R5).
+#
+# Hard rules (spec sections 4.3 and 7): /mesh/* is never part of
+# the passcode-cookie dashboard surface — the DHD proxy hands it
+# to this section directly, before its cookie gate; node keys and
+# dashboard codes share no credentials in either direction; and
+# the lender persists NOTHING but ledger metadata — no prompt or
+# reply text is ever written to disk on the lending side.
+
+MESH_DIR = os.path.join(ROOT, "config", "mesh")
+MESH_KEY_PATH = os.path.join(MESH_DIR, "node_key.pem")
+MESH_PUB_PATH = os.path.join(MESH_DIR, "node_pub.pem")
+MESH_CERT_PATH = os.path.join(MESH_DIR, "cert.pem")
+MESH_CERT_KEY_PATH = os.path.join(MESH_DIR, "cert_key.pem")
+MESH_LEDGER_PATH = os.path.join(MESH_DIR, "ledger.jsonl")
+
+MESH_LOCK = threading.Lock()
+MESH_STATE = {
+    # Lender side: the in-flight borrowed generation, if any. The
+    # connection object is kept so instant-off can abort it by
+    # closing the socket (R4: OFF means OFF mid-generation too).
+    "borrowed_conn": None,
+    "borrowed_resp": None,
+    "borrowed_peer": "",
+    "borrowed_started": 0.0,
+    "lend_stop_stamp": 0.0,
+    # Local generations in flight on this machine (either role) —
+    # the busy/idle signals admission and status read.
+    "local_gen": 0,
+    "last_local_done": 0.0,
+    "last_borrowed_done": 0.0,
+    # Borrower side: an outbound borrowed generation in flight.
+    "borrow_out": False,
+    "borrow_peer": "",
+    # Reachability probe cache: nodeId -> (stamp, status-or-None,
+    # error-kind). Status probes are short and chat is latency-
+    # sensitive, so a probe is reused for a few seconds.
+    "probe_cache": {},
+    # Borrower side (build .87): nodeId -> stamp of the last
+    # in-flight DROP this machine suffered from that peer — the
+    # status payload's "dropped" peer state and the Servers row's
+    # warning read it. A later successful probe supersedes it,
+    # and a borrow the peer actually serves clears it outright.
+    "peer_dropped": {},
+}
+MESH_SERVERS = []
+
+
+def _mesh_int(value, fallback):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
+def _mesh_peer(p):
+    # One peer record, normalized. Addresses keep the operator's
+    # order — LAN first as listed on the card (spec section 3.1).
+    if not isinstance(p, dict):
+        return None
+    addrs = p.get("addresses")
+    if not isinstance(addrs, list):
+        addrs = []
+    addrs = [str(a).strip() for a in addrs if str(a).strip()]
+    return {
+        "name": str(p.get("name") or "Unnamed peer"),
+        "addresses": addrs,
+        "port": _mesh_int(p.get("port"), 8765),
+        "nodeId": str(p.get("nodeId") or ""),
+        "publicKeyPem": str(p.get("publicKeyPem") or ""),
+        "certFingerprint": str(p.get("certFingerprint") or "").strip().lower(),
+        "canBorrow": p.get("canBorrow") is not False,
+        "capabilities": _mesh_caps_sanitize(p.get("capabilities")),
+    }
+
+
+def _mesh_caps_sanitize(raw):
+    # A peer's capability self-report, cut down to short strings
+    # and numbers only (build .86): a card is operator-carried
+    # data, so nothing long, nested, or structural survives into
+    # the stored record or the roster. None when absent.
+    if not isinstance(raw, dict):
+        return None
+    def s(v, n=80):
+        t = str(v or "").strip()
+        if len(t) <= n:
+            return t
+        # Cut at a word boundary: a capability line must never
+        # slice a word in half on the roster.
+        cut = t[:n].rsplit(" ", 1)[0]
+        return (cut or t[:n]) + "…"
+    def num(v):
+        try:
+            return float(v)
+        except Exception:
+            return 0
+    def i(v):
+        try:
+            return int(v)
+        except Exception:
+            return 0
+    caps = raw.get("caps") if isinstance(raw.get("caps"), dict) else {}
+    return {
+        "hardwareClass": s(raw.get("hardwareClass"), 60),
+        "gpu": s(raw.get("gpu")),
+        "cpu": s(raw.get("cpu")),
+        "ramGB": num(raw.get("ramGB")),
+        "model": s(raw.get("model"), 24) or "navi",
+        "speedClass": s(raw.get("speedClass"), 40),
+        "caps": {
+            "maxSharePercent": i(caps.get("maxSharePercent")),
+            "maxGenerationsPerHour": i(caps.get("maxGenerationsPerHour")),
+        },
+    }
+
+
+def mesh_capabilities(cfg):
+    # This node's capability self-report (build .86): an honest
+    # summary of THIS machine from its own data — the stored
+    # hardware profile (detected GPU kind/name, CPU model, total
+    # RAM, tier) and the lend settings as caps. The model is
+    # "navi"; the speed class derives from the GPU situation:
+    # discrete GPU -> "GPU-accelerated", integrated ->
+    # "Integrated graphics", none -> "CPU".
+    ms = mesh_settings(cfg)
+    hp = cfg.get("hardware_profile") if isinstance(cfg, dict) else None
+    det = hp.get("detected") if isinstance(hp, dict) else {}
+    if not isinstance(det, dict):
+        det = {}
+    gpu_kind = str(det.get("gpuKind") or "none").strip().lower()
+    gpu_name = str(det.get("gpuName") or "").strip()[:80]
+    cpu = str(det.get("cpuModel") or "").strip()[:80]
+    try:
+        ram = float(det.get("totalRamGB") or 0)
+    except Exception:
+        ram = 0
+    tier = ""
+    if isinstance(hp, dict):
+        tier = str(hp.get("tierLabel") or hp.get("tier") or "").strip()[:60]
+    if gpu_kind == "discrete":
+        speed = "GPU-accelerated"
+        gpu = gpu_name or "Discrete GPU"
+    elif gpu_kind == "integrated":
+        speed = "Integrated graphics"
+        gpu = gpu_name or "Integrated graphics"
+    else:
+        speed = "CPU"
+        gpu = ""
+    return {
+        "hardwareClass": tier,
+        "gpu": gpu,
+        "cpu": cpu,
+        "ramGB": ram,
+        "model": "navi",
+        "speedClass": speed,
+        "caps": {
+            "maxSharePercent": ms["lend"]["maxSharePercent"],
+            "maxGenerationsPerHour": ms["lend"]["maxGenerationsPerHour"],
+        },
+    }
+
+
+def mesh_settings(cfg):
+    # Absent-block-safe, like dhd_settings: an install whose config
+    # predates the mesh block (or a field of it) reads as the
+    # shipped defaults — absent = off.
+    m = cfg.get("mesh") if isinstance(cfg, dict) else None
+    if not isinstance(m, dict):
+        m = {}
+    borrow = m.get("borrow") if isinstance(m.get("borrow"), dict) else {}
+    lend = m.get("lend") if isinstance(m.get("lend"), dict) else {}
+    role = str(m.get("role") or "both").strip().lower()
+    if role not in ("borrow", "lend", "both"):
+        role = "both"
+    peers = []
+    raw_peers = borrow.get("peers")
+    if isinstance(raw_peers, list):
+        for p in raw_peers:
+            peer = _mesh_peer(p)
+            if peer is not None:
+                peers.append(peer)
+    return {
+        "enabled": m.get("enabled") is True,
+        "role": role,
+        "nodeName": str(m.get("nodeName") or ""),
+        "borrow": {
+            # R1: borrowing defaults ON under the master switch.
+            "enabled": borrow.get("enabled") is not False,
+            "graceMs": _mesh_int(borrow.get("graceMs"), 2000),
+            "peers": peers,
+        },
+        "lend": {
+            "enabled": lend.get("enabled") is True,
+            "maxSharePercent": _mesh_int(lend.get("maxSharePercent"), 25),
+            "maxGenerationsPerHour": _mesh_int(lend.get("maxGenerationsPerHour"), 20),
+            "perPeerPerHour": _mesh_int(lend.get("perPeerPerHour"), 10),
+            "idleOnly": lend.get("idleOnly") is not False,
+            "idleAfterSeconds": _mesh_int(lend.get("idleAfterSeconds"), 60),
+        },
+        "port": _mesh_int(m.get("port"), 8765),
+        "nodeId": str(m.get("nodeId") or ""),
+        "ledger": m.get("ledger") is not False,
+        "ledgerInBackup": m.get("ledgerInBackup") is True,
+    }
+
+
+# -- Node identity (spec section 4.2) -------------------------------
+# An Ed25519 keypair under config/mesh/, made with the openssl
+# binary — stdlib Python has no Ed25519, and openssl is already a
+# DHD prerequisite. The private key never leaves this machine: it
+# appears in no payload, no card, and no backup item.
+
+def mesh_openssl_missing_error():
+    return (
+        "Navi Mesh needs the openssl program to create this machine's node key, "
+        "and openssl was not found on this machine. Install openssl (the same "
+        "prerequisite DHD uses) and try again."
+    )
+
+
+def _mesh_pub_der(pub_pem):
+    # The DER bytes of a PEM public key, via openssl — the nodeId
+    # is the SHA-256 of exactly these bytes.
+    fd, path = tempfile.mkstemp(suffix=".pem")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(pub_pem)
+        r = subprocess.run(
+            ["openssl", "pkey", "-pubin", "-in", path, "-outform", "DER"],
+            capture_output=True, timeout=30,
+        )
+        if r.returncode != 0:
+            return b""
+        return r.stdout
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+
+
+def mesh_node_id():
+    if os.path.exists(MESH_PUB_PATH):
+        der = _mesh_pub_der(read_file(MESH_PUB_PATH))
+        if der:
+            return hashlib.sha256(der).hexdigest()
+    return ""
+
+
+def mesh_ensure_identity(cfg):
+    # Generates the keypair on first Mesh enable and records the
+    # nodeId in the config. Returns (ok, error-in-plain-words).
+    if shutil.which("openssl") is None:
+        return False, mesh_openssl_missing_error()
+    try:
+        os.makedirs(MESH_DIR, exist_ok=True)
+        if not (os.path.exists(MESH_KEY_PATH) and os.path.exists(MESH_PUB_PATH)):
+            r = subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "ED25519", "-out", MESH_KEY_PATH],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode != 0:
+                return False, "openssl could not create the Mesh node key: " + (r.stderr or "").strip()[:200]
+            r = subprocess.run(
+                ["openssl", "pkey", "-in", MESH_KEY_PATH, "-pubout", "-out", MESH_PUB_PATH],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode != 0:
+                return False, "openssl could not write the Mesh node public key: " + (r.stderr or "").strip()[:200]
+            try:
+                os.chmod(MESH_KEY_PATH, 0o600)
+            except Exception:
+                pass
+        node_id = mesh_node_id()
+        if not node_id:
+            return False, "The Mesh node key exists but could not be read back — check config/mesh/ on this machine."
+        block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+        block = dict(block)
+        if block.get("nodeId") != node_id:
+            block["nodeId"] = node_id
+            cfg["mesh"] = block
+            save_config(cfg)
+        return True, ""
+    except Exception as e:
+        return False, "Mesh identity could not be set up: " + str(e)
+
+
+def mesh_sign(data):
+    # Ed25519 signature (base64) over data, with this node's key.
+    fd, path = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        r = subprocess.run(
+            ["openssl", "pkeyutl", "-sign", "-inkey", MESH_KEY_PATH, "-rawin", "-in", path],
+            capture_output=True, timeout=30,
+        )
+        if r.returncode != 0:
+            raise RuntimeError("openssl could not sign the Mesh request")
+        return base64.b64encode(r.stdout).decode()
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+
+
+def mesh_verify(pub_pem, data, sig_b64):
+    # Verify an Ed25519 signature against a peer's pinned public
+    # key. Any doubt at all reads as failure.
+    try:
+        sig = base64.b64decode(sig_b64 or "")
+    except Exception:
+        return False
+    paths = []
+    try:
+        for blob, suffix in ((pub_pem.encode(), ".pem"), (data, ".bin"), (sig, ".sig")):
+            fd, path = tempfile.mkstemp(suffix=suffix)
+            with os.fdopen(fd, "wb") as f:
+                f.write(blob)
+            paths.append(path)
+        r = subprocess.run(
+            ["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", paths[0],
+             "-rawin", "-in", paths[1], "-sigfile", paths[2]],
+            capture_output=True, timeout=30,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+    finally:
+        for path in paths:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
+
+def mesh_sig_payload(request_id, ts, body):
+    # The signed string (spec section 4.3): requestId, timestamp,
+    # and the body's SHA-256, one per line.
+    return (
+        str(request_id) + "\n" + str(ts) + "\n"
+        + hashlib.sha256(body or b"").hexdigest()
+    ).encode()
+
+
+def mesh_signed_headers(request_id, body):
+    ts = str(int(time.time()))
+    return {
+        "X-Mesh-Node": mesh_node_id(),
+        "X-Mesh-Ts": ts,
+        "X-Mesh-Sig": mesh_sign(mesh_sig_payload(request_id, ts, body)),
+        "Content-Type": "application/json",
+    }
+
+
+def mesh_authenticate(handler, body, request_id):
+    # Verifies a signed Mesh request against the paired-peer list.
+    # Returns the peer record, or None — the caller answers a bare
+    # "unauthorized" either way; WHY it failed never leaves here
+    # (spec section 4.3: no detail leakage).
+    node = handler.headers.get("X-Mesh-Node") or ""
+    ts = handler.headers.get("X-Mesh-Ts") or ""
+    sig = handler.headers.get("X-Mesh-Sig") or ""
+    if not node or not ts or not sig:
+        return None
+    try:
+        ts_i = int(ts)
+    except Exception:
+        return None
+    if abs(time.time() - ts_i) > 120:
+        return None
+    ms = mesh_settings(load_config())
+    peer = None
+    for p in ms["borrow"]["peers"]:
+        if p["nodeId"] == node:
+            peer = p
+    if peer is None or not peer["canBorrow"] or not peer["publicKeyPem"]:
+        return None
+    if not mesh_verify(peer["publicKeyPem"], mesh_sig_payload(request_id, ts, body), sig):
+        return None
+    return peer
+
+
+# -- Mesh certificate (spec section 4.1) ----------------------------
+# Mesh carries its OWN self-signed certificate under config/mesh/,
+# made the same way DHD makes its — always (build .86): the
+# dedicated Mesh door has its own identity in every configuration,
+# so the fingerprint a peer pins from the card is the Mesh cert's
+# whether or not DHD is on. The borrower PINS the certificate's
+# SHA-256 fingerprint from the peer card — that pin, not a CA, is
+# what authenticates the door.
+
+def mesh_active_cert():
+    # (cert_path, key_path) this node serves Mesh on: the Mesh
+    # self-signed pair under config/mesh/, in all cases.
+    return MESH_CERT_PATH, MESH_CERT_KEY_PATH
+
+
+def mesh_ensure_cert():
+    cert_path, _key_path = mesh_active_cert()
+    if cert_path == MESH_CERT_PATH and not os.path.exists(MESH_CERT_PATH):
+        if shutil.which("openssl") is None:
+            return False, mesh_openssl_missing_error()
+        os.makedirs(MESH_DIR, exist_ok=True)
+        sans = ["DNS:localhost", "IP:127.0.0.1"]
+        try:
+            ip = lan_ipv4()
+            if ip and ip != "127.0.0.1":
+                sans.append("IP:" + ip)
+        except Exception:
+            pass
+        r = subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048",
+             "-keyout", MESH_CERT_KEY_PATH, "-out", MESH_CERT_PATH,
+             "-days", "365", "-nodes", "-subj", "/CN=Apex Mesh",
+             "-addext", "subjectAltName=" + ",".join(sans)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            return False, "openssl could not generate the Mesh certificate: " + (r.stderr or "").strip()[:200]
+    return True, ""
+
+
+def mesh_cert_fingerprint():
+    cert_path, _key_path = mesh_active_cert()
+    if not os.path.exists(cert_path):
+        ok, _err = mesh_ensure_cert()
+        if not ok:
+            return ""
+    try:
+        r = subprocess.run(
+            ["openssl", "x509", "-in", cert_path, "-outform", "DER"],
+            capture_output=True, timeout=30,
+        )
+        if r.returncode != 0 or not r.stdout:
+            return ""
+        return hashlib.sha256(r.stdout).hexdigest()
+    except Exception:
+        return ""
+
+
+# -- Peer card (spec section 3.1) -----------------------------------
+
+def mesh_card(cfg):
+    # This node's card: one copyable block the operator carries to
+    # their other machine by hand. Names and addresses come from
+    # config and this machine only (R2 — nothing baked in).
+    ms = mesh_settings(cfg)
+    addresses = []
+    try:
+        ip = lan_ipv4()
+        if ip and ip != "127.0.0.1":
+            addresses.append(ip)
+    except Exception:
+        pass
+    d = cfg.get("dhd") if isinstance(cfg.get("dhd"), dict) else {}
+    domain = str(d.get("domain") or "").strip()
+    if domain and d.get("enabled") is True:
+        addresses.append(domain)
+    addresses.append("127.0.0.1")
+    name = ms["nodeName"] or socket.gethostname()
+    return {
+        "meshCard": 1,
+        "name": name,
+        "nodeId": mesh_node_id(),
+        "publicKeyPem": read_file(MESH_PUB_PATH).strip(),
+        "certFingerprint": mesh_cert_fingerprint(),
+        "addresses": addresses,
+        "port": ms["port"],
+        "capabilities": mesh_capabilities(cfg),
+    }
+
+
+def mesh_parse_card(text):
+    # Validates a pasted peer card. Returns (peer, error) — errors
+    # in plain words, because the operator pastes by hand and a
+    # bare "invalid" helps nobody.
+    try:
+        card = json.loads(text or "")
+    except Exception:
+        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Settings, exactly as shown."
+    if not isinstance(card, dict) or card.get("meshCard") != 1:
+        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Settings, exactly as shown."
+    fp = str(card.get("certFingerprint") or "").strip().lower()
+    if len(fp) != 64 or any(c not in "0123456789abcdef" for c in fp):
+        return None, "The card's certificate fingerprint is not in the right shape — copy the card again, whole, and re-paste it."
+    node_id = str(card.get("nodeId") or "").strip()
+    if len(node_id) != 64:
+        return None, "The card's node id is not in the right shape — copy the card again, whole, and re-paste it."
+    if not str(card.get("publicKeyPem") or "").strip():
+        return None, "The card is missing its public key — copy the card again, whole, and re-paste it."
+    peer = _mesh_peer({
+        "name": card.get("name"),
+        "addresses": card.get("addresses"),
+        "port": card.get("port"),
+        "nodeId": node_id,
+        "publicKeyPem": card.get("publicKeyPem"),
+        "certFingerprint": fp,
+        "canBorrow": True,
+        "capabilities": card.get("capabilities"),
+    })
+    if peer is None or not peer["addresses"]:
+        return None, "The card carries no address to reach the other machine at — copy the card again, whole, and re-paste it."
+    return peer, ""
+
+
+# -- The ledger (spec section 6) ------------------------------------
+# Metadata only, forever: who, which direction, how long, how it
+# ended. Never prompt text, never reply text — a diff that
+# persists content on the lender is a wrong diff (spec section 7).
+
+def mesh_ledger_append(entry):
+    try:
+        if not mesh_settings(load_config())["ledger"]:
+            return
+        os.makedirs(MESH_DIR, exist_ok=True)
+        line = {"ts": int(time.time())}
+        line.update(entry)
+        with open(MESH_LEDGER_PATH, "a") as f:
+            f.write(json.dumps(line) + "\n")
+    except Exception:
+        pass
+
+
+def mesh_ledger_read():
+    rows = []
+    try:
+        with open(MESH_LEDGER_PATH) as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except Exception:
+        pass
+    return rows
+
+
+def mesh_balances():
+    # nodeId -> lent/borrowed seconds + last activity, from the
+    # ledger. Balances are a record, never a gate (Ring 1 has no
+    # give-to-get enforcement).
+    out = {}
+    for r in mesh_ledger_read():
+        peer = str(r.get("peer") or "")
+        if not peer:
+            continue
+        b = out.setdefault(peer, {"lentSec": 0.0, "borrowedSec": 0.0, "lastTs": 0})
+        sec = (r.get("wallMs") or 0) / 1000.0
+        if r.get("direction") == "lent":
+            b["lentSec"] += sec
+        elif r.get("direction") == "borrowed":
+            b["borrowedSec"] += sec
+        if (r.get("ts") or 0) > b["lastTs"]:
+            b["lastTs"] = r.get("ts") or 0
+    return out
+
+
+def mesh_hour_window(peer_id):
+    # The rolling hour the caps read: borrowed-generation counts
+    # and wall seconds, total and for one peer.
+    cutoff = time.time() - 3600
+    total = 0
+    per_peer = 0
+    wall = 0.0
+    for r in mesh_ledger_read():
+        if r.get("direction") != "lent" or (r.get("ts") or 0) < cutoff:
+            continue
+        total += 1
+        wall += (r.get("wallMs") or 0) / 1000.0
+        if r.get("peer") == peer_id:
+            per_peer += 1
+    return {"total": total, "perPeer": per_peer, "wallSec": wall}
+
+
+def mesh_idle_seconds():
+    # Seconds since this machine last finished generating (local
+    # or borrowed). A machine that has never generated is idle.
+    last = max(MESH_STATE["last_local_done"], MESH_STATE["last_borrowed_done"])
+    if last <= 0:
+        return 10 ** 9
+    return time.time() - last
+
+
+def mesh_busy():
+    return MESH_STATE["borrowed_conn"] is not None or MESH_STATE["local_gen"] > 0
+
+
+# -- Lender: the borrowed generation --------------------------------
+# The lender's own llamafile answers, through the same request
+# shape llamafile_chat builds — the lender adds nothing to the
+# prompt. The one difference is the connection: it is registered
+# in MESH_STATE so instant-off can close it mid-generation (R4).
+
+def mesh_lender_generate(messages, endpoint, model):
+    name = served_model(endpoint) or model
+    body = json.dumps({
+        "model": name,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": CHAT_MAX_TOKENS,
+    }).encode()
+    u = urllib.parse.urlparse(endpoint.rstrip("/") + "/chat/completions")
+    if u.scheme == "https":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=CHAT_TIMEOUT, context=ctx)
+    else:
+        conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=CHAT_TIMEOUT)
+    with MESH_LOCK:
+        MESH_STATE["borrowed_conn"] = conn
+        MESH_STATE["borrowed_started"] = time.time()
+    try:
+        conn.request("POST", u.path or "/", body=body, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        with MESH_LOCK:
+            MESH_STATE["borrowed_resp"] = resp
+        raw = resp.read()
+        if resp.status != 200:
+            raise RuntimeError("the llamafile server rejected the borrowed request (HTTP " + str(resp.status) + ")")
+        data = json.loads(raw.decode())
+        content = data["choices"][0]["message"]["content"]
+        if not (content or "").strip():
+            raise RuntimeError("the llamafile server answered the borrowed request with an empty reply")
+        return content, data.get("usage")
+    finally:
+        with MESH_LOCK:
+            if MESH_STATE["borrowed_conn"] is conn:
+                MESH_STATE["borrowed_conn"] = None
+                MESH_STATE["borrowed_peer"] = ""
+                MESH_STATE["borrowed_resp"] = None
+            MESH_STATE["last_borrowed_done"] = time.time()
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def mesh_handle_status(handler, body):
+    # GET /mesh/status — signed, peer-authenticated. The borrower's
+    # heartbeat and pick signal: is this node lending, is it busy,
+    # is it idle.
+    peer = mesh_authenticate(handler, body or b"", "")
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    return 200, {
+        "ok": True,
+        "lending": bool(ms["enabled"] and ms["lend"]["enabled"]),
+        "busy": mesh_busy(),
+        "idle": mesh_idle_seconds() >= ms["lend"]["idleAfterSeconds"],
+        "model": "navi",
+        "capabilities": mesh_capabilities(cfg),
+    }
+
+
+def mesh_handle_borrow(handler, body):
+    # POST /mesh/borrow — admission in the spec's order, then the
+    # lender's own model answers the exact messages it was sent.
+    # Returns (status, payload); the special status "drop" means:
+    # close the borrower's connection without answering — the
+    # lender was stopped mid-generation, and the borrower's
+    # fusion fallback (R3) is the honest response to that.
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    request_id = str(data.get("requestId") or "")
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"] or not ms["lend"]["enabled"]:
+        return 200, {"ok": False, "reason": "lending-off"}
+    peer = mesh_authenticate(handler, body, request_id)
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    messages = data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return 400, {"ok": False, "reason": "bad-request"}
+    # Too large is refused whole, never truncated: the assembled
+    # prompt must fit the lender's own context setting.
+    ctx_limit = 4096
+    try:
+        ctx_limit = int((cfg.get("runtime") or {}).get("ctx_size") or 4096)
+    except Exception:
+        pass
+    est_tokens = 0
+    for m in messages:
+        if isinstance(m, dict):
+            est_tokens += len(str(m.get("content") or "")) // 4 + 4
+    if est_tokens > ctx_limit:
+        return 200, {"ok": False, "reason": "too-large"}
+    lend = ms["lend"]
+    with MESH_LOCK:
+        in_flight = MESH_STATE["borrowed_conn"] is not None
+        local_running = MESH_STATE["local_gen"] > 0
+    if in_flight and MESH_STATE["borrowed_peer"] == peer["nodeId"]:
+        return 200, {"ok": False, "reason": "busy"}
+    window = mesh_hour_window(peer["nodeId"])
+    if window["total"] >= lend["maxGenerationsPerHour"] or window["perPeer"] >= lend["perPeerPerHour"]:
+        return 200, {"ok": False, "reason": "cap"}
+    if window["wallSec"] >= (lend["maxSharePercent"] / 100.0) * 3600:
+        return 200, {"ok": False, "reason": "cap"}
+    if lend["idleOnly"] and mesh_idle_seconds() < lend["idleAfterSeconds"]:
+        return 200, {"ok": False, "reason": "idle"}
+    if in_flight or local_running:
+        # One borrowed generation at a time, and local work always
+        # wins admission (Q6: a local arrival never kills a running
+        # borrowed generation — it just takes the next slot).
+        return 200, {"ok": False, "reason": "busy"}
+    endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
+    model = cfg.get("live", {}).get("model_name") or "navi"
+    with MESH_LOCK:
+        MESH_STATE["borrowed_peer"] = peer["nodeId"]
+    stop_stamp = MESH_STATE["lend_stop_stamp"]
+    started = time.time()
+    try:
+        reply, usage = mesh_lender_generate(messages, endpoint, model)
+    except Exception:
+        wall_ms = int((time.time() - started) * 1000)
+        if MESH_STATE["lend_stop_stamp"] != stop_stamp:
+            # Instant-off landed mid-generation (R4): the ledger
+            # records the abort, and the borrower's connection
+            # drops so its fusion fallback (R3) speaks.
+            mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "aborted"})
+            return "drop", None
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "error"})
+        return 502, {"ok": False, "reason": "lender-error"}
+    if MESH_STATE["lend_stop_stamp"] != stop_stamp:
+        # Build .86 (gate 4): instant-off landed while the
+        # generation was completing — the reply is NOT served.
+        # The ledger records the abort and the borrower's
+        # connection drops, so its fusion fallback (R3) speaks
+        # instead of a reply the operator already revoked.
+        wall_ms = int((time.time() - started) * 1000)
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "aborted"})
+        return "drop", None
+    wall_ms = int((time.time() - started) * 1000)
+    entry = {"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "ok"}
+    if isinstance(usage, dict):
+        if usage.get("prompt_tokens") is not None:
+            entry["promptTokens"] = usage.get("prompt_tokens")
+        if usage.get("completion_tokens") is not None:
+            entry["completionTokens"] = usage.get("completion_tokens")
+    mesh_ledger_append(entry)
+    payload = {"ok": True, "reply": reply, "wallMs": wall_ms}
+    if isinstance(usage, dict):
+        payload["usage"] = usage
+    return 200, payload
+
+
+def mesh_stop_lending():
+    # Instant-off (R4): flips lend.enabled off in the persisted
+    # config and aborts any in-flight borrowed generation NOW by
+    # shutting down its connection's socket (build .86, gate 4).
+    # Returns the new Mesh state payload.
+    cfg = load_config()
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    block = dict(block)
+    lend = block.get("lend") if isinstance(block.get("lend"), dict) else {}
+    lend = dict(lend)
+    lend["enabled"] = False
+    block["lend"] = lend
+    cfg["mesh"] = block
+    save_config(cfg)
+    with MESH_LOCK:
+        MESH_STATE["lend_stop_stamp"] = time.time()
+        conn = MESH_STATE["borrowed_conn"]
+        resp = MESH_STATE["borrowed_resp"]
+    if conn is not None:
+        # Build .86 (gate 4): close() alone does NOT interrupt the
+        # lender thread blocked in resp.read() — the socket must be
+        # SHUT DOWN so the in-flight read dies, and the tracked
+        # response closed with it. Only then is "Stop lending now
+        # aborts even a borrowed generation mid-flight" true.
+        try:
+            sock = getattr(conn, "sock", None)
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return mesh_status_payload(load_config())
+
+
+# -- Borrower transport ----------------------------------------------
+# TLS with verification OFF and the peer card's fingerprint PINNED:
+# the borrower compares the presented certificate's DER hash
+# against the card by hand and refuses a mismatch in plain words.
+# The pin is the authentication; no CA is involved (spec 4.1).
+
+class _MeshFpError(Exception):
+    pass
+
+
+class _MeshDropped(Exception):
+    pass
+
+
+class _MeshUnreachable(Exception):
+    pass
+
+
+# Build .87 (gate 4, borrower half): the generous cap on a borrow
+# read, in seconds. Connection TERMINATION is the drop signal — a
+# lender that stops mid-generation hard-closes its socket and this
+# borrower's blocked read fails at once (see _mesh_request). This
+# cap is only the backstop for a lender that vanishes WITHOUT
+# closing (a dead network path, a frozen process): far beyond a
+# healthy generation's normal span, far short of the 600s chat
+# timeout, and its expiry is classified exactly like termination —
+# dropped, so the fusion fallback runs.
+MESH_BORROW_READ_CAP = 330
+
+
+def _mesh_request(peer, method, path, body, request_id, timeout):
+    # One signed Mesh request, trying the peer's addresses in card
+    # order. Returns (status, raw-body). Raises _MeshFpError on a
+    # pinned-fingerprint mismatch, _MeshDropped when a connected
+    # request died mid-flight, _MeshUnreachable when no address
+    # could be connected at all.
+    last_err = None
+    for address in peer["addresses"]:
+        host = str(address).split("://")[-1].split("/")[0]
+        conn = None
+        sent = False
+        try:
+            ctx = ssl._create_unverified_context()
+            conn = http.client.HTTPSConnection(host, peer["port"], timeout=timeout, context=ctx)
+            conn.connect()
+            der = b""
+            try:
+                der = conn.sock.getpeercert(binary_form=True) or b""
+            except Exception:
+                der = b""
+            fp = hashlib.sha256(der).hexdigest() if der else ""
+            if peer["certFingerprint"] and fp != peer["certFingerprint"]:
+                conn.close()
+                raise _MeshFpError("fingerprint mismatch")
+            headers = mesh_signed_headers(request_id, body or b"")
+            conn.request(method, path, body=body, headers=headers)
+            sent = True
+            if path == "/mesh/borrow":
+                # Build .87 (gate 4, borrower half): bound the
+                # borrow read by MESH_BORROW_READ_CAP (see its
+                # comment). When the lender terminates the
+                # connection mid-borrow — the drop path's socket
+                # shutdown — getresponse()/read() below raises at
+                # once (RemoteDisconnected / reset / EOF), and the
+                # sent-branch of the except maps ANY such failure,
+                # cap expiry included, to _MeshDropped. No short
+                # timeout is imposed: a healthy lender generation
+                # may legitimately take minutes.
+                try:
+                    if conn.sock is not None:
+                        conn.sock.settimeout(min(timeout, MESH_BORROW_READ_CAP))
+                except Exception:
+                    pass
+            resp = conn.getresponse()
+            raw = resp.read()
+            status = resp.status
+            conn.close()
+            return status, raw
+        except _MeshFpError:
+            raise
+        except Exception as e:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            if sent:
+                raise _MeshDropped(str(e))
+            last_err = e
+            continue
+    raise _MeshUnreachable(str(last_err))
+
+
+def mesh_probe_peer(peer, force=False):
+    # GET /mesh/status with a short timeout, cached briefly.
+    # Returns (status-dict-or-None, error-kind).
+    cache = MESH_STATE["probe_cache"].get(peer["nodeId"])
+    now = time.time()
+    if not force and cache and now - cache[0] < 20:
+        return cache[1], cache[2]
+    status = None
+    err = "unreachable"
+    try:
+        code, raw = _mesh_request(peer, "GET", "/mesh/status", b"", "", 3)
+        if code == 200:
+            try:
+                parsed = json.loads(raw.decode())
+                if isinstance(parsed, dict) and parsed.get("ok"):
+                    status = parsed
+            except Exception:
+                status = None
+        elif code in (401, 403):
+            err = "unauthorized"
+    except _MeshFpError:
+        err = "fingerprint"
+    except Exception:
+        err = "unreachable"
+    MESH_STATE["probe_cache"][peer["nodeId"]] = (now, status, "" if status is not None else err)
+    return status, "" if status is not None else err
+
+
+def _mesh_borrow_once(peer, messages):
+    # A single borrow attempt against a peer already probed
+    # reachable. Outcomes: ("ok", reply, wallMs), ("refusal",
+    # reason), ("dropped", None) for an in-flight failure (R3),
+    # ("error", kind) for a failure before admission.
+    request_id = secrets.token_hex(8)
+    body = json.dumps({
+        "requestId": request_id,
+        "messages": messages,
+        "model": "navi",
+        "maxTokens": CHAT_MAX_TOKENS,
+    }).encode()
+    started = time.time()
+    try:
+        code, raw = _mesh_request(peer, "POST", "/mesh/borrow", body, request_id, CHAT_TIMEOUT)
+    except _MeshFpError:
+        return ("error", "fingerprint")
+    except _MeshDropped:
+        # Build .87: remember the drop for the status payload —
+        # the Servers row's Mesh warning ("<name> dropped") reads
+        # it until a later probe finds the peer healthy again.
+        with MESH_LOCK:
+            MESH_STATE["peer_dropped"][peer["nodeId"]] = time.time()
+        return ("dropped", None)
+    except _MeshUnreachable:
+        return ("error", "unreachable")
+    except Exception:
+        return ("error", "unreachable")
+    if code in (401, 403):
+        return ("refusal", "unauthorized")
+    try:
+        data = json.loads(raw.decode())
+    except Exception:
+        with MESH_LOCK:
+            MESH_STATE["peer_dropped"][peer["nodeId"]] = time.time()
+        return ("dropped", None)
+    if code == 200 and isinstance(data, dict) and data.get("ok"):
+        wall = data.get("wallMs")
+        if not isinstance(wall, (int, float)):
+            wall = int((time.time() - started) * 1000)
+        return ("ok", str(data.get("reply") or ""), int(wall))
+    reason = str((data or {}).get("reason") or "lender-error") if isinstance(data, dict) else "lender-error"
+    return ("refusal", reason)
+
+
+def mesh_try_borrow(messages, cfg, ms):
+    # The borrower (spec section 2): first reachable peer only —
+    # Ring 1 never races lenders. Returns (reply, mesh-payload) on
+    # a mesh-served answer, or (None, mesh-payload) describing the
+    # local fallback the caller is about to run. (None, None) when
+    # Mesh does not apply at all.
+    peers = ms["borrow"]["peers"]
+    if not peers:
+        return None, None
+    if not mesh_node_id():
+        ok, _err = mesh_ensure_identity(cfg)
+        if not ok:
+            return None, None
+    with MESH_LOCK:
+        MESH_STATE["borrow_out"] = True
+    try:
+        last_reason = "unreachable"
+        for peer in peers:
+            status, err = mesh_probe_peer(peer)
+            if status is None:
+                last_reason = err or "unreachable"
+                continue
+            name = peer["name"]
+            with MESH_LOCK:
+                MESH_STATE["borrow_peer"] = name
+            if not status.get("lending"):
+                return None, {"servedBy": "local", "fellBack": True, "reason": "lending-off", "node": name}
+            outcome = _mesh_borrow_once(peer, messages)
+            if outcome[0] == "ok":
+                # Build .87: a served borrow is the freshest word
+                # on the peer — it clears any recorded drop, so the
+                # status row stops warning about a peer that is
+                # demonstrably answering again.
+                with MESH_LOCK:
+                    MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
+                mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
+                return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+            if outcome[0] == "dropped":
+                # R3 FUSION: the notice is data; the caller runs a
+                # FRESH local reply — two models' prose is never
+                # spliced.
+                return None, {
+                    "servedBy": "local", "fellBack": True, "reason": "lender-dropped", "node": name,
+                    "notice": name + " dropped mid-answer \u2014 this reply was generated locally instead.",
+                }
+            if outcome[0] == "error":
+                return None, {"servedBy": "local", "fellBack": True, "reason": outcome[1], "node": name}
+            reason = outcome[1]
+            if reason == "busy":
+                # R5 GRACE: poll/retry admission for up to graceMs.
+                # Once local generation starts (grace spent), the
+                # lender is never claimed mid-reply — it serves the
+                # NEXT request.
+                deadline = time.time() + max(0, ms["borrow"]["graceMs"]) / 1000.0
+                while time.time() < deadline:
+                    time.sleep(0.4)
+                    st2, _e2 = mesh_probe_peer(peer, force=True)
+                    if st2 is not None and not st2.get("busy"):
+                        outcome = _mesh_borrow_once(peer, messages)
+                        if outcome[0] == "ok":
+                            with MESH_LOCK:
+                                MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
+                            mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+                        break
+                return None, {"servedBy": "local", "fellBack": True, "reason": "busy", "node": name}
+            return None, {"servedBy": "local", "fellBack": True, "reason": reason, "node": name}
+        return None, {"servedBy": "local", "fellBack": True, "reason": last_reason}
+    finally:
+        with MESH_LOCK:
+            MESH_STATE["borrow_out"] = False
+            MESH_STATE["borrow_peer"] = ""
+
+
+def mesh_status_payload(cfg):
+    # The /api/status mesh section and the Settings card's state:
+    # metadata only — state, peers, balances. No content, ever.
+    # Build .87: the payload also carries the status column's
+    # at-a-glance verdict — a summary "state" + short "warning"
+    # string, and per peer a "status" word + "lastProbeError" —
+    # all read from state the bridge already tracks (the probe
+    # cache, the recorded drops, the lend/borrow flags). Names and
+    # state words only: a peer's addresses never enter this
+    # payload, exactly as they never render anywhere.
+    ms = mesh_settings(cfg)
+    balances = mesh_balances()
+    peers = []
+    now = time.time()
+    for p in ms["borrow"]["peers"]:
+        b = balances.get(p["nodeId"], {"lentSec": 0.0, "borrowedSec": 0.0, "lastTs": 0})
+        cache = MESH_STATE["probe_cache"].get(p["nodeId"])
+        reachable = None
+        probe = None
+        probe_err = ""
+        probe_stamp = 0.0
+        if cache and now - cache[0] < 60:
+            reachable = cache[1] is not None
+            probe = cache[1] if isinstance(cache[1], dict) else None
+            probe_err = str(cache[2] or "")
+            probe_stamp = cache[0]
+        caps = p.get("capabilities")
+        if probe is not None and probe.get("capabilities"):
+            live_caps = _mesh_caps_sanitize(probe.get("capabilities"))
+            if live_caps is not None:
+                caps = live_caps
+        # The peer's one-word state: a recorded drop that no later
+        # healthy probe has superseded outranks the probe cache —
+        # it is the freshest thing this machine knows about the
+        # peer, and it is exactly what the operator needs warned
+        # about. Drops age out after five minutes so a stale one
+        # cannot haunt the row forever.
+        drop_stamp = MESH_STATE["peer_dropped"].get(p["nodeId"], 0.0)
+        if drop_stamp and now - drop_stamp < 300 and drop_stamp >= probe_stamp:
+            peer_status = "dropped"
+        elif reachable is True:
+            peer_status = "reachable"
+        elif reachable is False:
+            peer_status = "unreachable"
+        else:
+            peer_status = "unknown"
+        peers.append({
+            "name": p["name"],
+            "nodeId": p["nodeId"],
+            "short": p["nodeId"][:12],
+            "canBorrow": p["canBorrow"],
+            "reachable": reachable,
+            "status": peer_status,
+            "lastProbeError": probe_err if reachable is False else "",
+            "balanceSec": round(b["lentSec"] - b["borrowedSec"], 1),
+            "lastTs": b["lastTs"],
+            "capabilities": caps,
+            "probeLending": (bool(probe.get("lending")) if probe is not None else None),
+            "probeBusy": (bool(probe.get("busy")) if probe is not None else None),
+            "probeIdle": (bool(probe.get("idle")) if probe is not None else None),
+        })
+    # The summary the Servers row renders (build .87): one state
+    # word for the dot, one SHORT warning for the label — the
+    # first problem peer by name, never an address.
+    state = "off"
+    warning = ""
+    if ms["enabled"]:
+        dropped_peer = next((p for p in peers if p["status"] == "dropped"), None)
+        unreach_peer = next((p for p in peers if p["status"] == "unreachable"), None)
+        if not peers:
+            state = "no-peers"
+        elif dropped_peer is not None:
+            state = "warning"
+            warning = str(dropped_peer["name"]) + " dropped"
+        elif unreach_peer is not None:
+            state = "warning"
+            warning = str(unreach_peer["name"]) + " unreachable"
+        elif MESH_STATE["borrow_out"]:
+            state = "borrowing"
+        elif MESH_STATE["borrowed_conn"] is not None:
+            state = "lending"
+        elif any(p["status"] == "reachable" for p in peers):
+            state = "reachable"
+        else:
+            state = "on"
+    return {
+        "enabled": ms["enabled"],
+        "role": ms["role"],
+        "nodeName": ms["nodeName"],
+        "nodeId": mesh_node_id() or ms["nodeId"],
+        "borrowEnabled": ms["borrow"]["enabled"],
+        "graceMs": ms["borrow"]["graceMs"],
+        "lendEnabled": ms["lend"]["enabled"],
+        "lend": ms["lend"],
+        "ledgerInBackup": ms["ledgerInBackup"],
+        "borrowing": bool(MESH_STATE["borrow_out"]),
+        "lendingNow": MESH_STATE["borrowed_conn"] is not None,
+        "state": state,
+        "warning": warning,
+        "capabilities": mesh_capabilities(cfg),
+        "peers": peers,
+    }
+
+
+# -- The dedicated Mesh door -----------------------------------------
+# Mesh ALWAYS listens on its own TLS port (build .86) — its own
+# door, its own certificate, in every configuration. The DHD proxy
+# refuses /mesh/* outright and the dashboard surface does not
+# serve the node-facing endpoints at all: borrowers dial this
+# port — the peer card's port — only. There is no plaintext Mesh
+# listener.
+
+class MeshHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def _send(self, code, payload):
+        body = json.dumps(payload).encode()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(length) if length > 0 else b""
+
+    def do_GET(self):
+        if self.path.split("?")[0] == "/mesh/status":
+            code, payload = mesh_handle_status(self, b"")
+            self._send(code, payload)
+        else:
+            self._send(404, {"ok": False, "reason": "not-found"})
+
+    def do_POST(self):
+        if self.path.split("?")[0] == "/mesh/borrow":
+            code, payload = mesh_handle_borrow(self, self._body())
+            if code == "drop":
+                # Build .87 (gate 4, borrower half): a handler-level
+                # connection.close() on this HTTP/1.1 keep-alive TLS
+                # connection does NOT deliver a prompt EOF to a
+                # borrower blocked in getresponse() — the borrow
+                # strands for minutes instead of completing. Hard-
+                # close at the SOCKET level: shutdown(SHUT_RDWR)
+                # first, so the termination lands on the wire at
+                # once, then close. The borrower reads termination
+                # as the drop signal and its fusion fallback speaks.
+                self.close_connection = True
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+                return
+            self._send(code, payload)
+        else:
+            self._send(404, {"ok": False, "reason": "not-found"})
+
+
+def mesh_start_listener():
+    global MESH_SERVERS
+    if MESH_SERVERS:
+        return
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return
+    ok, _err = mesh_ensure_cert()
+    if not ok:
+        return
+    cert_path, key_path = mesh_active_cert()
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", ms["port"]), MeshHandler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_path, key_path)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        MESH_SERVERS = [server]
+    except Exception:
+        MESH_SERVERS = []
+
+
+def mesh_stop_listener():
+    global MESH_SERVERS
+    for s in MESH_SERVERS:
+        try:
+            s.shutdown()
+        except Exception:
+            pass
+        try:
+            s.server_close()
+        except Exception:
+            pass
+    MESH_SERVERS = []
+
 def read_file(path):
     try:
         with open(path) as f:
@@ -2979,12 +4274,17 @@ def _status_rank(status):
     return {"stable": 2, "beta": 1, "edge": 0}.get(status, 0)
 
 
-def _release_is_newer(tag, current_number, current_status):
+def _release_is_newer(tag, current_number, current_status, build_seq=None):
     # The Updater's real comparison (build .83): higher numbers
     # win; at the same numbers, only a graduation counts — an
     # Edge build of the numbers you already run as a full release
     # is a preview you passed, not an update, and the full
     # release of numbers you run as an Edge build IS one.
+    # Build .86 adds the third tier: same numbers AND same status
+    # AND the running build is an Edge publication — a candidate
+    # carrying a higher Build number (build_seq) than the running
+    # SHIPPED_BUILD_SEQ is a same-version refresh and IS newer; a
+    # candidate with no build number, or one no higher, is NOT.
     num, status = _tag_parts(tag)
     if not num:
         return False
@@ -2994,7 +4294,28 @@ def _release_is_newer(tag, current_number, current_status):
     b += (0,) * (width - len(b))
     if a != b:
         return a > b
-    return _status_rank(status) > _status_rank(current_status)
+    if _status_rank(status) != _status_rank(current_status):
+        return _status_rank(status) > _status_rank(current_status)
+    if current_status == "edge" and build_seq is not None:
+        return build_seq > SHIPPED_BUILD_SEQ
+    return False
+
+
+def _release_build_seq(rel):
+    # A publication's place in its own version's sequence
+    # (build .86): "Build <n>" parsed from the release's name
+    # first, then its body's opening lines. None when the
+    # release carries no build number.
+    name = str(rel.get("name") or "")
+    m = re.search(r"Build ([0-9]+)", name)
+    if m:
+        return int(m.group(1))
+    body = str(rel.get("body") or "")
+    for line in body.splitlines()[:6]:
+        m = re.search(r"Build ([0-9]+)", line)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def _update_error_text(e):
@@ -3049,6 +4370,7 @@ def _shape_release(rel):
         "publishedAt": str(rel.get("published_at") or ""),
         "notes": str(rel.get("body") or "").replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10)),
         "prerelease": bool(rel.get("prerelease")),
+        "buildSeq": _release_build_seq(rel),
         "asset": asset,
     }
 
@@ -3140,6 +4462,43 @@ def changelog_section_for(tag):
     return "\n".join(out).strip()
 
 
+# -- Background update re-check (build .86) -------------------------
+# While the bridge runs, a daemon thread re-checks for updates on
+# its own: shortly after startup, then every 3 hours, on the
+# install's configured channel. The verdict is cached here and
+# /api/status carries it as its "update" object, so the dashboard
+# learns about an update without the operator ever opening the
+# Updater. Silent by design — no UI of its own, no nag; the
+# status line's single "Up to date" / "Update available" voice is
+# still the only voice.
+UPDATE_BG_STATE = {"payload": None}
+UPDATE_BG_LOCK = threading.Lock()
+
+
+def update_bg_payload():
+    with UPDATE_BG_LOCK:
+        return UPDATE_BG_STATE["payload"]
+
+
+def _update_bg_loop():
+    time.sleep(20)
+    while True:
+        try:
+            cfg = load_config()
+            res = update_check_payload(cfg)
+            payload = {
+                "updateAvailable": bool(res.get("updateAvailable")),
+                "latest": res.get("latest") or "",
+                "channel": res.get("channel") or updater_channel(cfg),
+                "checkedAt": res.get("checkedAt") or "",
+            }
+            with UPDATE_BG_LOCK:
+                UPDATE_BG_STATE["payload"] = payload
+        except Exception:
+            pass
+        time.sleep(3 * 3600)
+
+
 def update_check_payload(cfg=None, channel=None):
     current = app_version(cfg)
     current_status = app_version_status(cfg)
@@ -3157,7 +4516,7 @@ def update_check_payload(cfg=None, channel=None):
         return dict(base, ok=False, updateAvailable=False, latest="",
                     error=_update_error_text(e))
     newer = bool(rel["tag"]) and _release_is_newer(
-        rel["tag"], current, current_status)
+        rel["tag"], current, current_status, rel.get("buildSeq"))
     # The release's notes travel with the check result (build .70,
     # issue #47): the Updater panel reads them before offering the
     # install, and Apply never fetches them again. Source of truth
@@ -3184,6 +4543,7 @@ def update_check_payload(cfg=None, channel=None):
         latest=rel["tag"], releaseName=rel["name"],
         releaseUrl=rel["url"], publishedAt=rel["publishedAt"],
         prerelease=rel["prerelease"],
+        buildSeq=rel.get("buildSeq"), currentBuildSeq=SHIPPED_BUILD_SEQ,
         notes=notes, notesSource=notes_source, asset=rel["asset"],
         currentRelease=cur_rel,
     )
@@ -3564,7 +4924,7 @@ def _run_update_apply(cfg):
         record["tag"] = tag
         record["targetLabel"] = (
             _version_label(t_num, t_status) if t_num else tag)
-        if not tag or not _release_is_newer(tag, current, current_status):
+        if not tag or not _release_is_newer(tag, current, current_status, rel.get("buildSeq")):
             fail("downloading",
                  "The latest release (" + (tag or "none") + ") is not "
                  "newer than the running v" + current
@@ -4264,6 +5624,15 @@ def github_collect_backup(cfg, dashboard=None):
                 "operatorName": str(dashboard.get("operatorName") or ""),
                 "theme": str(dashboard.get("theme") or ""),
             }, indent=2).encode()
+    # The Mesh ledger rides a backup ONLY on the operator's
+    # explicit tick (Settings → System → Navi Mesh; Q4, off by
+    # default): it is metadata — who lent whom how many seconds —
+    # but whose machines talked is the operator's business, so it
+    # stays home unless they say otherwise. The node keypair never
+    # rides a backup, tick or no tick.
+    if mesh_settings(cfg)["ledgerInBackup"] and os.path.isfile(MESH_LEDGER_PATH):
+        with open(MESH_LEDGER_PATH, "rb") as f:
+            files["mesh/ledger.jsonl"] = f.read()
     if "chips" in items:
         files["chips/installed.json"] = (read_file(CHIP_INSTALLS_PATH) or "[]").encode()
         for row in load_chip_installs():
@@ -4802,30 +6171,43 @@ def fetch_chip_payload(repo):
     full = repo["fullName"]
     latest = repo["latestRelease"]
     ref = latest["tag"] if latest else (repo["defaultBranch"] or "main")
-    listing = github_json(
-        "https://api.github.com/repos/" + full
-        + "/contents?ref=" + urllib.parse.quote(ref, safe="")
-    )
-    if not isinstance(listing, list):
-        raise ValueError("GitHub did not return the repo's file list.")
-    pys = [
-        i for i in listing
-        if i.get("type") == "file"
-        and str(i.get("name") or "").lower().endswith(".py")
-    ]
+    # Build .86 (issue #79): the walk is RECURSIVE — a legacy chip
+    # keeps its code in a package directory (app_cryptex/ and kin),
+    # and a root-only listing never sees it, which is how a chip
+    # could "install" and never run. Every file in the tree is
+    # listed with its repo-relative path; package directories keep
+    # their paths in the payload file set.
+    entries = []
+
+    def _walk(dir_path):
+        url = (
+            "https://api.github.com/repos/" + full + "/contents"
+            + ("/" + dir_path if dir_path else "")
+            + "?ref=" + urllib.parse.quote(ref, safe="")
+        )
+        listing = github_json(url)
+        if not isinstance(listing, list):
+            raise ValueError("GitHub did not return the repo's file list.")
+        for item in listing:
+            p = str(item.get("path") or "")
+            if item.get("type") == "dir":
+                _walk(p)
+            elif item.get("type") == "file":
+                entries.append((p, item))
+
+    _walk("")
+    pys = [(p, i) for (p, i) in entries if p.lower().endswith(".py")]
     if not pys:
         raise ValueError(
-            "the repo has no Python chip file in its root at " + ref
-            + " — a navi-chips repo carries its chip as a .py file there."
+            "the repo has no Python chip file at " + ref
+            + " — a navi-chips repo carries its chip as a .py file."
         )
     # A navi-chip.json manifest at the repo root (written by the
     # GitHub-ready export) names the entry file outright and
     # carries the chip's description and declared output.
     manifest = {}
     man_item = next(
-        (i for i in listing
-         if i.get("type") == "file"
-         and str(i.get("name") or "") == "navi-chip.json"),
+        (i for (p, i) in entries if p == "navi-chip.json"),
         None,
     )
     if man_item is not None:
@@ -4844,46 +6226,65 @@ def fetch_chip_payload(repo):
         wants.append(str(manifest["entry"]).lower())
     wants += ["root.py", stem + ".py", base + ".py", "chip.py", "main.py"]
     pick = None
+    pick_path = ""
     for want in wants:
-        pick = next(
-            (i for i in pys if str(i.get("name") or "").lower() == want),
-            None,
-        )
+        for (p, i) in pys:
+            if p.lower() == want or p.lower().rsplit("/", 1)[-1] == want:
+                pick = i
+                pick_path = p
+                break
         if pick:
             break
     if pick is None and len(pys) == 1:
-        pick = pys[0]
+        pick_path, pick = pys[0]
     if pick is None:
-        names = ", ".join(str(i.get("name")) for i in pys)
+        names = ", ".join(p for (p, _i) in pys)
         raise ValueError(
-            "the repo root holds several Python files (" + names
+            "the repo holds several Python files (" + names
             + ") and none is the chip's entry — name the entry file "
             "root.py, or add a navi-chip.json manifest naming it."
         )
-    # Every Python file at the root comes down: the entry becomes
-    # the chip's code and the rest ride along as its importable
-    # modules, so a multi-file chip runs exactly as authored.
+    # Every Python file in the tree comes down at its relative
+    # path: the entry becomes the chip's code and the rest ride
+    # along as its importable modules and packages, so a
+    # multi-file or package chip runs exactly as authored.
     files = []
     code = ""
-    for item in pys:
+    for (p, item) in pys:
         text = github_download(item["download_url"]).decode("utf-8", "replace")
         if item is pick:
             code = text
         else:
-            files.append({"path": str(item.get("name")), "content": text[:200000]})
+            files.append({"path": p, "content": text[:200000]})
     if not code.strip():
-        raise ValueError(str(pick.get("name")) + " is empty.")
+        raise ValueError(pick_path + " is empty.")
+    # Declared dependencies ride along as data (issue #79): a
+    # chip-requirements.txt at the repo root is read and its lines
+    # are stored on the payload — surfaced on the chip's card,
+    # never installed automatically.
+    requirements = []
+    req_item = next((i for (p, i) in entries if p == "chip-requirements.txt"), None)
+    if req_item is not None:
+        try:
+            req_text = github_download(req_item["download_url"]).decode("utf-8", "replace")
+            requirements = [
+                ln.strip() for ln in req_text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ][:50]
+        except Exception:
+            requirements = []
     payload = {
         "name": repo["name"],
         "description": str(manifest.get("description") or repo["description"] or ""),
         "code": code[:200000],
         "output": str(manifest.get("output") or ""),
+        "requirements": requirements,
         "files": _valid_chip_files(
             [{"path": "root.py", "content": code[:200000]}] + files,
             code[:200000],
         ),
     }
-    return payload, str(pick.get("name"))
+    return payload, pick_path
 
 
 def _display_ref(ref):
@@ -5143,6 +6544,8 @@ def local_chips():
     for fn in files:
         if not fn.lower().endswith(".png"):
             continue
+        rec = by_file.get(fn)
+        full = (rec or {}).get("full_name") or ""
         try:
             with open(os.path.join(CHIPS_DIR, fn), "rb") as f:
                 payload = parse_cartridge_png(f.read())
@@ -5151,12 +6554,32 @@ def local_chips():
         if payload:
             payload["file"] = fn
             payload["slug"] = fn[:-4]
-            rec = by_file.get(fn)
-            full = (rec or {}).get("full_name") or ""
             payload["source"] = "github" if full and not full.startswith("local/") else "local"
             payload["sourceKey"] = full if payload["source"] == "github" else None
             payload["locallyEdited"] = bool((rec or {}).get("locally_edited"))
+            if not payload.get("requirements"):
+                payload["requirements"] = list((rec or {}).get("requirements") or [])
             chips.append(payload)
+        else:
+            # Build .86 (issue #79): a cartridge that fails to
+            # parse is never silently dropped — it surfaces as an
+            # unreadable entry (filename for a name, empty code)
+            # so the Local tab can show it honestly, still
+            # deletable, instead of the chip simply vanishing.
+            chips.append({
+                "name": fn[:-4],
+                "description": "",
+                "code": "",
+                "output": "",
+                "files": [],
+                "file": fn,
+                "slug": fn[:-4],
+                "source": "github" if full and not full.startswith("local/") else "local",
+                "sourceKey": full if full and not full.startswith("local/") else None,
+                "locallyEdited": bool((rec or {}).get("locally_edited")),
+                "unreadable": True,
+                "requirements": list((rec or {}).get("requirements") or []),
+            })
     return chips
 
 
@@ -5238,6 +6661,25 @@ navi_instance = _NaviInstance()
 NaviApp = _NaviInstance
 '''
 
+# The navi.py compatibility shim (build .86, issue #79): chips
+# written for the original Navi import navi and call
+# get_parameters(text). The shim rides the same stub navi_internal
+# uses and restores the old semantics exactly: get_parameters
+# returns the shlex-split token list with the command name
+# INCLUDED — the chip's run() pops it, the way the old chips were
+# written. Written beside every sandbox unless the chip ships its
+# own navi.py.
+NAVI_PY_SHIM = '''
+import shlex
+from navi_internal import navi_instance, NaviApp
+
+def get_parameters(text):
+    try:
+        return shlex.split(text or "")
+    except Exception:
+        return (text or "").split()
+'''
+
 
 def execute_chip(chip, args_text, cfg):
     # Runs a chip the way Navi does: its run(arguments) with a working
@@ -5262,6 +6704,13 @@ def execute_chip(chip, args_text, cfg):
     try:
         with open(os.path.join(tmp, "navi_internal.py"), "w") as f:
             f.write(NAVI_INTERNAL_STUB)
+        # The navi.py compatibility shim (build .86, issue #79)
+        # rides EVERY sandbox — unless the chip ships its own
+        # navi.py, which always wins.
+        chip_files_pre = chip.get("files") or []
+        if not any(isinstance(it, dict) and str(it.get("path") or "") == "navi.py" for it in chip_files_pre):
+            with open(os.path.join(tmp, "navi.py"), "w") as f:
+                f.write(NAVI_PY_SHIM)
         # The chip's whole file set lands in the sandbox: the entry
         # code as root.py (and chip_module.py, the name the runner
         # imports) plus every module file at its own path, so
@@ -5283,15 +6732,55 @@ def execute_chip(chip, args_text, cfg):
                 f.write(str(item.get("content") or ""))
         with open(os.path.join(tmp, "root.py"), "w") as f:
             f.write(code)
-        with open(os.path.join(tmp, "chip_module.py"), "w") as f:
-            f.write(code)
-        runner = (
-            "import sys, types\n"
-            "sys.path.insert(0, sys.argv[1])\n"
-            "import chip_module\n"
-            "args = types.SimpleNamespace(text=sys.argv[2])\n"
-            "chip_module.run(args)\n"
+        # Package mode (build .86, issue #79): when the entry
+        # code uses relative imports, or the file set carries
+        # package directories, the entry loads as a package
+        # member — it is written into a synthetic package with
+        # the chip's package folders beside it, and the runner
+        # imports it as chip_pkg.chip_entry, so a relative
+        # import (from .app_cryptex...) resolves, and a plain
+        # "import app_cryptex..." finds the package too — the
+        # package dir itself joins the path.
+        file_paths = [str(it.get("path") or "") for it in chip_files if isinstance(it, dict)]
+        package_mode = (
+            re.search(r"^\s*from\s+\." , code, re.M) is not None
+            or any("/" in p for p in file_paths)
         )
+        if package_mode:
+            pkg_dir = os.path.join(tmp, "chip_pkg")
+            os.makedirs(pkg_dir, exist_ok=True)
+            with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
+                f.write("")
+            with open(os.path.join(pkg_dir, "chip_entry.py"), "w") as f:
+                f.write(code)
+            for item in chip_files:
+                if not isinstance(item, dict):
+                    continue
+                rel = str(item.get("path") or "")
+                if "/" not in rel or rel.startswith("/") or ".." in rel.split("/"):
+                    continue
+                dest = os.path.join(pkg_dir, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "w") as f:
+                    f.write(str(item.get("content") or ""))
+            runner = (
+                "import sys, types\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "sys.path.insert(0, sys.argv[1] + \"/chip_pkg\")\n"
+                "import chip_pkg.chip_entry as chip_module\n"
+                "args = types.SimpleNamespace(text=sys.argv[2])\n"
+                "chip_module.run(args)\n"
+            )
+        else:
+            with open(os.path.join(tmp, "chip_module.py"), "w") as f:
+                f.write(code)
+            runner = (
+                "import sys, types\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "import chip_module\n"
+                "args = types.SimpleNamespace(text=sys.argv[2])\n"
+                "chip_module.run(args)\n"
+            )
         with open(os.path.join(tmp, "runner.py"), "w") as f:
             f.write(runner)
         env = dict(os.environ)
@@ -7892,16 +9381,66 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
         return want not in parts
 
+    def do_DELETE(self):
+        # The only DELETE on the dashboard surface: removing a
+        # paired Mesh peer (spec section 3.1). Behind the same
+        # public gate as every other dashboard write.
+        if self.path.split("?")[0] == "/api/mesh/peers":
+            if self._public_gate_blocks():
+                self._send(403, {"error": "access code required"})
+                return
+            cfg = load_config()
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            borrow["peers"] = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == target)]
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        self._send(404, {"ok": False, "error": "not found"})
+
     def do_GET(self):
         _path = self.path.split("?")[0]
         if _path == "/__gate":
             self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
             return
+        # Build .86: the node-facing Mesh endpoints (/mesh/status,
+        # /mesh/borrow) are NOT served on this dashboard surface at
+        # all — borrowers dial the dedicated Mesh port (the peer
+        # card's port) only. The dashboard-local Mesh routes
+        # (/mesh/card, /mesh/lend/stop, /api/mesh/*) stay below,
+        # behind the gate, exactly as they were.
         if self._public_gate_blocks():
             if _path.startswith("/api/"):
                 self._send(403, {"error": "access code required"})
             else:
                 self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+            return
+        if _path in ("/mesh/card", "/api/mesh/card"):
+            # This node's peer card (spec section 3.1): a
+            # dashboard-surface read — it sits BEHIND the public
+            # gate above like every other dashboard API, and the
+            # DHD proxy never forwards /mesh/* here, so a DHD
+            # guest session cannot reach it.
+            _cfg = load_config()
+            if not mesh_settings(_cfg)["enabled"]:
+                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on in Settings first."})
+                return
+            _ok, _err = mesh_ensure_identity(_cfg)
+            if not _ok:
+                self._send(200, {"ok": False, "error": _err})
+                return
+            _ok, _err = mesh_ensure_cert()
+            if not _ok:
+                self._send(200, {"ok": False, "error": _err})
+                return
+            self._send(200, {"ok": True, "card": mesh_card(load_config())})
             return
         if self.path.split("?")[0] in ("/", "/index.html"):
             with open(os.path.join(ROOT, "app", "index.html"), "rb") as f:
@@ -7932,11 +9471,14 @@ class Handler(BaseHTTPRequestHandler):
                 "bridge": BRIDGE_BUILD,
                 "port": BRIDGE_PORT,
                 "dir": ROOT,
+                "root": ROOT,
+                "update": update_bg_payload(),
                 "model": "navi",
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
+                "mesh": mesh_status_payload(cfg),
             })
         elif self.path.startswith("/api/operations/"):
             _op_id = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
@@ -8129,7 +9671,7 @@ class Handler(BaseHTTPRequestHandler):
             # the folder a step can point at.
             self._send(200, {
                 "workflows": load_workflows(),
-                "chips": [{"file": c["file"], "name": c["name"], "source": c.get("source"), "sourceKey": c.get("sourceKey"), "locallyEdited": bool(c.get("locallyEdited"))} for c in local_chips()],
+                "chips": [{"file": c["file"], "name": c["name"], "source": c.get("source"), "sourceKey": c.get("sourceKey"), "locallyEdited": bool(c.get("locallyEdited")), "unreadable": bool(c.get("unreadable")), "requirements": list(c.get("requirements") or [])} for c in local_chips()],
             })
         elif self.path.split("?")[0] == "/api/chips/source":
             # Chip Studio opens a local chip for editing: its
@@ -8217,8 +9759,137 @@ class Handler(BaseHTTPRequestHandler):
                     "text/html; charset=utf-8",
                 )
             return
+        # Build .86: /mesh/borrow is not served on this surface
+        # (see do_GET) — the dedicated Mesh port is the only
+        # lender door.
         if self._public_gate_blocks():
             self._send(403, {"error": "access code required"})
+            return
+        if self.path.split("?")[0] == "/mesh/lend/stop":
+            # Instant-off (R4): a LOCAL dashboard action only. It
+            # is never served on the DHD-forwarded surface — a
+            # request the proxy carried in is refused here even
+            # with a valid dashboard session, and no node signature
+            # can reach it either (this route is behind the gate,
+            # not the signature check).
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
+                return
+            self._send(200, {"ok": True, "mesh": mesh_stop_lending()})
+            return
+        if self.path == "/api/mesh/settings":
+            # The Settings → System Mesh card's save. Persists the
+            # block, sets identity up on first enable, and starts
+            # or stops the dedicated Mesh door to match. Q1: lending
+            # may be turned ON only in person — a save arriving
+            # through the DHD proxy surface is refused for that one
+            # change; turning anything OFF is allowed from anywhere
+            # the operator is signed in.
+            data = self._body()
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            lend = block.get("lend") if isinstance(block.get("lend"), dict) else {}
+            lend = dict(lend)
+            was_enabled = block.get("enabled") is True
+            was_lending = lend.get("enabled") is True
+            want_lending = bool(data.get("lendEnabled")) if "lendEnabled" in data else was_lending
+            if want_lending and not was_lending and (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(200, {"ok": False, "error": "Lending can only be turned on from this machine's own dashboard, in person — not through the DHD door. Turning it off works from anywhere."})
+                return
+            if "enabled" in data:
+                block["enabled"] = bool(data.get("enabled"))
+            if "nodeName" in data:
+                block["nodeName"] = str(data.get("nodeName") or "")[:80]
+            if "borrowEnabled" in data:
+                borrow["enabled"] = bool(data.get("borrowEnabled"))
+            if "graceMs" in data:
+                borrow["graceMs"] = max(0, min(30000, _mesh_int(data.get("graceMs"), 2000)))
+            if "lendEnabled" in data:
+                lend["enabled"] = want_lending
+            if "ledgerInBackup" in data:
+                block["ledgerInBackup"] = bool(data.get("ledgerInBackup"))
+            block["borrow"] = borrow
+            block["lend"] = lend
+            cfg["mesh"] = block
+            if block.get("enabled") is True and not was_enabled:
+                _ok, _err = mesh_ensure_identity(cfg)
+                if not _ok:
+                    self._send(200, {"ok": False, "error": _err})
+                    return
+                _ok, _err = mesh_ensure_cert()
+                if not _ok:
+                    self._send(200, {"ok": False, "error": _err})
+                    return
+                cfg = load_config()
+                block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else block
+            save_config(cfg)
+            if block.get("enabled") is True:
+                mesh_start_listener()
+            else:
+                mesh_stop_listener()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers":
+            # Add a peer from a pasted card (spec section 3.1).
+            # Pairing is the consent act (R1): a card the operator
+            # pastes by hand is a trusted peer.
+            data = self._body()
+            peer, perr = mesh_parse_card(str(data.get("card") or ""))
+            if peer is None:
+                self._send(200, {"ok": False, "error": perr})
+                return
+            if peer["nodeId"] and peer["nodeId"] == mesh_node_id():
+                self._send(200, {"ok": False, "error": "That is this machine's own card — a machine does not pair with itself."})
+                return
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            peers = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"])]
+            peers.append(peer)
+            borrow["peers"] = peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/remove":
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            borrow["peers"] = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == target)]
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/can-borrow":
+            # The lender-side consent toggle for one paired peer.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    p["canBorrow"] = bool(data.get("canBorrow"))
+                new_peers.append(p)
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/settings/updater-channel":
             # The Updater's channel switch (build .83): persist
@@ -8967,7 +10638,31 @@ class Handler(BaseHTTPRequestHandler):
             }] + messages
             try:
                 model = cfg.get("live", {}).get("model_name") or "navi"
-                reply = llamafile_chat(messages, endpoint, model)
+                # Navi Mesh (Ring 1): the model route is the ONLY
+                # route that borrows — CLI mode, chips, and every
+                # deterministic route above never do. The exact
+                # assembled messages ride (persona/Vault/RAG/history
+                # assembly stays borrower-side), and everything
+                # below — citation strip, memory markers, speech —
+                # stays borrower-side on the returned text,
+                # unchanged. meshLocal is the per-request escape:
+                # when the operator set it, no borrow is attempted
+                # at all.
+                _mesh_payload = None
+                reply = None
+                if not data.get("meshLocal"):
+                    _ms = mesh_settings(cfg)
+                    if _ms["enabled"] and _ms["borrow"]["enabled"] and _ms["borrow"]["peers"]:
+                        reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms)
+                if reply is None:
+                    with MESH_LOCK:
+                        MESH_STATE["local_gen"] += 1
+                    try:
+                        reply = llamafile_chat(messages, endpoint, model)
+                    finally:
+                        with MESH_LOCK:
+                            MESH_STATE["local_gen"] = max(0, MESH_STATE["local_gen"] - 1)
+                            MESH_STATE["last_local_done"] = time.time()
                 # The reply text stays citation-free (see
                 # strip_citation_footer): sources are data, drawn
                 # as pills under this one message by the dashboard.
@@ -8982,6 +10677,8 @@ class Handler(BaseHTTPRequestHandler):
                 # dashboard to file and receipt.
                 reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
+                if _mesh_payload:
+                    payload["mesh"] = _mesh_payload
                 if _msaves:
                     payload["memorySaves"] = _msaves
                 if _mrefused:
@@ -9568,8 +11265,25 @@ class Handler(BaseHTTPRequestHandler):
                 record = chip_install_record(repo)
                 record["local_file"] = filename
                 record["source_file"] = source_file
+                record["requirements"] = list(payload.get("requirements") or [])
                 rows.append(record)
                 save_chip_installs(rows)
+                # Build .86 (issue #79): the install verifies
+                # itself — re-run the folder scan and answer ok
+                # only if the chip actually appears in it. A chip
+                # that landed on disk but does not list is named
+                # as such, with the reason, and its record is
+                # taken back so Installed never claims it.
+                landed = next((c for c in local_chips() if c.get("file") == filename), None)
+                if landed is None or landed.get("unreadable"):
+                    rows = [r for r in rows if r is not record]
+                    save_chip_installs(rows)
+                    if landed is None and not os.path.isfile(os.path.join(CHIPS_DIR, filename)):
+                        why = "the chip file is missing from the chips folder"
+                    else:
+                        why = "its cartridge could not be read back (unparseable cartridge)"
+                    self._send(200, {"ok": False, "error": "The chip landed on disk as " + filename + " but does not list: " + why + ". Nothing was kept as installed."})
+                    return
                 self._send(200, {"ok": True, "error": None})
         elif self.path == "/api/chips/update":
             data = self._body()
@@ -9616,6 +11330,7 @@ class Handler(BaseHTTPRequestHandler):
                 fresh["installed_at"] = inst.get("installed_at")
                 fresh["local_file"] = filename
                 fresh["source_file"] = source_file
+                fresh["requirements"] = list(payload.get("requirements") or [])
                 rows[rows.index(inst)] = fresh
                 save_chip_installs(rows)
                 self._send(200, {"ok": True, "updated": True, "error": None})
@@ -9970,6 +11685,9 @@ if __name__ == "__main__":
                 sys.exit(1)
             time.sleep(1)
     print("Navi bridge (build " + BRIDGE_BUILD + ") on http://localhost:" + str(port), flush=True)
+    # Background update re-check (build .86): the bridge keeps its
+    # own update verdict fresh while it runs (see _update_bg_loop).
+    threading.Thread(target=_update_bg_loop, daemon=True).start()
     if ACTIVE_BIND_HOST == "0.0.0.0":
         print("Local server is ON: the dashboard also answers on the local network at "
               + public_state_payload(load_config(), True)["lanUrl"]
@@ -9989,4 +11707,15 @@ if __name__ == "__main__":
         # If an enable operation was waiting on this restart, its
         # persisted card now reconciles with the live state.
         dhd_resume_enable_operation()
+    # Navi Mesh (Ring 1; dedicated door since build .86): if Mesh
+    # is on, open its dedicated TLS listener on the mesh port —
+    # always, whether or not DHD is on. Mesh never rides the DHD
+    # door; the proxy refuses /mesh/* outright.
+    if mesh_settings(cfg)["enabled"]:
+        mesh_start_listener()
+        if MESH_SERVERS:
+            print("Navi Mesh is ON: the dedicated Mesh door listens on port "
+                  + str(mesh_settings(cfg)["port"]) + " (TLS, fingerprint-pinned).", flush=True)
+        else:
+            print("Navi Mesh is ON but its dedicated door did not open — see the Mesh page.", flush=True)
     server.serve_forever()

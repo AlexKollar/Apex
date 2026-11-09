@@ -20,9 +20,12 @@ output).
 - **Navi User Repo (NUR)** searches GitHub for every public repo carrying the
   navi-chips topic — each one is a Navi chip — and lists them with
   their repo metadata and latest release. Install downloads the
-  chip's own code — a navi-chips repo carries its chip as a Python
-  file in the repo root — from the release being installed (or the
-  default branch for repos with no releases yet) and forges it into
+  chip's own code — every Python file in the repo, fetched
+  recursively so package folders keep their relative paths — from
+  the release being installed (or the default branch for repos
+  with no releases yet), reads chip-requirements.txt when the repo
+  declares one (the chip's card shows the declared dependencies;
+  they are not installed automatically), and forges it into
   a chip in this folder, recording the install in
   installed.json: from that moment the chip is a folder chip like
   any other, on the chat pill row and runnable from chat. Delete removes
