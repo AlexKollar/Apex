@@ -858,7 +858,7 @@ var speakPlaying = false;
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
 var BRIDGE_BUILD = "2026-11-09.87";
-var SHIPPED_BUILD_SEQ = 1;
+var SHIPPED_BUILD_SEQ = 2;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var bridgeRoot = "";   // live: the bridge's install tree, from /api/status (build .86, issue #79)
@@ -896,6 +896,14 @@ var docs = [];
 // mode no check runs at all (checks go through the live bridge),
 // and the view says so.
 var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", pollTimer: null };
+// Whether the channel on screen is the operator's own pick
+// (Build 2): the bridge stamps a panel choice as explicit and
+// reports both the effective channel and the stamp on
+// /api/status and every check. An Edge build sitting on Stable
+// WITHOUT the stamp is on its inherited default — which the
+// bridge resolves to Edge — never a mismatch; WITH the stamp it
+// is a real choice, and the panel says what that choice costs.
+var updaterChannelExplicit = false;
 // Chips screen: three tabs — Navi User Repo (NUR) (the GitHub navi-chips
 // catalog + installs, served live by the bridge), Chip Studio (the
 // code editor), and Workflows (chips chained output → input).
@@ -2770,7 +2778,7 @@ var DOC_PAGES = [
   "<p>Everything else — profiling your machine, the model download, what an update keeps, the startup choice — is the same on every family. On <b>Bazzite</b> the installer never layers packages onto the system with <span class='mono'>rpm-ostree</span> and never asks for a reboot: her window is built inside a Fedora <b>distrobox</b> when you have one, and when you don't, the window build is skipped — in plain words, during the install — and you get the complete core install: the bridge and the dashboard, which <span class='mono'>start.sh</span> opens in your browser. Create a Fedora distrobox later and re-run the installer to add the window. And if your distro isn't one the installer recognizes, it says so, guesses no package manager, installs everything it can user-space, and completes the core install just the same.</p>" +
   "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
   "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.6a → v0.1.7</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. That command carries your startup and voice choices as flags (<span class='mono'>--startup</span> / <span class='mono'>--voice</span>), so the installer never has to ask a question — which is the whole point in a shell with no terminal to answer one, like her own CLI shell: there, an installer that asks dies at the first question (issue #75, field-proven on a staged update), while the flagged command runs straight through. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
-  "<p><b>Two channels: Stable and Edge.</b> The Updater follows one release channel, chosen at the top of the Updater tab. <b>Stable</b> (the default) follows full releases only — cut from the project's main branch and tagged with the bare version number, like <b>v0.1.7</b>. <b>Edge</b> follows the newest release including pre-releases — test builds cut from the project's separate dev branch and tagged with an <span class='mono'>e</span>, like <b>v0.1.8e</b>. Edge is how you get a build before it is finished: newer, less settled. An Edge build of a version is the preview of that version, never an upgrade over its full release — when the full release of the same numbers lands, graduating to it is the update. Switching back to Stable never downgrades you; it simply waits for the next full release to pass what you run. The <b>About this release</b> dropdown at the bottom of the Updater tab carries the release page of the version you are running — its name, tag, whether it is a full release or an Edge pre-release, its published date, the link to GitHub, and its full patch notes — fetched with the same check, straight from the release page.</p>" +
+  "<p><b>Two channels: Stable and Edge.</b> The Updater follows one release channel, set by the <b>Release channel</b> card at the foot of the Updater tab. <b>Stable</b> follows full releases only — cut from the project's main branch and tagged with the bare version number, like <b>v0.1.7</b>. <b>Edge</b> follows the newest release including pre-releases — test builds cut from the project's separate dev branch and tagged with an <span class='mono'>e</span>, like <b>v0.1.8e</b>. Edge is how you get a build before it is finished: newer, less settled. <b>Until you choose a channel yourself, the default follows the build you are running</b>: an Edge build defaults to the Edge channel, a full release to Stable — a preview is never silently stranded on a channel that does not carry it. A channel you pick in the panel is yours and it stays. And if you are running an Edge build and set the channel to Stable yourself, the Updater says so plainly, in a notice in the panel: Edge builds and refreshes of your preview are published only on Edge, so none will be offered while the channel stands. An Edge build of a version is the preview of that version, never an upgrade over its full release — when the full release of the same numbers lands, graduating to it is the update. Switching back to Stable never downgrades you; it simply waits for the next full release to pass what you run. The <b>About this release</b> dropdown in the Updater tab carries the release page of the version you are running — its name, tag, whether it is a full release or an Edge pre-release, its published date, the link to GitHub, and its full patch notes — fetched with the same check, straight from the release page.</p>" +
   "<p><b>Checks also happen in the background.</b> While the bridge runs, it re-checks your channel on its own every three hours, the first run shortly after startup, and the dashboard folds the verdict in quietly: an available update shows as <b>Update available</b> without you pressing anything, and a stale one clears. It never interrupts an install already under way. <b>Edge publications of one version are numbered</b> — Build 1, Build 2, and so on: the Updater's Current line shows the build you are running, and when the same Edge version is republished with fixes, the offer is a <b>refresh</b> of the preview you already run (Build 2 replaces Build 1), labeled with its build — not a new version. When the offered update is an Edge pre-release, an amber notice in the Updater says so plainly: preview contents can change between builds, your Soul, Memory, chips and packs carry over as always, and the next full release supersedes the preview automatically; graduating to that full release gets a green notice instead, because updating leaves the preview line.</p>" +
   "<p><b>Turn Sudo Mode on before you update.</b> The installer's system step needs root, and without it an update can stall or finish without its system packages — field-proven the hard way. So when an update is available and Sudo Mode is off, the Updater shows a red warning directly above the <b>Download &amp; install</b> button: <i>Enable Sudo Mode before updating.</i> Turn Sudo Mode on (in the status column) and the warning is replaced by a quiet green <i>Sudo Mode is on — ready to update.</i> It is a warning, not a lock — the button still works, because you may know your machine needs nothing new.</p>" +
   "<p><b>Once you opt in, the install chain moves.</b> The moment you press Download &amp; install, the step chain — downloading, verifying, staging, installing, DHD prerequisites, restarting — appears directly above the release notes, with a slim progress bar across the top of its card: the bar for the glance, the chain for the receipts. And if the Installing step runs long, the chain says why, in place: <i>Taking a while? This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster.</i> No countdown and no ETA — on a modest machine an honest note beats a lying estimate.</p>" +
@@ -4612,6 +4620,7 @@ function checkForUpdates() {
       updater.notes = j.notes || "";
       updater.notesSource = j.notesSource || "";
       if (j.channel) updater.channel = j.channel;
+      if (typeof j.channelExplicit === "boolean") updaterChannelExplicit = j.channelExplicit;
       updater.prerelease = !!j.prerelease;
       // Edge build sequence (build .86): the candidate's Build
       // number and this build's own, from the check payload.
@@ -4749,7 +4758,14 @@ function updaterStatusHtml() {
   if (updater.state === "failed") return "<span style='color:#f5b544'>The last check didn't complete: " + esc(updater.error) + "</span><br><span style='color:var(--dim)'>That is all the check can honestly say — it never guesses that you are up to date.</span>";
   if (updater.state === "applyfailed") return "<span style='color:#f5b544'>The update didn't finish: " + esc(updater.applyError) + "</span>" + (updater.stagedDir ? "<br><span style='color:var(--dim)'>The staged package is still in place — the manual fallback is below.</span>" : "");
   if (updater.state === "updated") return "<span style='color:#34d399'>Updated <b class='mono'>" + esc(updater.fromLabel) + "</b> → <b class='mono'>" + esc(updater.toLabel) + "</b></span><br><span style='color:var(--dim)'>Confirmed from the VERSION file after the restart — the version above is the one now running.</span>";
-  if (updater.state === "uptodate") return "<span style='color:var(--dim)'>You're on the latest release" + (updater.latest ? " — GitHub's newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>, the same as yours" : "") + ".</span>";
+  if (updater.state === "uptodate") {
+    // Build 2: an Edge build checked on the Stable channel must
+    // not be told Stable's newest is "the same as yours" — the
+    // running preview is not on that channel at all. The line
+    // names the channel the check followed instead.
+    if (CONFIG.versionStatus === "edge" && updater.channel === "stable" && updater.latest) return "<span style='color:var(--dim)'>That check followed the <b>Stable</b> channel — its newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>. You're running an Edge build (v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "), which the Stable channel doesn't carry — there is nothing on this channel to offer you.</span>";
+    return "<span style='color:var(--dim)'>You're on the latest release" + (updater.latest ? " — GitHub's newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>, the same as yours" : "") + ".</span>";
+  }
   if (updater.state === "available") {
     var buildTxt = (updater.buildSeq && updaterSameNumbers()) ? " · Build " + updater.buildSeq + " — a refresh of the preview you are running" : "";
     var when = updater.publishedAt ? new Date(updater.publishedAt) : null;
@@ -4771,13 +4787,19 @@ function setUpdaterChannel(chan) {
   if (updater.channel === chan && updater.state !== "idle") return;
   updater.channel = chan;
   CONFIG.updaterChannel = chan;
+  updaterChannelExplicit = true;
   updater.state = "idle";
   updater.latest = "";
   updater.notes = "";
   render();
   if (CONFIG.backend === "live") {
-    fetch("/api/settings/updater-channel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: chan }) }).catch(function () {});
-    checkForUpdates();
+    // The fresh check runs once the choice is persisted (Build
+    // 2): the bridge treats a stamped choice as authoritative
+    // when it resolves the check's channel, so the save landing
+    // first is what makes the verdict belong to the new channel.
+    fetch("/api/settings/updater-channel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: chan }) })
+      .then(function () { checkForUpdates(); })
+      .catch(function () { checkForUpdates(); });
   }
 }
 function updaterSameNumbers() {
@@ -4804,6 +4826,22 @@ function updaterEdgeNoticeHtml() {
     return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>A refreshed build of v" + esc(String(updater.latest || "").replace(/^v/i, "")) + ".</b><br><span style='color:var(--dim)'>Build " + updater.buildSeq + " replaces Build " + updater.currentBuildSeq + " — the same preview version, rebuilt; not a new version. Preview contents can change between builds. " + carry + " And the next full release supersedes the preview automatically.</span></div>";
   }
   return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>A newer preview from the Edge line.</b><br><span style='color:var(--dim)'>This machine is on the preview line: Edge builds arrive before they are finished, and preview contents can change between builds. " + carry + " And the next full release supersedes the preview automatically.</span></div>";
+}
+function updaterChannelNoticeHtml() {
+  // The channel-mismatch notice (Build 2): this build is an Edge
+  // preview and the operator has EXPLICITLY set the Updater to
+  // the Stable channel — a real choice with a real cost, stated
+  // plainly in the warnings seat: Edge builds are never published
+  // to Stable, so no Edge update or refresh of this preview will
+  // ever be offered while the channel stands. Calm amber, the
+  // Edge preview notice's family — a heads-up, not an alarm. An
+  // Edge build with no explicit choice never lands here (its
+  // effective channel IS Edge), and neither does a Stable build.
+  // The status column's single "Up to date" / "Update available"
+  // voice is not touched.
+  if (CONFIG.backend !== "live") return "";
+  if (CONFIG.versionStatus !== "edge" || updater.channel !== "stable" || !updaterChannelExplicit) return "";
+  return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>An Edge preview on the Stable channel.</b><br><span style='color:var(--dim)'>You're running an Edge build (v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "), and the Release channel below is set to Stable by your choice. Edge builds and refreshes of this preview are published only on the Edge channel, so none will be offered here. Switch the channel to Edge (pre-release) to keep following the preview line — the next full release supersedes the preview on either channel.</span></div>";
 }
 function updaterChannelHtml() {
   if (CONFIG.backend !== "live") return "";
@@ -5523,7 +5561,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.root) bridgeRoot = j.root; if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Updater") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -5923,6 +5961,7 @@ function render() {
         ? "<p style='color:#34d399;font-size:13px;margin:8px 0 0'>Sudo Mode is on — ready to update.</p>"
         : "<p style='color:#f87171;font-size:13px;margin:8px 0 0'>⚠ <b>Enable Sudo Mode before updating.</b> The installer's system step needs root. Without it, an update can stall or finish without its system packages.</p>";
     }
+    h += updaterChannelNoticeHtml();
     h += updaterEdgeNoticeHtml();
     h += updaterNotesHtml();
     if (CONFIG.backend === "live") h += updaterCurrentHtml();

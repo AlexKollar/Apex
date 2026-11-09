@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 1
+SHIPPED_BUILD_SEQ = 2
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4337,15 +4337,36 @@ def _update_error_text(e):
             + ") — this machine may be offline.")
 
 
-def updater_channel(cfg=None):
-    # The release channel this install follows (build .83): the
-    # config's updater block, written by the package and switched
-    # from the Updater view. Anything unrecognized reads "stable"
-    # — the safe channel is the default, never the other way.
+def updater_channel_explicit(cfg=None):
+    # True only when the OPERATOR picked a channel in the Updater
+    # panel — the /api/settings/updater-channel save stamps
+    # channelExplicit beside the choice (Build 2). A channel value
+    # that arrived baked into the config by the package, or was
+    # written by a build from before channels were a choice, is a
+    # starting shape, not a choice, and never counts as one.
     if isinstance(cfg, dict):
         block = cfg.get("updater")
-        if isinstance(block, dict) and block.get("channel") == "edge":
-            return "edge"
+        if isinstance(block, dict):
+            return block.get("channelExplicit") is True and block.get("channel") in ("stable", "edge")
+    return False
+
+
+def updater_channel(cfg=None):
+    # The EFFECTIVE release channel this install follows (build
+    # .83; the default rule repaired in Build 2). An explicit
+    # operator choice wins, exactly as saved. With no explicit
+    # choice, the running build's own line is the default: an
+    # Edge build follows Edge — a config that predates channels
+    # carries a baked "stable" it never chose, and honoring it
+    # stranded Edge installs on a channel that never publishes
+    # their builds (the Build 2 field report: an Edge install
+    # told it was up to date against Stable's v0.1.7). A Stable
+    # build's default stays "stable" — the safe channel is the
+    # default for the line that has one, never silently Edge.
+    if updater_channel_explicit(cfg):
+        return cfg["updater"]["channel"]
+    if app_version_status(cfg) == "edge":
+        return "edge"
     return "stable"
 
 
@@ -4502,12 +4523,26 @@ def _update_bg_loop():
 def update_check_payload(cfg=None, channel=None):
     current = app_version(cfg)
     current_status = app_version_status(cfg)
-    if channel not in ("stable", "edge"):
+    # Channel resolution (Build 2): a persisted explicit choice is
+    # authoritative — the check follows the channel the operator
+    # picked, and the payload says so (channelExplicit). With no
+    # explicit choice, an Edge build checks Edge even when the
+    # caller asks for "stable": the only caller that asks is a
+    # dashboard whose baked starting channel predates the choice,
+    # and that inherited word is not a choice (see
+    # updater_channel). On a Stable build with no explicit choice,
+    # the caller's channel is honored, else the effective default.
+    if updater_channel_explicit(cfg):
+        channel = updater_channel(cfg)
+    elif current_status == "edge":
+        channel = "edge"
+    elif channel not in ("stable", "edge"):
         channel = updater_channel(cfg)
     base = {
         "current": current,
         "currentStatus": current_status,
         "channel": channel,
+        "channelExplicit": updater_channel_explicit(cfg),
         "checkedAt": _now_iso(),
     }
     try:
@@ -9473,6 +9508,8 @@ class Handler(BaseHTTPRequestHandler):
                 "dir": ROOT,
                 "root": ROOT,
                 "update": update_bg_payload(),
+                "updaterChannel": updater_channel(cfg),
+                "updaterChannelExplicit": updater_channel_explicit(cfg),
                 "model": "navi",
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
@@ -9822,8 +9859,22 @@ class Handler(BaseHTTPRequestHandler):
                 if not _ok:
                     self._send(200, {"ok": False, "error": _err})
                     return
-                cfg = load_config()
-                block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else block
+                # Pick up the nodeId identity setup recorded — but
+                # identity saves the config only when it writes a
+                # NEW nodeId, so on a re-enable (identity already on
+                # disk) the file still holds the pre-save block, and
+                # reloading it wholesale would resurrect that block
+                # and silently drop this save's change while still
+                # answering ok: the master switch stayed off under
+                # a "Saved." (field report, 0.1.8e Build 2 — the
+                # first enable worked precisely because identity's
+                # first write carried the change with it). The
+                # operator's block is the change being saved; the
+                # saved config contributes only the nodeId it holds.
+                _saved = load_config().get("mesh")
+                if isinstance(_saved, dict) and _saved.get("nodeId"):
+                    block["nodeId"] = _saved["nodeId"]
+                cfg["mesh"] = block
             save_config(cfg)
             if block.get("enabled") is True:
                 mesh_start_listener()
@@ -9905,9 +9956,14 @@ class Handler(BaseHTTPRequestHandler):
             block = cfg.get("updater") if isinstance(cfg.get("updater"), dict) else {}
             block = dict(block)
             block["channel"] = chan
+            # Build 2: this save is the operator's own act, so it
+            # stamps the choice as explicit — the stamp is what
+            # separates a chosen channel from one the config
+            # merely inherited (see updater_channel_explicit).
+            block["channelExplicit"] = True
             cfg["updater"] = block
             save_config(cfg)
-            self._send(200, {"ok": True, "channel": chan})
+            self._send(200, {"ok": True, "channel": chan, "channelExplicit": True})
             return
         if self.path == "/api/settings/public":
             # The Local server toggle itself (build .61 — one
