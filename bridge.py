@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 2
+SHIPPED_BUILD_SEQ = 3
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4886,7 +4886,11 @@ def main():
             "state": "done", "step": "done",
             "afterVersion": after_number,
             "afterStatus": after_status,
-            "afterLabel": after_label,
+            # The worker's composed to-side label when it sent
+            # one (Build 3: a refresh's "Build <n>"); the label
+            # read from the VERSION file otherwise — identical
+            # for graduations and new versions.
+            "afterLabel": job.get("afterLabel") or after_label,
             "updatedAt": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
@@ -4959,6 +4963,26 @@ def _run_update_apply(cfg):
         record["tag"] = tag
         record["targetLabel"] = (
             _version_label(t_num, t_status) if t_num else tag)
+        # Build 3: a same-version refresh — same numbers, same
+        # status, a higher Build number — names the builds in its
+        # labels, because the plain version labels read as no
+        # change at all ("Updated v0.1.8e → v0.1.8e"). The pair
+        # reads "v0.1.8e Build 2 → Build 3": the from-side keeps
+        # its version (it says what was running), the to-side is
+        # just the build it lands on. Graduation and new-version
+        # updates keep the plain version labels, untouched.
+        _tgt_seq = rel.get("buildSeq")
+        if t_num and current_status == "edge" and _tgt_seq is not None                 and _tgt_seq > SHIPPED_BUILD_SEQ:
+            _a, _b = _version_tuple(t_num), _version_tuple(current)
+            _w = max(len(_a), len(_b))
+            _same_numbers = (_a + (0,) * (_w - len(_a))) == (
+                _b + (0,) * (_w - len(_b)))
+            if _same_numbers and _status_rank(t_status) == _status_rank(
+                    current_status):
+                record["beforeLabel"] = (
+                    record["beforeLabel"] + " Build "
+                    + str(SHIPPED_BUILD_SEQ))
+                record["targetLabel"] = "Build " + str(_tgt_seq)
         if not tag or not _release_is_newer(tag, current, current_status, rel.get("buildSeq")):
             fail("downloading",
                  "The latest release (" + (tag or "none") + ") is not "
@@ -5102,6 +5126,13 @@ def _run_update_apply(cfg):
                 "voice": fb_voice,
                 "targetTuple": list(_version_tuple(tag)),
                 "targetLabel": record["targetLabel"],
+                # Build 3: the label the finished record carries
+                # for the to-side — composed here, where the
+                # target's Build number is known (for a refresh
+                # it is "Build <n>", which the helper cannot
+                # derive from the VERSION file it confirms
+                # against; the plain version label otherwise).
+                "afterLabel": record["targetLabel"],
             }
             job_path = os.path.join(stage_root, "apply-job.json")
             helper_path = os.path.join(stage_root, "apply-helper.py")

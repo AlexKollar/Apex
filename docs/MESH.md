@@ -17,7 +17,7 @@ Pairing is the consent act: a paired machine is a trusted machine. Either side c
 
 ## Borrowing — automatic, with off switches
 
-Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with a line under it — **Answered by <machine name>**.
+Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with a small pill under it — the Hexlink glyph and **via <machine name>** in Mesh cyan.
 
 Three off switches, from widest to narrowest:
 
