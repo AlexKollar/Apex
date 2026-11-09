@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 4
+SHIPPED_BUILD_SEQ = 5
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4226,6 +4226,61 @@ def github_text(url, accept):
 # manual fallback — the staged folder and the one install
 # command — labeled as the fallback it is.
 #
+# Build 5 — the helper can no longer die traceless. The Build 4
+# round-trip gate ran a genuine Build 3 install applying a
+# package through its own Updater: the staged installer ran
+# through to "Done.", and then the detached helper died without
+# a trace — apply.log 0 bytes, no apply-relaunch.log ever
+# created, the record frozen at working/installing, no bridge
+# relaunched. Diagnosis from the helper's source: its step
+# sequence after the installer exits is read the install log
+# back -> record the DHD-prerequisites step -> record
+# "restarting" -> spawn start.sh -> poll /api/status for up to
+# five minutes -> verify (Build 4's lock: the answering bridge
+# reports the target build AND bridge.py on disk carries it)
+# -> finish the record. Every death in that window was
+# invisible by construction: the helper printed nothing (so
+# apply.log is empty BY DESIGN on any run that does not crash
+# Python itself), it had no top-level guard and no signal
+# handlers, write_result merged into the record with no
+# freshness stamp, and the failure-path ordering called fail()
+# BEFORE relaunch() — an exception inside the failure write
+# itself skipped the relaunch entirely. Ranked mechanisms for
+# the gate's evidence: (1) an external signal kill at the
+# installer's end — the only mechanism consistent with all
+# three facts at once (a Python exception would have left a
+# traceback in apply.log; the log was empty; a mere hang would
+# have left a live process). The helper runs in its own
+# session but in the same process tree and user-service world
+# as everything the installer stops and restarts at exactly
+# that moment — pattern kills, the pid-file kill, the shell
+# stop, service manipulation — and SIGTERM/SIGKILL leave no
+# trace in the victim. (2) An uncaught exception in the
+# unguarded post-installer segment (record writes against a
+# config tree the installer had just replaced/re-owned) —
+# real, and closed by the guard, but it predicts a traceback
+# the gate did not see, so it ranks second for THIS incident.
+# (3) A block inside subprocess.run past the installer's
+# "Done." — indistinguishable from death in the old design,
+# which is itself the indictment. The repair defends against
+# all three and makes the next incident self-convicting: the
+# helper keeps a step log (updates/<tag>/apply-trace.log) from
+# its first instruction — step boundaries, the installer's
+# exit, the relaunch spawn, the confirmation's found-vs-
+# expected values, a 30-second heartbeat (a log still beating
+# at one step is a block; a log whose beats stop is a kill) —
+# a top-level guard records any exception into the record
+# (failed + step + reason) and mirrors the traceback to
+# apply.log, signal handlers record SIGTERM/SIGINT/SIGHUP the
+# same way before exiting, a relaunch that cannot even spawn
+# fails loudly at "restart" with found-vs-expected detail, and
+# the no-answer failure names what was expected and what was
+# found. For the death no in-process guard survives (SIGKILL,
+# OOM, power), the bridge's apply watchdog closes a record
+# whose helper pid is dead and whose last write is stale as
+# failed at its last step, quoting the step log's final line —
+# the record can never again freeze at working/installing.
+#
 # Gzip tolerance (build .56): a package asset can arrive
 # gzip-wrapped (its first bytes are the gzip signature, 1f 8b,
 # instead of a zip's PK) when whatever staged the release asset
@@ -4625,6 +4680,11 @@ def _tag_parts(tag):
 
 def _write_update_result(rec):
     try:
+        # Build 5: every write carries a freshness stamp, so a
+        # reader can always tell a live apply from an orphaned
+        # one (see the apply watchdog below).
+        rec["updatedAt"] = _now_iso()
+        rec["updatedEpoch"] = time.time()
         os.makedirs(os.path.dirname(UPDATE_RESULT_PATH), exist_ok=True)
         tmp = UPDATE_RESULT_PATH + ".tmp"
         with open(tmp, "w") as f:
@@ -4634,16 +4694,86 @@ def _write_update_result(rec):
         pass
 
 
+def _apply_watchdog(rec):
+    # The apply watchdog (Build 5): the backstop for the one
+    # death the detached helper cannot record itself — killed
+    # outright (SIGKILL, the kernel OOM killer, power loss)
+    # before it could write again, like the silent death the
+    # Build 4 round-trip gate found, where the record froze at
+    # working/installing for a quarter of an hour and nothing
+    # ever closed it. When a record still claims "working" but
+    # its helper process is gone and its last write is stale,
+    # the record is closed HERE, by whichever bridge serves it
+    # next: state failed, the step it died on kept, and the
+    # error quoting the helper step log's last line (the last
+    # step the helper provably completed). A helper that is
+    # still alive is never touched: the install step can
+    # legitimately run silent for many minutes while the
+    # installer rebuilds, and only a dead pid plus a stale
+    # record convicts. Records with no helper pid (written
+    # before pids were recorded) are judged on staleness alone,
+    # against a threshold longer than any silent step.
+    try:
+        if rec.get("state") != "working":
+            return rec
+        try:
+            stale = time.time() - os.path.getmtime(UPDATE_RESULT_PATH)
+        except Exception:
+            return rec
+        pid = rec.get("helperPid")
+        alive = None
+        if pid:
+            try:
+                alive = pid_alive(int(pid))
+            except Exception:
+                alive = None
+        if alive:
+            return rec
+        if alive is False and stale <= 30:
+            return rec
+        if alive is None and stale <= 360:
+            return rec
+        step = rec.get("step") or "installing"
+        last = ""
+        trace_path = rec.get("traceLog") or ""
+        if trace_path:
+            try:
+                with open(trace_path, "rb") as f:
+                    lines = f.read().decode(
+                        "utf-8", "replace").strip().splitlines()
+                if lines:
+                    last = lines[-1].strip()
+            except Exception:
+                last = ""
+        rec["state"] = "failed"
+        rec["failedAt"] = _now_iso()
+        rec["watchdog"] = True
+        rec["error"] = (
+            "The apply helper stopped at the " + step + " step "
+            "and never finished this record — the apply watchdog "
+            "closed it, because the helper process is gone and "
+            "the record went stale. Nothing is confirmed updated."
+            + (" Its step log ends with: " + last if last else "")
+            + " The staged package is still in place — the "
+            "manual fallback below finishes the job by hand.")
+        _write_update_result(rec)
+        return rec
+    except Exception:
+        return rec
+
+
 def update_result_payload():
     # The apply's live record (config/update-result.json): the
     # step it is on while it runs, and afterwards either the
     # confirmed outcome or the failure + fallback. No record yet
-    # reads as state "none".
+    # reads as state "none". A record orphaned by a helper that
+    # died outright is closed by the apply watchdog on its way
+    # out (Build 5) — never left claiming "working" forever.
     try:
         with open(UPDATE_RESULT_PATH) as f:
             rec = json.load(f)
         if isinstance(rec, dict):
-            return dict(rec, ok=True)
+            return dict(_apply_watchdog(rec), ok=True)
     except Exception:
         pass
     return {"ok": True, "state": "none"}
@@ -4677,7 +4807,15 @@ def _unwrap_package(data):
 # stash-and-restore), relaunches the app through start.sh, and
 # finishes the update-result record the panel reads. It is a
 # standalone stdlib script: everything it needs arrives in the
-# job file beside it.
+# job file beside it. Since Build 5 it also keeps the step log
+# (apply-trace.log) described in its own header: the Build 4
+# round-trip gate caught the old helper dying traceless
+# between the installer's "Done." and the relaunch — no log,
+# no record update, no relaunch — and the repair is structural
+# (trace from the first instruction, a top-level guard, signal
+# handlers, a heartbeat, and the bridge-side apply watchdog in
+# update_result_payload above), not a patch on one suspect
+# line.
 APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # Apex updater apply helper — written by bridge.py into
 # updates/<tag>/ and run detached (its own session), so it
@@ -4686,13 +4824,175 @@ APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # records the outcome in config/update-result.json — the record
 # the Updater panel reads its confirmation (or its failure and
 # fallback) from. Stdlib only, like the bridge.
+#
+# Build 5 — the helper can no longer die traceless. The Build 4
+# round-trip gate caught it dying silently: the installer ran
+# through to "Done.", then nothing — apply.log 0 bytes, no
+# relaunch log, the record frozen at working/installing, no
+# bridge relaunched. The old helper's only diary was the record
+# itself, it wrote the record only at step boundaries, it had
+# no top-level guard, no signal handlers, and it printed
+# nothing — so any death between two writes (a signal above
+# all: an uncaught Python exception would at least have left a
+# traceback in apply.log, and apply.log was empty) left no
+# evidence at all. Now, from its first instruction, the helper
+# keeps a step log — apply-trace.log beside the job file, its
+# path carried on the apply record — and writes every step
+# boundary, a 30-second heartbeat while it works, every signal
+# it is handed, and every exception into that log and onto the
+# record (state/step/updatedAt) as it happens. A top-level
+# guard turns any Python-level failure into a failed record
+# naming the step and the reason before exiting, and mirrors
+# the traceback to stderr so apply.log is never 0 bytes on a
+# death words could have described. Signal handlers do the
+# same for SIGTERM, SIGINT and SIGHUP. The one death no
+# in-process guard can survive — SIGKILL, the kernel OOM
+# killer, power loss — still leaves the step log ending at the
+# last completed step, and the bridge's apply watchdog closes
+# a record whose helper is gone as failed at that step,
+# quoting the log's last line, instead of leaving it frozen
+# at working/installing forever.
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
+import traceback
 import urllib.request
+
+STATE = {"step": "starting", "job": None, "env": None,
+         "trace_path": None, "result_path": None,
+         "stop_beat": False}
+
+
+def _stamp():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def trace(event, detail=""):
+    # The step log: append-only, flushed and fsync'd per line,
+    # and never allowed to raise — a helper that dies because
+    # its own diary failed would be the old bug in a new coat.
+    path = STATE.get("trace_path")
+    if not path:
+        return
+    try:
+        line = _stamp() + " [" + str(STATE.get("step")) + "] " + event
+        if detail:
+            line += " — " + str(detail)
+        with open(path, "a") as f:
+            f.write(line + "\\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        pass
+
+
+def write_result(patch):
+    # The apply record: read-modify-write like always, now
+    # stamped with the current step and a freshness time on
+    # EVERY write, so the panel — and the bridge's apply
+    # watchdog — can always tell a live helper from a dead
+    # one. Never raises: a failed record write is traced and
+    # retried once, and the step log still carries what the
+    # record could not.
+    job = STATE.get("job") or {}
+    result_path = STATE.get("result_path") or job.get("resultPath")
+    if not result_path:
+        return
+    patch = dict(patch)
+    if "step" in patch:
+        STATE["step"] = patch["step"]
+    patch.setdefault("step", STATE.get("step"))
+    patch["updatedAt"] = _stamp()
+    patch["updatedEpoch"] = time.time()
+    patch["helperStep"] = STATE.get("step")
+    if job.get("traceLog"):
+        patch["traceLog"] = job["traceLog"]
+    for attempt in (1, 2):
+        try:
+            rec = {}
+            try:
+                with open(result_path) as f:
+                    rec = json.load(f)
+                if not isinstance(rec, dict):
+                    rec = {}
+            except Exception:
+                rec = {}
+            rec.update(patch)
+            tmp = result_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(rec, f)
+            os.replace(tmp, result_path)
+            trace("record",
+                  "state=" + str(rec.get("state"))
+                  + " step=" + str(rec.get("step")))
+            return
+        except Exception as e:
+            trace("record-write-failed",
+                  "attempt " + str(attempt) + ": " + str(e))
+
+
+def fail(step, error):
+    STATE["step"] = step
+    job = STATE.get("job") or {}
+    write_result({
+        "state": "failed", "step": step, "error": error,
+        "stagedDir": job.get("pkgDir", ""),
+        "command": job.get("command", ""),
+        "failedAt": _stamp(),
+    })
+
+
+def _heartbeat():
+    # While the helper lives it beats every 30 seconds into the
+    # step log, naming the step it is on. A log whose beats stop
+    # mid-step is a killed helper; a log still beating at one
+    # step is a blocked one — the field can finally tell those
+    # two deaths apart, which the frozen Build 4 record could
+    # not.
+    while not STATE.get("stop_beat"):
+        time.sleep(30)
+        if STATE.get("stop_beat"):
+            break
+        trace("heartbeat", "still working")
+
+
+def _on_signal(signum, frame):
+    # SIGTERM / SIGINT / SIGHUP get words before the exit: the
+    # step log and the record both name the signal and the step
+    # it interrupted, so a helper stopped from outside is a
+    # recorded failure, never a silent freeze. (SIGKILL cannot
+    # be handled by any process — the step log's last line and
+    # the bridge's apply watchdog cover that death.)
+    name = "signal " + str(signum)
+    try:
+        name = signal.Signals(signum).name
+    except Exception:
+        pass
+    trace("signal", name + " received — recording the failure and exiting")
+    job = STATE.get("job") or {}
+    try:
+        write_result({
+            "state": "failed", "step": STATE.get("step"),
+            "error": (
+                "The apply helper was stopped by " + name
+                + " at the " + str(STATE.get("step")) + " step, "
+                "so the update is not confirmed. Its step log "
+                "(apply-trace.log, beside the staged package) "
+                "shows the last step it completed. The staged "
+                "package is still in place — the manual fallback "
+                "below finishes the job by hand."),
+            "stagedDir": job.get("pkgDir", ""),
+            "command": job.get("command", ""),
+            "failedAt": _stamp(),
+        })
+    except Exception:
+        pass
+    os._exit(128 + signum)
 
 
 def version_tuple(raw):
@@ -4769,40 +5069,55 @@ def version_label(number, status):
 
 
 def main():
-    job_path = sys.argv[1]
+    job_path = sys.argv[1] if len(sys.argv) > 1 else ""
+    if job_path:
+        STATE["trace_path"] = os.path.join(
+            os.path.dirname(os.path.abspath(job_path)),
+            "apply-trace.log")
+    trace("helper-start",
+          "pid " + str(os.getpid()) + ", job " + (job_path or "(none)"))
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _on_signal)
+        except Exception as e:
+            trace("signal-handler-skipped", str(e))
+    beat = threading.Thread(target=_heartbeat, daemon=True)
+    beat.start()
     with open(job_path) as f:
         job = json.load(f)
+    STATE["job"] = job
+    if job.get("traceLog"):
+        STATE["trace_path"] = job["traceLog"]
     root = job["root"]
-    result_path = job["resultPath"]
+    STATE["result_path"] = job["resultPath"]
     pkg_dir = job["pkgDir"]
+    trace("job-loaded",
+          "target " + str(job.get("targetLabel"))
+          + ", target build " + str(job.get("targetBuildSeq")))
 
-    def write_result(patch):
-        rec = {}
+    env = dict(os.environ)
+    env["NAVI_HOME"] = root
+    STATE["env"] = env
+
+    def relaunch():
         try:
-            with open(result_path) as f:
-                rec = json.load(f)
-            if not isinstance(rec, dict):
-                rec = {}
-        except Exception:
-            rec = {}
-        rec.update(patch)
-        tmp = result_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(rec, f)
-        os.replace(tmp, result_path)
-
-    def fail(step, error):
-        write_result({
-            "state": "failed", "step": step, "error": error,
-            "stagedDir": pkg_dir, "command": job["command"],
-            "failedAt": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
+            log = open(job["relaunchLog"], "ab")
+            subprocess.Popen(
+                ["bash", os.path.join(root, "start.sh")],
+                cwd=root, env=env, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True)
+            trace("relaunch", "start.sh spawned")
+            return ""
+        except Exception as e:
+            trace("relaunch-failed", str(e))
+            return str(e)
 
     # Give the bridge a moment to answer the apply request and
     # the panel a moment to paint the installing step before the
     # installer stops the bridge.
     time.sleep(2)
+    STATE["step"] = "installing"
     write_result({"state": "working", "step": "installing"})
     startup = "boot" if job.get("startup") == "on-boot" else "launch"
     # The install's known answers ride as flags (build .84, issue
@@ -4812,10 +5127,10 @@ def main():
     # her venv is on disk, both recorded on the job by the bridge
     # when it staged the update.
     voice = "yes" if job.get("voice") == "yes" else "no"
-    env = dict(os.environ)
-    env["NAVI_HOME"] = root
     code = None
     why = ""
+    trace("installer-start",
+          "bash install.sh --startup " + startup + " --voice " + voice)
     try:
         with open(job["installLog"], "wb") as log:
             proc = subprocess.run(
@@ -4829,18 +5144,8 @@ def main():
         why = "the installer did not finish within 50 minutes"
     except Exception as e:
         why = str(e)
-
-    def relaunch():
-        try:
-            log = open(job["relaunchLog"], "ab")
-            subprocess.Popen(
-                ["bash", os.path.join(root, "start.sh")],
-                cwd=root, env=env, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT,
-                start_new_session=True, close_fds=True)
-            return True
-        except Exception:
-            return False
+    trace("installer-exit",
+          "code " + str(code) + ((", " + why) if why else ""))
 
     if code != 0:
         reason = why or ("it exited with code " + str(code))
@@ -4852,6 +5157,7 @@ def main():
              "staged package is still in place — the manual "
              "fallback below finishes the job by hand.")
         relaunch()
+        STATE["stop_beat"] = True
         return
 
     # The installer's DHD prerequisite step is a named ladder
@@ -4869,13 +5175,32 @@ def main():
                 break
     except Exception:
         dhd_prereq_detail = ""
+    trace("dhd-prereqs",
+          dhd_prereq_detail or "no DHD-PREREQS line in the install log")
+    STATE["step"] = "dhd-prereqs"
     write_result({
         "state": "working", "step": "dhd-prereqs",
         "dhdPrereqs": dhd_prereq_detail or "This installer did not report a DHD prerequisite step.",
     })
     time.sleep(1)
+    STATE["step"] = "restarting"
     write_result({"state": "working", "step": "restarting"})
-    relaunch()
+    relaunch_err = relaunch()
+    if relaunch_err:
+        fail("restart",
+             "The update installed, but relaunching Apex through "
+             "start.sh could not even be started (" + relaunch_err
+             + "), so the update is not confirmed. Expected "
+             + job["targetLabel"]
+             + (" Build " + str(job["targetBuildSeq"])
+                if job.get("targetBuildSeq") is not None else "")
+             + " answering on http://localhost:" + str(job["port"])
+             + "; found: no relaunch was started. The staged "
+             "package is still in place — the manual fallback "
+             "below finishes the job by hand, or launch the app "
+             "again from its menu entry.")
+        STATE["stop_beat"] = True
+        return
     target = tuple(job["targetTuple"])
     # Build 4: when the job names a target Build number, the
     # confirmation must observe that build answering — the
@@ -4884,6 +5209,7 @@ def main():
     # build's reinstall as the new build's arrival.
     tgt_seq = job.get("targetBuildSeq")
     answered = None
+    last_seen = ""
     deadline = time.time() + 300
     while time.time() < deadline:
         seen = None
@@ -4895,7 +5221,14 @@ def main():
                 seen = json.loads(resp.read().decode("utf-8", "replace"))
         except Exception:
             seen = None
+        if seen:
+            last_seen = (
+                "app=" + str(seen.get("app"))
+                + " version=" + str(seen.get("version"))
+                + " buildSeq=" + str(seen.get("buildSeq")))
         if seen and seen.get("app") == "Navi: Apex":
+            if answered is None:
+                trace("bridge-answered", last_seen)
             answered = seen
             if (seen.get("version")
                     and tuples_equal(
@@ -4908,6 +5241,12 @@ def main():
     after_label = (
         version_label(after_number, after_status) if after_number else "")
     disk_seq = read_installed_build_seq(root)
+    trace("confirm",
+          "live: " + (last_seen or "no answer")
+          + "; on disk: version=" + (after_number or "(unreadable)")
+          + " buildSeq=" + str(disk_seq)
+          + "; expected: " + job["targetLabel"]
+          + " buildSeq=" + str(tgt_seq))
     live_ok = bool(
         answered and answered.get("version")
         and tuples_equal(version_tuple(answered["version"]), target)
@@ -4918,6 +5257,7 @@ def main():
         and (tgt_seq is None or disk_seq is None
              or disk_seq == tgt_seq))
     if live_ok and file_ok:
+        STATE["step"] = "done"
         write_result({
             "state": "done", "step": "done",
             "afterVersion": after_number,
@@ -4930,16 +5270,26 @@ def main():
             "updatedAt": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
+        trace("done",
+              "confirmed " + str(job.get("afterLabel") or after_label))
     elif answered is None:
         fail("restart",
              "The update installed, but Apex did not answer on "
              "http://localhost:" + str(job["port"]) + " after "
-             "restarting, so the update is not confirmed. The "
+             "restarting, so the update is not confirmed. Expected "
+             + job["targetLabel"]
+             + (" Build " + str(tgt_seq) if tgt_seq is not None else "")
+             + " answering there; found: "
+             + (("an answer that was not the expected bridge ("
+                 + last_seen + ")")
+                if last_seen else
+                "no answer at all in five minutes")
+             + ". The "
              "staged package is still in place — the manual "
              "fallback below re-runs its installer by hand, or "
              "launch the app again from its menu entry.")
-    elif tgt_seq is not None and disk_seq is not None \
-            and disk_seq != tgt_seq:
+    elif (tgt_seq is not None and disk_seq is not None
+            and disk_seq != tgt_seq):
         fail("restart",
              "Apex came back after the update, but the bridge "
              "installed on disk is Build " + str(disk_seq)
@@ -4947,9 +5297,9 @@ def main():
              + " — the update is not confirmed. The staged "
              "package is still in place — the manual fallback "
              "below finishes the job by hand.")
-    elif tgt_seq is not None and answered is not None \
-            and answered.get("buildSeq") is not None \
-            and answered.get("buildSeq") != tgt_seq:
+    elif (tgt_seq is not None and answered is not None
+            and answered.get("buildSeq") is not None
+            and answered.get("buildSeq") != tgt_seq):
         fail("restart",
              "Apex came back after the update, but the bridge "
              "answering reports Build "
@@ -4966,10 +5316,51 @@ def main():
              + " — the update is not confirmed. The staged "
              "package is still in place — the manual fallback "
              "below finishes the job by hand.")
+    STATE["stop_beat"] = True
+
+
+def _guarded_main():
+    # The top-level guard: any Python-level failure anywhere in
+    # the apply — the job load, a record write, the relaunch,
+    # the confirmation — lands in the step log with its
+    # traceback, in the record as a failed state naming the
+    # step it died on and the reason in words, and on stderr
+    # (which the bridge points at apply.log, so that file is
+    # never again 0 bytes on a death words could describe).
+    try:
+        main()
+    except BaseException as e:
+        tb = traceback.format_exc()
+        trace("fatal", tb.replace("\\n", " | ")[-1500:])
+        try:
+            print(tb, file=sys.stderr)
+            sys.stderr.flush()
+        except Exception:
+            pass
+        job = STATE.get("job") or {}
+        try:
+            write_result({
+                "state": "failed", "step": STATE.get("step"),
+                "error": (
+                    "The apply helper failed at the "
+                    + str(STATE.get("step")) + " step: "
+                    + type(e).__name__ + ": " + str(e)
+                    + " — the update is not confirmed. Its step "
+                    "log (apply-trace.log, beside the staged "
+                    "package) carries the full trace. The staged "
+                    "package is still in place — the manual "
+                    "fallback below finishes the job by hand."),
+                "stagedDir": job.get("pkgDir", ""),
+                "command": job.get("command", ""),
+                "failedAt": _stamp(),
+            })
+        except Exception:
+            pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    _guarded_main()
 '''
 
 
@@ -5258,6 +5649,13 @@ def _run_update_apply(cfg):
                     stage_root, "apply-install.log"),
                 "relaunchLog": os.path.join(
                     stage_root, "apply-relaunch.log"),
+                # Build 5: the helper's step log — written from
+                # its first instruction, beside the job, with its
+                # path carried on the apply record so the panel,
+                # the watchdog, and anyone reading the wreckage
+                # afterwards can find the last step it completed.
+                "traceLog": os.path.join(
+                    stage_root, "apply-trace.log"),
                 "command": command,
                 "port": BRIDGE_PORT,
                 "startup": str(cfg_now.get("startup") or "on-ui-launch"),
@@ -5294,6 +5692,7 @@ def _run_update_apply(cfg):
             finally:
                 logf.close()
             record["helperPid"] = proc.pid
+            record["traceLog"] = job["traceLog"]
             _write_update_result(record)
         except Exception as e:
             fail("install",
