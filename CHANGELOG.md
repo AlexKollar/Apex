@@ -2,6 +2,10 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.1.8e
+
+Edge preview line for the next iteration, opened on the edge branch the moment 0.1.7 shipped as a full release — the standing rule is that edge always carries the next version's number with the e suffix. Nothing is built into this line yet, and no Edge pre-release is published from it until there is something worthwhile to preview; it starts from the 0.1.7 full release recorded below.
+
 ## 0.1.7
 
 Release tag: v0.1.7. The bundled release: the Updater round (#70) and Navi's memory from chat (#72), built together in build 2026-11-09.81, first prepped as an alpha in build .82, and re-cut as this full release — with release channels built in — in build 2026-11-09.83. The installer hardening (#75) landed in build .84, before the release went out.
