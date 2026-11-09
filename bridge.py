@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 6
+SHIPPED_BUILD_SEQ = 7
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2269,6 +2269,14 @@ MESH_STATE = {
     # warning read it. A later successful probe supersedes it,
     # and a borrow the peer actually serves clears it outright.
     "peer_dropped": {},
+    # Background peer health (Build 7, #87): whether the health
+    # thread has been started, and nodeId -> the last health
+    # state word the bridge LOGGED for that peer ("reachable" or
+    # "unreachable:<kind>"). Only transitions are logged, so the
+    # word lives here to compare against — the probe cache above
+    # stays the status payload's source of truth.
+    "health_started": False,
+    "peer_health": {},
 }
 MESH_SERVERS = []
 
@@ -2327,6 +2335,16 @@ def _mesh_caps_sanitize(raw):
         except Exception:
             return 0
     caps = raw.get("caps") if isinstance(raw.get("caps"), dict) else {}
+    def cap_i(v, fallback):
+        # Build 7 (Fix F): the caps on a card are the peer's
+        # CONFIGURED values. A card that does not state them (one
+        # written before caps rode along, or a hand-trimmed one)
+        # falls back to the shipped defaults — a stated value
+        # under 1 is not a real configuration (the settings save
+        # validates 1..100 / 1..10000), so it reads as unstated
+        # rather than as "lends at most 0%".
+        n = i(v)
+        return n if n >= 1 else fallback
     return {
         "hardwareClass": s(raw.get("hardwareClass"), 60),
         "gpu": s(raw.get("gpu")),
@@ -2334,9 +2352,13 @@ def _mesh_caps_sanitize(raw):
         "ramGB": num(raw.get("ramGB")),
         "model": s(raw.get("model"), 24) or "navi",
         "speedClass": s(raw.get("speedClass"), 40),
+        # A card written before the posture rode along (Build 6
+        # and earlier) was an idle-only lender by construction —
+        # absent reads as True, the posture those builds kept.
+        "idleOnly": raw.get("idleOnly") is not False,
         "caps": {
-            "maxSharePercent": i(caps.get("maxSharePercent")),
-            "maxGenerationsPerHour": i(caps.get("maxGenerationsPerHour")),
+            "maxSharePercent": cap_i(caps.get("maxSharePercent"), 25),
+            "maxGenerationsPerHour": cap_i(caps.get("maxGenerationsPerHour"), 20),
         },
     }
 
@@ -2380,6 +2402,11 @@ def mesh_capabilities(cfg):
         "ramGB": ram,
         "model": "navi",
         "speedClass": speed,
+        # Build 7 (Fix F2): the idle posture rides the same
+        # self-report as the caps, so a peer's card and roster
+        # line state it truthfully — "lends when idle" vs "lends
+        # even while busy" — from this machine's own setting.
+        "idleOnly": ms["lend"]["idleOnly"],
         "caps": {
             "maxSharePercent": ms["lend"]["maxSharePercent"],
             "maxGenerationsPerHour": ms["lend"]["maxGenerationsPerHour"],
@@ -2586,6 +2613,15 @@ def mesh_authenticate(handler, body, request_id):
     # Returns the peer record, or None — the caller answers a bare
     # "unauthorized" either way; WHY it failed never leaves here
     # (spec section 4.3: no detail leakage).
+    # Build 7 (#87): pairing is the whole consent on this side —
+    # any peer on the paired list with a valid key and signature
+    # is authorized. The peer record's canBorrow flag used to be
+    # required here too, which made one flag do two opposite jobs:
+    # a lender whose stored flag for the requester was off refused
+    # even a health probe as "unauthorized", invisibly. canBorrow
+    # now means one thing only, enforced on the BORROWING side in
+    # mesh_try_borrow: this machine will not borrow from a peer
+    # whose flag is off.
     node = handler.headers.get("X-Mesh-Node") or ""
     ts = handler.headers.get("X-Mesh-Ts") or ""
     sig = handler.headers.get("X-Mesh-Sig") or ""
@@ -2602,7 +2638,7 @@ def mesh_authenticate(handler, body, request_id):
     for p in ms["borrow"]["peers"]:
         if p["nodeId"] == node:
             peer = p
-    if peer is None or not peer["canBorrow"] or not peer["publicKeyPem"]:
+    if peer is None or not peer["publicKeyPem"]:
         return None
     if not mesh_verify(peer["publicKeyPem"], mesh_sig_payload(request_id, ts, body), sig):
         return None
@@ -2669,6 +2705,35 @@ def mesh_cert_fingerprint():
 
 # -- Peer card (spec section 3.1) -----------------------------------
 
+def _interface_ipv4s():
+    # Every non-loopback IPv4 address on this machine's network
+    # interfaces, via the SIOCGIFADDR ioctl (stdlib only; Linux is
+    # the bridge's platform). Best-effort by construction: any
+    # failure — no fcntl, an interface that will not answer —
+    # simply contributes nothing, and the caller keeps the
+    # default-route address it already has. Card plumbing only:
+    # these addresses are never rendered or logged anywhere.
+    out = []
+    try:
+        import fcntl
+        import struct
+        for _idx, name in socket.if_nameindex():
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    packed = fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", name.encode()[:15]))
+                finally:
+                    s.close()
+                ip = socket.inet_ntoa(packed[20:24])
+            except Exception:
+                continue
+            if ip and not ip.startswith("127.") and ip not in out:
+                out.append(ip)
+    except Exception:
+        pass
+    return out
+
+
 def mesh_card(cfg):
     # This node's card: one copyable block the operator carries to
     # their other machine by hand. Names and addresses come from
@@ -2681,6 +2746,16 @@ def mesh_card(cfg):
             addresses.append(ip)
     except Exception:
         pass
+    # Build 7 (#87): the card used to freeze the ONE address the
+    # default route picked at render time — the field card that
+    # carried a hotspot-range address beside a dead pairing. When
+    # the machine has more than one non-loopback address, the
+    # card now carries them all, the default-route (LAN) address
+    # first and the rest after; the borrower tries them in order,
+    # so one stale address can no longer strand the pair.
+    for ip in _interface_ipv4s():
+        if ip not in addresses:
+            addresses.append(ip)
     d = cfg.get("dhd") if isinstance(cfg.get("dhd"), dict) else {}
     domain = str(d.get("domain") or "").strip()
     if domain and d.get("enabled") is True:
@@ -2729,6 +2804,338 @@ def mesh_parse_card(text):
     })
     if peer is None or not peer["addresses"]:
         return None, "The card carries no address to reach the other machine at — copy the card again, whole, and re-paste it."
+    return peer, ""
+
+
+def mesh_add_peer(cfg, peer):
+    # Adds a validated peer record to this machine's pairings —
+    # the shared tail of every pairing path (pasted text card,
+    # PNG picture card): pairing is the consent act, a record
+    # with the same nodeId is replaced rather than duplicated,
+    # and the config is saved before the caller answers. Returns
+    # an error string, or "" when the peer is in. The caller
+    # probes at once (mesh_probe_peers_soon) after a success.
+    if peer["nodeId"] and peer["nodeId"] == mesh_node_id():
+        return "That is this machine's own card — a machine does not pair with itself."
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    block = dict(block)
+    borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+    borrow = dict(borrow)
+    peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+    peers = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"])]
+    peers.append(peer)
+    borrow["peers"] = peers
+    block["borrow"] = borrow
+    cfg["mesh"] = block
+    save_config(cfg)
+    return ""
+
+
+# -- The pairing card as a picture (Build 7, spec section 13) ----
+# The card's second body: a real .png whose face a person can
+# read — the machine's name, its node identity, and the offer in
+# words (capabilities, the lending limits it is CONFIGURED with,
+# its idle posture) — while the whole card rides inside the
+# picture as a tEXt payload, the same data-in-picture convention
+# the chip cartridges use (keyword, NUL, JSON), so Apex keeps ONE
+# picture format. The face is drawn from the very dict that
+# becomes the payload, so the picture can never advertise an
+# offer the payload does not make; and the payload is the card
+# itself, so a PNG pairing lands the identical peer record a
+# pasted text card lands.
+
+_MESH_CARD_FONT = {
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "C": (".####", "#....", "#....", "#....", "#....", "#....", ".####"),
+    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    "G": (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "I": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"),
+    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    "X": ("#...#", ".#.#.", "..#..", "..#..", "..#..", ".#.#.", "#...#"),
+    "Y": ("#...#", ".#.#.", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    "0": (".###.", "#..##", "#.#.#", "##..#", "#...#", "#...#", ".###."),
+    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    "3": ("#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."),
+    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": ("#####", "....#", "...#.", "..#..", "..#..", "..#..", "..#.."),
+    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "9": (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    ".": (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
+    ",": (".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."),
+    ":": (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
+    ";": (".....", ".##..", ".##..", ".....", ".##..", ".##..", ".#..."),
+    "-": (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    "/": ("....#", "...#.", "...#.", "..#..", "..#..", ".#...", "#...."),
+    "(": ("...##", "..#..", ".#...", ".#...", ".#...", "..#..", "...##"),
+    ")": ("##...", "..#..", "...#.", "...#.", "...#.", "..#..", "##..."),
+    "%": ("##..#", "##.#.", "....#", "...#.", "..#..", ".#.##", "#..##"),
+    "+": (".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."),
+    "'": ("..#..", "..#..", "..#..", ".....", ".....", ".....", "....."),
+    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    "#": (".#.#.", ".#.#.", "#####", ".#.#.", "#####", ".#.#.", ".#.#."),
+    "*": (".....", "#.#.#", ".###.", "#####", ".###.", "#.#.#", "....."),
+    "=": (".....", ".....", "#####", ".....", "#####", ".....", "....."),
+    "_": (".....", ".....", ".....", ".....", ".....", ".....", "#####"),
+    '"': (".#.#.", ".#.#.", ".#.#.", ".....", ".....", ".....", "....."),
+    "&": (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
+    "•": (".....", ".....", ".....", ".##..", ".##..", ".....", "....."),
+    ">": ("#....", ".#...", "..#..", "...#.", "..#..", ".#...", "#...."),
+    "<": ("....#", "...#.", "..#..", ".#...", "..#..", "...#.", "....#"),
+    "[": ("..###", "..#..", "..#..", "..#..", "..#..", "..#..", "..###"),
+    "]": ("###..", "..#..", "..#..", "..#..", "..#..", "..#..", "###.."),
+    "$": ("..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."),
+    "@": (".###.", "#...#", "#.###", "#.#.#", "#....", ".####", "....."),
+}
+
+
+def _mesh_face_clean(text):
+    # Words for the card face: uppercase, in the characters the
+    # face font carries; anything else becomes a space, and the
+    # typographic dashes and dots fold to the drawn ones.
+    out = []
+    for ch in str(text or "").upper():
+        if ch in ("·", "∙"):
+            out.append("•")
+        elif ch in ("—", "–"):
+            out.append("-")
+        elif ch in _MESH_CARD_FONT:
+            out.append(ch)
+        else:
+            out.append(" ")
+    return " ".join("".join(out).split())
+
+
+def _mesh_face_wrap(text, max_chars):
+    lines = []
+    cur = ""
+    for word in str(text or "").split(" "):
+        if not word:
+            continue
+        if cur and len(cur) + 1 + len(word) > max_chars:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = cur + " " + word if cur else word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _mesh_face_text_w(text, scale):
+    return len(text) * 6 * scale
+
+
+def _mesh_face_draw(img, W, H, x, y, text, scale, rgb):
+    cx = x
+    for ch in text:
+        glyph = _MESH_CARD_FONT.get(ch) or _MESH_CARD_FONT["?"]
+        for gy in range(7):
+            row = glyph[gy] if gy < len(glyph) else ""
+            for gx in range(5):
+                if gx < len(row) and row[gx] == "#":
+                    for sy in range(scale):
+                        for sx in range(scale):
+                            xx = cx + gx * scale + sx
+                            yy = y + gy * scale + sy
+                            if 0 <= xx < W and 0 <= yy < H:
+                                o = (yy * W + xx) * 3
+                                img[o] = rgb[0]
+                                img[o + 1] = rgb[1]
+                                img[o + 2] = rgb[2]
+        cx += 6 * scale
+
+
+def build_mesh_card_png(cfg):
+    # This node's pairing card as a picture. Face and payload
+    # both come from mesh_card(cfg) — one source, so what the
+    # picture says is what the picture carries.
+    card = mesh_card(cfg)
+    caps = card.get("capabilities") if isinstance(card.get("capabilities"), dict) else {}
+    cap_caps = caps.get("caps") if isinstance(caps.get("caps"), dict) else {}
+    W, H = 720, 452
+    BG = (10, 14, 18)
+    RIM = (34, 48, 61)
+    ACCENT = (34, 211, 238)
+    INK = (230, 241, 245)
+    DIM = (159, 179, 200)
+    img = bytearray(bytes(BG) * (W * H))
+    def px(x, y, rgb):
+        if 0 <= x < W and 0 <= y < H:
+            o = (y * W + x) * 3
+            img[o] = rgb[0]
+            img[o + 1] = rgb[1]
+            img[o + 2] = rgb[2]
+    for i in range(3):
+        for x in range(W):
+            px(x, i, RIM)
+            px(x, H - 1 - i, RIM)
+        for y in range(H):
+            px(i, y, RIM)
+            px(W - 1 - i, y, RIM)
+    MX = 36
+    y = 30
+    _mesh_face_draw(img, W, H, MX, y, "NAVI MESH", 3, ACCENT)
+    right = "PAIRING CARD"
+    _mesh_face_draw(img, W, H, W - MX - _mesh_face_text_w(right, 3), y, right, 3, DIM)
+    y += 21 + 22
+    name = _mesh_face_clean(card.get("name") or "This machine") or "THIS MACHINE"
+    scale = 5
+    while scale > 2 and _mesh_face_text_w(name, scale) > W - 2 * MX:
+        scale -= 1
+    if _mesh_face_text_w(name, scale) > W - 2 * MX:
+        name = name[: max(0, (W - 2 * MX) // (6 * scale) - 3)] + "..."
+    _mesh_face_draw(img, W, H, MX, y, name, scale, INK)
+    y += 7 * scale + 14
+    _mesh_face_draw(img, W, H, MX, y, "NODE " + str(card.get("nodeId") or "")[:12], 2, DIM)
+    y += 14 + 16
+    for x in range(MX, W - MX):
+        px(x, y, ACCENT)
+        px(x, y + 1, ACCENT)
+    y += 18
+    _mesh_face_draw(img, W, H, MX, y, "THE OFFER", 2, ACCENT)
+    y += 14 + 10
+    bits = []
+    if caps.get("hardwareClass"):
+        bits.append(str(caps["hardwareClass"]))
+    if caps.get("gpu"):
+        bits.append(str(caps["gpu"]))
+    elif caps.get("cpu"):
+        bits.append(str(caps["cpu"]))
+    if caps.get("ramGB"):
+        try:
+            ram = float(caps["ramGB"])
+            bits.append((str(int(ram)) if ram == int(ram) else str(ram)) + " GiB RAM")
+        except Exception:
+            pass
+    bits.append("model " + str(caps.get("model") or "navi"))
+    if caps.get("speedClass"):
+        bits.append(str(caps["speedClass"]))
+    offer_lines = _mesh_face_wrap(_mesh_face_clean(" · ".join(bits)), 54)
+    try:
+        share = int(cap_caps.get("maxSharePercent") or 25)
+    except Exception:
+        share = 25
+    try:
+        gens = int(cap_caps.get("maxGenerationsPerHour") or 20)
+    except Exception:
+        gens = 20
+    offer_lines.append("LENDS AT MOST " + str(share) + "% OF EACH HOUR")
+    offer_lines.append(str(gens) + " GENERATIONS AN HOUR")
+    offer_lines.append("LENDS WHEN IDLE" if caps.get("idleOnly") is not False else "LENDS EVEN WHILE BUSY")
+    for line in offer_lines:
+        _mesh_face_draw(img, W, H, MX, y, line, 2, INK)
+        y += 14 + 6
+    foot = _mesh_face_wrap(
+        "THE PAIRING DATA RIDES INSIDE THIS PICTURE. SEND THE FILE ITSELF - "
+        "INSIDE A .ZIP FOR CHAT APPS, WHICH RECOMPRESS PICTURES AND STRIP THE DATA OUT.",
+        54,
+    )
+    fy = H - 26 - len(foot) * 20
+    for line in foot:
+        _mesh_face_draw(img, W, H, MX, fy, line, 2, DIM)
+        fy += 14 + 6
+    raw = bytearray()
+    for yy in range(H):
+        raw.append(0)
+        raw += img[yy * W * 3:(yy + 1) * W * 3]
+    text = b"navi-mesh-card\x00" + json.dumps(card).encode()
+    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"tEXt", text)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+# The PNG import's refusals, in the operator's own words — each
+# names what is wrong and what to do about it, because a picture
+# that pairs nothing must never fail silently (Build 7, spec
+# section 13, Alex's wording rule).
+MESH_CARD_PNG_NOT_PNG = "That file is not a PNG image — a Mesh card travels as a .png picture. Export it again from the other machine's Mesh page (Show my Mesh card, then Download PNG card) and send the file itself."
+MESH_CARD_PNG_NO_PAYLOAD = "This image has no readable Mesh card data — it may have been recompressed by a chat app, which strips the data out of the picture while leaving the picture itself looking fine. Send the original file inside a .zip instead."
+MESH_CARD_PNG_DAMAGED = "This picture started life as a Mesh card, but the card data inside it is damaged — it no longer reads whole, so nothing was paired. Ask the other machine to export a fresh PNG card, and send the original file inside a .zip so nothing re-encodes it on the way."
+MESH_CARD_PNG_IS_CHIP = "That picture is a Navi chip cartridge, not a Mesh pairing card — chips and cards are different pictures. Pairing cards come from the other machine's Mesh page: Show my Mesh card, then Download PNG card."
+MESH_CARD_PNG_NEWER = "This picture's Mesh card was made by a newer Apex than this one — update this machine, then import the card again."
+
+
+def parse_mesh_card_png(data):
+    # Reads a pairing card back out of a PNG picture. Returns
+    # (peer, error): on success the peer record mesh_parse_card
+    # builds from the embedded block — the identical record the
+    # text-card path builds, because the embedded payload goes
+    # through that same validation; on failure one of the
+    # specific refusals above. A tampered or truncated payload
+    # fails loudly here: bad chunk CRC, broken JSON, or a card
+    # that no longer validates is damage, never a quiet no.
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return None, MESH_CARD_PNG_NOT_PNG
+    data = bytes(data)
+    pos = 8
+    payload = None
+    saw_chip = False
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            return None, MESH_CARD_PNG_DAMAGED
+        chunk_data = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                keyword = chunk_data[:nul]
+                if keyword == b"navi-mesh-card":
+                    (crc_stored,) = struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])
+                    if binascii.crc32(kind + chunk_data) & 0xFFFFFFFF != crc_stored:
+                        return None, MESH_CARD_PNG_DAMAGED
+                    payload = chunk_data[nul + 1:]
+                elif keyword == b"navi-chip":
+                    saw_chip = True
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    if payload is None:
+        if saw_chip:
+            return None, MESH_CARD_PNG_IS_CHIP
+        return None, MESH_CARD_PNG_NO_PAYLOAD
+    try:
+        text = payload.decode("utf-8")
+        card = json.loads(text)
+    except Exception:
+        return None, MESH_CARD_PNG_DAMAGED
+    if not isinstance(card, dict):
+        return None, MESH_CARD_PNG_DAMAGED
+    if card.get("meshCard") != 1:
+        if "meshCard" in card:
+            return None, MESH_CARD_PNG_NEWER
+        return None, MESH_CARD_PNG_DAMAGED
+    peer, _perr = mesh_parse_card(text)
+    if peer is None:
+        return None, MESH_CARD_PNG_DAMAGED
     return peer, ""
 
 
@@ -3058,11 +3465,13 @@ MESH_BORROW_READ_CAP = 330
 
 def _mesh_request(peer, method, path, body, request_id, timeout):
     # One signed Mesh request, trying the peer's addresses in card
-    # order. Returns (status, raw-body). Raises _MeshFpError on a
-    # pinned-fingerprint mismatch, _MeshDropped when a connected
-    # request died mid-flight, _MeshUnreachable when no address
-    # could be connected at all.
+    # order. Returns (status, raw-body). Raises _MeshFpError when
+    # an address answered but none presented the pinned
+    # fingerprint, _MeshDropped when a connected request died
+    # mid-flight, _MeshUnreachable when no address could be
+    # connected at all.
     last_err = None
+    fp_err = None
     for address in peer["addresses"]:
         host = str(address).split("://")[-1].split("/")[0]
         conn = None
@@ -3079,7 +3488,16 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
             fp = hashlib.sha256(der).hexdigest() if der else ""
             if peer["certFingerprint"] and fp != peer["certFingerprint"]:
                 conn.close()
-                raise _MeshFpError("fingerprint mismatch")
+                # Build 7 (#87): a mismatch at ONE address no
+                # longer aborts the whole request. A card can
+                # carry several addresses and something else may
+                # be answering at the wrong one — record the
+                # mismatch and try the next address. _MeshFpError
+                # is raised only at the end, when no address both
+                # connected AND matched (see below).
+                fp_err = "fingerprint mismatch"
+                last_err = _MeshFpError("fingerprint mismatch")
+                continue
             headers = mesh_signed_headers(request_id, body or b"")
             conn.request(method, path, body=body, headers=headers)
             sent = True
@@ -3116,6 +3534,11 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
                 raise _MeshDropped(str(e))
             last_err = e
             continue
+    # Build 7 (#87): something DID answer at one of the addresses
+    # but never with the pinned certificate — that is the honest,
+    # diagnosable failure, and it outranks a plain unreachable.
+    if fp_err is not None:
+        raise _MeshFpError(fp_err)
     raise _MeshUnreachable(str(last_err))
 
 
@@ -3143,8 +3566,112 @@ def mesh_probe_peer(peer, force=False):
         err = "fingerprint"
     except Exception:
         err = "unreachable"
-    MESH_STATE["probe_cache"][peer["nodeId"]] = (now, status, "" if status is not None else err)
+    # Build 7 gate repair: the cache carries a fourth element —
+    # the stamp the roster's "(last checked … ago)" age is
+    # measured from. A successful probe stamps it with now; a
+    # FAILED probe keeps the previous stamp, updating only the
+    # error kind, so during a long outage the age keeps growing
+    # (how long the peer has been dark) instead of cycling with
+    # the ~30s health cadence. A peer that has never been
+    # reached has no success to keep: its first failed probe
+    # stamps it, and the age counts from that first check. The
+    # first element stays the latest ATTEMPT's time — the 20s
+    # borrow-cache freshness reads exactly what it read before.
+    if status is not None:
+        ok_stamp = now
+    elif cache is not None and len(cache) > 3 and cache[3]:
+        ok_stamp = cache[3]
+    else:
+        ok_stamp = now
+    MESH_STATE["probe_cache"][peer["nodeId"]] = (now, status, "" if status is not None else err, ok_stamp)
     return status, "" if status is not None else err
+
+
+# -- Background peer health (Build 7, #87) ---------------------------
+# Before this build the probe above had exactly one caller — a
+# chat borrow — so a paired peer's state existed only as a side
+# effect of borrowing, and a pure lender (or a pair nobody had
+# chatted across yet) sat at "not checked yet" forever, which the
+# first field pair did. The bridge now watches its peers itself:
+# a daemon thread probes each paired peer on a ~30s cadence while
+# Mesh is enabled, and pairing / Mesh enable probe at once. Only
+# state TRANSITIONS earn a log line, with the error kind — the
+# log records that a peer went dark or came back, never a
+# drumbeat of successful checks. Peer names only in those lines,
+# never an address, like every Mesh surface.
+
+def mesh_probe_tracked(peer):
+    # One forced probe whose result is compared with the last
+    # health state the bridge logged for the peer; a change is
+    # written to the bridge log, anything else stays silent.
+    status, err = mesh_probe_peer(peer, force=True)
+    cur = "reachable" if status is not None else "unreachable:" + (err or "unreachable")
+    with MESH_LOCK:
+        prev = MESH_STATE["peer_health"].get(peer["nodeId"])
+        if prev != cur:
+            MESH_STATE["peer_health"][peer["nodeId"]] = cur
+    if prev == cur:
+        return status, err
+    name = peer["name"]
+    if status is not None:
+        if prev is None:
+            print("Navi Mesh: peer " + name + " checked \u2014 reachable.", flush=True)
+        else:
+            print("Navi Mesh: peer " + name + " is reachable again.", flush=True)
+    else:
+        kind = err or "unreachable"
+        if prev is None:
+            print("Navi Mesh: peer " + name + " checked \u2014 unreachable (" + kind + ").", flush=True)
+        elif prev == "reachable":
+            print("Navi Mesh: peer " + name + " is now unreachable (" + kind + ").", flush=True)
+        else:
+            print("Navi Mesh: peer " + name + " is still unreachable \u2014 the reason is now " + kind + ".", flush=True)
+    return status, err
+
+
+def mesh_probe_all_tracked():
+    # Probe every paired peer once (tracked). A no-op while Mesh
+    # is off — pairing can be recorded with the master switch in
+    # any state, and a disabled Mesh probes nothing.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return
+    for peer in ms["borrow"]["peers"]:
+        try:
+            mesh_probe_tracked(peer)
+        except Exception:
+            pass
+
+
+def mesh_probe_peers_soon():
+    # An immediate background probe of every paired peer: pairing
+    # and Mesh enable call this so a fresh peer is checked at
+    # once instead of waiting for the health cadence. Never
+    # blocks the caller — the probes run on their own thread.
+    t = threading.Thread(target=mesh_probe_all_tracked, daemon=True)
+    t.start()
+
+
+def mesh_health_loop():
+    # The cadence itself. The loop runs for the bridge's life
+    # once started and simply idles — no probes, no log — while
+    # Mesh is off or nothing is paired.
+    while True:
+        try:
+            mesh_probe_all_tracked()
+        except Exception:
+            pass
+        time.sleep(30)
+
+
+def mesh_ensure_health_thread():
+    with MESH_LOCK:
+        if MESH_STATE["health_started"]:
+            return
+        MESH_STATE["health_started"] = True
+    t = threading.Thread(target=mesh_health_loop, daemon=True)
+    t.start()
 
 
 def _mesh_borrow_once(peer, messages):
@@ -3210,15 +3737,76 @@ def mesh_try_borrow(messages, cfg, ms):
     try:
         last_reason = "unreachable"
         for peer in peers:
+            # Build 7 (#87): canBorrow is enforced HERE, on the
+            # borrowing side — this machine does not borrow from
+            # a peer whose flag is off. It no longer gates the
+            # lender's authentication (see mesh_authenticate):
+            # pairing is that side's consent.
+            if not peer["canBorrow"]:
+                continue
             status, err = mesh_probe_peer(peer)
+            if status is None and err == "unreachable":
+                # Build 7 gate repair (close-out): the answer above
+                # may be the 20s probe cache holding a FAILED probe —
+                # since Build 7 the background health thread keeps
+                # that cache permanently warm, so a lender killed
+                # mid-generation (the drop path) leaves a fresh
+                # failure cached, and the very borrow meant to
+                # discover the drop read the cache and never
+                # attempted the request at all: no drop recorded,
+                # no fusion notice, reason "unreachable" — the
+                # fusion path starved exactly like the idle path
+                # did. A cached FAILURE earns one fresh probe
+                # before the borrow gives up on this peer; only a
+                # fresh failure keeps "unreachable". A genuinely
+                # down lender pays one extra short probe. Mirrors
+                # the not-lending fresh check below and the
+                # busy/idle grace paths, which already re-probe
+                # with force=True. (A cached SUCCESS is untouched:
+                # freshness only ever ADDS an attempt, and a failed
+                # fresh probe of a just-dropped lender still
+                # classifies through _mesh_borrow_once.)
+                status, err = mesh_probe_peer(peer, force=True)
             if status is None:
+                # A failed probe — cached or fresh — never clears
+                # a recorded drop. The drop is the freshest thing
+                # this machine knows about the peer (Build 6's
+                # manifest: warning "<name> dropped" read straight
+                # after it), and a lender that died mid-answer is
+                # exactly the peer whose next probes all fail: the
+                # failure EXPLAINS the drop, it does not supersede
+                # it. The status payload already weighs the two —
+                # the drop stands until a probe SUCCEEDS (its
+                # success stamp postdates the drop), a borrow is
+                # served, or five minutes pass. (An earlier repair
+                # popped the record here the moment a fresh probe
+                # proved the peer dark; that raced the drop
+                # discovery itself — the borrow meant to find the
+                # drop could read a warm failed cache, force one
+                # dark probe, and erase the record before the row
+                # ever showed it.)
                 last_reason = err or "unreachable"
                 continue
             name = peer["name"]
             with MESH_LOCK:
                 MESH_STATE["borrow_peer"] = name
             if not status.get("lending"):
-                return None, {"servedBy": "local", "fellBack": True, "reason": "lending-off", "node": name}
+                # Build 7 gate repair: the probe above may have
+                # served a CACHED status (up to 20s old), and the
+                # background health thread now keeps that cache
+                # permanently warm — so a lender that stopped and
+                # then re-enabled lending inside the cache window
+                # would read as still-off and the borrow would
+                # never even be attempted. Re-probe ONCE fresh
+                # before refusing; only a fresh not-lending (or a
+                # failed fresh probe) earns "lending-off". A
+                # genuinely-off lender pays one extra short probe
+                # on this path. Mirrors the busy-grace path below,
+                # which already re-probes with force=True.
+                fresh, _ferr = mesh_probe_peer(peer, force=True)
+                if fresh is None or not fresh.get("lending"):
+                    return None, {"servedBy": "local", "fellBack": True, "reason": "lending-off", "node": name}
+                status = fresh
             outcome = _mesh_borrow_once(peer, messages)
             if outcome[0] == "ok":
                 # Build .87: a served borrow is the freshest word
@@ -3240,6 +3828,49 @@ def mesh_try_borrow(messages, cfg, ms):
             if outcome[0] == "error":
                 return None, {"servedBy": "local", "fellBack": True, "reason": outcome[1], "node": name}
             reason = outcome[1]
+            if reason == "idle":
+                # Build 7 gate repair: "idle" is the ONE admission
+                # refusal that carries a TIME dimension — the lender
+                # accepts this borrow once it has been quiet for
+                # idleAfterSeconds (default 60s). A borrower that
+                # sends chats back-to-back right after a served
+                # borrow would otherwise watch every follow-up fall
+                # back locally as "idle" — the reason also renders
+                # in the chat notice as "is not idle yet" — which is
+                # indistinguishable in the payload from the request
+                # never having been attempted, and it starves the
+                # in-flight fusion path entirely (a borrow refused
+                # here never registers on the lender). It gets the
+                # busy shape, not the busy word: poll the lender's
+                # probe-reported idle state for up to graceMs and
+                # retry admission ONCE the moment the lender itself
+                # reports idle; a refused retry keeps reason
+                # "idle", and a mid-generation lender still
+                # classifies through the busy/drop paths below and
+                # in _mesh_borrow_once. Deliberately NO unbounded
+                # wait: a lender idle only after the grace is spent
+                # serves the NEXT request, exactly like busy (R5).
+                deadline = time.time() + max(0, ms["borrow"]["graceMs"]) / 1000.0
+                while time.time() < deadline:
+                    time.sleep(0.4)
+                    st2, _e2 = mesh_probe_peer(peer, force=True)
+                    if st2 is not None and st2.get("idle"):
+                        outcome = _mesh_borrow_once(peer, messages)
+                        if outcome[0] == "ok":
+                            with MESH_LOCK:
+                                MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
+                            mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+                        if outcome[0] == "dropped":
+                            return None, {
+                                "servedBy": "local", "fellBack": True, "reason": "lender-dropped", "node": name,
+                                "notice": name + " dropped mid-answer \u2014 this reply was generated locally instead.",
+                            }
+                        if outcome[0] == "error":
+                            return None, {"servedBy": "local", "fellBack": True, "reason": outcome[1], "node": name}
+                        reason = outcome[1]
+                        break
+                return None, {"servedBy": "local", "fellBack": True, "reason": reason, "node": name}
             if reason == "busy":
                 # R5 GRACE: poll/retry admission for up to graceMs.
                 # Once local generation starts (grace spent), the
@@ -3295,11 +3926,25 @@ def mesh_status_payload(cfg, via_dhd=False):
         probe = None
         probe_err = ""
         probe_stamp = 0.0
-        if cache and now - cache[0] < 60:
+        probe_age = None
+        if cache:
+            # Build 7 (#87): the last probe's word is DURABLE —
+            # it no longer expires after 60s. A failed check
+            # stays "unreachable", with its error kind and its
+            # age, until a newer probe replaces it; reachable is
+            # None (the roster's "not checked yet") only when no
+            # probe has ever completed for this peer. Freshness
+            # now comes from the background health cadence, not
+            # from forgetting.
             reachable = cache[1] is not None
             probe = cache[1] if isinstance(cache[1], dict) else None
             probe_err = str(cache[2] or "")
             probe_stamp = cache[0]
+            # The age reads the cache's fourth element — the
+            # last SUCCESSFUL probe's stamp (the first failed
+            # probe's, for a peer never reached) — never the
+            # latest attempt's, so it grows through an outage.
+            probe_age = max(0, int(now - (cache[3] if len(cache) > 3 and cache[3] else cache[0])))
         caps = p.get("capabilities")
         if probe is not None and probe.get("capabilities"):
             live_caps = _mesh_caps_sanitize(probe.get("capabilities"))
@@ -3310,9 +3955,20 @@ def mesh_status_payload(cfg, via_dhd=False):
         # it is the freshest thing this machine knows about the
         # peer, and it is exactly what the operator needs warned
         # about. Drops age out after five minutes so a stale one
-        # cannot haunt the row forever.
+        # cannot haunt the row forever. Build 7 gate repair: the
+        # superseding stamp is the last SUCCESSFUL probe's (the
+        # cache's fourth element), never the latest ATTEMPT's —
+        # a failed health probe landing after a drop (the lender
+        # is down; every cadence tick fails) advanced the attempt
+        # stamp past the drop and flipped the row's warning from
+        # "<name> dropped" to "<name> unreachable", hiding the
+        # drop behind the outage it caused. A peer that ANSWERS
+        # again still supersedes the drop at once, exactly as
+        # before; a peer that merely gets probed and fails does
+        # not.
         drop_stamp = MESH_STATE["peer_dropped"].get(p["nodeId"], 0.0)
-        if drop_stamp and now - drop_stamp < 300 and drop_stamp >= probe_stamp:
+        ok_stamp = cache[3] if cache and len(cache) > 3 and cache[3] else 0.0
+        if drop_stamp and now - drop_stamp < 300 and drop_stamp >= ok_stamp:
             peer_status = "dropped"
         elif reachable is True:
             peer_status = "reachable"
@@ -3328,6 +3984,14 @@ def mesh_status_payload(cfg, via_dhd=False):
             "reachable": reachable,
             "status": peer_status,
             "lastProbeError": probe_err if reachable is False else "",
+            # Build 7 (#87): seconds since the peer was last
+            # successfully checked — or since its first check
+            # when it has never been reached — or null when it
+            # has never been probed at all. The roster renders
+            # "(last checked 42s ago)" from it beside a failed
+            # state, and through an outage it keeps growing:
+            # failed attempts refresh the reason, not the age.
+            "lastProbeAgeSec": probe_age,
             "balanceSec": round(b["lentSec"] - b["borrowedSec"], 1),
             "lastTs": b["lastTs"],
             "capabilities": caps,
@@ -3445,6 +4109,10 @@ class MeshHandler(BaseHTTPRequestHandler):
 
 def mesh_start_listener():
     global MESH_SERVERS
+    # Build 7 (#87): the peer health thread starts with the Mesh
+    # door — at boot and at enable alike (this is the one place
+    # both paths meet). It idles while Mesh is off or unpaired.
+    mesh_ensure_health_thread()
     if MESH_SERVERS:
         return
     cfg = load_config()
@@ -10061,6 +10729,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, {"ok": True, "card": mesh_card(load_config())})
             return
+        if _path in ("/mesh/card.png", "/api/mesh/card.png"):
+            # This node's pairing card as a picture (Build 7,
+            # spec section 13): the same dashboard-surface read
+            # as the text card above — same gate, same identity
+            # prerequisites — answering the PNG whose face is the
+            # card and whose payload is the card.
+            _cfg = load_config()
+            if not mesh_settings(_cfg)["enabled"]:
+                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on from the Mesh page first."})
+                return
+            _ok, _err = mesh_ensure_identity(_cfg)
+            if not _ok:
+                self._send(200, {"ok": False, "error": _err})
+                return
+            _ok, _err = mesh_ensure_cert()
+            if not _ok:
+                self._send(200, {"ok": False, "error": _err})
+                return
+            self._send(200, build_mesh_card_png(load_config()), "image/png")
+            return
         if self.path.split("?")[0] in ("/", "/index.html"):
             with open(os.path.join(ROOT, "app", "index.html"), "rb") as f:
                 html = f.read()
@@ -10435,12 +11123,43 @@ class Handler(BaseHTTPRequestHandler):
                 borrow["graceMs"] = max(0, min(30000, _mesh_int(data.get("graceMs"), 2000)))
             if "lendEnabled" in data:
                 lend["enabled"] = want_lending
+            # Build 7 (#87, Fix F): the lending caps are operator
+            # settings on the lending machine — share of each hour
+            # (1–100%), borrowed generations an hour and per peer
+            # an hour (1–10000 each). They persist in the lend
+            # block and take effect on the next admission decision
+            # and the next card/capability report, because both
+            # read mesh_settings(load_config()) fresh — no bridge
+            # restart. The shipped defaults (25 / 20 / 10) are
+            # only the fallbacks for a missing or unparseable
+            # value, here and in mesh_settings.
+            if "maxSharePercent" in data:
+                lend["maxSharePercent"] = max(1, min(100, _mesh_int(data.get("maxSharePercent"), 25)))
+            if "maxGenerationsPerHour" in data:
+                lend["maxGenerationsPerHour"] = max(1, min(10000, _mesh_int(data.get("maxGenerationsPerHour"), 20)))
+            if "perPeerPerHour" in data:
+                lend["perPeerPerHour"] = max(1, min(10000, _mesh_int(data.get("perPeerPerHour"), 10)))
+            # Build 7 (Fix F2): the idle-only override rides the
+            # same save. Admission already reads lend["idleOnly"]
+            # on every request, so the flip is live at once; the
+            # shipped default stays ON (a lender serves only
+            # after idleAfterSeconds of quiet) until the operator
+            # turns it off here.
+            if "idleOnly" in data:
+                lend["idleOnly"] = bool(data.get("idleOnly"))
             if "ledgerInBackup" in data:
                 block["ledgerInBackup"] = bool(data.get("ledgerInBackup"))
             block["borrow"] = borrow
             block["lend"] = lend
             cfg["mesh"] = block
             if block.get("enabled") is True and not was_enabled:
+                # Build 7 (#87): a node whose name was never set
+                # sits "Unnamed" in every roster — at enable time,
+                # a blank name takes the machine's hostname as its
+                # default, persisted with this save. A name the
+                # operator typed is never overwritten.
+                if not str(block.get("nodeName") or "").strip():
+                    block["nodeName"] = socket.gethostname()[:80]
                 _ok, _err = mesh_ensure_identity(cfg)
                 if not _ok:
                     self._send(200, {"ok": False, "error": _err})
@@ -10468,6 +11187,11 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
             if block.get("enabled") is True:
                 mesh_start_listener()
+                if not was_enabled:
+                    # Build 7 (#87): enabling Mesh checks every
+                    # paired peer at once, not at the health
+                    # cadence's leisure.
+                    mesh_probe_peers_soon()
             else:
                 mesh_stop_listener()
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config(), (self.headers.get("X-Apex-Via") or "") == "dhd")})
@@ -10481,20 +11205,48 @@ class Handler(BaseHTTPRequestHandler):
             if peer is None:
                 self._send(200, {"ok": False, "error": perr})
                 return
-            if peer["nodeId"] and peer["nodeId"] == mesh_node_id():
-                self._send(200, {"ok": False, "error": "That is this machine's own card — a machine does not pair with itself."})
+            aerr = mesh_add_peer(cfg, peer)
+            if aerr:
+                self._send(200, {"ok": False, "error": aerr})
                 return
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
-            peers = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"])]
-            peers.append(peer)
-            borrow["peers"] = peers
-            block["borrow"] = borrow
-            cfg["mesh"] = block
-            save_config(cfg)
+            # Build 7 (#87): a freshly paired peer is probed at
+            # once — pairing is exactly when the operator is
+            # watching the roster for its first checked state.
+            mesh_probe_peers_soon()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/png":
+            # Add a peer from a PNG picture card (Build 7, spec
+            # section 13). The dashboard sends the picture's bytes
+            # base64'd — from the file-upload control or a drag-
+            # and-drop, both through the one client importer — and
+            # the payload inside the picture goes through the same
+            # card validation and the same add as a pasted card:
+            # one parser, one pairing, the identical peer record.
+            # A picture with no readable payload, or a damaged
+            # one, is refused with its specific reason — never a
+            # silent no-op.
+            data = self._body()
+            raw = None
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again, or paste the text card instead."})
+                return
+            if len(raw) > 8 * 1024 * 1024:
+                self._send(200, {"ok": False, "error": "That file is far larger than a Mesh card picture — the cards are small PNGs. Check you picked the card file, and try again."})
+                return
+            peer, png_err = parse_mesh_card_png(raw)
+            if peer is None:
+                self._send(200, {"ok": False, "error": png_err})
+                return
+            aerr = mesh_add_peer(cfg, peer)
+            if aerr:
+                self._send(200, {"ok": False, "error": aerr})
+                return
+            mesh_probe_peers_soon()
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/mesh/peers/remove":
@@ -10512,7 +11264,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/mesh/peers/can-borrow":
-            # The lender-side consent toggle for one paired peer.
+            # The borrow-side toggle for one paired peer (Build 7,
+            # #87): whether THIS machine borrows from that peer.
+            # It no longer gates the peer's inbound requests —
+            # pairing is that side's consent (mesh_authenticate).
             data = self._body()
             target = str(data.get("nodeId") or "")
             block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}

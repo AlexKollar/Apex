@@ -771,6 +771,8 @@ var meshState = null;        // live: last /api/status mesh report (build .85); 
 var meshMsg = "";
 var meshCardText = "";       // this node's card, as shown in the Settings card
 var meshCardCopied = false;
+var meshPngMsg = "";         // the PNG card import's own verdict, shown at the drop zone (Build 7)
+var meshPngDrag = false;     // the drop zone is lit while a file drags over it (Build 7)
 var meshDetailsOpen = false;
 var dhdMsg = "";
 var dhdCodeShown = false;
@@ -868,7 +870,7 @@ var speakPlaying = false;
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
 var BRIDGE_BUILD = "2026-11-09.87";
-var SHIPPED_BUILD_SEQ = 6;
+var SHIPPED_BUILD_SEQ = 7;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var bridgeRoot = "";   // live: the bridge's install tree, from /api/status (build .86, issue #79)
@@ -2676,7 +2678,9 @@ var DOC_PAGES = [
   "<li>Choose <b>Show my Mesh card</b> and copy the whole block.</li>" +
   "<li>On the second machine, turn Mesh on, paste the card into <b>Add a peer</b>, and add it.</li>" +
   "<li>Do the same in the other direction — each machine needs the other's card.</li></ol>" +
-  "<p><b>Pairing is the consent act:</b> a paired machine is a trusted machine. Either side can unpair by removing the card, and on the lending side you can untick a machine's <b>Can borrow</b> to stop that one machine from borrowing without unpairing it.</p></div>" +
+  "<p><b>Pairing is the consent act:</b> a paired machine is a trusted machine, and a paired machine's signed requests are accepted on that basis alone. Either side can unpair by removing the card. The <b>Can borrow</b> toggle on a peer is the borrowing machine's own choice about that peer: untick it there and that machine will not borrow from the peer, while staying paired — it does not gate what the peer accepts.</p>" +
+  "<p><b>The card also travels as a picture.</b> Beside <b>Show my Mesh card</b>, <b>Download PNG card</b> saves the card as a .png. Its face is the card a person reads — the machine's name, its node identity, and the offer in words: its capabilities, the lending limits it is configured with, and whether it lends when idle or even while busy. The whole card rides inside the picture, in the same data-in-a-picture format the chips use, so Apex keeps one cartridge language. On the other machine, drop the picture onto the Mesh page's <b>Paired machines</b> area, or use <b>Upload a PNG card</b> there — the peer is added exactly as if you had pasted the text card. Text cards from earlier builds still pair the same way.</p>" +
+  "<p><b>Send the picture as a file.</b> The data inside the picture survives only if the file's bytes arrive untouched. Put it inside a <b>.zip</b> before sending it through a chat app — Discord and its kind recompress the pictures people upload and strip the data out, leaving a picture that looks like the card and pairs nothing. When that has happened, the Mesh page says so in those words and tells you to resend the original inside a .zip. A damaged picture — cut short, or with its payload tampered with — is refused just as loudly, never silently ignored.</p></div>" +
     "<div class='doc-sec'><h4>Borrowing — automatic, with off switches</h4>" +
   "<p>Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with its <i>via &lt;name&gt;</i> pill. The first borrowed reply of a session also raises a notice card in the thread, so borrowing never starts silently.</p>" +
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
@@ -2689,22 +2693,25 @@ var DOC_PAGES = [
   "<p>Open this page through the DHD door and the <b>Lend this machine</b> switch shows the lock itself: while lending is off it renders locked — dimmed, not clickable — with the reason in plain words directly under the switch, because lending can only be turned on in person. While lending is on, the switch stays live on the remote view, since turning lending off works from anywhere; a note under it says turning it back on will require being at the machine. The lock is the bridge's, not the page's: the bridge refuses a lending turn-on that arrives through the DHD door regardless of what any client renders.</p>" +
   "<p>A lender serves only inside the limits set on its card:</p><ul>" +
   "<li><b>Idle only</b> (on by default): the machine must have been quiet for 60 seconds, and no local generation may be running.</li>" +
-  "<li><b>Share cap:</b> borrowed work may take at most 25% of any rolling hour.</li>" +
-  "<li><b>Generation caps:</b> at most 20 borrowed generations an hour, and at most 10 an hour for any one machine.</li></ul>" +
+  "<li><b>Share cap:</b> borrowed work may take at most a set share of any rolling hour — <b>25%</b> as shipped.</li>" +
+  "<li><b>Generation caps:</b> at most a set number of borrowed generations an hour — <b>20</b> as shipped — and a set number for any one machine — <b>10</b> as shipped.</li></ul>" +
+  "<p>The three caps are yours to set, on the lending machine itself: they sit in the <b>Lending</b> section of its Mesh page, beside the Caps line that shows the current values, and they take effect as soon as you save — no restart. Set them for the machine it is; a strong server can take far more than the shipped defaults. Your card advertises the caps you set, so a paired machine sees the real offer before it asks.</p>" +
+  "<p><b>Idle only</b> has an override in the same section: the <b>Lend only when idle</b> switch, on as shipped. Turn it off and the machine lends without waiting for a quiet minute — borrowed generations run alongside your own work, and your own replies may slow down. The caps still apply, and lending still serves one borrowed generation at a time: a request that arrives mid-generation waits for the next slot, exactly as before. Your card states the posture either way — <i>lends when idle</i> or <i>lends even while busy</i>.</p>" +
   "<p>Your own work always wins: a local request takes the next slot ahead of any new borrowed work, though it never kills a borrowed answer already running. A request whose assembled context exceeds the lender's context setting is refused whole — never silently truncated.</p></div>" +
     "<div class='doc-sec'><h4>Privacy — what travels, what never does</h4>" +
   "<p><b>What travels</b> when you borrow: the assembled prompt for that one reply — your Soul and Memory text, any Vault or knowledge-pack material the question pulled in, and the recent conversation — sent encrypted to the lending machine, whose model reads it to write the reply. The lender keeps none of it: no prompt or reply text is written to disk on the lending machine, ever. But that machine's operator owns the machine it runs on. <b>Only borrow from machines you trust with the conversation.</b> The Mesh page shows this in plain words the first time borrowing is enabled.</p>" +
   "<p><b>What never travels:</b> your files and data stores, your credentials and access codes, and command-line access. Mesh carries chat requests and replies, nothing else. Mesh keys and dashboard codes are separate credentials that share nothing in either direction: a guest signed in through DHD can never reach Mesh, and a paired Mesh peer gains no dashboard access.</p>" +
   "<p>Every Mesh request is signed with the borrowing machine's Ed25519 node key and checked against the key on its paired card; stale or unsigned requests are refused with no detail given. The connection is pinned to the certificate fingerprint on the card — if the machine answering presents a different certificate, the borrower refuses and says so in plain words.</p></div>" +
     "<div class='doc-sec'><h4>The ledger and balances</h4>" +
-  "<p>Each machine keeps a small ledger of Mesh work: who, which direction, how long, how it ended — metadata only, never content. The Mesh page's roster shows each paired machine's <b>balance</b> in seconds lent minus seconds borrowed, next to its capability line and live status (reachable, lending, busy, idle, unreachable). A machine's addresses never appear in the roster or anywhere else on screen — they are plumbing for the transport, not display. Balances are a record, not a rule: Ring 1 has no give-to-get enforcement. The ledger stays out of GitHub backups unless you tick <b>Include the Mesh ledger in backups</b> (off by default); the node keypair never rides a backup either way, and a fresh reinstall keeps <span class='mono'>config/mesh/</span> on the installer's keep-list, so a machine never loses its identity — or its pairings — to an update.</p></div>" +
+  "<p>Each machine keeps a small ledger of Mesh work: who, which direction, how long, how it ended — metadata only, never content. The Mesh page's roster shows each paired machine's <b>balance</b> in seconds lent minus seconds borrowed, next to its capability line and live status (reachable, lending, busy, idle, unreachable). That status is kept current by the bridge itself: while Mesh is on, every paired peer is checked in the background about every thirty seconds — and immediately when a peer is paired and when Mesh is turned on — so a pair reaches “checked” on its own, with no chat sent. A failed check stays on the roster with its reason and how long it has been since the peer last answered — <i>unreachable — unauthorized (last checked 42s ago)</i> — until a newer check replaces it; the age keeps growing while the peer stays down, because failed checks refresh the reason, not the clock. “not checked yet” appears only before a peer's first check has ever completed. A machine's addresses never appear in the roster or anywhere else on screen — they are plumbing for the transport, not display. Balances are a record, not a rule: Ring 1 has no give-to-get enforcement. The ledger stays out of GitHub backups unless you tick <b>Include the Mesh ledger in backups</b> (off by default); the node keypair never rides a backup either way, and a fresh reinstall keeps <span class='mono'>config/mesh/</span> on the installer's keep-list, so a machine never loses its identity — or its pairings — to an update.</p></div>" +
     "<div class='doc-sec'><h4>Getting there — the doors</h4>" +
   "<p>Mesh always travels through its <b>own dedicated TLS listener</b> on the Mesh port (8765 by default), whether or not DHD is on — and the certificate it serves is the Mesh certificate, the one the paired card pins, in every configuration. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated port. There is no plaintext Mesh listener. Ring 1 does no NAT traversal, no relay, and no racing between lenders: the first reachable lender serves.</p></div>" +
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
   "<li><b>Certificate fingerprint does not match.</b> The machine that answered is not presenting the certificate on its card — the card is stale, or something else is answering at that address. Re-copy the card from that machine's Mesh page and re-add the peer.</li>" +
   "<li><b>Replies keep saying “answered locally” with a busy, cap, or idle note.</b> The lender is doing its job: it is mid-answer, over its caps for the hour, or not idle yet. The note names which. Wait, or raise the caps on the lender.</li>" +
   "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
-  "<li><b>A peer shows unreachable.</b> Its Mesh is off, its bridge is stopped, or the address on its card no longer reaches it. Re-check the card's addresses on the lender itself first.</li></ul></div>" },
+  "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
+  "<li><b>“This image has no readable Mesh card data.”</b> The PNG card arrived without its payload — almost always because a chat app recompressed it on the way. Resend the original card file inside a .zip, or by any channel that moves files untouched, and import that.</li></ul></div>" },
   { id: "settings", title: "Settings & persona", related: ["installing", "voice", "github"], html:
     "<div class='doc-sec'><h4>Her persona — Soul and Memory</h4>" +
   "<p>Navi's personality is two documents in <span class='mono'>config/</span>: <span class='mono'>soul.md</span> (who she is) and <span class='mono'>memory.md</span> (what she carries). The bridge builds her system prompt from them on every chat. Both are editable in Settings, along with what she calls you. Nothing overwrites them once they exist: updates, reinstalls, and even a --fresh install stash and restore them, along with her installed chips and the llamafile. Only a first install creates them fresh.</p></div>" +
@@ -3965,7 +3972,7 @@ function meshViewState() {
     ledgerInBackup: !!m.ledgerInBackup, borrowing: false, lendingNow: false,
     viaDhd: false,
     state: m.enabled ? ((b.peers || []).length ? "on" : "no-peers") : "off", warning: "",
-    peers: (b.peers || []).map(function (p) { return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", balanceSec: 0, lastTs: 0 }; })
+    peers: (b.peers || []).map(function (p) { return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0 }; })
   };
 }
 function meshDotColor(m) {
@@ -3987,6 +3994,27 @@ function meshDotColor(m) {
 function meshFmtSec(sec) {
   var s = Math.round(sec || 0);
   return (s > 0 ? "+" : s < 0 ? "−" : "") + Math.abs(s) + "s";
+}
+function meshAgeText(sec) {
+  // Build 7 (#87): the age of a peer's last probe, the way the
+  // roster speaks it — "42s", "3m", "2h" — inside "(last checked
+  // … ago)". Null (never probed) renders nothing.
+  if (sec == null) return "";
+  var s = Math.max(0, Math.round(sec));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.round(s / 60) + "m";
+  return Math.round(s / 3600) + "h";
+}
+function meshUnreachableText(p) {
+  // Build 7 (#87): a failed check keeps its reason and its age —
+  // "unreachable — unauthorized (last checked 42s ago)" — and
+  // never decays back to "not checked yet"; that phrase is
+  // reserved for a peer no probe has ever completed for.
+  var t = "unreachable";
+  if (p.lastProbeError) t += " — " + p.lastProbeError;
+  var age = meshAgeText(p.lastProbeAgeSec);
+  if (age) t += " (last checked " + age + " ago)";
+  return t;
 }
 function meshLineHtml(mesh) {
   // The quiet line under a reply Mesh touched (build .85): who
@@ -4028,8 +4056,8 @@ function renderMeshStatus() {
     if (m.state === "warning" && m.warning) line = m.warning;
     else if (m.borrowing) line = "Borrowing now";
     else if (m.lendingNow) line = "Lending now";
-    else if (m.lendEnabled && m.borrowEnabled) line = "On — lending when idle · borrowing automatic";
-    else if (m.lendEnabled) line = "On — lending when idle";
+    else if (m.lendEnabled && m.borrowEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle") + " · borrowing automatic";
+    else if (m.lendEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle");
     else if (m.borrowEnabled) line = m.peers && m.peers.length ? "On — borrowing automatic" : "On — no peers paired yet";
     else line = "On — borrowing and lending both off";
   }
@@ -4044,7 +4072,7 @@ function renderMeshStatus() {
       h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>PAIRED MACHINES</div>";
       m.peers.forEach(function (p) {
         var reach = (p.status && p.status !== "unknown") ? p.status : p.reachable === true ? "reachable" : p.reachable === false ? "unreachable" : "not checked yet";
-        if (p.status === "unreachable" && p.lastProbeError) reach += " (" + p.lastProbeError + ")";
+        if (p.status === "unreachable" || (p.status == null && p.reachable === false)) reach = meshUnreachableText(p);
         h += "<div style='font-size:12px;margin-top:2px'>" + esc(p.name) + " <span style='color:var(--dim)'>· " + reach + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>";
       });
     } else {
@@ -4069,6 +4097,10 @@ function meshSave(patch) {
     if (patch.borrowEnabled != null) m.borrow.enabled = patch.borrowEnabled;
     if (patch.graceMs != null) m.borrow.graceMs = patch.graceMs;
     if (patch.lendEnabled != null) m.lend.enabled = patch.lendEnabled;
+    if (patch.maxSharePercent != null) m.lend.maxSharePercent = patch.maxSharePercent;
+    if (patch.maxGenerationsPerHour != null) m.lend.maxGenerationsPerHour = patch.maxGenerationsPerHour;
+    if (patch.perPeerPerHour != null) m.lend.perPeerPerHour = patch.perPeerPerHour;
+    if (patch.idleOnly != null) m.lend.idleOnly = patch.idleOnly;
     if (patch.ledgerInBackup != null) m.ledgerInBackup = patch.ledgerInBackup;
     saveCfg(); meshMsg = "Saved (mock mode — simulated)."; render(); return;
   }
@@ -4106,6 +4138,9 @@ function meshCapLine(caps) {
   bits.push("model " + (caps.model || "navi"));
   if (caps.speedClass) bits.push(caps.speedClass);
   if (caps.caps) bits.push("lends at most " + caps.caps.maxSharePercent + "% of each hour, " + caps.caps.maxGenerationsPerHour + " generations an hour");
+  // Build 7 (Fix F2): the posture closes the line, stated the
+  // same way on the machine's own row and every peer row.
+  bits.push(caps.idleOnly === false ? "lends even while busy" : "lends when idle");
   return bits.join(" · ");
 }
 function meshRosterHtml() {
@@ -4124,7 +4159,7 @@ function meshRosterHtml() {
     "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + selfDot + "'></span><b>" + esc(m.nodeName || "This machine") + "</b><span style='color:var(--dim);font-size:12px'>this machine · " + selfStatus + "</span></div>" +
     (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") + "</div>";
   (m.peers || []).forEach(function (p) {
-    var status = p.reachable === false ? "unreachable" : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
+    var status = p.reachable === false ? meshUnreachableText(p) : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
     var dot = p.reachable === false ? "#f87171" : p.probeBusy ? "#f5b544" : p.reachable === true ? "#34d399" : "#9fb3c8";
     h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
       "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + dot + "'></span><b>" + esc(p.name) + "</b><span style='color:var(--dim);font-size:12px'>" + status + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
@@ -4163,11 +4198,38 @@ function meshCardHtml() {
     // turn-back-on note. Locally (viaDhd false) this section
     // renders exactly as it always has.
     var lendLocked = !!m.viaDhd && !m.lendEnabled;
-    h += meshSwitchRow("mesh-lend", m.lendEnabled, "Lend this machine (automatic when idle)", "Lend this machine — automatic when idle, inside the caps below", lendLocked);
+    // Build 7 (Fix F2): the switch's own words follow the
+    // idle-only posture — with the override off, "automatic when
+    // idle" would be a false label on a live control.
+    var lendIdleOnly = lend.idleOnly !== false;
+    h += meshSwitchRow("mesh-lend", m.lendEnabled, lendIdleOnly ? "Lend this machine (automatic when idle)" : "Lend this machine (automatic, even while busy)", lendIdleOnly ? "Lend this machine — automatic when idle, inside the caps below" : "Lend this machine — automatic, even while busy, inside the caps below", lendLocked);
     if (lendLocked) h += "<p style='color:var(--dim);font-size:12px'>Lending can only be turned on at this machine, in person — and this view is through the DHD door, so the switch is locked here. Turning it off works from anywhere.</p>";
     else if (m.viaDhd && m.lendEnabled) h += "<p style='color:var(--dim);font-size:12px'>You are viewing through the DHD door: you can turn lending off from here, but turning it back on will require being at this machine, in person.</p>";
     h += "<p style='color:var(--dim);font-size:12px'>Caps: at most " + (lend.maxSharePercent != null ? lend.maxSharePercent : 25) + "% of each hour · " + (lend.maxGenerationsPerHour != null ? lend.maxGenerationsPerHour : 20) + " borrowed generations an hour · " + (lend.perPeerPerHour != null ? lend.perPeerPerHour : 10) + " per machine" + (lend.idleOnly !== false ? " · idle only (" + (lend.idleAfterSeconds != null ? lend.idleAfterSeconds : 60) + "s quiet)" : "") + ". Your own work always takes the next slot.</p>" +
+      // Build 7 (Fix F): the caps are operator settings, set
+      // right here in the Lending section — inline with the Lend
+      // switch and the Caps line above, never behind a panel or
+      // in Settings. Same input family as the grace field; the
+      // row wraps on a phone and every input is a 44px target.
+      // Saving rides the card's Save button (wireMeshCard), and
+      // the bridge applies the new caps to the next admission
+      // and the next card it shows — no restart.
+      "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'>" +
+      "<label style='font-size:12px'>Share of each hour <input id='mesh-cap-share' type='number' min='1' max='100' step='1' value='" + (lend.maxSharePercent != null ? lend.maxSharePercent : 25) + "' aria-label='Lending cap — share of each hour, percent' style='width:84px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'> %</label>" +
+      "<label style='font-size:12px'>Generations per hour <input id='mesh-cap-gen' type='number' min='1' max='10000' step='1' value='" + (lend.maxGenerationsPerHour != null ? lend.maxGenerationsPerHour : 20) + "' aria-label='Lending cap — borrowed generations per hour' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label>" +
+      "<label style='font-size:12px'>Per machine per hour <input id='mesh-cap-peer' type='number' min='1' max='10000' step='1' value='" + (lend.perPeerPerHour != null ? lend.perPeerPerHour : 10) + "' aria-label='Lending cap — borrowed generations per machine per hour' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label></div>" +
+      "<p style='color:var(--dim);font-size:12px'>Set these for the machine this is — a strong server can take far more than the shipped defaults (25%, 20 an hour, 10 per machine). Your card advertises what you set here, so a paired machine sees the real offer.</p>" +
       "<p style='color:var(--dim);font-size:12px'>Lending can only be turned ON here, on this machine's own dashboard — never through the DHD door. Turning it off works from anywhere you are signed in. When you lend, this machine's model reads prompts assembled on your paired machines to answer them; the bridge keeps none of their content — the ledger holds only who, which direction, and how long.</p>";
+    // Build 7 (Fix F2): the idle-only override, in the same
+    // always-visible Lending section as the caps — the switch
+    // flips on click like the others (wireMeshCard), the bridge
+    // saves it into the lend block, and admission reads it on
+    // the next request. The line under it states the current
+    // posture's consequence in plain words, both ways.
+    h += meshSwitchRow("mesh-idle-only", lendIdleOnly, "Lend only when idle", "Lend only when idle — off means this machine lends without waiting for a quiet minute");
+    h += lendIdleOnly
+      ? "<p style='color:var(--dim);font-size:12px'>On: this machine lends only after " + (lend.idleAfterSeconds != null ? lend.idleAfterSeconds : 60) + " seconds of quiet. Turn it off and it lends without waiting to be idle.</p>"
+      : "<p style='color:var(--dim);font-size:12px'>Off: this machine lends without waiting to be idle — borrowed generations run alongside your own work, and your own replies may slow down. The caps above still apply, and lending still serves one borrowed generation at a time.</p>";
     if (m.lendEnabled) h += "<p><button type='button' class='ghost' id='mesh-stop' aria-label='Stop lending now — ends lending and aborts any borrowed generation in flight' style='min-height:44px;color:#f87171;border-color:#f87171'>Stop lending now</button></p>";
     h += "<h4 style='margin:14px 0 0'>Paired machines</h4>";
     if (m.peers && m.peers.length) {
@@ -4175,24 +4237,73 @@ function meshCardHtml() {
         var reachDot = p.reachable === true ? "#34d399" : p.reachable === false ? "#f87171" : "#9fb3c8";
         h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
           "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + reachDot + "'></span><b>" + esc(p.name) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.short || "") + "</span><span style='color:var(--dim);font-size:12px'>balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
-          "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Let " + esc(p.name) + " borrow from this machine'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
+          "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Borrow from " + esc(p.name) + " — this machine borrows from it while this is on'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
           "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div></div>";
       });
     } else {
       h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Show your card here, paste it into the other machine's Mesh page, and paste its card back here.</p>";
     }
-    h += "<div style='margin-top:10px'><button type='button' class='act' id='mesh-card-show' aria-label='Show my Mesh card' style='min-height:44px'>Show my Mesh card</button></div>";
+    h += "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'><button type='button' class='act' id='mesh-card-show' aria-label='Show my Mesh card' style='min-height:44px'>Show my Mesh card</button>" +
+      "<button type='button' class='ghost' id='mesh-card-png' aria-label='Download my Mesh card as a PNG picture' style='min-height:44px'>Download PNG card</button></div>" +
+      "<p style='color:var(--dim);font-size:12px'>The PNG card is this same card as a picture: a face you can read — name, node, the offer — with the whole card riding inside the picture, the way chips travel. Send the file itself; for a chat app, put it inside a .zip first, because chat apps recompress pictures and strip the data out.</p>";
     if (meshCardText) {
       h += "<textarea id='mesh-card-block' readonly rows='9' class='mono' style='font-size:11px;margin-top:8px;width:100%' aria-label='My Mesh card — copy the whole block'>" + esc(meshCardText) + "</textarea>" +
         "<p><button type='button' class='ghost' id='mesh-card-copy' aria-label='Copy my Mesh card' style='min-height:44px'>" + (meshCardCopied ? "Copied" : "Copy card") + "</button></p>";
     }
     h += "<div style='margin-top:10px'><label style='font-size:12px'>Add a peer — paste the other machine's card<textarea id='mesh-peer-text' rows='5' class='mono' style='font-size:11px;width:100%;margin-top:4px' aria-label='Paste a Mesh peer card' placeholder='Paste the whole card block from the other machine'></textarea></label>" +
       "<p><button type='button' class='act' id='mesh-peer-add' aria-label='Add the pasted peer card' style='min-height:44px'>Add peer</button></p></div>";
+    // Build 7 (spec section 13): the PNG import — a visible drop
+    // target plus an upload control, both feeding the one
+    // importer (wireMeshCard). Drag-and-drop is the desktop
+    // path; the upload button is the path that works everywhere,
+    // phones included: a 44px target, and the zone wraps its
+    // words instead of widening the page at 360-430px.
+    h += "<div id='mesh-png-zone' style='margin-top:12px;border:1.5px dashed " + (meshPngDrag ? "var(--accent)" : "var(--line)") + ";border-radius:6px;padding:12px;text-align:center'>" +
+      "<p style='font-size:12px;margin:0'>Or pair by picture — drop the other machine's PNG card here</p>" +
+      "<p style='margin:8px 0 0'><label for='mesh-png-file' class='act' style='display:inline-flex;align-items:center;min-height:44px;padding:0 14px;cursor:pointer'>Upload a PNG card</label>" +
+      "<input type='file' id='mesh-png-file' accept='image/png,.png' aria-label='Upload a Mesh PNG card file' style='display:none'></p>" +
+      "<p style='color:var(--dim);font-size:11px;margin:8px 0 0'>The picture must arrive as the original file — inside a .zip for chat apps, which recompress pictures and strip the card data out.</p>" +
+      (meshPngMsg ? "<p style='font-size:12px;margin:8px 0 0'>" + esc(meshPngMsg) + "</p>" : "") +
+      "</div>";
     h += "<div style='display:flex;align-items:center;gap:8px;margin-top:10px'><input type='checkbox' id='mesh-ledger-backup' aria-label='Include the Mesh ledger in backups'" + (m.ledgerInBackup ? " checked" : "") + " style='width:20px;height:20px'><label for='mesh-ledger-backup' style='font-size:12px'>Include the Mesh ledger in backups (off by default — the ledger is metadata, but whose machines talked is yours)</label></div>";
-    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, grace, and ledger choice' style='min-height:44px'>Save name &amp; grace</button></p>";
+    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
   }
   h += "</div>";
   return h;
+}
+function meshPngFileName() {
+  // The download's file name, from this machine's Mesh name —
+  // cosmetic only; the bridge names nothing.
+  var m = meshViewState();
+  var base = String(m.nodeName || "mesh").replace(/[^A-Za-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
+  return (base || "mesh") + "-mesh-card.png";
+}
+function meshImportPngFile(file) {
+  // THE PNG card importer (Build 7, spec section 13): the file-
+  // upload control and the drag-and-drop zone both land here,
+  // so both paths run the same bytes through the same bridge
+  // parser — there is no second, weaker path. The verdict,
+  // success or one of the bridge's specific refusals, renders
+  // at the drop zone in meshPngMsg: never a silent no-op.
+  if (!file) return;
+  if (CONFIG.backend !== "live") { meshPngMsg = "Pairing needs the live bridge — the bench does not simulate Mesh traffic."; render(); return; }
+  meshPngMsg = "Reading " + file.name + "…"; render();
+  var reader = new FileReader();
+  reader.onload = function () {
+    var url = String(reader.result || "");
+    var b64 = url.indexOf(",") !== -1 ? url.split(",")[1] : "";
+    if (!b64) { meshPngMsg = "That file could not be read — try the upload again, or paste the text card instead."; render(); return; }
+    fetch("/api/mesh/peers/png", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ png: b64 }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) { meshState = j.mesh; meshPngMsg = "Peer added from the picture. Pairing is complete when this machine's card is added on the other side too."; }
+        else meshPngMsg = (j && j.error) || "That picture was refused.";
+        render();
+      })
+      .catch(function () { meshPngMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  reader.onerror = function () { meshPngMsg = "That file could not be read — try the upload again, or paste the text card instead."; render(); };
+  reader.readAsDataURL(file);
 }
 function wireMeshCard() {
   var master = document.getElementById("mesh-master");
@@ -4201,6 +4312,8 @@ function wireMeshCard() {
   if (borrow) borrow.onclick = function () { var m = meshViewState(); meshSave({ borrowEnabled: !m.borrowEnabled }); };
   var lend = document.getElementById("mesh-lend");
   if (lend) lend.onclick = function () { var m = meshViewState(); meshSave({ lendEnabled: !m.lendEnabled }); };
+  var idleOnly = document.getElementById("mesh-idle-only");
+  if (idleOnly) idleOnly.onclick = function () { var m = meshViewState(); var l = m.lend || {}; meshSave({ idleOnly: l.idleOnly === false ? true : false }); };
   var save = document.getElementById("mesh-save");
   if (save) save.onclick = function () {
     var nameEl = document.getElementById("mesh-name");
@@ -4210,6 +4323,13 @@ function wireMeshCard() {
     if (nameEl) patch.nodeName = nameEl.value;
     if (graceEl) patch.graceMs = parseInt(graceEl.value, 10);
     if (ledgerEl) patch.ledgerInBackup = !!ledgerEl.checked;
+    // Build 7 (Fix F): the lending caps ride the same save.
+    var shareEl = document.getElementById("mesh-cap-share");
+    var genEl = document.getElementById("mesh-cap-gen");
+    var peerCapEl = document.getElementById("mesh-cap-peer");
+    if (shareEl) patch.maxSharePercent = parseInt(shareEl.value, 10);
+    if (genEl) patch.maxGenerationsPerHour = parseInt(genEl.value, 10);
+    if (peerCapEl) patch.perPeerPerHour = parseInt(peerCapEl.value, 10);
     meshSave(patch);
   };
   var stop = document.getElementById("mesh-stop");
@@ -4249,6 +4369,44 @@ function wireMeshCard() {
       .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = "Peer added. Pairing is complete when this machine's card is added on the other side too."; } else meshMsg = (j && j.error) || "That card was refused."; render(); })
       .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
   };
+  var pngDl = document.getElementById("mesh-card-png");
+  if (pngDl) pngDl.onclick = function () {
+    if (CONFIG.backend !== "live") { meshMsg = "Mock mode — the live bridge issues the real PNG card."; render(); return; }
+    fetch("/api/mesh/card.png").then(function (r) {
+      var ct = r.headers.get("Content-Type") || "";
+      if (ct.indexOf("image/png") === -1) return r.json().then(function (j) { meshMsg = (j && j.error) || "The bridge could not produce a PNG card."; render(); });
+      return r.blob().then(function (b) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(b);
+        a.download = meshPngFileName();
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        meshMsg = "PNG card downloaded — send the file itself (inside a .zip for chat apps)."; render();
+      });
+    }).catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  var pngFile = document.getElementById("mesh-png-file");
+  if (pngFile) pngFile.onchange = function () {
+    var f = pngFile.files && pngFile.files[0];
+    pngFile.value = "";
+    if (f) meshImportPngFile(f);
+  };
+  var pngZone = document.getElementById("mesh-png-zone");
+  if (pngZone) {
+    pngZone.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      if (!meshPngDrag) { meshPngDrag = true; pngZone.style.borderColor = "var(--accent)"; }
+    });
+    pngZone.addEventListener("dragleave", function () {
+      meshPngDrag = false; pngZone.style.borderColor = "var(--line)";
+    });
+    pngZone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      meshPngDrag = false;
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) meshImportPngFile(f); else render();
+    });
+  }
   mainEl.querySelectorAll("[data-mesh-borrow]").forEach(function (b) {
     b.onclick = function () {
       var nodeId = b.getAttribute("data-mesh-borrow");
