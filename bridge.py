@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 3
+SHIPPED_BUILD_SEQ = 4
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4207,9 +4207,14 @@ def github_text(url, accept):
 # in config/update-result.json; the panel polls that record while
 # the apply runs (downloading / verifying / staging / installing /
 # restarting) and reads the outcome from it afterwards. "Updated"
-# is claimed only when the VERSION file after the relaunch reads
-# the target version — a step that did not observe its own
-# success never reports one.
+# is claimed only when the install after the relaunch reads as
+# the target — the VERSION file's number AND, for a same-version
+# Edge refresh, the build sequence the relaunched bridge reports
+# and the one baked into the bridge.py on disk (Build 4: the
+# number alone is the same before and after a refresh, so a
+# confirmation that read only the number once certified an
+# install of the previous build as the new one). A step that did
+# not observe its own success never reports one.
 #
 # The failure ladder is part of the design: every step can fail
 # and names itself and its reason in the record (download failed,
@@ -4683,6 +4688,7 @@ APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # fallback) from. Stdlib only, like the bridge.
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -4736,6 +4742,24 @@ def read_installed_version(root):
             token = token[: -(len(word) + 1)]
             break
     return token, status
+
+
+def read_installed_build_seq(root):
+    # The Edge build sequence baked into the bridge.py at the
+    # install root (Build 4): the on-disk half of the identity a
+    # same-version refresh has to prove, beside the VERSION
+    # file's number — which a refresh deliberately does not
+    # change. None when the file or the sequence cannot be read
+    # (a bridge from before build sequences existed).
+    try:
+        with open(os.path.join(root, "bridge.py"), "rb") as f:
+            m = re.search(
+                rb"SHIPPED_BUILD_SEQ\\s*=\\s*([0-9]+)", f.read())
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
 
 
 def version_label(number, status):
@@ -4853,6 +4877,12 @@ def main():
     write_result({"state": "working", "step": "restarting"})
     relaunch()
     target = tuple(job["targetTuple"])
+    # Build 4: when the job names a target Build number, the
+    # confirmation must observe that build answering — the
+    # version number is identical on both sides of a refresh,
+    # so a version-only match once certified the previous
+    # build's reinstall as the new build's arrival.
+    tgt_seq = job.get("targetBuildSeq")
     answered = None
     deadline = time.time() + 300
     while time.time() < deadline:
@@ -4869,18 +4899,24 @@ def main():
             answered = seen
             if (seen.get("version")
                     and tuples_equal(
-                        version_tuple(seen["version"]), target)):
+                        version_tuple(seen["version"]), target)
+                    and (tgt_seq is None
+                         or seen.get("buildSeq") == tgt_seq)):
                 break
         time.sleep(2)
     after_number, after_status = read_installed_version(root)
     after_label = (
         version_label(after_number, after_status) if after_number else "")
+    disk_seq = read_installed_build_seq(root)
     live_ok = bool(
         answered and answered.get("version")
-        and tuples_equal(version_tuple(answered["version"]), target))
+        and tuples_equal(version_tuple(answered["version"]), target)
+        and (tgt_seq is None or answered.get("buildSeq") == tgt_seq))
     file_ok = bool(
         after_number
-        and tuples_equal(version_tuple(after_number), target))
+        and tuples_equal(version_tuple(after_number), target)
+        and (tgt_seq is None or disk_seq is None
+             or disk_seq == tgt_seq))
     if live_ok and file_ok:
         write_result({
             "state": "done", "step": "done",
@@ -4902,6 +4938,26 @@ def main():
              "staged package is still in place — the manual "
              "fallback below re-runs its installer by hand, or "
              "launch the app again from its menu entry.")
+    elif tgt_seq is not None and disk_seq is not None \
+            and disk_seq != tgt_seq:
+        fail("restart",
+             "Apex came back after the update, but the bridge "
+             "installed on disk is Build " + str(disk_seq)
+             + " instead of the expected Build " + str(tgt_seq)
+             + " — the update is not confirmed. The staged "
+             "package is still in place — the manual fallback "
+             "below finishes the job by hand.")
+    elif tgt_seq is not None and answered is not None \
+            and answered.get("buildSeq") is not None \
+            and answered.get("buildSeq") != tgt_seq:
+        fail("restart",
+             "Apex came back after the update, but the bridge "
+             "answering reports Build "
+             + str(answered.get("buildSeq"))
+             + " instead of the expected Build " + str(tgt_seq)
+             + " — the update is not confirmed. The staged "
+             "package is still in place — the manual fallback "
+             "below finishes the job by hand.")
     else:
         fail("restart",
              "Apex came back after the update, but its VERSION "
@@ -5022,22 +5078,49 @@ def _run_update_apply(cfg):
         command = (
             "cd " + pkg_dir + " && ./install.sh --startup "
             + fb_startup + " --voice " + fb_voice)
-        # Downloading (a package already downloaded beside the app
-        # — including one a pre-.56 Updater refused after
-        # downloading — is read back and put through the same
-        # validation instead of being fetched again).
+        # Downloading (Build 4 — the refresh-identity repair).
+        # A package already downloaded beside the app — including
+        # one a pre-.56 Updater refused after downloading — is
+        # read back instead of being fetched again ONLY when it
+        # is provably the package the feed is offering now: its
+        # byte size must equal the feed asset's size. The staging
+        # folder is named by the release TAG and the file by the
+        # asset name, and both are identical for every
+        # publication of one version — so a same-version refresh
+        # otherwise finds the PREVIOUS build's zip sitting at
+        # this exact path (left there by that build's own apply)
+        # and installs those bytes again. That is the Build 2 →
+        # Build 3 field failure: the apply ran clean, the
+        # checklist passed, and the install still identified as
+        # Build 2 afterwards, because the bytes it installed WERE
+        # Build 2's — and the version-only confirmation below
+        # could not tell the difference. A size mismatch (or a
+        # feed that names no size) fetches fresh, overwriting
+        # the leftover; the build-identity check in verification
+        # is the second lock on the same door, for a leftover
+        # whose size happens to match.
+        feed_seq = rel.get("buildSeq")
+        feed_size = 0
+        try:
+            feed_size = int(asset.get("size") or 0)
+        except Exception:
+            feed_size = 0
         _write_update_result(record)
+        data = None
+        from_disk = False
         if os.path.isfile(zip_path):
             try:
-                with open(zip_path, "rb") as f:
-                    data = f.read()
+                if feed_size and os.path.getsize(zip_path) == feed_size:
+                    with open(zip_path, "rb") as f:
+                        data = f.read()
+                    from_disk = True
             except Exception as e:
                 fail("downloading",
                      "Downloading the update failed: the package "
                      "already beside the app could not be read ("
                      + str(e) + ") — nothing was staged.")
                 return
-        else:
+        if data is None:
             try:
                 data = github_download(asset["url"])
             except Exception as e:
@@ -5047,42 +5130,97 @@ def _run_update_apply(cfg):
                 return
         # Verifying: unwrap a gzip-wrapped payload, then the same
         # Apex-package verification as always — a real zip, holding
-        # install.sh + VERSION, with no path escaping its folder.
+        # install.sh + VERSION, with no path escaping its folder —
+        # plus the build-identity check (Build 4): when the feed
+        # names the target's Build number, the package in hand
+        # must BE that build; its bridge.py carries the sequence
+        # the installed app will report. A package naming a
+        # different build is the wrong bytes, however valid a zip
+        # it is. When the wrong bytes came from the leftover
+        # beside the app, they are discarded and the offered
+        # package is fetched fresh, once, and verified again;
+        # when a fresh download itself names the wrong build, the
+        # feed and its asset disagree and the apply fails here,
+        # in words, with nothing staged.
         record["step"] = "verifying"
         _write_update_result(record)
-        payload, _note = _unwrap_package(data)
-        if payload is None:
-            if _note == "gzip-broken":
+        retried_fresh = False
+        while True:
+            payload, _note = _unwrap_package(data)
+            if payload is None:
+                if _note == "gzip-broken":
+                    fail("verifying",
+                         "The download arrived gzip-wrapped but "
+                         "could not be unwrapped — nothing was "
+                         "staged.")
+                else:
+                    fail("verifying",
+                         "The download arrived gzip-wrapped, but "
+                         "what is inside is not a zip file — "
+                         "nothing was staged.")
+                return
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(payload))
+                names = zf.namelist()
+            except Exception:
                 fail("verifying",
-                     "The download arrived gzip-wrapped but could "
-                     "not be unwrapped — nothing was staged.")
-            else:
+                     "The download did not arrive as a zip file "
+                     "— nothing was staged.")
+                return
+            if "install.sh" not in names or "VERSION" not in names:
                 fail("verifying",
-                     "The download arrived gzip-wrapped, but what "
-                     "is inside is not a zip file — nothing was "
+                     "That zip is not an Apex package (no "
+                     "install.sh / VERSION inside) — nothing was "
                      "staged.")
-            return
-        try:
-            zf = zipfile.ZipFile(io.BytesIO(payload))
-            names = zf.namelist()
-        except Exception:
-            fail("verifying",
-                 "The download did not arrive as a zip file "
-                 "— nothing was staged.")
-            return
-        if "install.sh" not in names or "VERSION" not in names:
-            fail("verifying",
-                 "That zip is not an Apex package (no install.sh / "
-                 "VERSION inside) — nothing was staged.")
-            return
-        base = os.path.realpath(pkg_dir)
-        for member in names:
-            target = os.path.realpath(os.path.join(pkg_dir, member))
-            if target != base and not target.startswith(base + os.sep):
+                return
+            base = os.path.realpath(pkg_dir)
+            escaped = ""
+            for member in names:
+                target = os.path.realpath(
+                    os.path.join(pkg_dir, member))
+                if target != base and not target.startswith(
+                        base + os.sep):
+                    escaped = member
+                    break
+            if escaped:
                 fail("verifying",
                      "The package zip contains a path outside its "
-                     "folder (" + member + ") — nothing was staged.")
+                     "folder (" + escaped + ") — nothing was "
+                     "staged.")
                 return
+            if feed_seq is not None and "bridge.py" in names:
+                pkg_seq = None
+                try:
+                    with zf.open("bridge.py") as bf:
+                        _m = re.search(
+                            rb"SHIPPED_BUILD_SEQ\s*=\s*([0-9]+)",
+                            bf.read())
+                    if _m:
+                        pkg_seq = int(_m.group(1))
+                except Exception:
+                    pkg_seq = None
+                if pkg_seq is not None and pkg_seq != feed_seq:
+                    if from_disk and not retried_fresh:
+                        retried_fresh = True
+                        from_disk = False
+                        try:
+                            data = github_download(asset["url"])
+                        except Exception as e:
+                            fail("downloading",
+                                 "Downloading the update failed ("
+                                 + type(e).__name__ + ") — nothing "
+                                 "was staged.")
+                            return
+                        continue
+                    fail("verifying",
+                         "The package in hand is Build "
+                         + str(pkg_seq) + ", but the release on "
+                         "offer is Build " + str(feed_seq)
+                         + " — not the same bytes, so nothing was "
+                         "staged. Check again to fetch the offered "
+                         "package.")
+                    return
+            break
         # Staging: the verified (unwrapped) zip lands beside the
         # app and unpacks under updates/<tag>/package, as before.
         record["step"] = "staging"
@@ -5125,6 +5263,11 @@ def _run_update_apply(cfg):
                 "startup": str(cfg_now.get("startup") or "on-ui-launch"),
                 "voice": fb_voice,
                 "targetTuple": list(_version_tuple(tag)),
+                # Build 4: the target's Build number, when the
+                # feed names one — the helper's confirmation must
+                # observe THIS landing, not just the version
+                # number a refresh shares with its predecessor.
+                "targetBuildSeq": rel.get("buildSeq"),
                 "targetLabel": record["targetLabel"],
                 # Build 3: the label the finished record carries
                 # for the to-side — composed here, where the
@@ -9535,6 +9678,12 @@ class Handler(BaseHTTPRequestHandler):
                 "version": app_version(cfg),
                 "versionStatus": app_version_status(cfg),
                 "bridge": BRIDGE_BUILD,
+                # Build 4: the running process's own Edge build
+                # sequence, beside its stamp — the apply helper's
+                # confirmation reads it after a relaunch, because
+                # the version number alone cannot tell one build
+                # of a version from the next.
+                "buildSeq": SHIPPED_BUILD_SEQ,
                 "port": BRIDGE_PORT,
                 "dir": ROOT,
                 "root": ROOT,
