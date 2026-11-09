@@ -370,7 +370,7 @@ BRIDGE_BUILD = "2026-11-09.87"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 5
+SHIPPED_BUILD_SEQ = 6
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2982,11 +2982,13 @@ def mesh_handle_borrow(handler, body):
     return 200, payload
 
 
-def mesh_stop_lending():
+def mesh_stop_lending(via_dhd=False):
     # Instant-off (R4): flips lend.enabled off in the persisted
     # config and aborts any in-flight borrowed generation NOW by
     # shutting down its connection's socket (build .86, gate 4).
-    # Returns the new Mesh state payload.
+    # Returns the new Mesh state payload. Build 6 (#86): the
+    # caller's via_dhd rides through so the returned payload
+    # carries the same viaDhd field as the other Mesh answers.
     cfg = load_config()
     block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
     block = dict(block)
@@ -3021,7 +3023,7 @@ def mesh_stop_lending():
             conn.close()
         except Exception:
             pass
-    return mesh_status_payload(load_config())
+    return mesh_status_payload(load_config(), via_dhd)
 
 
 # -- Borrower transport ----------------------------------------------
@@ -3264,7 +3266,7 @@ def mesh_try_borrow(messages, cfg, ms):
             MESH_STATE["borrow_peer"] = ""
 
 
-def mesh_status_payload(cfg):
+def mesh_status_payload(cfg, via_dhd=False):
     # The /api/status mesh section and the Settings card's state:
     # metadata only — state, peers, balances. No content, ever.
     # Build .87: the payload also carries the status column's
@@ -3274,6 +3276,14 @@ def mesh_status_payload(cfg):
     # cache, the recorded drops, the lend/borrow flags). Names and
     # state words only: a peer's addresses never enter this
     # payload, exactly as they never render anywhere.
+    # Build 6 (#86): "viaDhd" says whether THE REQUEST this
+    # payload answers arrived through the DHD proxy surface (the
+    # X-Apex-Via: dhd header the proxy stamps). It is a property
+    # of the request, not of the machine, so the callers that
+    # answer an operator's view pass it in; everyone else gets
+    # False. The dashboard reads it to render the Lend switch
+    # locked on the remote view — the in-person turn-on lock
+    # itself is enforced at the settings handler, unchanged.
     ms = mesh_settings(cfg)
     balances = mesh_balances()
     peers = []
@@ -3363,6 +3373,7 @@ def mesh_status_payload(cfg):
         "lendingNow": MESH_STATE["borrowed_conn"] is not None,
         "state": state,
         "warning": warning,
+        "viaDhd": bool(via_dhd),
         "capabilities": mesh_capabilities(cfg),
         "peers": peers,
     }
@@ -10094,7 +10105,7 @@ class Handler(BaseHTTPRequestHandler):
                 "llamafile_reachable": alive,
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
-                "mesh": mesh_status_payload(cfg),
+                "mesh": mesh_status_payload(cfg, (self.headers.get("X-Apex-Via") or "") == "dhd"),
             })
         elif self.path.startswith("/api/operations/"):
             _op_id = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
@@ -10391,7 +10402,7 @@ class Handler(BaseHTTPRequestHandler):
             if (self.headers.get("X-Apex-Via") or "") == "dhd":
                 self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
                 return
-            self._send(200, {"ok": True, "mesh": mesh_stop_lending()})
+            self._send(200, {"ok": True, "mesh": mesh_stop_lending((self.headers.get("X-Apex-Via") or "") == "dhd")})
             return
         if self.path == "/api/mesh/settings":
             # The Settings → System Mesh card's save. Persists the
@@ -10459,7 +10470,7 @@ class Handler(BaseHTTPRequestHandler):
                 mesh_start_listener()
             else:
                 mesh_stop_listener()
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config(), (self.headers.get("X-Apex-Via") or "") == "dhd")})
             return
         if self.path == "/api/mesh/peers":
             # Add a peer from a pasted card (spec section 3.1).

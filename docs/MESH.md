@@ -33,6 +33,8 @@ CLI mode, chips, and every built-in route never borrow. Only model answers do.
 
 Lending can only be turned **on** from the lending machine's own dashboard, in person, at that machine. It cannot be armed through the DHD door. Turning it off works from anywhere you are signed in — and **Stop lending now** ends lending and aborts a borrowed generation already running, mid-flight, at once.
 
+Open the Mesh page through the DHD door and the **Lend this machine** switch shows the lock itself: while lending is off it renders locked — dimmed, not clickable — with the reason in plain words directly under the switch, because lending can only be turned on in person. While lending is on, the switch stays live on the remote view, since turning lending off works from anywhere; a note under it says turning it back on will require being at the machine. The lock is the bridge's, not the page's: the bridge refuses a lending turn-on that arrives through the DHD door regardless of what any client renders.
+
 A lender serves only inside the limits you set:
 
 - **Idle only** (on by default): the machine must have been quiet for 60 seconds, and no local generation may be running.
