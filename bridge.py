@@ -2706,9 +2706,9 @@ def mesh_parse_card(text):
     try:
         card = json.loads(text or "")
     except Exception:
-        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Settings, exactly as shown."
+        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Mesh page, exactly as shown."
     if not isinstance(card, dict) or card.get("meshCard") != 1:
-        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Settings, exactly as shown."
+        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Mesh page, exactly as shown."
     fp = str(card.get("certFingerprint") or "").strip().lower()
     if len(fp) != 64 or any(c not in "0123456789abcdef" for c in fp):
         return None, "The card's certificate fingerprint is not in the right shape — copy the card again, whole, and re-paste it."
@@ -9430,7 +9430,7 @@ class Handler(BaseHTTPRequestHandler):
             # guest session cannot reach it.
             _cfg = load_config()
             if not mesh_settings(_cfg)["enabled"]:
-                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on in Settings first."})
+                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on from the Mesh page first."})
                 return
             _ok, _err = mesh_ensure_identity(_cfg)
             if not _ok:

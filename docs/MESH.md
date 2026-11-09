@@ -25,7 +25,7 @@ Three off switches, from widest to narrowest:
 - The **Borrowing switch** stops this machine from borrowing while leaving it able to lend.
 - **This chat only: keep it on this machine**, beside the composer, holds one chat session home — no borrow is attempted for it at all.
 
-If the lender is **busy**, your machine waits a short grace (2 seconds by default, changeable in Settings) for it to free up, then answers locally; a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply — it serves the next request. If a lender **drops mid-answer**, you see the notice — *"<machine> dropped mid-answer — this reply was generated locally instead"* — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together.
+If the lender is **busy**, your machine waits a short grace (2 seconds by default, changeable on the Mesh page) for it to free up, then answers locally; a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply — it serves the next request. If a lender **drops mid-answer**, you see the notice — *"<machine> dropped mid-answer — this reply was generated locally instead"* — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together.
 
 CLI mode, chips, and every built-in route never borrow. Only model answers do.
 
@@ -43,7 +43,7 @@ Your own work always wins: a local request takes the next slot ahead of any new 
 
 ## Privacy — what travels, what never does
 
-**What travels** when you borrow: the assembled prompt for that one reply — your Soul and Memory text, any Vault or knowledge-pack material the question pulled in, and the recent conversation — sent encrypted to the lending machine, whose model reads it to write the reply. The lender keeps none of it: no prompt or reply text is written to disk on the lending machine, ever. But that machine's operator owns the machine it runs on. **Only borrow from machines you trust with the conversation.** Settings shows this in plain words the first time borrowing is enabled.
+**What travels** when you borrow: the assembled prompt for that one reply — your Soul and Memory text, any Vault or knowledge-pack material the question pulled in, and the recent conversation — sent encrypted to the lending machine, whose model reads it to write the reply. The lender keeps none of it: no prompt or reply text is written to disk on the lending machine, ever. But that machine's operator owns the machine it runs on. **Only borrow from machines you trust with the conversation.** The Mesh page shows this in plain words the first time borrowing is enabled.
 
 **What never travels**: your files and data stores, your credentials and access codes, and command-line access. Mesh carries chat requests and replies, nothing else. Mesh keys and dashboard codes are separate credentials that share nothing in either direction: a guest signed in through DHD can never reach Mesh, and a paired Mesh peer gains no dashboard access. A peer's network addresses likewise stay in the plumbing — they are used to dial the machine and are never shown in the roster or any other surface.
 

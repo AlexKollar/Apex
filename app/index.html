@@ -2665,7 +2665,7 @@ var DOC_PAGES = [
   "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
   "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
   "<li><b>This chat only</b>, beside the composer, holds one chat session on this machine — no borrow is attempted for it at all. It stays latched for the session, like the CLI/Navi latch.</li></ul>" +
-  "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set in Settings) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
+  "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set on the Mesh page) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
     "<div class='doc-sec'><h4>Lending — automatic when idle, off means off</h4>" +
   "<p>Lending can only be turned <b>on</b> from the lending machine's own dashboard, <b>in person</b>, at that machine. It cannot be armed through the DHD door. Turning it off works from anywhere you are signed in — and <b>Stop lending now</b> ends lending and aborts a borrowed generation already running, mid-flight, at once.</p>" +
   "<p>A lender serves only inside the limits set on its card:</p><ul>" +
@@ -4116,7 +4116,7 @@ function meshCardHtml() {
     if (m.borrowEnabled && !meshPrivacyAcked) {
       h += "<p style='font-size:12px;border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:8px'>Borrowing sends this chat's full context — including your Soul and Memory pages and recent conversation — to the lending machine, whose model reads it to write the reply. It is encrypted on the way and the lender keeps none of it, but that machine's operator owns the machine it runs on. Only borrow from machines you trust with the conversation.</p>";
     }
-    h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>Grace when a lender is busy <input id='mesh-grace' type='number' min='0' max='30000' step='100' value='" + (m.graceMs != null ? m.graceMs : 2000) + "' aria-label='Borrow grace in milliseconds' style='width:96px;min-height:44px'> ms</label></div>" +
+    h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>Grace when a lender is busy <input id='mesh-grace' type='number' min='0' max='30000' step='100' value='" + (m.graceMs != null ? m.graceMs : 2000) + "' aria-label='Borrow grace in milliseconds' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'> ms</label></div>" +
       "<p style='color:var(--dim);font-size:12px'>If a lender is busy, this machine waits up to the grace for it to free up, then answers locally. A freed lender serves the next request — never a half-written reply.</p>";
     h += "<h4 style='margin:14px 0 0'>Lending</h4>";
     h += meshSwitchRow("mesh-lend", m.lendEnabled, "Lend this machine (automatic when idle)", "Lend this machine — automatic when idle, inside the caps below");
@@ -4133,7 +4133,7 @@ function meshCardHtml() {
           "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div></div>";
       });
     } else {
-      h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Show your card here, paste it into the other machine's Settings, and paste its card back here.</p>";
+      h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Show your card here, paste it into the other machine's Mesh page, and paste its card back here.</p>";
     }
     h += "<div style='margin-top:10px'><button type='button' class='act' id='mesh-card-show' aria-label='Show my Mesh card' style='min-height:44px'>Show my Mesh card</button></div>";
     if (meshCardText) {
@@ -5569,7 +5569,7 @@ function render() {
         } else h += execChatHtml(m.exec);
       }
       if (m.operation) h += operationCardHtml(m.operation);
-      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Navi Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off in Settings → System → Navi Mesh.</div>";
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Navi Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI") h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       h += "</div>";
