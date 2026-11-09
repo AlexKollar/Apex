@@ -2,6 +2,24 @@
 
 All notable changes to Apex are recorded here. Releases are alpha until the first stable release.
 
+## 0.1.7 (alpha)
+
+Release tag: v0.1.7a. The bundled release: the Updater round (#70) and Navi's memory from chat (#72), built together in build 2026-11-09.81 and version-prepped in build 2026-11-09.82.
+
+### The Updater learns to warn, and the install chain moves (#70)
+
+- **Turn Sudo Mode on before you update.** The installer's system step needs root; without it an update can stall or finish without its system packages — field-proven on NeoArcadia, where a deliberate rollback test (VERSION edited back to 0.1.0, then updated under Sudo Mode) completed clean end to end, twice. When an update is available and Sudo Mode is off, the Updater now shows a red warning directly above the Download & install button: "Enable Sudo Mode before updating. The installer's system step needs root. Without it, an update can stall or finish without its system packages." With Sudo Mode on, the warning is replaced by a quiet green "Sudo Mode is on — ready to update." It is a warning, never a lock: the button still works.
+- **The chain above the notes, with a slim progress bar.** Once the operator opts into an update, the install chain (downloading, verifying, staging, installing, DHD prerequisites, restarting) renders directly above the release notes instead of below them, with a slim progress bar across the top of the chain card — the bar for the glance, the chain for the receipts.
+- **"Taking a while?"** Once the Installing step has been underway a while, the chain says what the time is going on: "This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster." No countdown, no ETA.
+
+### Navi pulls memories from chat (#72)
+
+- **Two doors.** A natural trigger — "remember this", "remember: …", "save this to your memory", or the Save to memory button under any operator message — and autonomous saves: when the operator says something durable (a fact, a preference, a decision, a commitment, a correction), Navi saves it in the same reply she was already generating. No second inference pass; the fluidity law holds on modest hardware.
+- **Nothing is saved silently.** Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap Undo. The Memory tab's entries say how they got there: added by hand, from chat (asked), from chat (her call), or from chat (correction).
+- **Corrections replace.** A save about the same fact as an existing entry replaces it — matched by fact key (name, home, work, favorite …) or heavy word overlap — instead of piling up a duplicate; Undo restores the old line.
+- **Secrets are never saved**, on any path. A password, key, or card number is refused in words, and the refusal receipt shows no payload.
+- **The leash is a setting.** Memory mode: She saves on her own (the default), Ask first (autonomous saves wait as proposals, in the chat receipt and the Memory tab), or Only when I say (trigger only). In the shipped app the judgment rides her persona prompt as a [[remember: …]] marker the bridge strips before the reply is shown or spoken; the saves return as payload data and the dashboard files them and draws the receipts.
+
 ## 0.1.6 (alpha)
 
 Release tag: v0.1.6a. The polish release: the Enter Code gate (#64), the Vault tree menus (#65), and the Servers collapse with the tag-form menu footer (#66) are first published here, together with two fixes from the v0.1.5a field test — the Servers group's missing spacer (#67) and the Vault navigation panel's move to the right, rebuilt so it cannot drift again (#68).

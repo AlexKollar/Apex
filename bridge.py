@@ -353,12 +353,12 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.6"
+SHIPPED_VERSION = "0.1.7"
 SHIPPED_VERSION_STATUS = "alpha"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-08.80"
+BRIDGE_BUILD = "2026-11-09.82"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2222,7 +2222,7 @@ def app_version(cfg=None):
     return SHIPPED_VERSION
 
 
-def persona_prompt(cfg, operator_name=""):
+def persona_prompt(cfg, operator_name="", memory_mode="autonomous"):
     parts = [read_file(SOUL_PATH).strip(), read_file(MEMORY_PATH).strip()]
     parts = [p for p in parts if p]
     if not parts:
@@ -2237,7 +2237,143 @@ def persona_prompt(cfg, operator_name=""):
         "they have asked you to use. Use it naturally, the way someone "
         "who knows them would."
     )
+    # Memory from chat (build .81, issue #72): she may pull memories
+    # out of the conversation on her own judgment, inside the same
+    # reply she is already generating — no second inference pass, so
+    # modest hardware pays nothing extra. The bridge strips the
+    # marker lines before the reply is shown or spoken and returns
+    # the saves as data; the dashboard files them and shows the
+    # operator a receipt of exactly what was saved, with an Undo.
+    # In trigger-only mode the instruction is not sent at all, and
+    # the bridge drops any marker a reply still carries.
+    if memory_mode != "trigger":
+        prompt += (
+            "\n\nMemory: you keep long-term memory entries for your operator. "
+            "When this conversation produces something durable — a fact about "
+            "them, a preference, a decision, a commitment, or a correction to "
+            "something you already carry — you may save it by ending your reply "
+            "with a line of exactly this form: [[remember: <the fact, stated "
+            "plainly in one sentence>]]. At most two per reply, and only when "
+            "it truly matters; small talk and command output are not memories. "
+            "If the operator corrects a fact, save the corrected fact the same "
+            "way — it replaces the old entry rather than piling up beside it. "
+            "Never save secrets (passwords, keys, card numbers, tokens): a "
+            "save like that is refused before it is written. The marker line "
+            "is removed before the operator sees your reply, and they are "
+            "shown a receipt of exactly what you saved — never mention the "
+            "marker itself."
+        )
     return prompt
+
+
+# ---------------------------------------------------------------------
+# Memory from chat (build .81, issue #72).
+#
+# Two doors, one store. The trigger — "remember this", "remember:
+# …", "save this to your memory" — is deterministic bridge work,
+# decided before the model route like DHD intents and Vault
+# filing: the fact is extracted here and carried back in the
+# payload, and the dashboard files it and shows the receipt. Her
+# own judgment rides the model's reply: the persona prompt teaches
+# her the [[remember: …]] marker, extract_memory_markers strips
+# those lines from the reply before it is shown or spoken, and the
+# saves travel back as payload data — never as words in her text.
+# The entries themselves live with the dashboard (its local store,
+# like the rest of her remembered facts); corrections are matched
+# there by the same key/overlap rule memory_fact_key mirrors here.
+# Secrets are screened on both doors and refused before anything
+# is written, and no save is ever silent: every outcome rides the
+# payload back to a receipt in the thread.
+
+MEMORY_SECRET_RE = re.compile(r"\b(password|passcode|passwd|api[\s_-]?key|secret|token|credential|ssn|social security|credit card|card number|cvv)\b", re.I)
+MEMORY_LONG_DIGITS_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+MEMORY_MARKER_RE = re.compile(r"^\s*\[\[remember:\s*(.+?)\s*\]\]\s*$", re.I | re.M)
+
+
+def memory_looks_secret(text):
+    return bool(MEMORY_SECRET_RE.search(text or "") or MEMORY_LONG_DIGITS_RE.search(text or ""))
+
+
+def normalize_memory_fact(text):
+    t = re.sub(r"\s+", " ", (text or "").strip()).strip("\"'")
+    if not t:
+        return ""
+    t = t[0].upper() + t[1:]
+    if not re.search(r"[.!?]$", t):
+        t += "."
+    return t
+
+
+def memory_fact_key(text):
+    t = (text or "").lower()
+    if re.search(r"(?:operator'?s|my) name is\b", t) or re.match(r"name\s*:", t):
+        return "name"
+    if re.search(r"(?:operator lives|i live|i'?m based|operator'?s (?:home|hometown) is|my (?:home|hometown) is)\b", t):
+        return "home"
+    if re.search(r"(?:operator works|i work|my job is|operator'?s job is)\b", t):
+        return "work"
+    m = re.search(r"favou?rite\s+([a-z][a-z -]*?)\s+is\b", t)
+    if m:
+        return "favorite:" + m.group(1).strip()
+    return None
+
+
+def memory_trigger(text):
+    # The operator's trigger. Returns ("fact", payload),
+    # ("prior", None) when the ask points at the previous message
+    # ("remember this" with nothing after it), or None when the
+    # line is not a trigger — questions about remembering ("do you
+    # remember…", "remember when…") are talk, not triggers.
+    line = (text or "").strip()
+    if line.startswith(">"):
+        line = line[1:].strip()
+    if "?" in line and re.match(r"(?i)(do|did|can|could|what|why|how|remember when)\b", line):
+        return None
+    m = re.match(r"(?i)(?:please\s+)?(?:navi[,\s]+)?(?:save|write|put)\s+(?:this|that)\s+(?:to|in|into)\s+(?:your\s+)?memory\s*[:\-]?\s*(.*)$", line)
+    if m:
+        rest = (m.group(1) or "").strip()
+        return ("fact", rest) if rest else ("prior", None)
+    m = re.match(r"(?i)(?:please\s+)?(?:navi[,\s]+)?remember[\s:]+(.*)$", line)
+    if not m:
+        return None
+    rest = (m.group(1) or "").strip()
+    if not rest or re.match(r"(?i)(when|me|us|the time)\b", rest):
+        return None
+    pm = re.match(r"(?i)(?:this|that)\b\s*[:\-—,]?\s*(.*)$", rest)
+    if pm:
+        rest = (pm.group(1) or "").strip()
+        return ("fact", rest) if rest else ("prior", None)
+    if rest[:1] in (":", "-"):
+        rest = rest[1:].strip()
+        return ("fact", rest) if rest else ("prior", None)
+    return ("fact", rest)
+
+
+def extract_memory_markers(reply, memory_mode):
+    # Strip [[remember: …]] lines from a model reply. Returns
+    # (clean_reply, saves, refused_count). Markers are honored
+    # only when the mode lets her save on her own judgment; in
+    # trigger mode they are stripped and dropped. Secret-shaped
+    # saves count as refused — never written, and the dashboard's
+    # receipt says so.
+    saves = []
+    refused = [0]
+
+    def _take(m):
+        fact = normalize_memory_fact(m.group(1))
+        if not fact:
+            return ""
+        if memory_mode == "trigger":
+            return ""
+        if memory_looks_secret(fact):
+            refused[0] += 1
+            return ""
+        saves.append({"text": fact, "origin": "autonomous", "key": memory_fact_key(fact), "proposed": memory_mode == "ask"})
+        return ""
+
+    clean = MEMORY_MARKER_RE.sub(_take, reply or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return clean, saves[:2], refused[0]
 
 
 LIST_INTENT = re.compile(
@@ -2948,7 +3084,7 @@ def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
     # letter (a for alpha, b for beta, none for stable) — the form
     # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.5a → v0.1.6a".
+    # "Updated v0.1.6a → v0.1.7a".
     return "v" + str(number) + (
         "a" if status == "alpha" else "b" if status == "beta" else "")
 
@@ -8386,6 +8522,7 @@ class Handler(BaseHTTPRequestHandler):
             sudo = bool(data.get("sudo"))
             sudo_password = str(data.get("sudo_password") or "")
             chat_mode = data.get("mode") if data.get("mode") in ("cli", "navi") else None
+            memory_mode = data.get("memory_mode") if data.get("memory_mode") in ("autonomous", "ask", "trigger") else "autonomous"
             last = messages[-1]["content"] if messages else ""
             endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
             # Chip invocation: "/chip <name>", "run the <name> chip",
@@ -8548,6 +8685,39 @@ class Handler(BaseHTTPRequestHandler):
                     payload["spoken"] = speak_reply(_result["output"], cfg)
                 self._send(200, payload)
                 return
+            # Memory from chat — the trigger (build .81, issue
+            # #72): deterministic bridge work beside Vault filing,
+            # decided before the model route and before the
+            # command-line fallback, so it works with or without
+            # the model connected. The fact rides the payload back
+            # as data; the dashboard files it into her memory
+            # store and draws the receipt in the thread. A
+            # secret-shaped payload is refused in words and
+            # nothing is written.
+            _mtrig = memory_trigger(last or "")
+            if _mtrig is not None:
+                _mfact = ""
+                if _mtrig[0] == "fact":
+                    _mfact = normalize_memory_fact(_mtrig[1])
+                else:
+                    for _pm in reversed(messages[:-1]):
+                        if isinstance(_pm, dict) and _pm.get("role") == "user" and (_pm.get("content") or "").strip():
+                            _mfact = normalize_memory_fact(_pm.get("content"))
+                            break
+                _mlive = "running" if llamafile_alive(endpoint) else "stopped"
+                if not _mfact:
+                    _reply = "Point me at the thing itself — say it first and then \"remember this\", or say \"remember:\" and the fact, and I'll write it down word for word and show you the receipt."
+                    payload = {"reply": _reply, "exec": None, "mode": "model", "llamafile": _mlive}
+                elif memory_looks_secret(_mfact):
+                    _reply = "I didn't save that — it looks like a secret, and secrets never go into my memory, not even when you ask me directly. If it needs keeping, it belongs somewhere built for secrets, not in the memory I carry into every conversation."
+                    payload = {"reply": _reply, "exec": None, "mode": "model", "llamafile": _mlive, "memoryRefused": True}
+                else:
+                    _reply = "Written down. The receipt below is exactly what I saved — word for word — and Undo takes it back out if I got it wrong."
+                    payload = {"reply": _reply, "exec": None, "mode": "model", "llamafile": _mlive, "memorySaves": [{"text": _mfact, "origin": "trigger", "key": memory_fact_key(_mfact), "proposed": False}]}
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_reply, cfg)
+                self._send(200, payload)
+                return
             _vfiling = re.search(r"(?:file|write|save|make|take)\s+(?:a\s+|this\s+)?note\b", (last or ""), re.I) or re.search(r"\bnote\s+(?:this|that)\s+down\b", (last or ""), re.I) or re.match(r"\s*note\s*:", (last or ""), re.I)
             if _vfiling:
                 _vpath, _verr = vault_file_from_chat(last or "", messages)
@@ -8629,7 +8799,7 @@ class Handler(BaseHTTPRequestHandler):
             # rides along as the system prompt on every chat.
             messages = [{
                 "role": "system",
-                "content": persona_prompt(cfg, str(data.get("operator_name") or "")),
+                "content": persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode),
             }] + messages
             try:
                 model = cfg.get("live", {}).get("model_name") or "navi"
@@ -8641,7 +8811,17 @@ class Handler(BaseHTTPRequestHandler):
                 # material carries any — once the conversation moves
                 # on, there is nothing to show.
                 reply = strip_citation_footer(reply)
+                # Memory from chat — her own call (build .81,
+                # #72): her [[remember: …]] markers come out of
+                # the reply before it is shown or spoken, and the
+                # saves ride the payload back as data for the
+                # dashboard to file and receipt.
+                reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
+                if _msaves:
+                    payload["memorySaves"] = _msaves
+                if _mrefused:
+                    payload["memoryRefused"] = True
                 if _hits:
                     _srcs = []
                     for h in _hits:

@@ -1,6 +1,5 @@
 # Apex — Powered by [Navi](https://github.com/SaintsSec/Navi)
-
-Apex — local app package
+# Apex — local app package
 
 Project home: https://github.com/AlexKollar/Apex — the fresh repo for this rebuild. (Navi was born at SaintsSec/Navi; that repo stays as the legacy archive of the original.)
 
@@ -8,13 +7,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.6 (alpha) — tag v0.1.6a
+## Latest release — 0.1.7 (alpha) — tag v0.1.7a
 
-- One Enter Code gate for both doors (#64): a Stargate-style page for Apex Node at home and DHD from anywhere, with the public door's throttle state shown on the page.
-- The Vault tree gives note and folder names their full width — every action lives behind one ⋯ menu per row, and the create row wraps instead of crushing (#65).
-- The status column's Servers group collapses as one parent, a dot per server in its header — and keeps the standard spacer before Sudo in both states (#66, #67).
-- The Vault's navigation panel sits on the right of the editor by explicit placement — a full-width two-column layout that renders the same in the app window and a browser (#68).
-- The side-menu footer reads in GitHub tag form: v0.1.6a.
+- The Updater warns you first (#70): with an update available and Sudo Mode off, a red warning sits above Download & install — enable Sudo Mode so the installer's system step can run; with it on, a quiet green "ready to update" line takes its place. A warning, never a lock.
+- The install chain moves above the release notes (#70): once you opt in, the step-by-step chain renders there with a slim progress bar across its card — and a "Taking a while?" note explains the long Installing step (likely the UI rebuild) instead of leaving you guessing.
+- Navi pulls memories from chat (#72): say "remember this" — or let her save on her own when something durable comes up. She judges inside the same reply; no second pass, no slowdown.
+- Nothing is saved silently (#72): every save leaves a receipt in chat with exactly what she wrote and a one-tap Undo; corrections replace the old entry instead of duplicating, and secrets are refused on every path.
+- The Memory tab shows how each entry got there — by hand, from chat (asked), from chat (her call), or from chat (correction) — and holds the mode setting: she saves on her own (default), ask first, or only when I say.
 
 [Read the changelog](CHANGELOG.md)
 
