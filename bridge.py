@@ -5,10 +5,18 @@ local powers.
 Stdlib only. Endpoints:
   GET  /              the dashboard (app/index.html)
   GET  /api/status    backend, model, version, llamafile reachability
-  GET  /api/update/check -> the Updater's real check: the project's
-                      latest GitHub release compared against the
-                      VERSION file; a check that cannot complete
-                      answers ok: False with the reason
+  GET  /api/update/check -> the Updater's real check: the newest
+                      GitHub release on the install's channel
+                      (stable = latest full release; edge = newest
+                      incl. pre-releases; ?channel= overrides the
+                      saved choice) compared against the VERSION
+                      file, with the running version's own release
+                      page riding along for the panel's dropdown;
+                      a check that cannot complete answers
+                      ok: False with the reason
+  POST /api/settings/updater-channel {channel} -> persists the
+                      Updater's Stable / Edge channel choice in
+                      the config's updater block
   POST /api/update/apply -> starts the end-to-end apply: a worker
                       downloads the latest release's package zip
                       (unwrapping a gzip-wrapped payload first),
@@ -354,11 +362,11 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
 SHIPPED_VERSION = "0.1.7"
-SHIPPED_VERSION_STATUS = "alpha"
+SHIPPED_VERSION_STATUS = "stable"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.82"
+BRIDGE_BUILD = "2026-11-09.84"
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2176,10 +2184,10 @@ def read_file(path):
 
 def app_version_status(cfg=None):
     # The VERSION file's optional build status: the number may be
-    # followed by a status word - "0.1.0 alpha" - or carry it as a
-    # suffix - "0.1.0-alpha". Alpha and beta builds wear a
-    # single-letter tag in the menu footer (a / b); stable wears
-    # none. Anything unrecognized reads as stable. When the file is
+    # followed by a status word - "0.1.8 edge" - or carry it as a
+    # suffix - "0.1.8-edge". Edge and beta builds wear a
+    # single-letter tag in the menu footer (e / b); a full release
+    # wears none. Anything unrecognized reads as stable. When the file is
     # missing entirely, the status of the release this bridge
     # shipped in answers — never the preserved config's record,
     # which belongs to an older build (see SHIPPED_VERSION above).
@@ -2187,9 +2195,13 @@ def app_version_status(cfg=None):
     if not text:
         return SHIPPED_VERSION_STATUS
     raw = text.splitlines()[0].strip().lower()
-    for word in ("alpha", "beta"):
+    # The pre-release word is "edge" (build .83); "alpha" is the
+    # retired word from before the sync and still reads as edge,
+    # so a VERSION file written by an older build is never
+    # misread as a full release.
+    for word in ("edge", "beta", "alpha"):
         if raw.endswith(" " + word) or raw.endswith("-" + word):
-            return word
+            return "edge" if word == "alpha" else word
     return "stable"
 
 
@@ -2197,7 +2209,8 @@ def app_version(cfg=None):
     # The VERSION file is the source of truth (see VERSION_PATH).
     # The reported number never carries the status word — the
     # status rides separately as versionStatus, and the dashboard
-    # renders the two together ("v0.1.0a"). When the file is
+    # renders the two together ("v0.1.8e" on an Edge build). When
+    # the file is
     # missing, the release this bridge shipped in answers. The
     # config's recorded version is NOT a fallback: the config is
     # preserved across installs, so its version is whichever build
@@ -2209,7 +2222,7 @@ def app_version(cfg=None):
         if not raw:
             return ""
         token = raw.split()[0]
-        for word in ("alpha", "beta", "stable"):
+        for word in ("edge", "alpha", "beta", "stable"):
             if token.lower().endswith("-" + word):
                 token = token[: -(len(word) + 1)]
                 break
@@ -2960,6 +2973,30 @@ def _version_newer(candidate, current):
     return a > b
 
 
+def _status_rank(status):
+    # Fuller beats preview at the same numbers: a full release
+    # outranks beta, which outranks an Edge build.
+    return {"stable": 2, "beta": 1, "edge": 0}.get(status, 0)
+
+
+def _release_is_newer(tag, current_number, current_status):
+    # The Updater's real comparison (build .83): higher numbers
+    # win; at the same numbers, only a graduation counts — an
+    # Edge build of the numbers you already run as a full release
+    # is a preview you passed, not an update, and the full
+    # release of numbers you run as an Edge build IS one.
+    num, status = _tag_parts(tag)
+    if not num:
+        return False
+    a, b = _version_tuple(num), _version_tuple(current_number)
+    width = max(len(a), len(b))
+    a += (0,) * (width - len(a))
+    b += (0,) * (width - len(b))
+    if a != b:
+        return a > b
+    return _status_rank(status) > _status_rank(current_status)
+
+
 def _update_error_text(e):
     # A failed check, worded honestly: offline and rate-limited are
     # different days, and the operator deserves to know which one
@@ -2979,16 +3016,22 @@ def _update_error_text(e):
             + ") — this machine may be offline.")
 
 
-def latest_release():
-    # The project's latest published release, shaped for the
-    # Updater; raises on any failure and lets the caller word it.
-    # The package asset is the release's .zip (the export package);
+def updater_channel(cfg=None):
+    # The release channel this install follows (build .83): the
+    # config's updater block, written by the package and switched
+    # from the Updater view. Anything unrecognized reads "stable"
+    # — the safe channel is the default, never the other way.
+    if isinstance(cfg, dict):
+        block = cfg.get("updater")
+        if isinstance(block, dict) and block.get("channel") == "edge":
+            return "edge"
+    return "stable"
+
+
+def _shape_release(rel):
+    # One GitHub release record in the Updater's shape. The
+    # package asset is the release's .zip (the export package);
     # a release without one can be reported but never staged.
-    feed_url = os.environ.get("NAVI_UPDATE_FEED_URL") or ""
-    rel = github_json(feed_url) if feed_url else github_json(
-        GITHUB_API_BASE + "/releases/latest")
-    if not isinstance(rel, dict):
-        raise ValueError("GitHub's answer was not a release record.")
     asset = None
     for a in rel.get("assets") or []:
         name = str(a.get("name") or "")
@@ -3005,8 +3048,59 @@ def latest_release():
         "url": str(rel.get("html_url") or ""),
         "publishedAt": str(rel.get("published_at") or ""),
         "notes": str(rel.get("body") or "").replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10)),
+        "prerelease": bool(rel.get("prerelease")),
         "asset": asset,
     }
+
+
+def latest_release(channel="stable"):
+    # The newest release on a channel, shaped for the Updater;
+    # raises on any failure and lets the caller word it. Stable
+    # asks GitHub for its "latest" — by GitHub's own rule the
+    # newest non-prerelease, the main branch's line. Edge reads
+    # the release list and takes the newest published entry,
+    # pre-releases included — the dev branch's line, kept
+    # separate from main, which is what an Edge build is.
+    feed_url = os.environ.get("NAVI_UPDATE_FEED_URL") or ""
+    if feed_url:
+        rel = github_json(feed_url)
+        if not isinstance(rel, dict):
+            raise ValueError("GitHub's answer was not a release record.")
+        return _shape_release(rel)
+    if channel == "edge":
+        items = github_json(GITHUB_API_BASE + "/releases?per_page=10")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and not item.get("draft"):
+                    return _shape_release(item)
+        raise ValueError("GitHub's release list carried no published release.")
+    rel = github_json(GITHUB_API_BASE + "/releases/latest")
+    if not isinstance(rel, dict):
+        raise ValueError("GitHub's answer was not a release record.")
+    return _shape_release(rel)
+
+
+def current_release(cfg=None):
+    # The release page for the version this install is running —
+    # the Updater's "About this release" dropdown reads it: name,
+    # tag, date, link, and the full notes, from the release page
+    # itself. Best-effort: any failure answers None and the panel
+    # says the page could not be fetched; it never invents one.
+    number = app_version(cfg)
+    status = app_version_status(cfg)
+    tags = [_version_label(number, status), "v" + str(number)]
+    seen = []
+    for t in tags:
+        if t and t not in seen:
+            seen.append(t)
+    for tag in seen:
+        try:
+            rel = github_json(GITHUB_API_BASE + "/releases/tags/" + tag)
+        except Exception:
+            continue
+        if isinstance(rel, dict) and rel.get("tag_name"):
+            return _shape_release(rel)
+    return None
 
 
 def changelog_section_for(tag):
@@ -3046,19 +3140,24 @@ def changelog_section_for(tag):
     return "\n".join(out).strip()
 
 
-def update_check_payload(cfg=None):
+def update_check_payload(cfg=None, channel=None):
     current = app_version(cfg)
+    current_status = app_version_status(cfg)
+    if channel not in ("stable", "edge"):
+        channel = updater_channel(cfg)
     base = {
         "current": current,
-        "currentStatus": app_version_status(cfg),
+        "currentStatus": current_status,
+        "channel": channel,
         "checkedAt": _now_iso(),
     }
     try:
-        rel = latest_release()
+        rel = latest_release(channel)
     except Exception as e:
         return dict(base, ok=False, updateAvailable=False, latest="",
                     error=_update_error_text(e))
-    newer = bool(rel["tag"]) and _version_newer(rel["tag"], current)
+    newer = bool(rel["tag"]) and _release_is_newer(
+        rel["tag"], current, current_status)
     # The release's notes travel with the check result (build .70,
     # issue #47): the Updater panel reads them before offering the
     # install, and Apply never fetches them again. Source of truth
@@ -3072,40 +3171,54 @@ def update_check_payload(cfg=None):
         if fallback:
             notes = fallback
             notes_source = "changelog"
+    # The running version's own release page rides the same check
+    # (build .83): the panel's "About this release" dropdown shows
+    # everything that page offers without a second round trip.
+    cur_rel = current_release(cfg)
+    if cur_rel is not None and not cur_rel["notes"].strip():
+        fb = changelog_section_for(cur_rel["tag"])
+        if fb:
+            cur_rel = dict(cur_rel, notes=fb, notesSource="changelog")
     return dict(
         base, ok=True, updateAvailable=newer,
         latest=rel["tag"], releaseName=rel["name"],
         releaseUrl=rel["url"], publishedAt=rel["publishedAt"],
+        prerelease=rel["prerelease"],
         notes=notes, notesSource=notes_source, asset=rel["asset"],
+        currentRelease=cur_rel,
     )
 
 
 def _version_label(number, status):
     # The footer's version-label form: "v" + number + the status
-    # letter (a for alpha, b for beta, none for stable) — the form
-    # the Updater's confirmation line uses for both sides of
-    # "Updated v0.1.6a → v0.1.7a".
+    # letter (e for edge, b for beta, none for a full release) —
+    # the form the Updater's confirmation line uses for both
+    # sides of "Updated v0.1.6a → v0.1.7" (the from-side's "a" is
+    # a legacy tag from before the sync; it is read, never made).
     return "v" + str(number) + (
-        "a" if status == "alpha" else "b" if status == "beta" else "")
+        "e" if status in ("edge", "alpha") else
+        "b" if status == "beta" else "")
 
 
 def _tag_parts(tag):
-    # A release tag in the label's shape — "v0.1.1a", "v0.1.1",
-    # "v0.1.1-alpha" — split into (number, status).
+    # A release tag in the label's shape — "v0.1.8e", "v0.1.7",
+    # "v0.1.8-edge" — split into (number, status). The retired
+    # alpha forms ("v0.1.6a", "-alpha") parse as edge: they were
+    # pre-releases then and are pre-releases now.
     text = str(tag or "").strip()
     if text.lower().startswith("v"):
         text = text[1:]
     status = "stable"
     low = text.lower()
-    for word in ("alpha", "beta"):
+    for word in ("edge", "beta", "alpha"):
         if low.endswith("-" + word) or low.endswith(" " + word):
-            status = word
+            status = "edge" if word == "alpha" else word
             text = text[: -(len(word) + 1)]
             low = text.lower()
             break
     if (status == "stable" and len(text) > 1
-            and text[-1].lower() in ("a", "b") and text[-2].isdigit()):
-        status = "alpha" if text[-1].lower() == "a" else "beta"
+            and text[-1].lower() in ("e", "a", "b") and text[-2].isdigit()):
+        status = "beta" if text[-1].lower() == "b" else "edge"
         text = text[:-1]
     return text, status
 
@@ -3216,14 +3329,14 @@ def read_installed_version(root):
     raw = text.splitlines()[0].strip()
     status = "stable"
     low = raw.lower()
-    for word in ("alpha", "beta"):
+    for word in ("edge", "beta", "alpha"):
         if low.endswith(" " + word) or low.endswith("-" + word):
-            status = word
+            status = "edge" if word == "alpha" else word
             raw = raw[: -(len(word) + 1)]
             break
     parts = raw.split()
     token = parts[0] if parts else ""
-    for word in ("alpha", "beta", "stable"):
+    for word in ("edge", "alpha", "beta", "stable"):
         if token.lower().endswith("-" + word):
             token = token[: -(len(word) + 1)]
             break
@@ -3232,7 +3345,8 @@ def read_installed_version(root):
 
 def version_label(number, status):
     return "v" + number + (
-        "a" if status == "alpha" else "b" if status == "beta" else "")
+        "e" if status in ("edge", "alpha") else
+        "b" if status == "beta" else "")
 
 
 def main():
@@ -3272,6 +3386,13 @@ def main():
     time.sleep(2)
     write_result({"state": "working", "step": "installing"})
     startup = "boot" if job.get("startup") == "on-boot" else "launch"
+    # The install's known answers ride as flags (build .84, issue
+    # #75): this run is detached and terminal-less by design, so
+    # the installer is never left to ask a question nobody can
+    # answer — startup from the config (above), voice from whether
+    # her venv is on disk, both recorded on the job by the bridge
+    # when it staged the update.
+    voice = "yes" if job.get("voice") == "yes" else "no"
     env = dict(os.environ)
     env["NAVI_HOME"] = root
     code = None
@@ -3280,7 +3401,7 @@ def main():
         with open(job["installLog"], "wb") as log:
             proc = subprocess.run(
                 ["bash", os.path.join(pkg_dir, "install.sh"),
-                 "--startup", startup, "--voice", "no",
+                 "--startup", startup, "--voice", voice,
                  "--dir", root],
                 cwd=pkg_dir, env=env, stdout=log,
                 stderr=subprocess.STDOUT, timeout=3000)
@@ -3432,7 +3553,7 @@ def _run_update_apply(cfg):
         record["beforeStatus"] = current_status
         record["beforeLabel"] = _version_label(current, current_status)
         try:
-            rel = latest_release()
+            rel = latest_release(updater_channel(cfg))
         except Exception as e:
             fail("downloading",
                  "Downloading the update failed — the release check "
@@ -3443,7 +3564,7 @@ def _run_update_apply(cfg):
         record["tag"] = tag
         record["targetLabel"] = (
             _version_label(t_num, t_status) if t_num else tag)
-        if not tag or not _version_newer(tag, current):
+        if not tag or not _release_is_newer(tag, current, current_status):
             fail("downloading",
                  "The latest release (" + (tag or "none") + ") is not "
                  "newer than the running v" + current
@@ -3460,7 +3581,28 @@ def _run_update_apply(cfg):
         stage_root = os.path.join(UPDATES_DIR, tag_dir)
         pkg_dir = os.path.join(stage_root, "package")
         zip_path = os.path.join(stage_root, asset["name"])
-        command = "cd " + pkg_dir + " && ./install.sh"
+        # The manual fallback carries the install's known answers
+        # as flags (build .84, issue #75): the fallback gets run by
+        # hand exactly where prompts go to die — shells with no
+        # usable terminal, the app's own CLI shell first among
+        # them — so it must never need to ask a question. Startup
+        # comes from the config; voice counts as installed when her
+        # venv Python is on disk (the installer still verifies the
+        # engines import before it skips the rebuild). The apply
+        # job below carries the same two answers.
+        fb_cfg = cfg if isinstance(cfg, dict) else {}
+        fb_startup = (
+            "boot"
+            if str(fb_cfg.get("startup") or "on-ui-launch") == "on-boot"
+            else "launch")
+        fb_voice = (
+            "yes"
+            if os.path.isfile(os.path.join(
+                ROOT, "voice", "venv", "bin", "python"))
+            else "no")
+        command = (
+            "cd " + pkg_dir + " && ./install.sh --startup "
+            + fb_startup + " --voice " + fb_voice)
         # Downloading (a package already downloaded beside the app
         # — including one a pre-.56 Updater refused after
         # downloading — is read back and put through the same
@@ -3562,6 +3704,7 @@ def _run_update_apply(cfg):
                 "command": command,
                 "port": BRIDGE_PORT,
                 "startup": str(cfg_now.get("startup") or "on-ui-launch"),
+                "voice": fb_voice,
                 "targetTuple": list(_version_tuple(tag)),
                 "targetLabel": record["targetLabel"],
             }
@@ -8019,12 +8162,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/github/pulse":
             # The Overview tab: the project's live pulse.
             self._send(200, github_pulse_payload())
-        elif self.path == "/api/update/check":
-            # The Updater's real check: the project's latest GitHub
-            # release against the VERSION file. A check that cannot
-            # complete answers ok: False with the reason — never a
-            # made-up "up to date".
-            self._send(200, update_check_payload(load_config()))
+        elif self.path.split("?")[0] == "/api/update/check":
+            # The Updater's real check: the newest GitHub release
+            # on the install's channel against the VERSION file. A
+            # check that cannot complete answers ok: False with
+            # the reason — never a made-up "up to date".
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            chan = (qs.get("channel") or [""])[0]
+            self._send(200, update_check_payload(
+                load_config(), chan if chan in ("stable", "edge") else None))
         elif self.path == "/api/update/result":
             # The end-to-end apply's live record: its current step
             # while it runs (written by the bridge's worker, then by
@@ -8073,6 +8219,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self._public_gate_blocks():
             self._send(403, {"error": "access code required"})
+            return
+        if self.path == "/api/settings/updater-channel":
+            # The Updater's channel switch (build .83): persist
+            # the operator's Stable / Edge choice in the config's
+            # updater block. Checks and the apply path both read
+            # it from there, so the choice survives restarts and
+            # a remote (DHD) session flips the same switch.
+            data = self._body()
+            chan = data.get("channel")
+            if chan not in ("stable", "edge"):
+                self._send(200, {"ok": False, "error": "The channel must be 'stable' or 'edge'."})
+                return
+            block = cfg.get("updater") if isinstance(cfg.get("updater"), dict) else {}
+            block = dict(block)
+            block["channel"] = chan
+            cfg["updater"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "channel": chan})
             return
         if self.path == "/api/settings/public":
             # The Local server toggle itself (build .61 — one

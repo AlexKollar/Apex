@@ -64,18 +64,37 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Is there a terminal that can actually answer a prompt? The test
+# is OPENING /dev/tty, never [ -r /dev/tty ] (build .84, issue
+# #75): in a shell with no controlling terminal — the app's own
+# CLI shell, cron, a detached helper — the device node exists and
+# reads as readable, so the old guard passed, and the read behind
+# it died mid-prompt with "/dev/tty: No such device or address"
+# (the v0.1.7a field failure on NeoArcadia, which cost the remote
+# install its running bridge for the night). Opening the device
+# in a subshell answers the real question and changes nothing.
+HAVE_TTY=""
+if ( : < /dev/tty ) 2>/dev/null; then
+  HAVE_TTY=1
+fi
+
 # The startup mode is the operator's call, made during the install —
 # there is no hard-coded default. --startup launch|boot answers it
 # ahead of time (for scripted installs); otherwise the installer asks.
 if [ -z "$STARTUP" ]; then
-  if [ -r /dev/tty ]; then
+  if [ -n "$HAVE_TTY" ]; then
     echo ""
     echo "How should the navi.llamafile server start?"
     echo "  1) On app launch — starts when you open Apex, stops when it closes"
     echo "  2) At system boot — registered as a service, warm before you open the app"
     while true; do
       printf "Enter 1 or 2: "
-      read -r CHOICE < /dev/tty
+      if ! read -r CHOICE < /dev/tty; then
+        echo "" >&2
+        echo "The terminal stopped answering before a choice was made." >&2
+        echo "Re-run with --startup launch or --startup boot to answer ahead of time." >&2
+        exit 1
+      fi
       case "$CHOICE" in
         1|launch) STARTUP="launch"; break ;;
         2|boot) STARTUP="boot"; break ;;
@@ -756,7 +775,7 @@ if [ -z "$VOICE_READY" ]; then
 case "$VOICE" in
   yes|no) ;;
   *)
-    if [ -r /dev/tty ]; then
+    if [ -n "$HAVE_TTY" ]; then
       echo ""
       echo "Give Navi a voice? She'd hear you with a local Whisper model and"
       echo "answer out loud with Kokoro — all on this machine, all on CPU."
@@ -766,7 +785,13 @@ case "$VOICE" in
       echo "  2) No — skip it (the Voice tab will name the command)"
       while true; do
         printf "Enter 1 or 2: "
-        read -r VCHOICE < /dev/tty
+        if ! read -r VCHOICE < /dev/tty; then
+          echo ""
+          echo "The terminal stopped answering — skipping her voice for now."
+          echo "(Install it any time with the command the Voice tab names.)"
+          VOICE="no"
+          break
+        fi
         case "$VCHOICE" in
           1|yes) VOICE="yes"; break ;;
           2|no) VOICE="no"; break ;;

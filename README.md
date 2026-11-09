@@ -7,13 +7,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.7 (alpha) — tag v0.1.7a
+## Latest release — 0.1.7 — tag v0.1.7
 
-- The Updater warns you first (#70): with an update available and Sudo Mode off, a red warning sits above Download & install — enable Sudo Mode so the installer's system step can run; with it on, a quiet green "ready to update" line takes its place. A warning, never a lock.
-- The install chain moves above the release notes (#70): once you opt in, the step-by-step chain renders there with a slim progress bar across its card — and a "Taking a while?" note explains the long Installing step (likely the UI rebuild) instead of leaving you guessing.
-- Navi pulls memories from chat (#72): say "remember this" — or let her save on her own when something durable comes up. She judges inside the same reply; no second pass, no slowdown.
-- Nothing is saved silently (#72): every save leaves a receipt in chat with exactly what she wrote and a one-tap Undo; corrections replace the old entry instead of duplicating, and secrets are refused on every path.
-- The Memory tab shows how each entry got there — by hand, from chat (asked), from chat (her call), or from chat (correction) — and holds the mode setting: she saves on her own (default), ask first, or only when I say.
+- **Apex 0.1.7 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.7 — and takes Latest. The version language is new from here on: full releases wear bare numbers cut from main; pre-releases are Edge builds with the e suffix (0.1.7e), cut from a separate dev branch. The old alpha/"a" naming is retired, and older tags written that way still read correctly, as Edge.
+- **Release channels, and the current release's page (#76).** The Updater follows a channel you choose and it remembers: Stable (the default) follows full releases only; Edge follows the newest release including pre-releases. An "About this release" dropdown in the Updater carries everything the running version's GitHub release page offers — name, tag, Edge/full badge, published date, the link, the package asset, and the full patch notes rendered in place.
+- **The installer stops dying in shells with no terminal (#75).** A terminal now counts only if it opens: the installer tests opening /dev/tty instead of checking whether the device node is readable, so a terminal-less run (her own CLI shell is the field-proven case) gets the plain re-run-with-flags instruction instead of dying mid-prompt. The one-click apply and the manual fallback both pass --startup and --voice from the install's own settings, so an update never depends on the staged installer being able to ask anything.
+- **The Updater warns you first (#70).** With an update available and Sudo Mode off, a red warning sits above Download & install — enable Sudo Mode so the installer's system step can run; with it on, a quiet green "ready to update" line takes its place. A warning, never a lock. Once you opt in, the install chain renders above the release notes with a slim progress bar across its card, and a "Taking a while?" note explains the long Installing step (likely the UI rebuild) instead of leaving you guessing.
+- **Navi pulls memories from chat (#72).** Say "remember this" — or let her save on her own when something durable comes up; she judges inside the same reply, no second pass, no slowdown. Nothing is saved silently: every save leaves a receipt in chat with exactly what she wrote and a one-tap Undo; corrections replace the old entry instead of duplicating, secrets are refused on every path, and the Memory tab shows how each entry got there — by hand, from chat (asked), from chat (her call), or from chat (correction) — with the mode setting: she saves on her own (default), ask first, or only when I say.
 
 [Read the changelog](CHANGELOG.md)
 

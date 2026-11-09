@@ -1,10 +1,21 @@
 # Changelog
 
-All notable changes to Apex are recorded here. Releases are alpha until the first stable release.
+All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
-## 0.1.7 (alpha)
+## 0.1.7
 
-Release tag: v0.1.7a. The bundled release: the Updater round (#70) and Navi's memory from chat (#72), built together in build 2026-11-09.81 and version-prepped in build 2026-11-09.82.
+Release tag: v0.1.7. The bundled release: the Updater round (#70) and Navi's memory from chat (#72), built together in build 2026-11-09.81, first prepped as an alpha in build .82, and re-cut as this full release — with release channels built in — in build 2026-11-09.83. The installer hardening (#75) landed in build .84, before the release went out.
+
+### Release channels, and the new version language
+
+- **Two channels in the Updater.** The Updater now follows a channel, chosen in the Updater view and remembered. **Stable** (the default) follows full releases only, cut from the main branch. **Edge** follows the newest release including pre-releases — test builds cut from a separate dev branch, kept apart from main — so opting into Edge is how a machine gets those builds at all. Checks and installs both run on the chosen channel.
+- **Full releases wear the bare number; pre-releases are Edge.** A full release is just its number — 0.1.7, tag v0.1.7, no status word, no letter. An Edge build of a version reads 0.1.7e (tag v0.1.7e). The old alpha word and "a" suffix are retired: older VERSION files and tags written that way still read correctly everywhere, as Edge. An Edge build of a version is its preview, not an upgrade over the full release; when the full release of the same numbers lands, graduating to it is the update.
+- **The current release's page, in the Updater.** The Updater gains an "About this release" dropdown carrying everything the GitHub release page offers for the version you are running — release name, tag, Edge/full badge, published date, the link, the package asset, and the full patch notes rendered in place — fetched alongside the update check.
+
+### The installer stops dying in shells with no terminal (#75)
+
+- **A terminal counts only if it opens.** The installer asks its two questions (startup mode, her voice) only when it can actually hear the answer: the test is opening /dev/tty, not checking whether the device node is readable. In a shell with no controlling terminal — her own CLI shell is the field-proven case — the old readability check passed and the read died mid-prompt ("/dev/tty: No such device or address"), killing a staged v0.1.7a install on NeoArcadia after the bridge had already stopped for it. A terminal-less run now gets the plain instruction instead — re-run with --startup / --voice — and a terminal that stops answering mid-question ends the same clean way.
+- **The update path carries the answers as flags.** The one-click apply and the manual fallback command both pass --startup and --voice from the install's own settings (the config's startup mode; her voice counts as installed when her venv is on disk), so an update never depends on the staged installer being able to ask anything.
 
 ### The Updater learns to warn, and the install chain moves (#70)
 

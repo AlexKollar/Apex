@@ -120,5 +120,8 @@
     "last_import_result": ""
   },
   "version": "0.1.7",
-  "version_status": "alpha"
+  "version_status": "stable",
+  "updater": {
+    "channel": "stable"
+  }
 }
