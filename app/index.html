@@ -364,6 +364,15 @@
   a.ghost { background:none; color:var(--text); border:1px solid var(--line); padding:6px 10px; border-radius:4px; cursor:pointer; }
   .chipbtn { border:1px solid var(--cy); color:var(--cy); background:none; border-radius:999px; padding:3px 10px; cursor:pointer; margin:0 4px 4px 0; }
   .srcs { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+  /* Build 8 (#88): the one pill row under a reply never wraps —
+     Mesh pill first, then the source pills, all on one line.
+     Inside the row the pills may shrink: the Mesh pill keeps its
+     full text (flex none), and a source pill ellipsizes before
+     it could push the row — and with it the page — sideways at
+     phone widths. */
+  .srcs.pillrow { flex-wrap:nowrap; min-width:0; }
+  .srcs.pillrow .meshpill { flex:0 0 auto; }
+  .srcs.pillrow .srcpill { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .srcpill { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:999px; padding:2px 9px; }
   .srcpill .srcsep { color:var(--cy); }
   /* The Mesh attribution pill (Build 3): a borrowed reply's
@@ -869,8 +878,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-09.87";
-var SHIPPED_BUILD_SEQ = 7;
+var BRIDGE_BUILD = "2026-11-09.88";
+var SHIPPED_BUILD_SEQ = 8;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var bridgeRoot = "";   // live: the bridge's install tree, from /api/status (build .86, issue #79)
@@ -3041,8 +3050,11 @@ function srcPills(sources) {
   // pill per source, pack › document, drawn under the message it
   // belongs to. Only a message that actually drew on a pack
   // carries any — once the conversation moves on, they stop.
+  // The pills are returned BARE (no row wrapper of their own):
+  // pillRow() owns the one row under a reply, so a Mesh pill and
+  // source pills can share it — Build 8 (#88).
   if (!sources || !sources.length) return "";
-  return "<div class='srcs' aria-label='Sources'>" + sources.map(function (s) { return "<span class='srcpill'>" + esc(s.pack) + " <span class='srcsep' aria-hidden='true'>›</span> " + esc(s.document) + "</span>"; }).join("") + "</div>";
+  return sources.map(function (s) { return "<span class='srcpill'>" + esc(s.pack) + " <span class='srcsep' aria-hidden='true'>›</span> " + esc(s.document) + "</span>"; }).join("");
 }
 // Ghost-hint history for the chat composer: the CLI lines already
 // run in this conversation, newest first — terminal blocks carry
@@ -4016,17 +4028,42 @@ function meshUnreachableText(p) {
   if (age) t += " (last checked " + age + " ago)";
   return t;
 }
+function meshPillHtml(mesh) {
+  // The Mesh attribution pill itself (Build 3), BARE since
+  // Build 8 (#88): pillRow() owns the one row under a reply and
+  // puts this pill first in it, ahead of any source pills.
+  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Navi Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
+}
+function pillRow(mesh, sources) {
+  // Build 8 (#88): ONE row under a reply carries every pill —
+  // the Mesh attribution FIRST, then the source pills. Before,
+  // each kind rendered its own wrapping .srcs row, so a reply
+  // that was both borrowed and pack-informed stacked two rows
+  // with the Mesh pill on the bottom — the field report that
+  // filed #88. The row never wraps (flex-nowrap): on a phone the
+  // pills shrink and ellipsize inside it instead of pushing the
+  // page sideways or stacking.
+  var pills = "";
+  if (mesh && mesh.servedBy === "mesh") pills += meshPillHtml(mesh);
+  pills += srcPills(sources);
+  if (!pills) return "";
+  var hasMesh = !!(mesh && mesh.servedBy === "mesh");
+  var hasSrc = !!(sources && sources.length);
+  var label = hasMesh && hasSrc ? "Answered by a paired machine — sources" : hasMesh ? "Answered by a paired machine" : "Sources";
+  return "<div class='srcs pillrow' aria-label='" + label + "'>" + pills + "</div>";
+}
 function meshLineHtml(mesh) {
   // The quiet line under a reply Mesh touched (build .85): who
   // answered, or why this machine answered instead. Same register
   // as the source pills — metadata, never part of the reply.
   // Build 3: a mesh-served reply carries its attribution as a
   // PILL — Hexlink glyph + "via <name>" in Mesh Cyan, one glance,
-  // no prose line. The fallback lines below stay plain text: a
+  // no prose line — rendered by pillRow() since Build 8, never
+  // from here. The fallback lines below stay plain text: a
   // dropped or busy lender is a notice, not an attribution, and
   // local replies carry nothing at all — absence means local.
   if (!mesh) return "";
-  if (mesh.servedBy === "mesh") return "<div class='srcs'><span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Navi Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span></div>";
+  if (mesh.servedBy === "mesh") return "";
   if (mesh.notice) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(mesh.notice) + "</div>";
   if (mesh.fellBack) {
     var why = mesh.reason === "busy" ? " was busy"
@@ -5791,8 +5828,8 @@ function render() {
         if (!isCurrent && isLongNavi(m.text)) {
           var openAttr = chatFoldState[foldKey] ? " open" : "";
           var lineCount = String(m.text).split("\n").length;
-          h += "<details class='foldcard' data-fold='" + esc(foldKey) + "'" + openAttr + "><summary>Navi reply · " + esc(firstHintLine(m.text, true)) + " · " + lineCount + " lines · " + String(m.text).length + " chars</summary><div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>" + srcPills(m.sources) + "</details>";
-        } else { h += "<div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>"; if (m.who === "NAVI") h += srcPills(m.sources); }
+          h += "<details class='foldcard' data-fold='" + esc(foldKey) + "'" + openAttr + "><summary>Navi reply · " + esc(firstHintLine(m.text, true)) + " · " + lineCount + " lines · " + String(m.text).length + " chars</summary><div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>" + pillRow(m.mesh, m.sources) + "</details>";
+        } else { h += "<div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>"; if (m.who === "NAVI") h += pillRow(m.mesh, m.sources); }
       } else if (m.text) h += "<div>" + esc(m.text) + "</div>";
       if (m.exec) {
         if (!isCurrent) {
@@ -5803,7 +5840,7 @@ function render() {
       }
       if (m.operation) h += operationCardHtml(m.operation);
       if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Navi Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
-      if (m.who === "NAVI") h += meshLineHtml(m.mesh);
+      if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       h += "</div>";
     });
@@ -6022,7 +6059,7 @@ function render() {
     } else {
       h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>";
       h += "<div style='margin-top:10px;max-height:300px;overflow-y:auto' aria-label='Call transcript'>" + call.turns.map(function (t) {
-        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? srcPills(t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
+        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
       }).join("") + "</div>";
       h += "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>or type what you'd say:</span></div>";
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='call-type' type='text' placeholder='Show me the contents of /home/name/' aria-label='Type what you would say on the call'><button class='act' id='call-say'>Speak</button></div>";

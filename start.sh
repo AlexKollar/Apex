@@ -212,7 +212,7 @@ open_browser_fallback() {
 # refusal explained only to a terminal a menu launch doesn't
 # have. A page that is NOT a Navi bridge at all still blocks
 # the open, and gets named — in the log as well as the terminal.
-BRIDGE_STAMP="2026-11-09.87"
+BRIDGE_STAMP="2026-11-09.88"
 OPENED=""
 for i in $(seq 1 40); do
   STATUS=$(curl -s --max-time 2 "http://localhost:$BRIDGE_PORT/api/status" 2>/dev/null || true)
