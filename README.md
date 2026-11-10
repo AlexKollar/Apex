@@ -140,12 +140,14 @@ fallback, served by the bridge at the same address.
 
 ## What's in here
 
-- app/index.html — the Apex dashboard (left nav: Chat, Voice, Chips,
-  Memory, RAG, Documentation, Updater, GitHub, Settings; central panel;
-  right status column). Pure static file, no build step. Its header
-  reads "Apex"; the side menu collapses to a rail while the
-  status column stays visible; the Memory tab switches between saved
-  chats. Every menu option carries its own icon beside its label (and
+- app/index.html — the Apex dashboard (left nav: Chat; the
+  Apex | Systems group — Node, Mesh, DHD; the Apex | Navi group —
+  Chips, ChipDeck, RAG; then Vault; and at the foot the
+  Apex | Utilities group — Settings, Updater, GitHub, Docs; central
+  panel; right status column). Pure static file, no build step. Its
+  header reads "Apex"; the side menu collapses to a rail; the status
+  column starts hidden behind its Status toggle, and its Chats tab
+  switches between saved chats. Every menu option carries its own icon beside its label (and
   the collapsed rail is icons alone). The frame is fixed: the dashboard
   fills the viewport, the left menu and the right status column never
   scroll away, and in Chat only the message thread scrolls (the

@@ -7,8 +7,8 @@
 <style>
   :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   /* Curated themes (Settings): the same variables, eleven palettes.
-     Nordic dark is the default; the others swap the whole
-     variable set on <body data-theme>, so every view — selects and
+     Nocturne Row is the default (issue #118); the others swap the
+     whole variable set on <body data-theme>, so every view — selects and
      inputs included — follows the one choice. Nord is the dark Nord
      family: Polar Night backgrounds, Snow Storm text, Frost accents,
      muted Aurora highlights. Code and terminal surfaces stay dark
@@ -22,7 +22,9 @@
   body[data-theme="terminal"] { --bg:#000000; --panel:#020a02; --panel2:#010501; --line:#14532d; --text:#4ade80; --dim:#22c55e; --cy:#4ade80; --am:#a3e635; --red:#f87171; --green:#4ade80; --ver-alpha:#f87171; --ver-beta:#a3e635; --ver-stable:#4ade80; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#a3e635; --syn-str:#fde047; --syn-path:#2dd4bf; --syn-kw:#bef264; --syn-num:#bbf7d0; --syn-op:#f0abfc; --exec-bg:#000000; }
   /* DHD glyph tuning (build .74): ring and wedges resolve from the theme like the other nav icons; the center stays warm red-orange in the glyph itself. */
   body[data-theme="nord"] .nav-ico-dhd { color:#88c0d0; }
+  body[data-theme="nord"] .nav-ico-node { color:#81a1c1; }
   body[data-theme="terminal"] .nav-ico-dhd { color:#4ade80; }
+  body[data-theme="terminal"] .nav-ico-node { color:#86efac; }
   body[data-theme="nord"] .nav-ico-mesh { color:#88c0d0; }
   body[data-theme="terminal"] .nav-ico-mesh { color:#4ade80; }
   body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
@@ -47,11 +49,10 @@
      item trades the Frost fill for the deepest Polar Night step
      with a Frost edge, so its icon's own color stays readable. */
   body[data-theme="nord"] #nav-Chat .ic { color:#88c0d0; }
-  body[data-theme="nord"] #nav-Voice .ic { color:#b48ead; }
-  body[data-theme="nord"] #nav-Chips .ic { color:#ebcb8b; }
-  body[data-theme="nord"] #nav-RAG .ic { color:#81a1c1; }
+  body[data-theme="nord"] #nav-child-navi-Chips .ic { color:#ebcb8b; }
+  body[data-theme="nord"] #nav-child-navi-RAG .ic { color:#81a1c1; }
   body[data-theme="nord"] #nav-Vault .ic { color:#bf616a; }
-  body[data-theme="nord"] #nav-Updater .ic { color:#a3be8c; }
+  body[data-theme="nord"] #nav-child-utilities-Updater .ic { color:#a3be8c; }
   body[data-theme="nord"] #nav-child-utilities-GitHub .ic { color:#d08770; }
   body[data-theme="nord"] #nav-child-utilities-Settings .ic { color:#d8dee9; }
   body[data-theme="nord"] #nav-child-utilities-Docs .ic { color:#d98a94; }
@@ -84,11 +85,10 @@
   body[data-theme="nord"] .ed-mini { background:#2e3440; }
   body[data-theme="nord"] .ed-extras i { background:#b48ead; }
   body[data-theme="terminal"] #nav-Chat .ic { color:#4ade80; }
-  body[data-theme="terminal"] #nav-Voice .ic { color:#a3e635; }
-  body[data-theme="terminal"] #nav-Chips .ic { color:#34d399; }
-  body[data-theme="terminal"] #nav-RAG .ic { color:#2dd4bf; }
+  body[data-theme="terminal"] #nav-child-navi-Chips .ic { color:#34d399; }
+  body[data-theme="terminal"] #nav-child-navi-RAG .ic { color:#2dd4bf; }
   body[data-theme="terminal"] #nav-Vault .ic { color:#fde047; }
-  body[data-theme="terminal"] #nav-Updater .ic { color:#bef264; }
+  body[data-theme="terminal"] #nav-child-utilities-Updater .ic { color:#bef264; }
   body[data-theme="terminal"] #nav-child-utilities-GitHub .ic { color:#facc15; }
   body[data-theme="terminal"] #nav-child-utilities-Settings .ic { color:#dcfce7; }
   body[data-theme="terminal"] #nav-child-utilities-Docs .ic { color:#6ee7b7; }
@@ -100,13 +100,49 @@
   html, body { height:100%; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,sans-serif; overflow:hidden; }
   .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
+  /* Motion tokens (0.1.9e Build 6, issue #109): ONE motion
+     system for the whole app — every transition and animation
+     below takes its duration from these variables and its
+     easing from the two curves, so the app moves in one
+     language: fast for hovers and presses, med for unfolds,
+     slides, and pane swaps, slow for the one big flip, view
+     for view entrances. Under prefers-reduced-motion the
+     tokens themselves collapse to zero — the operating
+     system's word always wins over the Potato toggle in
+     Settings -> Appearance, which applies the same collapse
+     through body[data-motion="potato"] at the foot of this
+     stylesheet. */
+  :root { --motion-fast:.14s; --motion-med:.3s; --motion-slow:.55s; --motion-view:.22s; --motion-glide:.28s; --motion-press:.08s; --motion-ease:cubic-bezier(.22,.8,.3,1); --uiscale:1; }
+  @media (prefers-reduced-motion: reduce) { :root { --motion-fast:0s; --motion-med:0s; --motion-slow:0s; --motion-view:0s; --motion-glide:0s; --motion-press:0s; } }
   /* Fixed-frame dashboard: the app fills the viewport and the page
      itself never scrolls. The left menu and the right status column
      stay fixed in place; only the center column scrolls — and in the
      Chat view only the message thread scrolls, with the composer
      pinned beneath it. */
-  #app { display:grid; grid-template-columns:170px minmax(0,1fr) 230px; grid-template-rows:minmax(0,1fr); height:100vh; height:100dvh; overflow:hidden; }
+  /* Build 6 (#111): the expanded menu is 196px — at 170px the
+     group headers' labels + auto-margin chevron overflowed the
+     rail and the chevron clipped at its edge. The frame height
+     divides by --uiscale: the UI scale (body zoom) magnifies
+     used lengths, so the frame asks for 100dvh / scale and
+     lands exactly on the viewport at every scale. */
+  #app { display:grid; grid-template-columns:196px minmax(0,1fr) 230px; grid-template-rows:minmax(0,1fr); height:calc(100vh / var(--uiscale, 1)); height:calc(100dvh / var(--uiscale, 1)); overflow:hidden; }
   #app.closed { grid-template-columns:54px minmax(0,1fr) 230px; }
+  /* The status column starts hidden (Build 6, #114, as
+     corrected): on desktop widths the column's 230px goes to
+     the content until the operator opens it with the Status
+     toggle in the menu chrome. Scoped to desktop — on phones
+     the column is the dock overlay, whose semantics are
+     unchanged and never gated by this class. The class is in
+     the static markup, so the first paint is already the
+     two-column frame; the grid transition animates only the
+     operator's toggles. */
+  #status-toggle { display:none; }
+  @media (min-width:801px) {
+    #app.no-status { grid-template-columns:196px minmax(0,1fr) 0px; }
+    #app.no-status.closed { grid-template-columns:54px minmax(0,1fr) 0px; }
+    #app.no-status aside { display:none; }
+    #status-toggle { display:flex; }
+  }
   nav { border-right:1px solid var(--line); background:var(--panel2); padding:14px 10px; height:100%; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
   /* Her version at the foot of the menu, under a divider bar: the
      number is read from the VERSION file at the install root (the
@@ -153,7 +189,7 @@
      the view in a tooltip beside it; the expanded menu shows its
      labels and the tooltip span stays hidden. The closed nav and
      its buttons let the tooltip paint outside the rail. */
-  .nav-tip { position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%); background:var(--panel); color:var(--text); border:1px solid var(--line); padding:3px 8px; font-size:11px; border-radius:4px; white-space:nowrap; opacity:0; pointer-events:none; transition:opacity .15s ease; z-index:60; display:none; }
+  .nav-tip { position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%); background:var(--panel); color:var(--text); border:1px solid var(--line); padding:3px 8px; font-size:11px; border-radius:4px; white-space:nowrap; opacity:0; pointer-events:none; transition:opacity var(--motion-fast) ease; z-index:60; display:none; }
   #app.closed nav { overflow:visible; }
   #app.closed nav button { overflow:visible; position:relative; }
   #app.closed .nav-tip { display:block; }
@@ -181,30 +217,59 @@
   .nav-break { border-top:1px solid var(--line); margin:8px 4px; flex:0 0 auto; }
   #app.closed .nav-break { margin:8px 2px; }
   .nav-group-head { font-weight:700; color:var(--text); }
-  .nav-group-head .nav-chev { margin-left:auto; font-size:11px; color:var(--dim); transition:transform .3s cubic-bezier(.22,.8,.3,1); }
+  .nav-group-head .nav-chev { margin-left:auto; font-size:11px; color:var(--dim); transition:transform var(--motion-med) var(--motion-ease); }
   .nav-group-head[aria-expanded="false"] .nav-chev { transform:rotate(-90deg); }
   #app.closed .nav-group-head .nav-chev, #app.closed .nav-group-head .lbl { display:none; }
   #app.closed .nav-group-head { justify-content:center; }
-  .nav-children { display:grid; grid-template-rows:1fr; transition:grid-template-rows .3s cubic-bezier(.22,.8,.3,1); min-height:0; }
+  .nav-children { display:grid; grid-template-rows:1fr; transition:grid-template-rows var(--motion-med) var(--motion-ease); min-height:0; }
   .nav-children.closed { grid-template-rows:0fr; }
-  .nav-children > button { min-height:0; overflow:hidden; min-width:0; }
-  .nav-children .nav-child { opacity:1; transform:none; transition:opacity .26s cubic-bezier(.22,.8,.3,1), transform .26s cubic-bezier(.22,.8,.3,1), background .14s ease, color .14s ease; }
+  /* Build 6 (#105): the children ride in ONE inner track, the
+     shape the Docs topics always used. Build 4 made each button
+     a direct grid child, so grid-template-rows templated only
+     the FIRST row and the remaining children overflowed the
+     track onto the rows after the group (Mesh over Voice, DHD
+     over Chips on phones). One track, one templated row: the
+     unfold animates the track, and nothing can paint outside
+     it. The inner clips while the track is mid-flight, and at
+     0fr the wrap is exactly zero tall — a collapsed group
+     leaves no void in the flow on any screen size. */
+  .nav-children-inner { overflow:hidden; min-height:0; display:flex; flex-direction:column; }
+  .nav-children-inner > button { min-height:0; overflow:hidden; min-width:0; }
+  .nav-group-sec { display:flex; flex-direction:column; }
+  .nav-children .nav-child { opacity:1; transform:none; transition:opacity var(--motion-glide) var(--motion-ease), transform var(--motion-glide) var(--motion-ease), background var(--motion-fast) ease, color var(--motion-fast) ease; }
   .nav-children.closed .nav-child { opacity:0; transform:translateY(-4px); pointer-events:none; }
   #nav-children-utilities .nav-child { transform:none; }
   .nav-children.closed#nav-children-utilities .nav-child { transform:translateY(4px); }
-  nav button { transition:background .14s ease, color .14s ease; }
-  /* The Chats tab + panel (Build 4): the tab is a full-width row
-     fixed at the top of the status column, above Navi's status
-     box; the panel opens under it with the groups' own height
-     motion. */
-  .chats-tab { display:flex; align-items:center; gap:8px; width:100%; min-height:44px; padding:8px 10px; margin-bottom:12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--text); font:inherit; font-weight:700; cursor:pointer; text-align:left; transition:background .14s ease, border-color .14s ease; }
-  .chats-tab:hover { border-color:var(--cy); }
-  .chats-tab .chats-count { color:var(--dim); font-size:11px; }
-  .chats-tab .chats-chev { margin-left:auto; color:var(--dim); font-size:11px; transition:transform .3s cubic-bezier(.22,.8,.3,1); }
-  .chats-tab[aria-expanded="false"] .chats-chev { transform:rotate(-90deg); }
-  .chats-panel { display:grid; grid-template-rows:1fr; transition:grid-template-rows .3s cubic-bezier(.22,.8,.3,1); }
-  .chats-inner { overflow:hidden; min-height:0; }
-  @media (prefers-reduced-motion: reduce) { .nav-children, .chats-panel, .nav-group-head .nav-chev, .chats-tab .chats-chev, .nav-children .nav-child { transition:none; } }
+  nav button { transition:background var(--motion-fast) ease, color var(--motion-fast) ease; }
+  /* The tabbed status pane (0.1.9e Build 6, issues #107/#108):
+     the status column is two panes under one sticky tab bar —
+     Status first, Chats second. Build 4's Chats disclosure is
+     retired: its panel opened at the BOTTOM of the column, a
+     full scroll away from its tab (#107). Now exactly one pane
+     shows, swapped in place directly under the tab bar, and
+     the bar sticks to the top of the column while it scrolls.
+     While Chats is up, an amber dot on the Status tab carries
+     any summons (update waiting, stale bridge or page) so a
+     tab can never bury one. */
+  /* The Chat window's own header (Build 6, #115): her presence
+     at the top left — name, dot, and the living line, social-
+     chat style — and the status column's toggle hugging the
+     right edge, a full 44px target in the panel-icon language. */
+  .chat-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .chat-presence { display:flex; align-items:center; gap:9px; flex:1 1 auto; min-width:0; }
+  .chat-presence .dot { flex:0 0 auto; }
+  .chat-presence-name { font-weight:700; line-height:1.25; }
+  .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #chat-status-toggle { flex:0 0 auto; width:44px; height:44px; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+  #chat-status-toggle[aria-pressed="true"] { color:var(--cy); border-color:var(--cy); }
+  .status-tabs { position:sticky; top:-14px; z-index:5; display:flex; gap:6px; padding:12px 0 8px; margin:-14px 0 0; background:var(--panel2); border-bottom:1px solid var(--line); }
+  .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
+  .status-tab:hover { border-color:var(--cy); color:var(--text); }
+  .status-tab.on { color:var(--text); border-color:var(--cy); }
+  .status-tab .chats-count { color:var(--dim); font-size:11px; }
+  .status-attn { width:8px; height:8px; border-radius:50%; background:#f5b544; flex:0 0 auto; }
+  .status-pane-in { animation:view-in var(--motion-view) ease both; }
+  @media (prefers-reduced-motion: reduce) { .nav-children, .nav-group-head .nav-chev, .nav-children .nav-child { transition:none; } .status-pane-in { animation:none; } }
   #nav-toggle { color:var(--dim); border:1px solid var(--line); margin-bottom:8px; }
   /* The destination buttons and the version footer live in one
      container so the small-screen rules can lift them out of the
@@ -226,6 +291,17 @@
      never sliced mid-text by a flex parent again. */
   main .card { flex:0 0 auto; }
   main.chat-view { display:flex; flex-direction:column; overflow:hidden; }
+  /* The Docs view's own layout frame (issue #119): the view is
+     a fixed frame — header still, and below it two panes that
+     scroll independently, the topic menu and the article, each
+     filling the frame's height exactly. No page-level scroll. */
+  main.docs-view { display:flex; flex-direction:column; overflow:hidden; }
+  main.docs-view > h3 { flex:0 0 auto; }
+  .docs-frame { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .docs-panes { display:flex; gap:16px; flex:1; min-height:0; margin-top:10px; }
+  .docs-wiki-nav { min-width:190px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; min-height:0; }
+  .docs-wiki-body { flex:1; min-width:260px; overflow-y:auto; overscroll-behavior:contain; min-height:0; }
+  main.docs-pop { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
   main.chat-view > h3, main.chat-view > .card { flex:0 0 auto; }
   #msgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; }
   #msgs + div, main.chat-view > .row { flex:0 0 auto; }
@@ -277,9 +353,9 @@
      chevron turns with the state. */
   .doc-topic-head { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:none; border:none; padding:2px 4px; margin:0; cursor:pointer; color:var(--dim); font:inherit; font-size:10px; font-weight:700; letter-spacing:.22em; text-transform:uppercase; text-align:left; }
   .doc-topic-head:hover { color:var(--text); }
-  .doc-chev { display:inline-block; transition:transform .28s ease; font-size:11px; letter-spacing:0; }
+  .doc-chev { display:inline-block; transition:transform var(--motion-glide) ease; font-size:11px; letter-spacing:0; }
   .doc-topic-head[aria-expanded="false"] .doc-chev { transform:rotate(-90deg); }
-  .doc-topic-pages { display:grid; grid-template-rows:1fr; transition:grid-template-rows .28s ease; }
+  .doc-topic-pages { display:grid; grid-template-rows:1fr; transition:grid-template-rows var(--motion-glide) ease; }
   .doc-topic-pages.closed { grid-template-rows:0fr; }
   .doc-topic-inner { overflow:hidden; min-height:0; }
   @media (prefers-reduced-motion: reduce) { .doc-topic-pages, .doc-chev { transition:none; } }
@@ -391,7 +467,7 @@
      margin above the actions — never in a squeezed line. */
   .nur-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(290px, 1fr)); gap:10px; }
   .flip-card { perspective:1200px; height:212px; }
-  .flip-inner { position:relative; width:100%; height:100%; transform-style:preserve-3d; transition:transform .55s ease; }
+  .flip-inner { position:relative; width:100%; height:100%; transform-style:preserve-3d; transition:transform var(--motion-slow) ease; }
   .flip-card.flipped .flip-inner { transform:rotateY(180deg); }
   .flip-face { position:absolute; inset:0; backface-visibility:hidden; -webkit-backface-visibility:hidden; overflow:hidden; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 12px; box-sizing:border-box; }
   .flip-back { transform:rotateY(180deg); }
@@ -458,8 +534,8 @@
   .switch[aria-checked="true"] { border-color:var(--red); background:rgba(248,113,113,.15); }
   .switch[aria-checked="true"] .knob { left:24px; background:var(--red); }
   /* ---- polish: motion, hover highlights, press feedback ---- */
-  #app { transition:grid-template-columns .25s ease; }
-  nav button, button.act, button.ghost, a.act, a.ghost, .chipbtn, .card, .switch .knob { transition:background .15s ease, color .15s ease, border-color .15s ease, filter .15s ease, transform .08s ease, left .15s ease; }
+  #app { transition:grid-template-columns var(--motion-view) ease; }
+  nav button, button.act, button.ghost, a.act, a.ghost, .chipbtn, .card, .switch .knob { transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease, filter var(--motion-fast) ease, transform var(--motion-press) ease, left var(--motion-fast) ease; }
   nav button:hover { background:rgba(34,211,238,.12); color:var(--text); }
   nav button.on:hover { background:var(--cy); color:#000; }
   button.ghost:hover, a.ghost:hover, .chipbtn:hover { border-color:var(--cy); color:var(--cy); }
@@ -467,7 +543,7 @@
   button.act:active, button.ghost:active, a.act:active, a.ghost:active, .chipbtn:active, nav button:active { transform:scale(.97); }
   .card:hover { border-color:#2e4356; }
   @keyframes view-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
-  main.view-in { animation:view-in .22s ease both; }
+  main.view-in { animation:view-in var(--motion-view) ease both; }
   /* Navi's typing indicator + presence pulse */
   @keyframes navi-typing { 0%,60%,100% { transform:translateY(0); opacity:.35; } 30% { transform:translateY(-3px); opacity:1; } }
   .tdots { display:inline-flex; gap:3px; align-items:center; }
@@ -510,7 +586,7 @@
   /* Chat markdown: Navi's replies render as real markdown — fenced
      code becomes a code block, inline code a chip, lists and
      headings structure the prose instead of dumping raw backticks. */
-  .msg { animation:view-in .25s ease both; }
+  .msg { animation:view-in var(--motion-view) ease both; }
   .md p { margin:0 0 8px; } .md p:last-child { margin-bottom:0; }
   .md .ic { background:rgba(34,211,238,.13); border:1px solid var(--line); border-radius:4px; padding:0 5px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.92em; color:var(--cy); }
   .md-code { background:var(--exec-bg); border:1px solid var(--line); border-radius:4px; padding:8px; white-space:pre-wrap; color:var(--text); margin:6px 0; overflow:auto; font-size:12.5px; }
@@ -560,7 +636,7 @@
      scrolling, composer pinned — sized to the viewport under the
      bar. Touch targets are finger-sized, and wide children wrap or
      scroll inside themselves, so nothing scrolls sideways at
-     360–430px. Build .65 (Alex's Build 5 field test on his
+     360–430px. Build .65 (Alex's Build 6 field test on his
      iPhone): the hamburger wraps only its icon — flex:0 0 auto,
      a square ≥44px target exactly like the dock toggle's, never
      flex-growing (the base nav-button width:100% is overridden
@@ -572,7 +648,7 @@
      shows in full at 360–430px. */
   @media (max-width:800px) {
     html, body { height:auto; overflow:auto; }
-    #app, #app.closed { display:flex; flex-direction:column; height:auto; min-height:100dvh; overflow:visible; }
+    #app, #app.closed { display:flex; flex-direction:column; height:auto; min-height:calc(100dvh / var(--uiscale, 1)); overflow:visible; }
     nav { position:sticky; top:0; z-index:90; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:6px; height:60px; overflow:visible; padding:6px 10px; border-right:0; border-bottom:1px solid var(--line); background:var(--panel2); }
     nav .logo, nav .tagline { display:none; }
     .bar-title { display:block; flex:1 1 auto; min-width:0; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:13px; letter-spacing:.04em; }
@@ -581,15 +657,16 @@
     #dock-toggle { display:flex; align-items:center; justify-content:center; width:auto; flex:0 0 auto; margin-left:auto; min-width:44px; min-height:44px; padding:8px 10px; color:var(--dim); border:1px solid var(--line); background:none; border-radius:4px; cursor:pointer; }
     #app.dock-open #dock-toggle { color:var(--cy); border-color:var(--cy); }
     nav button { min-height:44px; }
-    #nav-menu { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; display:flex; flex-direction:column; gap:4px; padding:10px; overflow-y:auto; background:var(--panel2); transform:translateX(-104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
-    #app:not(.closed) #nav-menu { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
+    #nav-menu { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; display:flex; flex-direction:column; gap:4px; padding:10px; overflow-y:auto; background:var(--panel2); transform:translateX(-104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
+    #app:not(.closed) #nav-menu { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     #nav-menu button[id^="nav-"] { flex:0 0 auto; width:100%; min-height:48px; justify-content:flex-start; }
     /* Grouped menu on phones (Build 4): groups expand inline in
        the full-width overlay — no flyouts — children and headers
        alike meet the 48px row the other destinations get, and the
        Utilities children open upward within the same panel,
        never off-screen (the panel itself scrolls). */
-    #nav-menu .nav-children > button { min-height:48px; }
+    #nav-menu .nav-children-inner > button { min-height:48px; }
+    #nav-menu .nav-group-sec { gap:4px; }
     #nav-menu .nav-group-head { min-height:48px; }
     #nav-menu .nav-util { margin-top:auto; }
     #nav-menu .nav-break { margin:6px 2px; }
@@ -600,9 +677,12 @@
     #app.closed #nav-version { text-align:center; padding:9px 8px 0; }
     #app.closed #nav-version .nv-pre { display:inline; }
     main { height:auto; min-height:0; overflow:visible; padding:12px; }
-    main.chat-view { height:calc(100dvh - 60px); min-height:0; overflow:hidden; }
-    aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
-    #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
+    main.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    main.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
+    #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
+    .status-tabs { top:-12px; margin-top:-12px; }
+    .status-tab { min-height:48px; }
     button.act, button.ghost, a.act, a.ghost, .chipbtn { min-height:40px; }
     /* Vault at phone widths (build .73, kept in .80): the pair
        restacks to one column, the files card full-width above the
@@ -636,10 +716,24 @@
     .docs-wiki-body { min-width:0; }
   }
   @media (max-width:800px) and (prefers-reduced-motion: reduce) { #nav-menu, aside { transition:none; } }
+  /* Potato mode (0.1.9e Build 6, issue #109): the Appearance
+     switch for low-power machines. Every transition and
+     animation in the app collapses to effectively instant —
+     state changes stay honest, they just stop traveling —
+     stagger delays (set inline per nav child) are zeroed, the
+     functional loops stop and hold their static state, and
+     the Glass theme's backdrop blur is suspended (its colors
+     stay): on a potato the blur costs more than the motion
+     does. prefers-reduced-motion reaches the same place
+     through the tokens themselves, and wins over this switch
+     either way. */
+  body[data-motion="potato"] *, body[data-motion="potato"] *::before, body[data-motion="potato"] *::after { transition-duration:.01ms !important; transition-delay:0s !important; animation-duration:.01ms !important; animation-delay:0s !important; animation-iteration-count:1 !important; }
+  body[data-motion="potato"] .pdot, body[data-motion="potato"] .wave i, body[data-motion="potato"] .tdots i, body[data-motion="potato"] .glitching { animation:none !important; }
+  body[data-motion="potato"][data-theme="glass"] nav, body[data-motion="potato"][data-theme="glass"] aside, body[data-motion="potato"][data-theme="glass"] .ac, body[data-motion="potato"][data-theme="glass"] .acsearch { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" class="no-status">
   <nav id="nav">
     <div class="logo mono">APEX</div>
     <div class="tagline mono" id="tagline">Powered by Navi</div>
@@ -672,7 +766,7 @@ var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.9","versionStatus":
 // Live below, so it can never strand the app in a dead mode. The
 // in-page mock code remains only as the bridge-unreachable fallback
 // paths' simulator inside this file; it is never a selectable mode.
-var CONFIG = { backend: "live", version: "0.1.9", versionStatus: "edge", updaterChannel: "stable", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
+var CONFIG = { backend: "live", version: "0.1.9", versionStatus: "edge", updaterChannel: "stable", threat: "Guarded", sudo: false, operatorName: "", theme: "nocturne", motion: "full", uiScale: 1, installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
 Object.assign(CONFIG, NAVI_SETTINGS);
 try {
   var savedCfg = localStorage.getItem("navi.config");
@@ -716,23 +810,58 @@ function gateGuard(r) {
   }
   return r;
 }
-function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nord"; }
+function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nocturne"; }
+// Potato mode (Build 6, #109): the Appearance switch rides a
+// body attribute the stylesheet's potato block keys on, the
+// same shape as the theme beside it. "full" is the default —
+// the attribute always names the effective choice.
+function applyMotion() { document.body.dataset.motion = CONFIG.motion === "potato" ? "potato" : "full"; }
+// UI scale (Build 6, #111): ONE control for interface size —
+// the root zoom. Zoom is the honest single mechanism: it
+// scales text and layout in proportion, exactly like an OS
+// display scale, so nothing can overflow a fixed row the way
+// a text-only bump would (the group headers at 150% text in a
+// fixed rail are the standing example). The frame heights
+// divide by --uiscale so the app still lands exactly on the
+// viewport. Two knobs (a UI scale AND a text size) would
+// multiply into each other and fight; there is one, and the
+// Appearance copy says why.
+function applyUiScale() {
+  var z = [1, 1.1, 1.25, 1.5].indexOf(Number(CONFIG.uiScale)) !== -1 ? Number(CONFIG.uiScale) : 1;
+  document.documentElement.style.setProperty("--uiscale", String(z));
+  document.body.style.zoom = String(z);
+  document.body.dataset.uiscale = String(z);
+}
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
 
-var NAV = ["Chat", "Voice", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
+var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
 // Apex | Systems group (Node / Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
-// surfaces; and the Apex | Utilities drop-up at the foot (Settings,
-// Docs, GitHub). NAV keeps every REACHABLE view key for the
-// active-state sweep; NAV_GROUPS drives what the menu renders, and
-// the Memory view is retired — its chats live on as the Chats tab
-// on Chat, its memory entries under Settings -> Memories.
+// surfaces; and the Apex | Utilities drop-up at the foot. NAV keeps
+// every REACHABLE view key for the active-state sweep; NAV_GROUPS
+// drives what the menu renders, and the Memory view is retired —
+// its chats live on in the status pane's Chats tab (Build 6,
+// #108), its memory entries under Settings -> Operator (the
+// operator's file) and Settings -> Operator & Persona (hers).
+// Build 6 (#106): the Updater leaves the flat block for
+// Utilities. The drop-up's children paint above its header in
+// DOM order (the container is a plain column), so the child
+// list IS the on-screen reading order, top to bottom:
+// Settings, Updater, GitHub, Docs — verified in pixels by the
+// real-browser geometry gate, not just in the markup.
+// Apex | Navi (Build 6, #112, as amended by #113): her mind
+// and tools — Chips, ChipDeck, RAG. (Voice was drafted into
+// this group for one amendment and retired as a view by the
+// next; it lives in Settings → Voice now, and appears nowhere
+// in the menu.) The Vault stays flat between the groups and
+// Utilities: the shared desk, belonging to neither family.
 var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Node", "DHD"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
-  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Docs", "Docs"], ["GitHub", "GitHub"]] }
+  navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
+  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"]] }
 };
-var NAV_FLAT = ["Chat", "Voice", "Chips", "ChipDeck", "RAG", "Vault", "Updater"];
+var NAV_FLAT = ["Chat", "Vault"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
 // the view keys stay what they have always been; the labels wear
 // the product line — Apex | DHD, Apex | Mesh.
@@ -769,12 +898,24 @@ function dhdGlyphSvg() {
   inner += "<circle cx='12' cy='12' r='4.9' fill='#f4502a' stroke='none'/>";
   return inner;
 }
-// The Mesh glyph (build .86): Hexlink — two interlocking
-// hexagon outlines with a small link node where they meet, drawn
-// as stroke paths in currentColor with the nav-ico-mesh class, so
-// the themes tune it exactly the way they tune .nav-ico-dhd.
+// The Mesh glyph (build .86's two-hexagon Hexlink, redrawn in
+// Build 6, #111): the HEX TRIO — three hexagon outlines in a
+// triangular cluster, one above and two below, edges just
+// touching, a node dot at each center. The operator's verdict
+// on the pair was that it read as a horizontal Venn diagram;
+// three is the mark. Same stroke family, same nav-ico-mesh
+// class, so the themes tune it the way they tune .nav-ico-dhd.
 function meshGlyphSvg() {
-  return "<path d='M9 3.5 13.8 6.3v5.4L9 14.5 4.2 11.7V6.3z'/><path d='M15 9.5l4.8 2.8v5.4L15 20.5l-4.8-2.8v-5.4z'/><circle cx='12' cy='12' r='1.7' fill='currentColor' stroke='none'/>";
+  return "<path d='M12 3l3.72 2.15v4.3L12 11.6l-3.72-2.15V5.15z'/><path d='M7.6 10.1l3.72 2.15v4.3L7.6 18.7l-3.72-2.15v-4.3z'/><path d='M16.4 10.1l3.72 2.15v4.3l-3.72 2.15-3.72-2.15v-4.3z'/><circle cx='12' cy='7.3' r='1.15' fill='currentColor' stroke='none'/><circle cx='7.6' cy='14.4' r='1.15' fill='currentColor' stroke='none'/><circle cx='16.4' cy='14.4' r='1.15' fill='currentColor' stroke='none'/>";
+}
+// Node's own glyph (Build 6, #111): one upright server unit —
+// a tower with a node dot and its rails — in the same Lucide
+// stroke family. Until this build the Node child wore DHD's
+// dial because the icon keyed off the target view; the icon
+// now keys off the child's own identity, and Node is a server,
+// not a dial. DHD keeps the dial; Mesh keeps its hex trio.
+function nodeGlyphSvg() {
+  return "<rect x='5' y='3.5' width='14' height='17' rx='2'/><circle cx='12' cy='8.6' r='1.7' fill='currentColor' stroke='none'/><path d='M8.6 13.6h6.8'/><path d='M8.6 16.8h4.6'/>";
 }
 function chipdeckGlyphSvg() {
   return "<circle cx='6.2' cy='5.4' r='1.9'/><circle cx='6.2' cy='12' r='1.9'/><circle cx='6.2' cy='18.6' r='1.9'/><path d='M9.4 3.6h9.1a1.9 1.9 0 0 1 1.9 1.9v13a1.9 1.9 0 0 1-1.9 1.9H9.4'/><path d='M15.9 8.2l3.1 4.6h-6.2z'/>";
@@ -784,24 +925,30 @@ function navIcon(name) {
   if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
+  if (name === "Node") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-node'>" + nodeGlyphSvg() + "</svg>";
+  if (name === "Apex | Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
 var view = "Chat";
 var navClosed = false;
-// Menu group state (0.1.9e Build 4): both groups start expanded —
-// the menu's standing spirit is destinations visible — and the
-// operator's choice persists per group.
-var navGroupsOpen = { systems: true, utilities: true };
-try {
-  var savedGroups = JSON.parse(localStorage.getItem("navi.navGroups") || "null");
-  if (savedGroups) { navGroupsOpen.systems = savedGroups.systems !== false; navGroupsOpen.utilities = savedGroups.utilities !== false; }
-} catch (e) {}
-function persistNavGroups() { try { localStorage.setItem("navi.navGroups", JSON.stringify(navGroupsOpen)); } catch (e) {} }
-// The Chats tab on Chat (0.1.9e Build 4): the panel beside the
-// status column starts shut; the tab is the door, and opening it
-// never disturbs the thread or the composer.
-var chatsPanelOpen = false;
+// Menu group state (Build 6, #114 — supersedes Build 4's
+// expanded-by-default + persistence): every group starts
+// COLLAPSED at every launch, on every screen size, no
+// exceptions; toggling within a session works as it always
+// has, and the group state is neither read from nor written
+// to storage — a stale navi.navGroups save from an older
+// build is cleaned on sight and never honored. (The rail's
+// own open/collapsed state is NOT part of this ruling: it
+// keeps its remembered behavior — see the navClosed read
+// below. The correction is recorded in the build report.)
+var navGroupsOpen = { systems: false, navi: false, utilities: false };
+try { localStorage.removeItem("navi.navGroups"); } catch (e) {}
+// The tabbed status pane (0.1.9e Build 6, issues #107/#108):
+// Status is the default pane — the first render and every
+// opening of the mobile dock land on it — and Chats is the
+// second tab. Exactly one pane shows at a time.
+var statusPaneTab = "status";
 try {
   var savedNavClosed = localStorage.getItem("navi.navClosed");
   if (savedNavClosed !== null) navClosed = savedNavClosed === "1";
@@ -817,6 +964,13 @@ try {
 // overlay. Closed is the resting state on every screen size; it is
 // never persisted — a page always comes up content-only.
 var dockOpen = false;
+// Status column visibility on desktop (Build 6, #114, as
+// corrected): hidden at every launch, behind the Status
+// toggle in the menu chrome — and deliberately NOT persisted:
+// "closed by default" means every launch, so no storage key
+// exists for it. On phones this state does nothing; the dock
+// (dockOpen above) is the column's door there, as always.
+var statusHidden = true;
 // navi.llamafile connection state, driven by the status element: it
 // starts stopped ("Disconnected. Click to Connect."); only a successful
 // connect probe flips it to running. While stopped, chat is a plain
@@ -1022,7 +1176,7 @@ var docs = [];
 // was reached). Nothing here is simulated: in Mock backend
 // mode no check runs at all (checks go through the live bridge),
 // and the view says so.
-var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", pollTimer: null };
+var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", tailFailure: "", pollTimer: null };
 // Whether the channel on screen is the operator's own pick
 // (Build 2): the bridge stamps a panel choice as explicit and
 // reports both the effective channel and the stamp on
@@ -1162,6 +1316,8 @@ var githubFetching = false;
 var githubTab = "overview";
 var githubPulse = null;
 var githubPulseFetching = false;
+var githubPulseFailedAt = 0;
+var githubIssuesFailedAt = 0;
 var githubPulseError = "";
 var githubPulseFetchedAt = null;
 var githubIssues = null;
@@ -1169,7 +1325,7 @@ var githubIssuesFetching = false;
 var githubIssuesError = "";
 var githubIssuesFetchedAt = null;
 // Settings' topic tabs: every setting lives under exactly one.
-var settingsTab = "persona";
+var settingsTab = "operator";
 var githubMsg = "";          // last action's outcome line, shown on the view
 var githubError = false;     // whether that line is an error
 var githubDevice = null;     // {userCode, verificationUri} while a device sign-in runs
@@ -1253,7 +1409,7 @@ function openGithubPageWindow(page) {
 function openGithubIssueWindow(number, url) {
   docsTauriInvoke("open_github_window", { page: "issue:" + number }).catch(function () { openExternal(url); });
 }
-function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "" }; }
+function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1 }; }
 function ghPost(path, body, done) {
   fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
     .then(function (r) { return r.json(); })
@@ -1278,7 +1434,7 @@ function fetchGithubIssues(thenRender) {
   var done = function (j) {
     githubIssuesFetching = false;
     if (j && j.ok) { githubIssues = j.issues; githubIssuesError = ""; githubIssuesFetchedAt = j.fetchedAt; }
-    else { githubIssuesError = (j && j.error) || "GitHub issues fetch failed."; }
+    else { githubIssuesError = (j && j.error) || "GitHub issues fetch failed."; githubIssuesFailedAt = Date.now(); }
     if (thenRender) render();
   };
   if (CONFIG.backend === "live") {
@@ -1296,7 +1452,7 @@ function fetchGithubPulse(thenRender) {
   var done = function (j) {
     githubPulseFetching = false;
     if (j && j.ok && j.pulse) { githubPulse = j.pulse; githubPulseError = ""; githubPulseFetchedAt = j.fetchedAt; }
-    else { githubPulseError = (j && j.error) || "GitHub pulse fetch failed."; }
+    else { githubPulseError = (j && j.error) || "GitHub pulse fetch failed."; githubPulseFailedAt = Date.now(); }
     if (thenRender) render();
   };
   if (CONFIG.backend === "live") {
@@ -1383,7 +1539,7 @@ function ghBackupNow() {
   if (CONFIG.backend !== "live") {
     if (!githubState.signedIn) { ghSetMsg("Backups need a GitHub sign-in first — Navi herself doesn't, but writing to GitHub does.", true); render(); return; }
     if (!githubState.backupItems.length) { ghSetMsg("Nothing is ticked — a backup with no essentials in it would restore an empty Navi.", true); render(); return; }
-    var snap = { takenAt: new Date().toISOString(), items: githubState.backupItems.slice(), soul: CONFIG.soul || "", memory: CONFIG.memory || "", operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "" };
+    var snap = { takenAt: new Date().toISOString(), items: githubState.backupItems.slice(), soul: CONFIG.soul || "", memory: CONFIG.memory || "", operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1 };
     try { localStorage.setItem("navi.github.snapshot", JSON.stringify(snap)); } catch (e) {}
     githubState.hasBackup = true; githubState.lastBackupAt = snap.takenAt;
     githubState.lastBackupFileCount = ghMockBackupFileCount(snap.items);
@@ -1407,7 +1563,7 @@ function ghImportPreview() {
     snap.items.forEach(function (id) {
       if (id === "soul") changes.push({ item: id, label: labelOf[id], detail: (CONFIG.soul || "") === snap.soul ? "Already matches the backup — nothing to change." : "Would replace the current Soul (" + (CONFIG.soul || "").length + " characters) with the backup's (" + snap.soul.length + " characters).", willChange: (CONFIG.soul || "") !== snap.soul });
       else if (id === "memory") changes.push({ item: id, label: labelOf[id], detail: (CONFIG.memory || "") === snap.memory ? "Already matches the backup — nothing to change." : "Would replace the current Memory (" + (CONFIG.memory || "").length + " characters) with the backup's (" + snap.memory.length + " characters).", willChange: (CONFIG.memory || "") !== snap.memory });
-      else if (id === "settings") { var d = []; if ((CONFIG.operatorName || "") !== snap.operatorName) d.push("operator name → " + (snap.operatorName || "Operator")); if ((CONFIG.theme || "") !== snap.theme) d.push("theme"); changes.push({ item: id, label: labelOf[id], detail: d.length ? "Would restore: " + d.join(" · ") + "." : "Already matches the backup — nothing to change.", willChange: !!d.length }); }
+      else if (id === "settings") { var d = []; if ((CONFIG.operatorName || "") !== snap.operatorName) d.push("operator name → " + (snap.operatorName || "Operator")); if ((CONFIG.theme || "") !== snap.theme) d.push("theme"); if ((CONFIG.motion || "") !== (snap.motion || "")) d.push("motion"); if ((Number(CONFIG.uiScale) || 1) !== (Number(snap.uiScale) || 1)) d.push("UI scale"); changes.push({ item: id, label: labelOf[id], detail: d.length ? "Would restore: " + d.join(" · ") + "." : "Already matches the backup — nothing to change.", willChange: !!d.length }); }
       else changes.push({ item: id, label: labelOf[id], detail: "Simulated in mock mode — the live bridge and the bench in the Apex space restore this essential in full.", willChange: false });
     });
     githubPreview = { ok: true, changes: changes, backedUpAt: snap.takenAt }; ghSetMsg("", false); render(); return;
@@ -1423,8 +1579,8 @@ function ghImportApply() {
     if (!snap) { ghSetMsg("No backup is on record yet.", true); render(); return; }
     if (snap.items.indexOf("soul") !== -1) CONFIG.soul = snap.soul;
     if (snap.items.indexOf("memory") !== -1) CONFIG.memory = snap.memory;
-    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; }
-    saveCfg(); applyTheme(); refreshSeedGreeting();
+    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; if (snap.motion === "potato" || snap.motion === "full") CONFIG.motion = snap.motion; if ([1, 1.1, 1.25, 1.5].indexOf(Number(snap.uiScale)) !== -1) CONFIG.uiScale = Number(snap.uiScale); }
+    saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
     githubState.lastImportAt = new Date().toISOString();
     githubState.lastImportResult = "Imported the (simulated) backup from " + String(snap.takenAt).slice(0, 10) + " — documents and dashboard settings restored.";
     mockGithubSave();
@@ -1438,7 +1594,9 @@ function ghImportApply() {
       if (j.dashboard) {
         if (typeof j.dashboard.operatorName === "string") CONFIG.operatorName = j.dashboard.operatorName;
         if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(j.dashboard.theme) !== -1) CONFIG.theme = j.dashboard.theme;
-        saveCfg(); applyTheme(); refreshSeedGreeting();
+        if (j.dashboard.motion === "potato" || j.dashboard.motion === "full") CONFIG.motion = j.dashboard.motion;
+        if ([1, 1.1, 1.25, 1.5].indexOf(Number(j.dashboard.uiScale)) !== -1) CONFIG.uiScale = Number(j.dashboard.uiScale);
+        saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
       }
       // Her persona may have been restored under us — re-read it.
       fetch("/api/persona").then(function (r) { return r.json(); }).then(function (p) { if (p.soul) CONFIG.soul = p.soul; if (p.memory) CONFIG.memory = p.memory; }).catch(function () {});
@@ -1515,6 +1673,29 @@ function wireDocTopics(rootEl) {
     b.setAttribute("aria-label", (open ? "Collapse" : "Expand") + " the " + title + " topic");
   }; });
 }
+// The menu's scroll position survives re-renders (issue #119):
+// captured from the live menu before any rebuild of the Docs
+// view or the popped window, restored after — and the active
+// page is scrolled into view when a navigation leaves it
+// outside the menu's visible stretch (instantly under reduced
+// motion or Potato, a gentle glide otherwise).
+var docsNavScrollTop = 0;
+function docsCaptureNav() {
+  var n = mainEl.querySelector(".docs-wiki-nav");
+  if (n) docsNavScrollTop = n.scrollTop;
+}
+function docsRestoreNav() {
+  var n = mainEl.querySelector(".docs-wiki-nav");
+  if (!n) return;
+  n.scrollTop = docsNavScrollTop;
+  var act = n.querySelector("button.act[data-docpage]");
+  if (!act) return;
+  var nr = n.getBoundingClientRect(), ar = act.getBoundingClientRect();
+  if (ar.top < nr.top || ar.bottom > nr.bottom) {
+    var calm = CONFIG.motion === "potato" || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    act.scrollIntoView({ block: "nearest", behavior: calm ? "auto" : "smooth" });
+  }
+}
 function docsWikiHtml() {
   docsEnsureTopicOpen();
   var dp = DOC_PAGES.filter(function (x) { return x.id === docsPage; })[0] || DOC_PAGES[0];
@@ -1539,8 +1720,8 @@ function docsWikiHtml() {
       return x ? "<option value='" + x.id + "'" + (x.id === dp.id ? " selected" : "") + ">" + esc(x.title) + "</option>" : "";
     }).join("") + "</optgroup>";
   }).join("") + "</select>";
-  return picker + "<div style='display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap'><nav class='docs-wiki-nav' aria-label='Documentation pages' style='min-width:190px'>" + nav + "</nav>"
-    + "<div class='docs-wiki-body' style='flex:1;min-width:260px'>" + dp.html
+  return picker + "<div class='docs-panes'><nav class='docs-wiki-nav' aria-label='Documentation pages'>" + nav + "</nav>"
+    + "<div class='docs-wiki-body'>" + dp.html
     + "<p style='color:var(--dim)'>See also: " + dp.related.map(function (r) { return "<button class='ghost' data-docpage='" + r + "' aria-label='Open the " + esc(docsPageTitle(r)) + " documentation page'>" + esc(docsPageTitle(r)) + "</button>"; }).join(" ") + "</p></div></div>";
 }
 function docsPoppedOut() { return docsShellOut || !!(docsPopWin && !docsPopWin.closed); }
@@ -1580,33 +1761,36 @@ function dockDocs() {
 // so and carries a direct link that opens the documentation in a
 // new window on the operator's own click.
 function docsHomeHtml() {
-  var h = "<div style='display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap'><p style='color:var(--dim);max-width:640px;margin:0'>One page per topic, written plainly — short steps, in order. This view is the wiki's home: pop it out of here when you want it beside your work, and pop it back in when you're done.</p>";
+  var h = "<div class='docs-frame'><div style='display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap'><p style='color:var(--dim);max-width:640px;margin:0'>One page per topic, written plainly — short steps, in order. This view is the wiki's home: pop it out of here when you want it beside your work, and pop it back in when you're done.</p>";
   if (docsPoppedOut()) {
     h += "</div><div class='card' style='margin-top:10px'><span style='color:var(--dim)'>The documentation is popped out in its own window, open at <b>" + esc(docsPageTitle(docsPage)) + "</b> — read it side-by-side with the chat or the editor.</span><br><button class='ghost' id='docs-pop-in' style='margin-top:6px' aria-label='Pop the documentation back into the Docs view'>⇙ Pop back in</button></div>";
   } else {
     h += "<button class='ghost' id='docs-pop-out' aria-label='Pop the documentation out of the Docs view into its own window'>⧉ Pop out</button></div>"
-      + "<div style='margin-top:10px'>" + docsWikiHtml() + "</div>";
+      + docsWikiHtml();
     if (docsPopBlocked) {
       h += "<div class='card docs-blocked' style='margin-top:10px;border-color:#f5b544;color:#f5b544'>The pop-out was blocked — the documentation did not open anywhere. <a class='ghost' style='border-color:#f5b544;color:#f5b544' href='" + esc(docsPopUrl()) + "' target='_blank' rel='noopener' aria-label='Open the documentation in a new window'>Open the documentation in a new window</a> — the same wiki, in a window of its own. Stand-in until this is fixed: open the Apex Web UI (http://localhost:8675) in your browser — links work there.</div>";
     }
   }
-  return h;
+  return h + "</div>";
 }
 // The popped window itself: no nav, no status column — the wiki,
 // a header, and the way back. Pop back in leaves the page in
 // localStorage for the main window and asks it to dock, then
 // closes; if the host refuses the close, the note says the rest.
 function renderDocsPop() {
+  docsCaptureNav();
   if (navEl) navEl.style.display = "none";
   if (statusEl) statusEl.style.display = "none";
   if (toggleBtn) toggleBtn.style.display = "none";
   if (appEl) appEl.style.display = "block";
   document.title = "Apex — Documentation";
   mainEl.classList.remove("chat-view");
-  mainEl.style.height = "auto";
+  mainEl.classList.add("docs-pop");
+  mainEl.style.height = "";
   mainEl.innerHTML = "<div style='display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap'><h3 style='margin:0'>Documentation</h3><button class='ghost' id='docs-pop-back' aria-label='Pop the documentation back into the Docs view'>⇙ Pop back in</button></div>"
     + "<p id='docs-pop-note' style='color:var(--dim);font-size:12px'>Popped out of the Docs view — the Docs view in the main window is holding your place.</p>"
-    + docsWikiHtml();
+    + "<div class='docs-frame'>" + docsWikiHtml() + "</div>";
+  docsRestoreNav();
   mainEl.querySelectorAll("[data-docpage]").forEach(function (b) { b.onclick = function () { docsPage = b.getAttribute("data-docpage") || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} renderDocsPop(); }; });
   wireDocTopics(mainEl);
   var popPicker = document.getElementById("docs-picker");
@@ -1719,7 +1903,8 @@ try {
 } catch (e) {}
 // Memory entries (build .81, issue #72): an entry is an object
 // now — {t: the fact, o: how it got there: manual / trigger /
-// autonomous / correction} — so Settings → Memories can say where each
+// autonomous / correction} — so the two Settings files (Operator
+// for manual / trigger, Operator & Persona for the rest) can say where each
 // entry came from and a chat receipt's Undo can find its entry.
 // Entries saved by earlier builds are plain strings; they
 // normalize to "manual" on load, which is exactly what they were.
@@ -2046,7 +2231,7 @@ function mockChat(text) {
   var chipHit = matchChipText(text, CHIP_DEFS);
   if (chipHit) return { text: "Slotted in " + chipHit.name + " and ran it — here's what it gave me:", exec: { command: "chip " + chipHit.id, output: chipHit.output } };
   if (/chip/i.test(text)) return { text: "Chips live in the Chips tab — each one a little chip with its code inside the picture. My shelf starts empty: forge one in Chip Studio (in live mode it writes a real chip) and it can run right here — type /chip followed by its name and its output lands in our conversation.", exec: null };
-  if (/remember|memory/i.test(text)) return { text: "Memory lives under Settings → Memories — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
+  if (/remember|memory/i.test(text)) return { text: "Memory lives in two files now — yours under Settings → Operator, mine under Settings → Operator & Persona — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
   return { text: "(Mock reply) I'm here — I heard you: \"" + text + "\" — in live mode the llamafile answers with the real me. Try: show me the contents of /home/name/ — or keep talking; I like that too.", exec: null };
 }
 // The dashboard's mock backend starts with an EMPTY chip shelf, like
@@ -2291,7 +2476,13 @@ function vaultLoad() {
   fetch("/api/vault/list").then(function (r) { return r.json(); }).then(function (j) {
     vaultState = j; vaultLoading = false; vaultLoadedAt = Date.now();
     if (view === "Vault") render();
-  }).catch(function () { vaultLoading = false; vaultMsg = "The vault could not be read from the bridge."; if (view === "Vault") render(); });
+  }).catch(function () { vaultLoading = false; vaultLoadedAt = Date.now(); vaultMsg = "The vault could not be read from the bridge."; if (view === "Vault") render(); });
+  // The failure path stamps vaultLoadedAt too (Build 6 bake
+  // find): without it the freshness gate in vaultHtml saw a
+  // permanently stale load and every render refired the fetch
+  // — a render/fetch storm against a dead bridge. Failures now
+  // back off on the same 4s gate as successes; a manual
+  // Refresh still reloads immediately.
 }
 function vaultRefresh() { if (CONFIG.backend === "live") { vaultState = null; vaultLoad(); } else { vaultLoad(); render(); } }
 function vaultApply(kind, a, b) {
@@ -2391,7 +2582,7 @@ function vaultHtml() {
   // Fresh on entry (build .73): the tree refetches when the view is
   // shown with a stale (or never-loaded) listing, so a note Navi
   // filed from chat is simply there — no manual app refresh.
-  if (!vaultLoading && (!vaultState || Date.now() - vaultLoadedAt > 4000)) vaultLoad();
+  if (!vaultLoading && Date.now() - vaultLoadedAt > 4000) vaultLoad();
   var h = "<h3>Vault · the shared desk</h3>";
   h += "<p style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
   h += "<div class='row'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button></div>";
@@ -2625,8 +2816,8 @@ var DOC_PAGES = [
   { id: "chat-cli", title: "Chat & CLI mode", related: ["chips-guide", "voice"], html:
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
-  "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under <b>Memory → Uploaded files</b>, where you can find it later and delete it.</p>" +
-  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Conversations are saved as known chats — switch from the <b>Chats</b> tab at the top of the status column, right beside Navi's status, without leaving this page.</p>" +
+  "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
+  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. At the top of the Chat window sits her <b>presence header</b> — her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode</h4>" +
   "<p>The status column's sudo switch makes Navi execute commands as root. Turning it on asks for your sudo password once; the bridge validates it by opening <b>one persistent root shell</b> that every sudo command runs inside, so a fingerprint-first PAM stack is consulted exactly once, at authentication. The password lives only in this page's memory — never saved, never logged — and turning sudo off closes the root shell on the spot.</p></div>" +
@@ -2646,7 +2837,7 @@ var DOC_PAGES = [
   "<p><b>Navi User Repo (NUR)</b> searches GitHub for repos tagged <span class='mono'>navi-chips</span> — that topic is the whole store. The Saints Sec Chips and Community Chips tabs are where you find and install chips: a card there shows whether you already have the chip, and that is all it does with it. A chip that is already on this machine — installed from its repo, or forged in Chip Studio under the same name — reads <b>INSTALLED</b> on its catalog card and its Install button sits grayed out: there is no second install over the copy you have. Install tracks the latest release; a newer release offers an update, which you take from the chip's card on the Local Chips tab. <b>Chip Studio</b> is where chips are written: a full code editor with highlighting, find, templates, and a live structure check. To publish: public repo, the <span class='mono'>navi-chips</span> topic, a release tag as the version.</p>" +
   "<p><b>Editing a chip you already have.</b> <b>Local Chips</b> is where you manage the chips you have — its card carries every management action: <b>Run</b>, <b>Download .png</b>, <b>Edit in Studio</b>, <b>Edit README</b>, <b>Export for GitHub</b>, <b>Publish to GitHub</b>, <b>Check for updates</b> / <b>Update</b>, and <b>Delete</b>. Uninstalling is not fenced into that one card anymore: an installed chip's catalog card carries <b>Uninstall</b> too, and so does its sleeve in <b>ChipDeck</b> — cartridge and install record go together from any of them, and a chip with local edits asks before it goes. Any chip in the folder can go back to the Studio — press <b>Edit in Studio</b> on its card in Navi User Repo (NUR) → Local Chips, or pick it in the Studio's <b>Open a chip</b> list: forged chips, GitHub installs, and chips you once exported and installed again all open with their whole file set, root.py and modules together. Saving re-forges the chip with your changes inside. If the chip came from GitHub, saving marks it <b>edited locally</b>: the app says plainly that your copy no longer matches the published one, and an Update will refuse rather than quietly overwrite your edits. To share your version, use <b>Export for GitHub</b> in Navi User Repo (NUR) and cut a new release. Knowledge packs work the same way: <b>Edit in RAG Studio</b> on the RAG tab reopens any pack — documents in or out, name and description adjusted — and saving rebuilds its index on your machine.</p>" +
   "<p><b>Installs prove themselves.</b> When a chip installs, the bridge re-scans the chips folder before it answers: if the cartridge landed on disk but does not list, the answer says so, and why — an install is never reported done on faith. A cartridge whose payload will not parse is listed in Local Chips as <b>couldn't be read</b> — visible and deletable, but it cannot run, and the runners skip it. <b>Older chips still run:</b> installing walks the repo's folders recursively, so a chip laid out as a package keeps its relative paths and its imports resolve at run time; a repo's <span class='mono'>chip-requirements.txt</span> is read and the chip's card shows the declared dependencies plainly — they are <b>not installed automatically</b>; and every chip sandbox carries the legacy <span class='mono'>navi.py</span> shim (<span class='mono'>get_parameters</span>, old semantics) unless the chip ships its own.</p>" +
-  "<p><b>A chip's face is a card, drawn at card grade.</b> New forges wear the family shell — black body, coral notched bands top and bottom as the cartridge's contacts — with the chip's own story on it like a Mesh card's: the family header, its art large in its window, then the chip's name, what it does, and in small print its version and its output kind. The window itself is textured now: a dim QR-style tile field, seeded from the chip's name, and over it the art renders as a solid silhouette with a shade offset — the built-in glyphs (a key for cryptex, a hash mark for a hasher, a terminal for a shell tool) were redrawn as filled objects on the field's own 20-by-20 grid, so each reads at sleeve size without its name. The glyph is named in the chip's manifest (<span class='mono'>glyph</span> in navi-chip.json); with no glyph named, a keyword read of the chip's name and description picks one. <b>Better still, draw your own:</b> a manifest <span class='mono'>icon</span> — 20 rows of 20 characters, <span class='mono'>#</span> for the accent, <span class='mono'>o</span> for its shade, <span class='mono'>.</span> for empty — outranks the built-in glyph and rides inside the picture like the glyph does; art in the wrong shape is refused in plain words at forge time, and a picture whose art arrives damaged simply falls back to its glyph. A chip no art claims keeps the older name-seeded pattern in the window as a fallback. The version itself also rides <b>inside</b> the picture now, so the cartridge states its own version wherever it travels — on the face, in the install receipt, and on its ChipDeck sleeve. Faces are drawn at forge time — installed and published pictures keep the faces they were forged with until they are re-forged.</p></div>" +
+  "<p><b>A chip's face is a card, drawn at card grade.</b> New forges wear the family shell — black body, coral notched bands top and bottom as the cartridge's contacts (coral is the chip family's color — knowledge cartridges wear green, Mesh pairing cards blue) — with the chip's own story on it like a Mesh card's: the family header, its art large in its window, then the chip's name, what it does, and in small print its version and its output kind. The window itself is textured now: a dim QR-style tile field, seeded from the chip's name, and over it the art renders as a solid silhouette with a shade offset — the built-in glyphs (a key for cryptex, a hash mark for a hasher, a terminal for a shell tool) were redrawn as filled objects on the field's own 20-by-20 grid, so each reads at sleeve size without its name. The glyph is named in the chip's manifest (<span class='mono'>glyph</span> in navi-chip.json); with no glyph named, a keyword read of the chip's name and description picks one. <b>Better still, draw your own:</b> a manifest <span class='mono'>icon</span> — 20 rows of 20 characters, <span class='mono'>#</span> for the accent, <span class='mono'>o</span> for its shade, <span class='mono'>.</span> for empty — outranks the built-in glyph and rides inside the picture like the glyph does; art in the wrong shape is refused in plain words at forge time, and a picture whose art arrives damaged simply falls back to its glyph. A chip no art claims keeps the older name-seeded pattern in the window as a fallback. The version itself also rides <b>inside</b> the picture now, so the cartridge states its own version wherever it travels — on the face, in the install receipt, and on its ChipDeck sleeve. Faces are drawn at forge time — installed and published pictures keep the faces they were forged with until they are re-forged.</p></div>" +
     "<div class='doc-sec'><h4>Running chips from chat, and Workflows</h4>" +
   "<p>Any loaded chip runs from the conversation: <span class='mono'>./&lt;name&gt;</span> — the way you run a program — with its arguments after it (<span class='mono'>./navi-cryptex hex -e -t \"Hello world!\"</span>); a short name resolves (./cryptex finds navi-cryptex), a bare <span class='mono'>./</span> answers with the shelf itself, and typing <span class='mono'>./</span> in the composer offers the chips' names as you type. <span class='mono'>/chip &lt;name&gt;</span> remains as the long-form alias, alongside “run the &lt;name&gt; chip” and its name alone — its output lands in the thread. Under the CLI latch (<span class='mono'>$</span>), <span class='mono'>./</span> is the shell's own again: the latch decides, never a guess. There is no pill row above the composer anymore — the shelf lives in ChipDeck now, and running lives at the keyboard. The bridge genuinely runs it: code defining <span class='mono'>run()</span> executes with a working <span class='mono'>navi_internal</span>; a chip that only declares an output shows that instead. <b>Workflows</b> chain chips in order — each chip's output becomes the next chip's input, and the last output is the result.</p></div>" +
     "<div class='doc-sec'><h4>Writing a chip, step by step</h4>" +
@@ -2714,7 +2905,7 @@ var DOC_PAGES = [
   "<p>Installing one downloads the documents into <span class='mono'>rag-packs/</span> and <b>builds the pack's index there, at install time</b> — feature-hashed term vectors, small local embeddings computed with the standard library alone, no model to download. At question time only your question is embedded, so retrieval stays fluid on CPU.</p>" +
   "<p>Each pack carries an <b>active</b> toggle: only active packs feed her answers, and when a pack informs an answer, the pack and the document it came from appear as a source pill under her message — display only, never part of her reply text, so her voice never reads citations aloud, and a message that drew on no pack carries none. A bare <span class='mono'>/rag</span> in chat lists the packs on this machine and which are active.</p>" +
   "<p><b>RAG Studio</b> (the RAG tab's second tab) forges packs from documents on your disk — picked files, or a folder on this machine — into the same folder, documents, index, and metadata, ready to use immediately. Publishing a pack mirrors chips: a public repo, the <span class='mono'>navi-rag</span> topic, and a release tag as its version — a newer tag is what offers an update.</p>" +
-  "<p><b>A pack can ride a picture, too.</b> <b>Export as PNG</b> on a pack's card draws its <b>knowledge cartridge</b> — a card-grade face at the same grade as a chip's now: the family shell and coral contacts, the pack's art large in its window — a dim QR-style tile field, seeded from the pack's name, with a solid silhouette over it: the book, redrawn filled on the field's own grid, or the pack's own art when its manifest declares an <span class='mono'>icon</span> (the same 20-by-20, three-character drawing a chip declares, edited as text rows in RAG Studio) — the pack's name and what it holds, and in small print its version and how many documents ride inside. The picture carries the pack's manifest and every document's full text, compressed inside the image. Hand someone the picture and they install the pack from the picture alone — <b>Install from a picture…</b> on this tab, or a drop onto ChipDeck — and the index is <b>built on their machine at install time</b> from the texts inside: a cartridge never carries an index, and nothing reads the picture when her answers draw on the pack. Installed from a picture, a pack is a pack in every way — same folder, same index, same active toggle. There is a ceiling: a cartridge may run to 8 MB of picture; past it the export refuses in plain words and the ZIP stays the way to carry that pack — nothing is ever truncated to squeeze into a picture. And the standing warning for every Apex picture: chat apps recompress the pictures people upload and strip the data out, leaving a picture that looks right and carries nothing — send the original file inside a <span class='mono'>.zip</span>.</p>" +
+  "<p><b>A pack can ride a picture, too.</b> <b>Export as PNG</b> on a pack's card draws its <b>knowledge cartridge</b> — a card-grade face at the same grade as a chip's now: the family shell with green contacts — green is the knowledge family's color, as coral is the chips' — and the pack's center is the spray: the seeded tile field grown to fill the whole window, denser and brighter toward the middle, in the pack's greens. The pack's own art still outranks the spray when its manifest declares an <span class='mono'>icon</span> (the same 20-by-20, three-character drawing a chip declares, edited as text rows in RAG Studio) — then it renders as a solid silhouette over the tile field, in green — the pack's name and what it holds, and in small print its version and how many documents ride inside. The picture carries the pack's manifest and every document's full text, compressed inside the image. Hand someone the picture and they install the pack from the picture alone — <b>Install from a picture…</b> on this tab, or a drop onto ChipDeck — and the index is <b>built on their machine at install time</b> from the texts inside: a cartridge never carries an index, and nothing reads the picture when her answers draw on the pack. Installed from a picture, a pack is a pack in every way — same folder, same index, same active toggle. There is a ceiling: a cartridge may run to 8 MB of picture; past it the export refuses in plain words and the ZIP stays the way to carry that pack — nothing is ever truncated to squeeze into a picture. And the standing warning for every Apex picture: chat apps recompress the pictures people upload and strip the data out, leaving a picture that looks right and carries nothing — send the original file inside a <span class='mono'>.zip</span>.</p>" +
 "<p>The Packs list's <b>Export for GitHub</b> button packages a pack into exactly that repo shape:</p><ul>" +
   "<li>a generated README page (installs skip a root README, so it is never indexed),</li>" +
   "<li>a navi-rag.json manifest,</li>" +
@@ -2757,7 +2948,7 @@ var DOC_PAGES = [
   "<li>Her model answers with her persona, her CLI access, and her chips intact.</li>" +
   "<li><b>Kokoro</b> — an 82M-parameter voice model, Apache-2.0 — speaks the answer back, sentence by sentence as it arrives, so she starts talking before she's finished thinking.</li></ol>" +
   "<p><b>Piper</b> is the lighter fallback engine. Nothing you say is recorded anywhere but this machine.</p>" +
-  "<p>The <b>Voice tab</b> holds the pipeline and the call itself — her settings (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>) live in <b>Settings → Voice</b>: a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
+  "<p><b>Settings → Voice</b> is her voice's one home — the call itself and her settings together (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>): a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
   { id: "dhd", title: "DHD — Apex from anywhere", related: ["settings", "installing", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What DHD is</h4>" +
   "<p><b>Apex | DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex | Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
@@ -2846,29 +3037,31 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Memory from chat — she writes things down herself</h4>" +
   "<p>Navi pulls memories out of the conversation itself, two ways. <b>The trigger:</b> tell her <i>remember this</i>, <i>remember: …</i>, or <i>save this to your memory</i> — or tap <b>Save to memory</b> under any of your messages in Chat — and she writes the fact down. <b>On her own:</b> when you say something durable — a fact about you, a preference, a decision, a commitment, a correction — she saves it in the same reply she was already giving, with no extra round-trip. Small talk, command output, and questions are never saved.</p>" +
   "<p><b>Nothing is saved silently.</b> Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap <b>Undo</b>. A save that corrects an existing entry <b>replaces</b> it — the receipt shows the old line struck through, and Undo restores it. <b>Secrets are never saved</b>, on any path: ask her to remember a password, a key, or a card number and she refuses, says why, and the receipt shows no payload.</p>" +
-  "<p><b>Settings → Memories</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Memories — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). Every entry in the Memories list says how it got there: added by hand, from chat because you asked, from chat on her call, or from chat as a correction.</p></div>" +
+  "<p><b>Settings → Operator &amp; Persona</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Operator &amp; Persona — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). The entries live in two files, split by who authored them: <b>Settings → Operator</b> holds yours — added by hand, or saved because you asked — under <i>About you — memories for Navi</i>; <b>Operator &amp; Persona</b> holds hers, under <i>Her file — what she keeps</i>. Every entry says how it got there.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p>The <b>Chats</b> tab — fixed at the top of the status column beside Navi's status, on the Chat page — is the chat manager: the known chats (switch, new, delete) and the uploaded files. What she remembers from chat lives under <b>Settings → Memories</b>. <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
-  "<li><b>Operator &amp; Persona</b> — what she calls you, and the Soul and Memory editors.</li>" +
-  "<li><b>Appearance</b> — the theme picker.</li>" +
+  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the toggle at the top right of the Chat window is its door (the menu chrome carries a Status toggle too), and hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Operator &amp; Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<li><b>Operator</b> — what she calls you, and your file: the memories you handed her about you.</li>" +
+  "<li><b>Operator &amp; Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
+  "<li><b>Appearance</b> — the theme picker, Potato mode for low-power machines, and the UI scale.</li>" +
   "<li><b>Voice</b> — her voice settings.</li>" +
-  "<li><b>Memories</b> — what she remembers from chat: the entries, the save-mode leash, and anything waiting on your word. (The Memory <i>document</i> itself is edited under Operator &amp; Persona.)</li>" +
   "<li><b>GitHub &amp; Backup</b> — sign-in and the backup/import block.</li>" +
   "<li><b>System</b> — the hardware profile (the detected profile, its override, and re-detect), plus installed commands.</li></ul>" +
   "<p>There is no backend switch: the app always talks Live to the real bridge and llamafile, and the llamafile's Running state in the status column is the live signal.</p>" +
   "<p><b>Themes.</b> Settings' Appearance tab holds the theme picker: eleven palettes over the same colors the whole app is built from, so every screen — dropdowns and typing boxes included — changes together:</p><ul>" +
-  "<li><b>Nordic dark</b> comes first and is the default: the Nord family — Polar Night backgrounds in steps, pale Snow Storm words, and Frost-blue highlights with muted Aurora colors. In Nordic, each menu icon gets its own color from that palette — Chat is Frost blue, Voice Aurora purple, Chips Aurora yellow, and so on — the same color everywhere it appears, even in the collapsed rail, and her written answers dress the same way: Snow Storm words, Frost headings and links, and code sitting on the deepest Polar Night step.</li>" +
+  "<li><b>Nordic dark</b>: the Nord family — Polar Night backgrounds in steps, pale Snow Storm words, and Frost-blue highlights with muted Aurora colors. In Nordic, each menu icon gets its own color from that palette — Chat is Frost blue, Voice Aurora purple, Chips Aurora yellow, and so on — the same color everywhere it appears, even in the collapsed rail, and her written answers dress the same way: Snow Storm words, Frost headings and links, and code sitting on the deepest Polar Night step.</li>" +
   "<li><b>Dark Liquid Glass</b> comes second: frosted dark glass — deep near-black blue panels you can half see through, with a cheap blur on the big surfaces only (the side menu, the status column, the bar you type in), so it stays smooth on modest graphics; where blur or see-through panels are unavailable it falls back gracefully to the same colors, solid.</li>" +
   "<li><b>Terminal</b> is green on black, the classic console.</li>" +
   "<li><b>Signature dark</b> is her original console, cyan on near-black.</li>" +
   "<li><b>Light</b> is the same console on pale slate.</li>" +
   "<li><b>High contrast</b> is pure black with white words and bright signals.</li>" +
-  "<li><b>Nocturne Row</b> is a rain-slick Rockport night — blue-black streets with neon cyan and magenta signs.</li>" +
+  "<li><b>Nocturne Row</b> is the default: a rain-slick Rockport night — blue-black streets with neon cyan and magenta signs.</li>" +
   "<li><b>Abyss</b> is the deep sea off her app icon — near-black and quiet, with one bioluminescent cyan, the anglerfish lure, as the only loud color.</li>" +
   "<li><b>Case File</b> is a light theme — warm paper, ink-black words, evidence-red string accents, and terminal blocks set like a typewriter.</li>" +
   "<li><b>Blood Moon</b> is crimson over black with gold thread for highlights.</li>" +
   "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li></ul>" +
   "<p>Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
+  "<p><b>Motion.</b> The whole app moves in one language — menus unfold, panes swap, and views arrive on the same curves. On a low-power machine, Appearance's <b>Potato mode</b> turns the decorative motion off across Apex: state changes become instant, and the glass theme's backdrop blur is suspended as well, since on weak graphics the blur costs more than the motion does. Your operating system's reduced-motion setting always wins over the switch, either way.</p>" +
+  "<p><b>Interface size.</b> Appearance's <b>UI scale</b> — 100%, 110%, 125%, 150% — scales the whole interface, words and layout together, like a display scale: one knob, deliberately, because a separate text size would multiply against it and squeeze the fixed rows at the big end. It applies the moment you pick it and persists beside the theme.</p>" +
   "<p><b>Hardware profile.</b> Settings' System tab shows the profile the installer made of your machine: what it detected (the CPU and its core count, how much memory, the graphics chip — separate or built in, and its memory), and the settings it chose from that — threads, context size, batch size, and graphics layers. Her settings are picked from <i>your</i> machine at install, never copied from the developer's: a modest laptop gets the proven gentle numbers, a strong machine gets more room. Type your own numbers to override them, or press <b>Re-detect</b> to profile the machine again and return to the automatic choice. The installer writes what it found and why it chose it to <span class='mono'>hardware-profile.log</span> in the install folder.</p></div>" +
     "<div class='doc-sec'><h4>Apex | Node — Apex on your phone or tablet</h4>" +
   "<p>The <b>DHD page</b> holds the <b>Apex | Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex | Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
@@ -2934,19 +3127,19 @@ var DOC_PAGES = [
   "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.1.7</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.1.8 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.1.8e</b> and this full release reads <b>v0.1.7</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
-  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex | Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
+  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex | Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right — the Chat window's own status toggle, at its top right, drives the same dock, one state behind two doors) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
   "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still answering after a reinstall. The installer and the Updater now stop the old bridge and prove it stopped before new files land, so this should not survive an update; if you meet it after starting a bridge by hand, quit the app fully and relaunch — and if a process ever holds her port and will not stop, the failure that reports it names the process and the exact <span class='mono'>kill -9</span> command that ends it.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
   "<li><b>She doesn't answer.</b> Every chat request is bounded — at most 1,024 tokens of generation — and the bridge waits up to ten minutes for a CPU-bound reply to finish. If the wait runs out, the message in the thread says the model was still generating; that never means the server died. An empty reply from the model is reported the same way, in the thread, rather than swallowed as silence.</li>" +
   "<li><b>The llamafile won't start.</b> Press Connect — in app-launch mode the bridge starts the server itself and reports the specific failure.</li>" +
-  "<li><b>Her voice is not installed.</b> Her voice is an extra the installer offers — it is not part of the main app. Say yes when the installer asks, or follow the step the Voice view names. Until then she still works; she just answers in writing instead of out loud.</li>" +
+  "<li><b>Her voice is not installed.</b> Her voice is an extra the installer offers — it is not part of the main app. Say yes when the installer asks, or follow the step Settings → Voice names. Until then she still works; she just answers in writing instead of out loud.</li>" +
   "<li><b>A chip will not run.</b> Open it in Chip Studio and read the red squiggles first — a chip needs a <span class='mono'>command</span>, a <span class='mono'>use</span> line, and a <span class='mono'>run()</span> before Navi can run it, and the bar under the editor names what is missing. A chip that only declares an output is not broken: it shows that output instead of running code.</li>" +
   "<li><b>The catalog finds nothing.</b> The catalog is a live search of GitHub. With no network it finds nothing, and when GitHub itself is busy the search says so instead of pretending the shelf is empty — wait a minute and press Search again.</li>" +
   "<li><b>She answers without using my pack.</b> Only packs switched <b>on</b> feed her answers. Check the switch on the Packs tab. When a pack does help, the small label under her message names the pack and the document — no label means no pack was used for that answer.</li>" +
-  "<li><b>The call will not start.</b> A call needs her voice installed and switched on, and her model connected. The Voice view names the missing piece — fix that one thing and try again.</li>" +
+  "<li><b>The call will not start.</b> A call needs her voice installed and switched on, and her model connected. Settings → Voice names the missing piece — fix that one thing and try again.</li>" +
   "<li><b>Dark Liquid Glass looks solid, not frosted.</b> That is the design working as intended, not a bug: where your system cannot do backdrop blur, the theme falls back to the same colors, solid and fully readable. If scrolling ever feels stuttery on weak built-in graphics while the glass theme is on, pick any other theme in Settings → Appearance — the flat themes cost the graphics chip almost nothing.</li>" +
-  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted on the Voice page at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests, so the break is somewhere in that chain and the fix is still being worked on; it is <b>not fixed yet</b>. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — the Voice page shows what this window's own mic requests did this session, which helps narrow it down.</li></ul></div>" },
+  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted in Settings → Voice at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests, so the break is somewhere in that chain and the fix is still being worked on; it is <b>not fixed yet</b>. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — Settings → Voice shows what this window's own mic requests did this session, which helps narrow it down.</li></ul></div>" },
   { id: "glossary", title: "Glossary — the words we use", related: ["getting-started", "chips-guide"], html:
     "<div class='doc-sec'><h4>Glossary — the words we use, in plain words</h4>" +
   "<p>Every special word in this wiki, explained once, in the order you are most likely to meet it. If a page ever uses a word that is not clear, it should be in this list.</p>" +
@@ -3509,6 +3702,8 @@ function attachAutocomplete(input, opts) {
 
 /* -------------------------------- render -------------------------------- */
 applyTheme();
+applyMotion();
+applyUiScale();
 var appEl = document.getElementById("app"), navEl = document.getElementById("nav"), mainEl = document.getElementById("main"), statusEl = document.getElementById("status");
 var toggleBtn = document.createElement("button");
 toggleBtn.id = "nav-toggle";
@@ -3524,6 +3719,15 @@ toggleBtn.onclick = function () {
   render();
 };
 navEl.appendChild(toggleBtn);
+var statusToggleBtn = document.createElement("button");
+statusToggleBtn.type = "button";
+statusToggleBtn.id = "status-toggle";
+statusToggleBtn.setAttribute("aria-expanded", "false");
+statusToggleBtn.setAttribute("aria-controls", "status");
+statusToggleBtn.setAttribute("aria-label", "Show or hide the status column");
+statusToggleBtn.textContent = "« Status";
+statusToggleBtn.onclick = function () { toggleStatusColumn(); };
+navEl.appendChild(statusToggleBtn);
 // The destinations and the version footer ride in one container:
 // display:contents on desktop (the nav's flex column is unchanged),
 // the full-width overlay panel on small screens.
@@ -3560,7 +3764,6 @@ function navGroupHeader(gid) {
     // it opens the rail so the children can be reached.
     if (document.getElementById("app").classList.contains("closed") && window.innerWidth > 800) { navClosed = false; try { localStorage.setItem("navi.navClosed", "0"); } catch (e) {} render(); return; }
     navGroupsOpen[gid] = !navGroupsOpen[gid];
-    persistNavGroups();
     syncNav();
   };
   return b;
@@ -3569,23 +3772,44 @@ function navGroupWrap(gid) {
   var wrap = document.createElement("div");
   wrap.className = "nav-children" + (navGroupsOpen[gid] ? "" : " closed");
   wrap.id = "nav-children-" + gid;
+  // Build 6 (#105): the buttons ride in ONE inner track — the
+  // grid animates a single templated row around it (the Docs
+  // topics' shape). Build 4 appended the buttons as direct
+  // grid children, so only the first row was templated and the
+  // rest overflowed the track onto whatever followed.
+  var inner = document.createElement("div");
+  inner.className = "nav-children-inner";
   NAV_GROUPS[gid].children.forEach(function (pair, i) {
-    var b = navBtn("nav-child-" + gid + "-" + pair[0], pair[0], pair[1], pair[1]);
+    var b = navBtn("nav-child-" + gid + "-" + pair[0], pair[0], pair[0], pair[1]);
     b.classList.add("nav-child");
     b.style.transitionDelay = (i * 55) + "ms";
-    wrap.appendChild(b);
+    inner.appendChild(b);
   });
+  wrap.appendChild(inner);
   return wrap;
 }
-// The menu (0.1.9e Build 4): Chat pinned; a break; the Apex |
-// Systems dropdown; a break; the flat work surfaces; and at the
-// foot, the Apex | Utilities drop-up over the version line.
+// The menu (0.1.9e Build 4; Build 6, #106): Chat pinned; a
+// break; the Apex | Systems section — header, children, and
+// its OWN break as the section's last element, so the divider
+// travels with the group and sits directly beneath its last
+// visible row in every state (a standalone sibling used to be
+// stranded a full group-height below a collapsed header,
+// because the collapsed children stayed in the flow); the flat
+// work surfaces; and at the foot, the Apex | Utilities drop-up
+// over the version line.
 navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
 var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
-navMenu.appendChild(navGroupHeader("systems"));
-navMenu.appendChild(navGroupWrap("systems"));
-var navBrk2 = document.createElement("div"); navBrk2.className = "nav-break"; navBrk2.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk2);
-["Voice", "Chips", "ChipDeck", "RAG", "Vault", "Updater"].forEach(function (name) { navMenu.appendChild(navBtn("nav-" + name, navLabel(name), name, name)); });
+var navSys = document.createElement("div"); navSys.className = "nav-group-sec"; navSys.id = "nav-sec-systems";
+navSys.appendChild(navGroupHeader("systems"));
+navSys.appendChild(navGroupWrap("systems"));
+var navBrk2 = document.createElement("div"); navBrk2.className = "nav-break"; navBrk2.setAttribute("aria-hidden", "true"); navSys.appendChild(navBrk2);
+navMenu.appendChild(navSys);
+var navNavi = document.createElement("div"); navNavi.className = "nav-group-sec"; navNavi.id = "nav-sec-navi";
+navNavi.appendChild(navGroupHeader("navi"));
+navNavi.appendChild(navGroupWrap("navi"));
+var navBrk3 = document.createElement("div"); navBrk3.className = "nav-break"; navBrk3.setAttribute("aria-hidden", "true"); navNavi.appendChild(navBrk3);
+navMenu.appendChild(navNavi);
+navMenu.appendChild(navBtn("nav-Vault", navLabel("Vault"), "Vault", "Vault"));
 var navUtil = document.createElement("div"); navUtil.className = "nav-util"; navUtil.id = "nav-util";
 navUtil.appendChild(navGroupWrap("utilities"));
 navUtil.appendChild(navGroupHeader("utilities"));
@@ -3597,15 +3821,15 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Voice: "nav-Voice", Chips: "nav-Chips", ChipDeck: "nav-ChipDeck", RAG: "nav-RAG", Vault: "nav-Vault", Updater: "nav-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", Vault: "nav-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-Voice", "nav-Chips", "nav-ChipDeck", "nav-RAG", "nav-Vault", "nav-Updater", "nav-child-systems-Node", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-utilities-Settings", "nav-child-utilities-Docs", "nav-child-utilities-GitHub"].forEach(function (id) {
+  ["nav-Chat", "nav-Vault", "nav-child-systems-Node", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
   });
-  ["systems", "utilities"].forEach(function (gid) {
+  ["systems", "navi", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
     if (wrap) {
       var closed = !navGroupsOpen[gid];
@@ -3628,14 +3852,18 @@ dockBtn.setAttribute("aria-label", "Open the status dock");
 dockBtn.setAttribute("aria-expanded", "false");
 dockBtn.onclick = function () {
   dockOpen = !dockOpen;
-  if (dockOpen) navClosed = true;
+  if (dockOpen) { navClosed = true; statusPaneTab = "status"; }
   render();
 };
 navEl.appendChild(dockBtn);
 // Tapping back into the content dismisses whichever overlay is up
 // (build .64) — reachable whenever an overlay leaves content
 // exposed, and the same gesture on the bar's own toggles.
-mainEl.addEventListener("click", function () {
+mainEl.addEventListener("click", function (e) {
+  // The chat header's own status toggle (issue #115) lives inside
+  // main: its click OPENS the dock, so the dismiss gesture must
+  // not treat it as a tap on the content.
+  if (e && e.target && e.target.closest && e.target.closest("#chat-status-toggle")) return;
   if (window.innerWidth <= 800 && (dockOpen || !navClosed)) {
     dockOpen = false;
     navClosed = true;
@@ -3687,9 +3915,40 @@ function cyclePresence() {
   }
   var el = document.getElementById("presence-line");
   if (el) el.textContent = presenceText;
+  var cel = document.getElementById("chat-presence-line");
+  if (cel && !call && !naviThinking && CONFIG.backend === "live" && llama.status === "running") cel.textContent = presenceText;
   setTimeout(cyclePresence, 120000 + Math.random() * 120000);
+
+
 }
 setTimeout(cyclePresence, 120000 + Math.random() * 120000);
+// Her presence, computed once (Build 6, #115): the Chat
+// window's presence header reads from this, and only this —
+// and in the state where she is simply here, its text IS the
+// status pane's living line (presenceText above), so the two
+// surfaces can never tell different stories. The pane keeps
+// its own line and dot exactly as they were; this adds the
+// state variants the pane never rendered: typing, in a call,
+// away, simulated.
+function presenceState() {
+  if (call) return { text: "In a call with you", dot: "#34d399", pulse: true, typing: false };
+  if (naviThinking) return { text: "", dot: "#34d399", pulse: false, typing: true };
+  if (CONFIG.backend !== "live") return { text: "Simulated (mock mode)", dot: "#f5b544", pulse: false, typing: false };
+  if (llama.status === "running") return { text: presenceText, dot: "#34d399", pulse: true, typing: false };
+  return { text: "Navi is not here — her model is disconnected.", dot: "#9fb3c8", pulse: false, typing: false };
+}
+function statusPanelSvg() {
+  return "<svg aria-hidden='true' focusable='false' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16' rx='2'/><path d='M15.5 4v16'/><rect x='15.5' y='4' width='5.5' height='16' fill='currentColor' stroke='none' opacity='0.45'/></svg>";
+}
+// One door logic for the status column (Build 6, #114/#115):
+// on desktop it shows/hides the column; on a phone it drives
+// the dock — the same state the top bar's dock button reads,
+// so the two doors can never disagree.
+function toggleStatusColumn() {
+  if (window.innerWidth <= 800) { dockOpen = !dockOpen; if (dockOpen) statusPaneTab = "status"; }
+  else statusHidden = !statusHidden;
+  render();
+}
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 function renderLlama() {
   var h = "<div class='stat'><span class='dot" + (llama.status === "running" ? " pdot" : "") + "' style='background:" + (llama.status === "running" ? "#34d399" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>NAVI</span> <span class='mono' style='color:var(--dim);font-size:11px'>llamafile · port 8080</span><br>";
@@ -4736,7 +4995,7 @@ function refreshVoice(thenRender) {
 }
 function refreshVoiceCalls() {
   if (CONFIG.backend !== "live") return;
-  fetch("/api/voice/calls").then(function (r) { return r.json(); }).then(function (j) { voiceCalls = j.calls || []; if (view === "Voice") render(); }).catch(function () {});
+  fetch("/api/voice/calls").then(function (r) { return r.json(); }).then(function (j) { voiceCalls = j.calls || []; if (view === "Settings") render(); }).catch(function () {});
 }
 function warmVoice() {
   // Warm her engines — once per session, fire-and-forget — so a
@@ -4754,8 +5013,8 @@ function callBlockReason() {
   // the chat window's Call button the way the Voice view's own
   // disabled state backs its panel.
   if (CONFIG.backend !== "live" || !voiceState) return "";
-  if (!voiceState.enabled) return "Voice is turned off — switch it on in the Voice view.";
-  if (!voiceState.stt.available || !voiceState.tts.available) return "Her speech engines aren't installed yet — the Voice view names the install step.";
+  if (!voiceState.enabled) return "Voice is turned off — switch it on in Settings → Voice.";
+  if (!voiceState.stt.available || !voiceState.tts.available) return "Her speech engines aren't installed yet — Settings → Voice names the install step.";
   return "";
 }
 function renderVoiceStatus() {
@@ -4765,12 +5024,7 @@ function renderVoiceStatus() {
   var dot = inCall ? "#34d399" : avail === false ? "#f5b544" : "#22d3ee";
   var sub = CONFIG.backend === "live" && voiceState ? "hears: faster-whisper " + esc(voiceState.config.stt_model) + " · speaks: " + esc(voiceState.config.tts_engine) + " " + esc(voiceState.config.tts_voice) : "local speech — faster-whisper hears, Kokoro speaks";
   return "<div class='stat'><span class='dot" + (inCall ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>VOICE</span><br>" +
-    "<span class='v mono'>" + esc(label) + "</span><br><span style='color:var(--dim);font-size:12px'>" + sub + "</span><br>" +
-    "<button class='ghost' id='voice-open' style='margin-top:6px;display:inline-flex;align-items:center;gap:6px'>" + phoneSvg() + (inCall ? "In a call — open Voice" : "Call Navi") + "</button></div>";
-}
-function wireVoiceStatus() {
-  var b = document.getElementById("voice-open");
-  if (b) b.onclick = function () { view = "Voice"; dockOpen = false; render(); };
+    "<span class='v mono'>" + esc(label) + "</span><br><span style='color:var(--dim);font-size:12px'>" + sub + "</span></div>";
 }
 function playWavB64(b64) {
   return new Promise(function (resolve) {
@@ -4955,7 +5209,7 @@ function finishPtt() {
   mediaChunks = [];
   if (!blob.size) { render(); return; }
   if (CONFIG.backend !== "live") { voiceMsg = "Mock mode simulates the call — type what you'd say; real transcription runs through the live bridge."; render(); return; }
-  voiceMsg = "Transcribing…"; if (view === "Voice") render();
+  voiceMsg = "Transcribing…"; if (view === "Settings") render();
   blobToB64(blob).then(function (b64) {
     return fetch("/api/voice/stt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio_b64: b64 }) }).then(function (r) { return r.json(); });
   }).then(function (j) {
@@ -5091,6 +5345,7 @@ function applyUpdateRecord(j) {
   if (j.stagedDir) updater.stagedDir = j.stagedDir;
   if (j.command) updater.command = j.command;
   if (j.dhdPrereqs) updater.dhdPrereqs = j.dhdPrereqs;
+  if (j.tailFailure) updater.tailFailure = j.tailFailure;
   if (j.state === "working") {
     updater.state = "applying";
     // When the current step started (build .81, #70): the
@@ -5140,7 +5395,7 @@ function updaterProgressHtml() {
     slowNote = "<br><span style='color:var(--dim)'><b>Taking a while?</b> This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster.</span>";
   }
   return "<div class='card' style='margin-top:10px'>" +
-    "<div role='progressbar' aria-label='Update progress' aria-valuemin='0' aria-valuemax='100' aria-valuenow='" + pct + "' style='height:6px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-bottom:8px'><div style='height:100%;width:" + pct + "%;background:var(--cy);transition:width .4s ease'></div></div>" +
+    "<div role='progressbar' aria-label='Update progress' aria-valuemin='0' aria-valuemax='100' aria-valuenow='" + pct + "' style='height:6px;border-radius:999px;background:var(--panel2);overflow:hidden;margin-bottom:8px'><div style='height:100%;width:" + pct + "%;background:var(--cy);transition:width var(--motion-med) ease'></div></div>" +
     "<b>Updating Apex…</b><br>" +
     "<span style='font-size:13px'>" + parts.join(" <span style='color:var(--dim)'>→</span> ") + "</span><br>" +
     "<span style='color:var(--dim)'>Apex will restart itself when the install finishes — this page will go quiet while it does, then come back on the new version with the confirmation.</span>" + slowNote + "</div>";
@@ -5297,8 +5552,9 @@ function updaterUpdatedHtml() {
     "- **Staged and installed** it — everything that's yours (chips, knowledge packs and their indexes, the Vault, the model file, Soul and Memory, her voice, your GitHub settings) rode the keep-list across.\n" +
     "- **DHD prerequisites** — " + (updater.dhdPrereqs || "installed by the update's installer run as their own named step") + ".\n" +
     "- **Restarted and confirmed** from the VERSION file: " + updater.fromLabel + " → " + updater.toLabel + ".\n";
+  var tailNote = updater.tailFailure ? "<br><span style='color:#f5b544'><b>Installed, with a tail failure in the " + esc(updater.tailFailure) + " step.</b> The installer exited nonzero after the new build was already in place — the version confirmed below is the target build, so this is not the manual-fallback failure. The installer's own output for that step is in its log (apply-install.log, beside the staged package).</span>" : "";
   return "<div class='card' style='margin-top:10px'><b>Updated " + esc(updater.fromLabel) + " → " + esc(updater.toLabel) + "</b><br>" +
-    "<span style='color:var(--dim)'>The update downloaded, installed, and restarted itself — and the version now running is the one the update promised, read from the VERSION file after the restart.</span>" +
+    "<span style='color:var(--dim)'>The update downloaded, installed, and restarted itself — and the version now running is the one the update promised, read from the VERSION file after the restart.</span>" + tailNote +
     "<div class='md' style='margin-top:6px'>" + mdToHtml(log) + "</div></div>";
 }
 // Issue #17 — the first-launch race: the Chat view reads
@@ -5342,25 +5598,44 @@ function serversSummaryDots() {
   function dot(c) { return "<span class='dot' style='background:" + c + ";margin-left:6px'></span>"; }
   return dot(llamaDot) + dot(nodeDot) + dot(meshDot) + dot(dhdDot);
 }
+function wireStatusTabs(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-statustab]").forEach(function (t) {
+    t.onclick = function () { statusPaneTab = t.getAttribute("data-statustab"); render(); };
+    t.onkeydown = function (e) {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      statusPaneTab = statusPaneTab === "status" ? "chats" : "status";
+      render();
+      var nt = document.getElementById("status-tab-" + statusPaneTab);
+      if (nt) nt.focus();
+    };
+  });
+}
+// Choosing a conversation lands the operator ON it (Build 6,
+// #108): the Chat view opens on the chosen thread, and on
+// mobile the dock closes so the thread is what they land on —
+// whichever view they were in when they picked it.
+function landOnChat() { dockOpen = false; view = "Chat"; render(); }
 function wireChatsPanel(root) {
   if (!root) return;
-  var tab = root.querySelector("#chats-tab");
-  if (tab) tab.onclick = function () { chatsPanelOpen = !chatsPanelOpen; render(); };
-  root.querySelectorAll("[data-switch]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-switch")); var c = chats.filter(function (x) { return x.id === id; })[0]; if (!c) return; activeChatId = c.id; messages = c.messages; persist(); render(); }; });
+  root.querySelectorAll("[data-switch]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-switch")); var c = chats.filter(function (x) { return x.id === id; })[0]; if (!c) return; activeChatId = c.id; messages = c.messages; persist(); landOnChat(); }; });
   root.querySelectorAll("[data-delchat]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-delchat")); chats = chats.filter(function (x) { return x.id !== id; }); if (!chats.length) seedChats(); if (!chats.some(function (x) { return x.id === activeChatId; })) { activeChatId = chats[0].id; messages = chats[0].messages; } persist(); render(); }; });
   var newBtn = root.querySelector("#chat-new");
-  if (newBtn) newBtn.onclick = function () { var t = root.querySelector("#chat-title"); var title = t && t.value.trim() ? t.value.trim() : "Chat " + (chats.length + 1); var c = { id: Date.now(), title: title, messages: [] }; chats.push(c); activeChatId = c.id; messages = c.messages; persist(); render(); };
+  if (newBtn) newBtn.onclick = function () { var t = root.querySelector("#chat-title"); var title = t && t.value.trim() ? t.value.trim() : "Chat " + (chats.length + 1); var c = { id: Date.now(), title: title, messages: [] }; chats.push(c); activeChatId = c.id; messages = c.messages; persist(); landOnChat(); };
   root.querySelectorAll("[data-delupload]").forEach(function (b) { b.onclick = function () { uploads.splice(Number(b.getAttribute("data-delupload")), 1); persistUploads(); render(); }; });
 }
 
 function chatsPanelHtml() {
-  // The Chats panel (0.1.9e Build 4): what the retired Memory view
-  // held for conversations — the saved chats (switch, new, delete)
-  // and the Uploaded files section — moved whole onto the Chat
-  // view, in a panel that slides open under the Chats tab at the
-  // top of the status column. Same data, same storage keys, same
-  // handlers (wireChatsPanel binds what the Memory wiring bound).
-  var h = "<div id='chats-panel' class='chats-panel'><div class='chats-inner'>";
+  // The Chats pane (0.1.9e Build 6, issues #107/#108): what the
+  // retired Memory view held for conversations — the saved chats
+  // (switch, new, delete) and the Uploaded files section — as
+  // the status pane's second tab. Same data, same storage keys,
+  // same handlers (wireChatsPanel binds what the Memory wiring
+  // bound); only the home changed, from Build 4's disclosure —
+  // whose panel opened at the column's foot — to a pane that
+  // renders directly under the tab bar.
+  var h = "";
   h += "<p style='color:var(--dim);font-size:12px;margin:2px 0 8px'>Every conversation is saved locally. Switch here and the thread picks that conversation back up.</p>";
   h += chats.map(function (c) {
     var on = c.id === activeChatId;
@@ -5370,7 +5645,7 @@ function chatsPanelHtml() {
   }).join("");
   h += "<div class='row'><input class='grow' id='chat-title' type='text' placeholder='New chat title (optional)' aria-label='New chat title'><button class='act' id='chat-new' style='min-height:44px'>New chat</button></div>";
   h += "<h3 style='margin-top:14px'>Uploaded files</h3>" + (uploads.length ? uploads.map(function (u, i) { return "<div class='card' style='margin-bottom:8px;padding:10px'>" + esc(u.name) + " <span style='color:var(--dim);font-size:12px'>" + esc(u.kind) + (u.chat ? " · in " + esc(u.chat) : "") + (u.at ? " · " + esc(String(u.at).slice(0, 10)) : "") + "</span> <button class='ghost' data-delupload='" + i + "' aria-label='Delete uploaded file " + esc(u.name) + "' style='min-height:40px'>Delete</button></div>"; }).join("") : "<p style='color:var(--dim);font-size:12px'>Nothing uploaded yet — attach a picture or a text file from the chat composer and it is indexed here.</p>");
-  return h + "</div></div>";
+  return h;
 }
 
 function renderStatus(live) {
@@ -5397,8 +5672,7 @@ function renderStatus(live) {
   } else {
     updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>" + (CONFIG.backend === "live" ? "Not checked yet" : "Live bridge only") + "</div>";
   }
-  statusEl.innerHTML =
-    (view === "Chat" ? "<button type='button' id='chats-tab' class='chats-tab' aria-expanded='" + (chatsPanelOpen ? "true" : "false") + "' aria-controls='chats-panel' aria-label='Chats — the chat manager: switch, start, and delete conversations, and see uploaded files'><span>Chats</span><span class='chats-count mono'>" + chats.length + "</span><span class='chats-chev' aria-hidden='true'>▾</span></button>" : "") +
+  var statusBody =
     "<h3>Status</h3>" +
     "<div class='stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='dot pdot' style='background:#34d399'></span><span id='presence-line'>" + esc(presenceText) + "</span></div>" +
     (bridgeStale && CONFIG.backend === "live"
@@ -5426,6 +5700,17 @@ function renderStatus(live) {
     stat("MEMORY", memory.length + " entries (local)", "#34d399") +
     stat("RAG", CONFIG.backend === "live" ? (ragPacksState ? ragPacksState.filter(function (p) { return p.active; }).length + " of " + ragPacksState.length + " packs active" : "…") : "simulated (mock mode)", "#34d399") +
     stat("BACKUP", githubState ? ghBackupSummary(githubState) : "…", githubState && githubState.lastBackupAt ? "#34d399" : "#9fb3c8");
+  // The tabbed pane composes here (Build 6, #108): the bar is
+  // always the column's first element, and the selected pane —
+  // Status (statusBody above) or Chats (chatsPanelHtml) — swaps
+  // in directly beneath it. While Chats is selected, the Status
+  // tab carries an amber dot for any standing summons, so the
+  // tab never buries one.
+  var statusAttn = (updater.state === "available" || updater.state === "applyfailed" || (bridgeStale && CONFIG.backend === "live") || (pageStale && CONFIG.backend === "live"));
+  var statusTabsHtml = "<div class='status-tabs' role='tablist' aria-label='Status pane'>"
+    + "<button type='button' role='tab' id='status-tab-status' data-statustab='status' class='status-tab" + (statusPaneTab === "status" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "status" ? "true" : "false") + "' aria-controls='status-pane-status'>Status" + (statusPaneTab === "chats" && statusAttn ? "<span class='status-attn' role='img' aria-label='Status needs attention'></span>" : "") + "</button>"
+    + "<button type='button' role='tab' id='status-tab-chats' data-statustab='chats' class='status-tab" + (statusPaneTab === "chats" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "chats" ? "true" : "false") + "' aria-controls='status-pane-chats'>Chats<span class='chats-count mono'>" + chats.length + "</span></button></div>";
+  statusEl.innerHTML = statusTabsHtml + "<div role='tabpanel' id='status-pane-" + statusPaneTab + "' class='status-pane-in' aria-labelledby='status-tab-" + statusPaneTab + "'>" + (statusPaneTab === "chats" ? chatsPanelHtml() : statusBody) + "</div>";
   // No threat-level element: the operator took it out — it was a
   // decorative selector with no mechanics behind it, and this
   // column carries only statuses that mean something.
@@ -5436,8 +5721,7 @@ function renderStatus(live) {
   wireMeshStatus();
   var sdet = document.getElementById("servers-details");
   if (sdet) sdet.addEventListener("toggle", function () { serversOpen = sdet.open; });
-  wireVoiceStatus();
-  if (view === "Chat" && chatsPanelOpen) statusEl.innerHTML += chatsPanelHtml();
+  wireStatusTabs(statusEl);
   var uw = document.getElementById("updater-warn");
   if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
   wireChatsPanel(statusEl);
@@ -5936,10 +6220,80 @@ function githubSettingsHtml() {
   return h;
 }
 
+// The Voice home (Build 6, #113): the Voice VIEW is retired
+// and everything it held lives on this one Settings tab, in
+// this order — the call panel, the pipeline strip, her voice
+// settings card, the engines-not-installed guidance, the
+// desktop-app microphone known-issue card (moved VERBATIM,
+// per-session mic line and all), the mock-mode notice, and
+// the past-calls list. The sections below are the view's own
+// markup, moved whole; the call object is global, so a call
+// started here (or from Chat) survives tab switches and shows
+// live whenever this tab renders.
+function voiceHomeHtml() {
+  var h = "";
+    if (CONFIG.backend === "live" && !voiceState && !voiceFetching) refreshVoice(true);
+    if (CONFIG.backend === "live" && voiceCalls === null) refreshVoiceCalls();
+    // Warm her engines as the Voice view opens, so pressing Call
+    // doesn't pay the model load inside the pickup.
+    warmVoice();
+    var vc = voiceState ? voiceState.config : { stt_model: "small.en", tts_engine: "kokoro", tts_voice: "bf_isabella", rate: 1, pitch: 1 };
+    var vEnabled = voiceState ? voiceState.enabled : true;
+    var sttOk = CONFIG.backend !== "live" || (voiceState && voiceState.stt.available);
+    var ttsOk = CONFIG.backend !== "live" || (voiceState && voiceState.tts.available);
+    h += "<p style='color:var(--dim)'>She hears you and answers out loud — the whole loop on this machine, on CPU, nothing sent anywhere. You speak; <b>faster-whisper</b> turns it into text; her model answers with her persona, CLI access, and chips intact; <b>" + (vc.tts_engine === "piper" ? "Piper" : "Kokoro") + "</b> speaks it back, sentence by sentence as it arrives.</p>";
+    if (voiceMsg) h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>" + esc(voiceMsg) + "</div>";
+    // The call panel.
+    h += "<div class='card'>";
+    if (!call) {
+      var callBlocked = CONFIG.backend === "live" && voiceState && (!vEnabled || !sttOk || !ttsOk);
+      h += "<div style='display:flex;gap:16px;align-items:center;flex-wrap:wrap'><button class='callbtn' id='call-start' " + (callBlocked ? "disabled" : "") + " aria-label='Call Navi'><span style='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;height:100%'>" + phoneSvg(26) + "<span style='font-size:12px'>Call</span></span></button><div style='flex:1;min-width:220px'><b>Call Navi</b><br><span style='color:var(--dim)'>She picks up and greets you; then it's a real conversation — talk, she answers out loud, and she can run commands and chips while you talk. Ended calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the active chat. Push-to-talk is also sitting beside the chat composer for one-off spoken messages — and the Call button beside it starts this same call right in the chat window.</span>" +
+        (callBlocked ? "<br><span style='color:#f5b544'>" + (!vEnabled ? "Voice is turned off - switch it on in Settings → Voice." : "Her speech engines aren't installed yet — see the note above.") + "</span>" : "") +
+        (llama.status !== "running" ? "<br><span style='color:var(--dim)'>Note: navi.llamafile is disconnected, so on the call she'll answer like command-line mode — running what you say as commands and reading the output back.</span>" : "") + "</div></div>";
+      h += "<div style='margin-top:10px'><button class='ghost' id='voice-test' " + (CONFIG.backend === "live" && voiceState && !ttsOk ? "disabled" : "") + ">Hear her voice</button> <span style='color:var(--dim);font-size:12px'>One line, synthesized locally, so you can check the voice before calling.</span></div>";
+    } else {
+      h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>";
+      h += "<div style='margin-top:10px;max-height:300px;overflow-y:auto' aria-label='Call transcript'>" + call.turns.map(function (t) {
+        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
+      }).join("") + "</div>";
+      h += "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>or type what you'd say:</span></div>";
+      h += "<div class='row' style='margin-top:8px'><input class='grow' id='call-type' type='text' placeholder='Show me the contents of /home/name/' aria-label='Type what you would say on the call'><button class='act' id='call-say'>Speak</button></div>";
+    }
+    h += "</div>";
+    // The pipeline, with each stage's real state.
+    var pipe = [["Microphone", "your voice, in the room", true], ["faster-whisper · " + vc.stt_model, "speech → text, CPU int8", !!sttOk], ["Navi · llamafile", "her model answers", llama.status === "running"], [vc.tts_engine === "piper" ? "Piper" : "Kokoro-82M", "text → her voice", !!ttsOk], ["Speaker", "her voice, in the room", true]];
+    h += "<div style='display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;margin-bottom:12px'>" + pipe.map(function (n, i) {
+      return (i ? "<span style='align-self:center;color:var(--dim)'>→</span>" : "") + "<div class='card' style='margin:0;padding:8px 10px;border-color:" + (n[2] ? "#34d399" : "#f87171") + "'><span class='dot' style='background:" + (n[2] ? "#34d399" : "#f87171") + "'></span><b style='font-size:12px'>" + esc(n[0]) + "</b><br><span style='color:var(--dim);font-size:11px'>" + esc(n[1]) + "</span></div>";
+    }).join("") + "</div>";
+  h += voiceSettingsHtml();
+    if (CONFIG.backend === "live" && voiceState && (!sttOk || !ttsOk)) {
+      h += "<div class='card' style='border-color:#f5b544'><b>Her voice isn't installed yet.</b><br><span style='color:var(--dim)'>" + esc((!sttOk && voiceState.stt.detail) || "") + ((!sttOk && !ttsOk) ? "<br>" : "") + esc((!ttsOk && voiceState.tts.detail) || "") + "</span><br><span style='color:var(--dim)'>The speech engines are optional on purpose — the bridge stays dependency-free until you want her voice. The installer offers them at the voice step (an isolated venv), or: <span class='mono'>python3 -m pip install -r requirements-voice.txt</span>. Models download once, on first use, into voice/models/ — and that folder survives updates and reinstalls like her chips and her Soul/Memory.</span></div>";
+      if (voiceState.python) h += "<p style='color:var(--dim);font-size:12px'>Diagnostics — bridge Python: <span class='mono'>" + esc(voiceState.python) + "</span> · installer's voice venv: " + (voiceState.venv ? "<span class='mono'>" + esc(voiceState.venv) + "</span> (adopted — its engines are on this bridge's module path)" : "not found beside the app") + " · if you picked voice at install, its log is <span class='mono'>voice/voice-install.log</span> and names any step that failed.</p>";
+    }
+    // Known issue (field report, 2026-11-07): the microphone in the
+    // desktop window. Noted here at the operator's request — the
+    // note stays until the fix lands, and it never claims it has.
+    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The underlying fix is still being worked on; it is <b>not</b> fixed yet, and this note stays on the Voice page until it is. The same entry lives in the wiki's Troubleshooting page.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
+    if (CONFIG.backend !== "live") {
+      h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>Mock mode: this call is simulated — her lines are spoken by your browser's built-in voice and answered by the mock brain. Switch the backend to Live in Settings for the real local engines (faster-whisper + Kokoro).</div>";
+    }
+    // Past calls.
+    if (CONFIG.backend === "live") {
+      h += "<h3 style='margin-top:16px'>Past calls</h3>";
+      if (voiceCalls === null) h += "<p style='color:var(--dim)'>Loading the call log…</p>";
+      else if (!voiceCalls.length) h += "<p style='color:var(--dim)'>No calls yet — the log (voice/calls.json) starts with your first one.</p>";
+      else h += voiceCalls.slice().reverse().map(function (c) {
+        var n = (c.turns || []).length;
+        return "<div class='card'><b>" + esc(String(c.started_at || "").slice(0, 16).replace("T", " ")) + "</b> <span style='color:var(--dim)'>" + n + " turns" + (c.ended_at ? "" : " · (in progress)") + "</span></div>";
+      }).join("");
+    }
+  return h;
+}
 function voiceSettingsHtml() {
-  // Settings -> Voice: her voice settings live here now (moved out
-  // of the Voice view, which keeps the call itself). Same v-* ids,
-  // same wiring - one home.
+  // Settings -> Voice: the voice settings card — since Build 6
+  // (#113) it shares its tab with the call panel itself, which
+  // moved in from the retired Voice view. Same v-* ids, same
+  // wiring — one home for everything voice.
   var vc = voiceState ? voiceState.config : { stt_model: "small.en", tts_engine: "kokoro", tts_voice: "bf_isabella", rate: 1, pitch: 1 };
   var vEnabled = voiceState ? voiceState.enabled : true;
   var h = "";
@@ -6023,6 +6377,10 @@ function render() {
   // (an old deep link, a saved view) lands on Chat, where its
   // chats now live as the Chats tab.
   if (view === "Memory") view = "Chat";
+  // The Voice view retired in Build 6 (#113) the same way: a
+  // stale state naming it lands on Chat; her voice lives in
+  // Settings → Voice now.
+  if (view === "Voice") view = "Chat";
   // Focus return for the chat composer: render() rebuilds the whole
   // view, which would strand the operator's cursor after every send.
   // If the composer held focus — or a send just asked for it back —
@@ -6035,12 +6393,19 @@ function render() {
     try { var p = localStorage.getItem("navi.docs.page"); if (p) docsPage = p; } catch (e) {}
   }
   appEl.classList.toggle("closed", navClosed);
+  appEl.classList.toggle("no-status", statusHidden);
   appEl.classList.toggle("dock-open", dockOpen);
   var smallScreen = window.innerWidth <= 800;
   toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
   toggleBtn.setAttribute("aria-label", smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : "Collapse or expand the side menu");
   toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
+  // The Status toggle rides the rail the same way (Build 6,
+  // #114): a bare chevron on the collapsed rail and on phones
+  // it is not in the bar at all (the dock toggle is the
+  // column's door there; CSS hides this one at <=800px).
+  statusToggleBtn.textContent = statusHidden ? (navClosed && !smallScreen ? "«" : "« Status") : (navClosed && !smallScreen ? "»" : "Status »");
+  statusToggleBtn.setAttribute("aria-expanded", statusHidden ? "false" : "true");
   dockBtn.setAttribute("aria-expanded", dockOpen ? "true" : "false");
   dockBtn.setAttribute("aria-label", dockOpen ? "Close the status dock" : "Open the status dock");
   syncNav();
@@ -6053,6 +6418,8 @@ function render() {
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
+    var pres = presenceState();
+    h += "<div class='chat-head'><div class='chat-presence'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div><button class='ghost' id='chat-status-toggle' aria-pressed='" + ((window.innerWidth <= 800 ? dockOpen : !statusHidden) ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button></div>";
     var cliMode = llama.status !== "running";
     // No header bar over the thread (build .52, issue #15): the
     // strip that read "Chat · <session> · navi.llamafile
@@ -6120,7 +6487,7 @@ function render() {
     // live transcript and the composer talking to the call.
     if (call) {
       h += "<div class='card' style='margin-top:8px'><div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>" +
-        "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>You're on a call — its transcript is this thread, and the composer below speaks to the call. Ending it files the call here, like the Voice view does.</span></div></div>";
+        "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>You're on a call — its transcript is this thread, and the composer below speaks to the call. Ending it files the call here, the same filing a call from Settings → Voice gets.</span></div></div>";
     } else if (callStarting) {
       h += "<div class='card' style='margin-top:8px;border-color:#f5b544;color:#f5b544'>Calling Navi — warming her voice…</div>";
     }
@@ -6269,66 +6636,6 @@ function render() {
         h += "<div id='nur-list'>" + nurCardsHtml() + "</div>";
       }
     }
-  } else if (view === "Voice") {
-    h += "<h3>Voice · call Navi</h3>";
-    if (CONFIG.backend === "live" && !voiceState && !voiceFetching) refreshVoice(true);
-    if (CONFIG.backend === "live" && voiceCalls === null) refreshVoiceCalls();
-    // Warm her engines as the Voice view opens, so pressing Call
-    // doesn't pay the model load inside the pickup.
-    warmVoice();
-    var vc = voiceState ? voiceState.config : { stt_model: "small.en", tts_engine: "kokoro", tts_voice: "bf_isabella", rate: 1, pitch: 1 };
-    var vEnabled = voiceState ? voiceState.enabled : true;
-    var sttOk = CONFIG.backend !== "live" || (voiceState && voiceState.stt.available);
-    var ttsOk = CONFIG.backend !== "live" || (voiceState && voiceState.tts.available);
-    h += "<p style='color:var(--dim)'>She hears you and answers out loud — the whole loop on this machine, on CPU, nothing sent anywhere. You speak; <b>faster-whisper</b> turns it into text; her model answers with her persona, CLI access, and chips intact; <b>" + (vc.tts_engine === "piper" ? "Piper" : "Kokoro") + "</b> speaks it back, sentence by sentence as it arrives.</p>";
-    // The pipeline, with each stage's real state.
-    var pipe = [["Microphone", "your voice, in the room", true], ["faster-whisper · " + vc.stt_model, "speech → text, CPU int8", !!sttOk], ["Navi · llamafile", "her model answers", llama.status === "running"], [vc.tts_engine === "piper" ? "Piper" : "Kokoro-82M", "text → her voice", !!ttsOk], ["Speaker", "her voice, in the room", true]];
-    h += "<div style='display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;margin-bottom:12px'>" + pipe.map(function (n, i) {
-      return (i ? "<span style='align-self:center;color:var(--dim)'>→</span>" : "") + "<div class='card' style='margin:0;padding:8px 10px;border-color:" + (n[2] ? "#34d399" : "#f87171") + "'><span class='dot' style='background:" + (n[2] ? "#34d399" : "#f87171") + "'></span><b style='font-size:12px'>" + esc(n[0]) + "</b><br><span style='color:var(--dim);font-size:11px'>" + esc(n[1]) + "</span></div>";
-    }).join("") + "</div>";
-    // Known issue (field report, 2026-11-07): the microphone in the
-    // desktop window. Noted here at the operator's request — the
-    // note stays until the fix lands, and it never claims it has.
-    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The underlying fix is still being worked on; it is <b>not</b> fixed yet, and this note stays on the Voice page until it is. The same entry lives in the wiki's Troubleshooting page.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
-    if (voiceMsg) h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>" + esc(voiceMsg) + "</div>";
-    if (CONFIG.backend === "live" && voiceState && (!sttOk || !ttsOk)) {
-      h += "<div class='card' style='border-color:#f5b544'><b>Her voice isn't installed yet.</b><br><span style='color:var(--dim)'>" + esc((!sttOk && voiceState.stt.detail) || "") + ((!sttOk && !ttsOk) ? "<br>" : "") + esc((!ttsOk && voiceState.tts.detail) || "") + "</span><br><span style='color:var(--dim)'>The speech engines are optional on purpose — the bridge stays dependency-free until you want her voice. The installer offers them at the voice step (an isolated venv), or: <span class='mono'>python3 -m pip install -r requirements-voice.txt</span>. Models download once, on first use, into voice/models/ — and that folder survives updates and reinstalls like her chips and her Soul/Memory.</span></div>";
-      if (voiceState.python) h += "<p style='color:var(--dim);font-size:12px'>Diagnostics — bridge Python: <span class='mono'>" + esc(voiceState.python) + "</span> · installer's voice venv: " + (voiceState.venv ? "<span class='mono'>" + esc(voiceState.venv) + "</span> (adopted — its engines are on this bridge's module path)" : "not found beside the app") + " · if you picked voice at install, its log is <span class='mono'>voice/voice-install.log</span> and names any step that failed.</p>";
-    }
-    if (CONFIG.backend !== "live") {
-      h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>Mock mode: this call is simulated — her lines are spoken by your browser's built-in voice and answered by the mock brain. Switch the backend to Live in Settings for the real local engines (faster-whisper + Kokoro).</div>";
-    }
-    // The call panel.
-    h += "<div class='card'>";
-    if (!call) {
-      var callBlocked = CONFIG.backend === "live" && voiceState && (!vEnabled || !sttOk || !ttsOk);
-      h += "<div style='display:flex;gap:16px;align-items:center;flex-wrap:wrap'><button class='callbtn' id='call-start' " + (callBlocked ? "disabled" : "") + " aria-label='Call Navi'><span style='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;height:100%'>" + phoneSvg(26) + "<span style='font-size:12px'>Call</span></span></button><div style='flex:1;min-width:220px'><b>Call Navi</b><br><span style='color:var(--dim)'>She picks up and greets you; then it's a real conversation — talk, she answers out loud, and she can run commands and chips while you talk. Ended calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the active chat. Push-to-talk is also sitting beside the chat composer for one-off spoken messages — and the Call button beside it starts this same call right in the chat window.</span>" +
-        (callBlocked ? "<br><span style='color:#f5b544'>" + (!vEnabled ? "Voice is turned off - switch it on in Settings → Voice." : "Her speech engines aren't installed yet — see the note above.") + "</span>" : "") +
-        (llama.status !== "running" ? "<br><span style='color:var(--dim)'>Note: navi.llamafile is disconnected, so on the call she'll answer like command-line mode — running what you say as commands and reading the output back.</span>" : "") + "</div></div>";
-      h += "<div style='margin-top:10px'><button class='ghost' id='voice-test' " + (CONFIG.backend === "live" && voiceState && !ttsOk ? "disabled" : "") + ">Hear her voice</button> <span style='color:var(--dim);font-size:12px'>One line, synthesized locally, so you can check the voice before calling.</span></div>";
-    } else {
-      h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>";
-      h += "<div style='margin-top:10px;max-height:300px;overflow-y:auto' aria-label='Call transcript'>" + call.turns.map(function (t) {
-        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
-      }).join("") + "</div>";
-      h += "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>or type what you'd say:</span></div>";
-      h += "<div class='row' style='margin-top:8px'><input class='grow' id='call-type' type='text' placeholder='Show me the contents of /home/name/' aria-label='Type what you would say on the call'><button class='act' id='call-say'>Speak</button></div>";
-    }
-    h += "</div>";
-    // Her voice settings moved to Settings -> Voice; this page
-    // keeps the call itself and points there.
-    h += "<div class='card'><h3>Voice settings</h3><p style='color:var(--dim)'>Her voice settings - on/off, the speech models, her voice picker, speed and pitch - live in <b>Settings → Voice</b> now. This page is for the call itself.</p><button class='ghost' id='voice-goto-settings'>Open Settings → Voice</button></div>";
-
-    // Past calls.
-    if (CONFIG.backend === "live") {
-      h += "<h3 style='margin-top:16px'>Past calls</h3>";
-      if (voiceCalls === null) h += "<p style='color:var(--dim)'>Loading the call log…</p>";
-      else if (!voiceCalls.length) h += "<p style='color:var(--dim)'>No calls yet — the log (voice/calls.json) starts with your first one.</p>";
-      else h += voiceCalls.slice().reverse().map(function (c) {
-        var n = (c.turns || []).length;
-        return "<div class='card'><b>" + esc(String(c.started_at || "").slice(0, 16).replace("T", " ")) + "</b> <span style='color:var(--dim)'>" + n + " turns" + (c.ended_at ? "" : " · (in progress)") + "</span></div>";
-      }).join("");
-    }
   } else if (view === "Vault") {
     h += vaultHtml();
   } else if (view === "DHD") {
@@ -6461,10 +6768,12 @@ function render() {
     h += "<h3>Settings</h3>";
     // Topic tabs: every setting lives under exactly one.
     h += "<div role='tablist' aria-label='Settings topics' class='tabbar' style='margin-bottom:10px'>" +
-      [["persona", "Operator & Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["memories", "Memories"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
+      [["operator", "Operator"], ["persona", "Operator & Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
         return "<button type='button' role='tab' aria-selected='" + (settingsTab === t[0]) + "' class='" + (settingsTab === t[0] ? "act" : "ghost") + "' data-settab='" + t[0] + "'>" + t[1] + "</button>";
       }).join("") + "</div>";
-    if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nordic dark is the default. Nordic is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
+    if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
+    if (settingsTab === "appearance") h += "<div class='card'><h3>Interface motion</h3><div style='display:flex;align-items:center;gap:8px'><button class='switch' id='motion-potato' role='switch' aria-checked='" + (CONFIG.motion === "potato" ? "true" : "false") + "' aria-label='Potato mode'><span class='knob'></span></button><span><b>Potato mode</b></span></div><p style='color:var(--dim)'>For low-power machines — turns off decorative animation across Apex. Menus, panes and views change instantly instead of traveling, and the Dark Liquid Glass theme's backdrop blur is suspended too (its colors stay). Off by default: the full motion language. The choice persists in your config like the theme, and rides the settings backup beside it." + ((window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ? " Your system asks for reduced motion — Apex honors that over this switch, either way." : "") + "</p></div>";
+    if (settingsTab === "appearance") h += "<div class='card'><h3>Interface size</h3><p style='color:var(--dim)'>One scale for the whole interface — words and layout together, the way an operating system's display scale works, so nothing outgrows its row or its rail. (A separate text-size knob would multiply against this one and squeeze fixed rows at the big end; there is deliberately just the one.) Applies the moment you pick it, persists in your config beside the theme, and rides the settings backup with it.</p><div class='row' role='group' aria-label='UI scale'>" + [[1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]].map(function (o) { return "<button class='" + (Number(CONFIG.uiScale) === o[0] ? "act" : "ghost") + "' data-uiscale='" + o[0] + "' aria-pressed='" + (Number(CONFIG.uiScale) === o[0] ? "true" : "false") + "'>" + o[1] + "</button>"; }).join("") + "</div></div>";
     if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup mode is chosen during install — the installer asks whether the llamafile server loads on app launch or at system boot, and records it in config/navi.config.json.</p></div>";
     // Apex | Node (build .59 as the Local server; renamed and
     // relocated in the DHD round): the controls themselves live
@@ -6513,21 +6822,38 @@ function render() {
       if (hardwareMsg) h += "<p style='font-size:12px'>" + esc(hardwareMsg) + "</p>";
       h += "</div>";
     })();
-    if (settingsTab === "persona") h += "<div class='card'><h3>What Navi calls you</h3><p style='color:var(--dim)'>The name or form of address Navi uses whenever she talks to you — stored in the app config, used by her persona and her greetings every time she addresses you. Blank = Operator, the default on a fresh install.</p><div class='row'><input class='grow' id='op-name' type='text' value='" + esc(CONFIG.operatorName || "") + "' placeholder='e.g. Alex — blank means Operator' aria-label='Name Navi uses for the operator'><button class='act' id='op-save'>Save</button></div></div>";
-    // Soul and Memory live on the Operator & Persona tab, together
-    // with the operator name, and on no other Settings tab — the
-    // editors have exactly one home.
+    if (settingsTab === "operator") h += "<div class='card'><h3>What Navi calls you</h3><p style='color:var(--dim)'>The name or form of address Navi uses whenever she talks to you — stored in the app config, used by her persona and her greetings every time she addresses you. Blank = Operator, the default on a fresh install.</p><div class='row'><input class='grow' id='op-name' type='text' value='" + esc(CONFIG.operatorName || "") + "' placeholder='e.g. Alex — blank means Operator' aria-label='Name Navi uses for the operator'><button class='act' id='op-save'>Save</button></div></div>";
+    // About you — memories for Navi (Build 6, #110): the
+    // operator's own file — the entries that exist because the
+    // operator put them there (added by hand, or saved from
+    // chat at the operator's ask). A view over the one memory
+    // list, partitioned by the origin every entry already
+    // carries; her side of the partition lives under Operator
+    // & Persona as "Her file — what she keeps".
+    if (settingsTab === "operator") {
+      var opMem = memory.map(function (m, i) { return { m: m, i: i }; }).filter(function (x) { return x.m.o === "manual" || x.m.o === "trigger"; });
+      h += "<div class='card'><h3>About you — memories for Navi</h3><p style='color:var(--dim)'>Facts you handed Navi about you — added by hand here, or saved from chat because you asked. Yours, in your words: true by your say-so, and forgetting one takes it out. What Navi keeps on her own judgment lives in her file, under Operator &amp; Persona — together the two files are everything she remembers from chat.</p><div id='memlist'>"
+        + (opMem.length ? opMem.map(function (x) { return "<div class='card'>" + esc(x.m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[x.m.o] || "Added by hand") + "</span> <button class='ghost' data-del='" + x.i + "'>Forget</button></div>"; }).join("") : "<p style='color:var(--dim);font-size:12px'>Nothing here yet — add the first fact below.</p>")
+        + "</div><div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div></div>";
+    }
+    // Soul and Memory live on the Operator & Persona tab, and on
+    // no other Settings tab — the editors have exactly one home.
+    // (The operator's name moved to the Operator tab in Build 6,
+    // #110, with the operator's own memory file.)
     if (settingsTab === "persona") {
       h += "<div class='card'><h3>Persona — Soul</h3><p style='color:var(--dim)'>Who Navi is — her identity and voice. Lives in config/soul.md; the bridge feeds it to the model as her system prompt.</p><textarea id='soul-doc' rows='12' class='mono' style='font-size:12px' aria-label='Soul document — who Navi is'>" + esc(CONFIG.soul || "") + "</textarea><button class='act' id='soul-save' style='margin-top:8px'>Save Soul</button></div>";
       h += "<div class='card'><h3>Persona — Memory</h3><p style='color:var(--dim)'>What Navi carries between sessions. Lives in config/memory.md, beside the Soul.</p><textarea id='mem-doc' rows='9' class='mono' style='font-size:12px' aria-label='Memory document — what Navi carries'>" + esc(CONFIG.memory || "") + "</textarea><button class='act' id='memdoc-save' style='margin-top:8px'>Save Memory</button></div>";
     }
     if (settingsTab === "voice") {
-      if (CONFIG.backend === "live" && !voiceState && !voiceFetching) refreshVoice(false);
-      h += voiceSettingsHtml();
+      h += voiceHomeHtml();
     }
-    if (settingsTab === "memories") {
-      h += "<div class='card'><b>Her memory document</b><br><span style='color:var(--dim)'>The document itself — what Navi carries between sessions, in config/memory.md — is edited under <b>Operator &amp; Persona</b>, beside her Soul. This tab holds what she remembers <b>from chat</b>: the entries below and anything waiting on your word.</span><div style='margin-top:8px'><button type='button' class='ghost' id='memdoc-pointer' aria-label='Open Operator and Persona to edit the memory document' style='min-height:44px'>Open the Memory document editor</button></div></div>";
-    h += "<h3 style='margin-top:16px'>Memory · local only</h3>";
+    if (settingsTab === "persona") {
+    // What she remembers from chat (Build 6, #110): the leash and
+    // the proposal queue moved here from Build 4's short-lived
+    // Memories tab, beside the Soul and Memory document editors
+    // they govern. The Build 4 pointer card is retired — the
+    // document editor is on this very tab now, so there is
+    // nothing left to point at.
     // How she remembers from chat (build .81, #72): the mode
     // selector, the receipt promise, and anything waiting on
     // the operator's word in Ask first mode.
@@ -6536,8 +6862,13 @@ function render() {
       h += "<div style='margin-top:10px'><b>Waiting for your word</b>" + memoryProposals.map(function (p) { return "<div class='card' style='margin-top:6px'>“" + esc(p.text) + "”<div style='margin-top:6px'><button class='act' data-memprop='" + p.id + "' aria-label='Save this proposed memory' style='padding:2px 10px'>Save it</button> <button class='ghost' data-mempropno='" + p.id + "' aria-label='Dismiss this proposed memory' style='padding:2px 10px'>Dismiss</button></div></div>"; }).join("") + "</div>";
     }
     h += "</div>";
-    h += "<div id='memlist'>" + memory.map(function (m, i) { return "<div class='card'>" + esc(m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[m.o] || "Added by hand") + "</span> <button class='ghost' data-del='" + i + "'>Forget</button></div>"; }).join("") + "</div>";
-    h += "<div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div>";
+    // Her file — what she keeps: the entries that exist by her
+    // judgment (saved on her own call, and her corrections) —
+    // the other half of the origin partition. No add row: she
+    // authors these, in chat, under the leash above.
+    var herMem = memory.map(function (m, i) { return { m: m, i: i }; }).filter(function (x) { return x.m.o === "autonomous" || x.m.o === "correction"; });
+    h += "<h3 style='margin-top:16px'>Her file — what she keeps</h3><p style='color:var(--dim)'>Entries that exist because Navi judged them worth keeping — saved on her own call in chat, or corrections she made to an earlier line. Facts you handed her live in your file, under Operator.</p>";
+    h += "<div id='memlist'>" + (herMem.length ? herMem.map(function (x) { return "<div class='card'>" + esc(x.m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[x.m.o] || "From chat — her call") + "</span> <button class='ghost' data-del='" + x.i + "'>Forget</button></div>"; }).join("") : "<p style='color:var(--dim);font-size:12px'>Nothing here yet — what she saves on her own call in chat will land here.</p>") + "</div>";
     }
     if (settingsTab === "github") {
       if (!githubState && !githubFetching) fetchGithub(true);
@@ -6555,6 +6886,7 @@ function render() {
     }
     h += "</div>";
   }
+  if (view === "Docs") docsCaptureNav();
   mainEl.innerHTML = h;
   // Replay the view-entrance motion on every render so switching
   // views (and tabs) glides instead of snapping.
@@ -6564,7 +6896,9 @@ function render() {
   // Chat view: the sidebars stay fixed and only the thread scrolls —
   // main becomes a flex frame and #msgs is its scrolling region.
   mainEl.classList.toggle("chat-view", view === "Chat");
+  mainEl.classList.toggle("docs-view", view === "Docs");
   wire();
+  if (view === "Docs") docsRestoreNav();
   if (view === "Chat") {
     wireOperationCards(mainEl);
     messages.forEach(function (m) { if (m.operation && (m.operation.state === "running" || m.operation.state === "waiting")) watchOperation(m.operation.id); });
@@ -6680,7 +7014,7 @@ function wire() {
     // Memory receipts (build .81, #72): Undo and proposal
     // decisions act on the receipt object stored on the message,
     // then persist and re-render so the store, the receipt, and
-    // Settings → Memories all agree.
+    // the Settings memory files all agree.
     mainEl.querySelectorAll("[data-memundo]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memundo") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc && undoMemoryReceipt(rc)) { persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memsave]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memsave") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, true); persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memdismiss]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memdismiss") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, false); persist(); render(); } }; });
@@ -6740,6 +7074,8 @@ function wire() {
     if (meshLocalBtnEl) meshLocalBtnEl.onclick = function () { meshLocal = !meshLocal; persistMeshLocal(); render(); };
     var micBtn = document.getElementById("chat-mic");
     if (micBtn) micBtn.onclick = function () { pttToggle("chat"); };
+    var cstBtn = document.getElementById("chat-status-toggle");
+    if (cstBtn) cstBtn.onclick = function () { toggleStatusColumn(); };
     var chatCallBtn = document.getElementById("chat-call");
     if (chatCallBtn) chatCallBtn.onclick = function () {
       var why = callBlockReason();
@@ -6752,29 +7088,6 @@ function wire() {
     if (chatEndBtn) chatEndBtn.onclick = function () { endCall(); };
     var chatPttBtn = document.getElementById("call-ptt");
     if (chatPttBtn) chatPttBtn.onclick = function () { pttToggle("call"); };
-  } else if (view === "Voice") {
-    var startBtn = document.getElementById("call-start");
-    if (startBtn) startBtn.onclick = function () { startCall(); };
-    var endBtn = document.getElementById("call-end");
-    if (endBtn) endBtn.onclick = function () { endCall(); };
-    var pttBtn = document.getElementById("call-ptt");
-    if (pttBtn) pttBtn.onclick = function () { pttToggle("call"); };
-    var sayBtn = document.getElementById("call-say");
-    if (sayBtn) sayBtn.onclick = function () { var inp = document.getElementById("call-type"); var t = inp ? inp.value.trim() : ""; if (t) callNaviTurn(t); };
-    var typeInp = document.getElementById("call-type");
-    if (typeInp) typeInp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); var b = document.getElementById("call-say"); if (b) b.click(); } };
-    var testBtn = document.getElementById("voice-test");
-    if (testBtn) testBtn.onclick = function () {
-      testBtn.textContent = "Synthesizing…"; testBtn.disabled = true;
-      if (CONFIG.backend !== "live") { mockSpeak("Hey — it's me, Navi. This is the mock stand-in voice; the real one runs locally through the live bridge.").then(function () { render(); }); return; }
-      fetch("/api/voice/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
-        .then(function (r) { return r.json(); })
-        .then(function (j) { if (j.ok && j.audio_b64) return playWavB64(j.audio_b64); voiceMsg = j.error || "She couldn't speak just then."; })
-        .catch(function () { voiceMsg = "The bridge didn't answer the voice test."; })
-        .then(function () { render(); });
-    };
-    var gotoVs = document.getElementById("voice-goto-settings");
-    if (gotoVs) gotoVs.onclick = function () { settingsTab = "voice"; view = "Settings"; render(); };
   } else if (view === "Chips") {
     mainEl.querySelectorAll("[data-chip]").forEach(function (b) { b.onclick = function () { var c = CHIP_DEFS.filter(function (x) { return x.id === b.getAttribute("data-chip"); })[0]; var pre = document.getElementById("chip-" + c.id); pre.style.display = "block"; if (CONFIG.backend === "mock") { pre.textContent = c.output; return; } pre.textContent = "Running " + c.name + " on the bridge…"; fetch("/api/chips/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: c.id }) }).then(function (r) { return r.json(); }).then(function (j) { pre.textContent = j.ok ? j.output : (j.error || "The chip could not be run."); }).catch(function () { pre.textContent = "The bridge could not be reached."; }); }; });
     mainEl.querySelectorAll("[data-lchip]").forEach(function (b) { b.onclick = function () { var id = b.getAttribute("data-lchip"); var pre = document.getElementById("lchip-" + id); if (!pre) return; pre.style.display = "block"; pre.textContent = "Running on the bridge…"; fetch("/api/chips/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: id }) }).then(function (r) { return r.json(); }).then(function (j) { pre.textContent = j.ok ? j.output : (j.error || "The chip could not be run."); }).catch(function () { pre.textContent = "The bridge could not be reached."; }); }; });
@@ -7324,19 +7637,6 @@ function wire() {
         }
       }; });
     }
-  } else if (view === "Settings" && settingsTab === "memories") {
-    // Memories from chat (Build 4): the entries + proposals wiring
-    // the retired Memory view carried, unchanged — same handlers,
-    // same storage. (The Chats panel's chat/upload handlers live in
-    // wireChatsPanel, bound from renderStatus.)
-    mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
-    var memAdd = document.getElementById("mem-add");
-    if (memAdd) memAdd.onclick = function () { var inp = document.getElementById("mem-in"); var v = inp ? inp.value.trim() : ""; if (!v) return; memory.push({ t: v, o: "manual" }); persist(); render(); };
-    mainEl.querySelectorAll("[data-memmode]").forEach(function (b) { b.onclick = function () { CONFIG.memoryMode = b.getAttribute("data-memmode") || "autonomous"; saveCfg(); render(); }; });
-    mainEl.querySelectorAll("[data-memprop]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-memprop"), true); }; });
-    mainEl.querySelectorAll("[data-mempropno]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-mempropno"), false); }; });
-    var memPtr = document.getElementById("memdoc-pointer");
-    if (memPtr) memPtr.onclick = function () { settingsTab = "persona"; render(); };
   } else if (view === "DHD") {
     wireDhd();
   } else if (view === "Mesh") {
@@ -7628,6 +7928,20 @@ function wire() {
     mainEl.querySelectorAll("[data-upchannel]").forEach(function (b) { b.onclick = function () { setUpdaterChannel(b.getAttribute("data-upchannel")); }; });
   } else if (view === "Settings") {
     mainEl.querySelectorAll("[data-settab]").forEach(function (b) { b.onclick = function () { settingsTab = b.getAttribute("data-settab"); render(); }; });
+    if (settingsTab === "operator" || settingsTab === "persona") {
+      // The two memory files' wiring (Build 6, #110; the handlers
+      // are Build 4's, unchanged — same storage): Forget lives on
+      // both tabs (each entry carries its true index in the one
+      // list), the add row only on Operator, the leash and the
+      // proposal queue only on Operator & Persona. Each handler
+      // binds only where its element rendered.
+      mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
+      var memAdd = document.getElementById("mem-add");
+      if (memAdd) memAdd.onclick = function () { var inp = document.getElementById("mem-in"); var v = inp ? inp.value.trim() : ""; if (!v) return; memory.push({ t: v, o: "manual" }); persist(); render(); };
+      mainEl.querySelectorAll("[data-memmode]").forEach(function (b) { b.onclick = function () { CONFIG.memoryMode = b.getAttribute("data-memmode") || "autonomous"; saveCfg(); render(); }; });
+      mainEl.querySelectorAll("[data-memprop]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-memprop"), true); }; });
+      mainEl.querySelectorAll("[data-mempropno]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-mempropno"), false); }; });
+    }
     var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
     var saveVoice = function (patch) {
       if (CONFIG.backend !== "live") { voiceMsg = "Voice settings save through the live bridge — switch the backend to Live in Settings."; render(); return; }
@@ -7648,6 +7962,32 @@ function wire() {
     if (rateInp) rateInp.onchange = function () { saveVoice({ rate: Number(rateInp.value) }); };
     var pitchInp = document.getElementById("v-pitch");
     if (pitchInp) pitchInp.onchange = function () { saveVoice({ pitch: Number(pitchInp.value) }); };
+    // The call panel's wiring (Build 6, #113): bound here now
+    // that the panel lives on this tab. Same ids, same handlers
+    // the Voice view's branch carried; each binds only where
+    // its element rendered, so they ride along harmlessly on
+    // the tab's other renders. (The retired pointer card's
+    // #voice-goto-settings binding went with the card.)
+    var startBtn = document.getElementById("call-start");
+    if (startBtn) startBtn.onclick = function () { startCall(); };
+    var endBtn = document.getElementById("call-end");
+    if (endBtn) endBtn.onclick = function () { endCall(); };
+    var pttBtn = document.getElementById("call-ptt");
+    if (pttBtn) pttBtn.onclick = function () { pttToggle("call"); };
+    var sayBtn = document.getElementById("call-say");
+    if (sayBtn) sayBtn.onclick = function () { var inp = document.getElementById("call-type"); var t = inp ? inp.value.trim() : ""; if (t) callNaviTurn(t); };
+    var typeInp = document.getElementById("call-type");
+    if (typeInp) typeInp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); var b = document.getElementById("call-say"); if (b) b.click(); } };
+    var testBtn = document.getElementById("voice-test");
+    if (testBtn) testBtn.onclick = function () {
+      testBtn.textContent = "Synthesizing…"; testBtn.disabled = true;
+      if (CONFIG.backend !== "live") { mockSpeak("Hey — it's me, Navi. This is the mock stand-in voice; the real one runs locally through the live bridge.").then(function () { render(); }); return; }
+      fetch("/api/voice/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j.ok && j.audio_b64) return playWavB64(j.audio_b64); voiceMsg = j.error || "She couldn't speak just then."; })
+        .catch(function () { voiceMsg = "The bridge didn't answer the voice test."; })
+        .then(function () { render(); });
+    };
     var speakRep = document.getElementById("v-speakreplies");
     if (speakRep) speakRep.onchange = function () { CONFIG.speakReplies = speakRep.checked; saveCfg(); };
     bind("gh-signin", ghSignInStart);
@@ -7668,6 +8008,9 @@ function wire() {
     if (visSel) { visSel.onchange = paintPubWarn; paintPubWarn(); }
     var th = document.getElementById("th");
     if (th) th.onchange = function () { CONFIG.theme = th.value; saveCfg(); applyTheme(); render(); };
+    var mp = document.getElementById("motion-potato");
+    if (mp) mp.onclick = function () { CONFIG.motion = CONFIG.motion === "potato" ? "full" : "potato"; saveCfg(); applyMotion(); render(); };
+    mainEl.querySelectorAll("[data-uiscale]").forEach(function (b) { b.onclick = function () { CONFIG.uiScale = Number(b.getAttribute("data-uiscale")) || 1; saveCfg(); applyUiScale(); render(); }; });
     var opSave = document.getElementById("op-save");
     if (opSave) opSave.onclick = function () { var inp = document.getElementById("op-name"); CONFIG.operatorName = inp ? inp.value.trim() : ""; saveCfg(); refreshSeedGreeting(); render(); };
     // Hardware profile card: load the profile on first Settings open.
@@ -7718,8 +8061,8 @@ function wire() {
     bind("gh-issues-page", function () { openExternal(NAVI_REPO_URL + "/issues"); });
     bind("gh-legacy", function () { openExternal("https://github.com/SaintsSec/Navi"); });
     mainEl.querySelectorAll("[data-gh-issue]").forEach(function (b) { b.onclick = function () { var u = b.getAttribute("data-gh-issue"); if (!u || u.indexOf("https://github.com/") !== 0) return; var m = /^https:\/\/github\.com\/AlexKollar\/Apex\/issues\/(\d+)$/.exec(u); if (m && docsInShell()) { openGithubIssueWindow(m[1], u); return; } openExternal(u); }; });
-    if (githubTab === "overview" && !githubPulse && !githubPulseFetching) fetchGithubPulse(true);
-    if (githubTab === "issues" && !githubIssues && !githubIssuesFetching) fetchGithubIssues(true);
+    if (githubTab === "overview" && !githubPulse && !githubPulseFetching && Date.now() - githubPulseFailedAt > 30000) fetchGithubPulse(true);
+    if (githubTab === "issues" && !githubIssues && !githubIssuesFetching && Date.now() - githubIssuesFailedAt > 30000) fetchGithubIssues(true);
   }
   if (view === "Chips" || view === "RAG") {
     // Publish to GitHub + README editing (packs and chips, one loop).
