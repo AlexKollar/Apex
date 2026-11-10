@@ -17,6 +17,28 @@
     "domain": "",
     "acme_directory": "https://acme-v02.api.letsencrypt.org/directory"
   },
+  "mesh": {
+    "enabled": false,
+    "role": "both",
+    "nodeName": "",
+    "borrow": {
+      "enabled": true,
+      "graceMs": 2000,
+      "peers": []
+    },
+    "lend": {
+      "enabled": false,
+      "maxSharePercent": 25,
+      "maxGenerationsPerHour": 20,
+      "perPeerPerHour": 10,
+      "idleOnly": true,
+      "idleAfterSeconds": 60
+    },
+    "port": 8765,
+    "nodeId": "",
+    "ledger": true,
+    "ledgerInBackup": false
+  },
   "startup": "on-ui-launch",
   "install_dir": "/opt/navi-apex",
   "sudo_mode": false,
@@ -111,7 +133,8 @@
       "chips",
       "rag",
       "workflows",
-      "vault"
+      "vault",
+      "mesh-cards"
     ],
     "backup_interval_days": 1,
     "last_backup_at": null,
@@ -119,7 +142,7 @@
     "last_import_at": null,
     "last_import_result": ""
   },
-  "version": "0.1.7",
+  "version": "0.1.8",
   "version_status": "stable",
   "updater": {
     "channel": "stable"

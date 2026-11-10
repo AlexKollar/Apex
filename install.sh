@@ -54,12 +54,14 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 VOICE=""
+NO_RELAUNCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --startup) STARTUP="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --fresh) FRESH=1; shift ;;
     --voice) VOICE="$2"; shift 2 ;;
+    --no-relaunch) NO_RELAUNCH=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -113,6 +115,181 @@ case "$STARTUP" in
 esac
 
 echo "==> Apex installer (Linux) — startup mode: $STARTUP"
+
+# --- Stopping a running bridge — a proof, not a gesture (.91, #91) --
+# The old stop fired one SIGTERM at the pid file's process, deleted
+# the pid file whatever happened, and slept a second: a bridge that
+# did not die on cue (stopped, stuck, mid-something-it-could-not-
+# put-down) kept port 8675 and kept answering — nameless,
+# its pid file gone — while the files under it became the new build.
+# The replacement bridge could never bind, and only killing the
+# stuck process by hand (or rebooting, which asks nothing) cleared
+# it. The stop below FINDS the bridge three ways, waits for the
+# process to be gone AND the port to be free, escalates to SIGKILL,
+# and — if the port still cannot be cleared — aborts the install
+# BEFORE any file is replaced, naming the holder and the exact
+# command that ends it. The pid file is deleted only once the stop
+# is proven; on an abort it is left exactly where it was.
+
+# PIDs of bridge.py processes whose working directory is $1 — how a
+# start.sh-launched bridge is found at all: its command line is the
+# relative "python3 bridge.py", which no path pattern can match.
+bridge_pids_in_dir() {
+  python3 - "$1" <<'PYEOF' 2>/dev/null || true
+import os, sys
+try:
+    root = os.path.realpath(sys.argv[1])
+except Exception:
+    sys.exit(0)
+found = []
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    try:
+        if os.path.realpath(os.readlink("/proc/" + name + "/cwd")) != root:
+            continue
+        with open("/proc/" + name + "/cmdline", "rb") as f:
+            raw = f.read()
+        cmd = " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0])))
+        if "bridge.py" in cmd:
+            found.append(name)
+    except Exception:
+        pass
+print(" ".join(found))
+PYEOF
+}
+
+# The PID holding the LISTEN socket on the bridge port, resolved
+# from /proc alone (ss/lsof are not guaranteed on a fresh box), or
+# nothing when the port is free.
+bridge_port_holder_pid() {
+  python3 - "8675" <<'PYEOF' 2>/dev/null || true
+import os, sys
+port = int(sys.argv[1])
+inodes = set()
+for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        with open(path) as f:
+            rows = f.read().splitlines()[1:]
+    except Exception:
+        continue
+    for row in rows:
+        parts = row.split()
+        if len(parts) > 9 and parts[3] == "0A":
+            try:
+                if int(parts[1].rsplit(":", 1)[1], 16) == port:
+                    inodes.add(parts[9])
+            except Exception:
+                pass
+if not inodes:
+    sys.exit(0)
+targets = set()
+for ino in inodes:
+    targets.add("socket:[" + ino + "]")
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    try:
+        fds = os.listdir("/proc/" + name + "/fd")
+    except Exception:
+        continue
+    for fd in fds:
+        try:
+            if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
+                print(name)
+                sys.exit(0)
+        except Exception:
+            pass
+PYEOF
+}
+
+# A process counts as gone when it no longer exists OR is a zombie:
+# a zombie holds no sockets — the kernel closed them at death — and
+# its parent reaps it in its own time.
+bridge_pid_gone() {
+  [ -n "$1" ] || return 0
+  kill -0 "$1" 2>/dev/null || return 0
+  local st=""
+  st="$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null || true)"
+  [ "$st" = "Z" ]
+}
+
+# stop_bridge <dir>: stop the bridge belonging to <dir> and PROVE
+# it — every candidate dead and the port free. Sets STOPPED_BRIDGE=1
+# when a bridge was in fact stopped (the end of the install
+# relaunches and verifies in that case). Returns 1 — the caller
+# aborts — when the port cannot be cleared; in that case nothing
+# has been signalled that was not this install's own bridge, the
+# pid file is untouched, and the holder is named with its remedy.
+STOPPED_BRIDGE=""
+stop_bridge() {
+  local dir="$1" pid_file="$1/bridge.pid"
+  local cands="" p=""
+  if [ -f "$pid_file" ]; then
+    p="$(tr -dc '0-9' < "$pid_file" 2>/dev/null || true)"
+    # A pid file is a claim, not a proof: the named process counts
+    # only if it really is a bridge of this install — a recycled
+    # pid belonging to somebody else's process is never signalled.
+    if [ -n "$p" ] && [ -d "/proc/$p" ]; then
+      if [ "$(readlink "/proc/$p/cwd" 2>/dev/null || true)" = "$dir" ] || grep -aq "bridge.py" "/proc/$p/cmdline" 2>/dev/null; then
+        cands="$cands $p"
+      fi
+    fi
+  fi
+  for p in $(bridge_pids_in_dir "$dir"); do
+    case " $cands " in *" $p "*) ;; *) cands="$cands $p" ;; esac
+  done
+  if [ -n "$cands" ]; then
+    STOPPED_BRIDGE=1
+    echo "    stopping the running bridge (pid(s):$cands) — waiting for it to be gone and port 8675 to be free"
+    for p in $cands; do kill "$p" 2>/dev/null || true; done
+    local waited=0 allgone="" q=""
+    while [ "$waited" -lt 15 ]; do
+      allgone=1
+      for q in $cands; do bridge_pid_gone "$q" || allgone=""; done
+      if [ -n "$allgone" ] && [ -z "$(bridge_port_holder_pid)" ]; then
+        rm -f "$pid_file"
+        echo "    the previous bridge is stopped and port 8675 is free"
+        return 0
+      fi
+      sleep 1; waited=$((waited + 1))
+    done
+    echo "    the bridge did not stop on a polite signal — ending it by force"
+    for p in $cands; do kill -9 "$p" 2>/dev/null || true; done
+    waited=0
+    while [ "$waited" -lt 10 ]; do
+      if [ -z "$(bridge_port_holder_pid)" ]; then
+        local survivors=""
+        for q in $cands; do bridge_pid_gone "$q" || survivors="$survivors $q"; done
+        if [ -z "$survivors" ]; then
+          rm -f "$pid_file"
+          echo "    the previous bridge is stopped and port 8675 is free"
+          return 0
+        fi
+      fi
+      sleep 1; waited=$((waited + 1))
+    done
+  fi
+  # No candidates of our own (or they are gone): the port itself is
+  # the verdict. Free — the stop is proven, nothing more to do.
+  local holder=""
+  holder="$(bridge_port_holder_pid)"
+  if [ -z "$holder" ]; then
+    if [ -f "$pid_file" ]; then rm -f "$pid_file"; fi
+    return 0
+  fi
+  # The port is held by something this stop may not signal (another
+  # program, or a bridge of a different install) — or by a candidate
+  # even SIGKILL could not move. Either way: abort BEFORE files are
+  # replaced, name the holder, give the exact command.
+  local hcmd=""
+  hcmd="$(python3 -c 'import sys; raw = open(sys.argv[1], "rb").read(); print(" ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip())' "/proc/$holder/cmdline" 2>/dev/null || true)"
+  echo "ERROR: port 8675 is still held by process $holder ($hcmd) and this installer cannot clear it." >&2
+  echo "       No files have been replaced, and the pid file is untouched. The update has NOT happened." >&2
+  echo "       End that process with:  kill -9 $holder" >&2
+  echo "       then run this installer again." >&2
+  return 1
+}
 
 # --- Which Linux family is this? (build .70, issue #48) ---
 # The family is read once, up front, from /etc/os-release (ID and
@@ -373,11 +550,14 @@ MIGRATED=""
 if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
   MIGRATED=1
   echo "==> Migrating the earlier install from $OLD_DIR to $INSTALL_DIR"
-  if [ -f "$OLD_DIR/bridge.pid" ]; then
-    kill "$(cat "$OLD_DIR/bridge.pid")" 2>/dev/null || true
-    rm -f "$OLD_DIR/bridge.pid"
+  # The old location's bridge gets the same proven stop as any
+  # other (build .91): found by pid file, port, and working
+  # directory, waited on, escalated — and if its port cannot be
+  # cleared, the install aborts here, before anything is moved.
+  if ! stop_bridge "$OLD_DIR"; then
+    echo "ERROR: the previous install's bridge could not be stopped — aborting before anything is moved." >&2
+    exit 1
   fi
-  pkill -f "$OLD_DIR/bridge.py" 2>/dev/null || true
   UNIT_FILE="$HOME/.config/systemd/user/navi-llamafile.service"
   if [ -f "$UNIT_FILE" ] && grep -q "$OLD_DIR" "$UNIT_FILE"; then
     systemctl --user disable --now navi-llamafile.service 2>/dev/null || true
@@ -420,6 +600,22 @@ fi
 
 $SUDO mkdir -p "$INSTALL_DIR"
 
+# Stop the bridge this install replaces — BEFORE any of its files
+# are touched (the --fresh wipe below included) — and prove the
+# stop (build .91, issue #91; the machinery is defined above). If
+# the port cannot be cleared, the install aborts here with the
+# holder named and every file untouched.
+echo "==> Stopping any bridge still running from a previous install"
+if ! stop_bridge "$INSTALL_DIR"; then
+  echo "ERROR: the previous bridge could not be stopped — aborting with every file untouched." >&2
+  exit 1
+fi
+# The previous shell window goes too (build .49): a window left open
+# from the old install keeps the old dashboard's process alive and
+# can hold the single-instance lock, so the new build never becomes
+# the one actually running. Stop it before the new files land.
+pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
+
 if [ -n "$FRESH" ]; then
   echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
   echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, and your Soul/Memory documents are kept)"
@@ -445,6 +641,14 @@ if [ -n "$FRESH" ]; then
   # a fresh reinstall must never wipe it and force re-issuance.
   if [ -d "$INSTALL_DIR/config/dhd" ]; then
     $SUDO cp -r "$INSTALL_DIR/config/dhd" "$STASH_DIR/dhd" 2>/dev/null || true
+  fi
+  # The Mesh identity home (config/mesh/) rides the same keep-list
+  # (build .85): the node keypair and Mesh certificate live there,
+  # and a fresh reinstall must never wipe the node's identity —
+  # losing it would silently orphan every pairing this machine
+  # holds. The ledger rides with it; it is metadata, not content.
+  if [ -d "$INSTALL_DIR/config/mesh" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/mesh" "$STASH_DIR/mesh" 2>/dev/null || true
   fi
   # Her downloaded speech models and her call log are hers too —
   # they ride the same keep-list. The voice venv rides along as
@@ -487,6 +691,11 @@ if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/config"
     $SUDO cp -r "$STASH_DIR/dhd" "$INSTALL_DIR/config/dhd"
     echo "    the DHD certificate home (config/dhd/) restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/mesh" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/mesh" "$INSTALL_DIR/config/mesh"
+    echo "    the Mesh identity home (config/mesh/) restored across the fresh install"
   fi
   if [ -d "$STASH_DIR/voice-models" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/voice"
@@ -532,26 +741,9 @@ else
   $SUDO chmod +x "$INSTALL_DIR/navi.llamafile"
 fi
 
-# Stop a bridge still running from a previous install BEFORE its
-# files are replaced. A running bridge holds port 8675 and serves
-# the (new) dashboard from disk while executing its old in-memory
-# code — chat 400s and sudo-auth 404s against a UI that looks fully
-# updated. The pid file names it exactly; pkill is the backstop.
-echo "==> Stopping any bridge still running from a previous install"
-if [ -f "$INSTALL_DIR/bridge.pid" ]; then
-  kill "$(cat "$INSTALL_DIR/bridge.pid")" 2>/dev/null || true
-  rm -f "$INSTALL_DIR/bridge.pid"
-fi
-pkill -f "$INSTALL_DIR/bridge.py" 2>/dev/null || true
-# The previous shell window goes too (build .49): a window left open
-# from the old install keeps the old dashboard's process alive and
-# can hold the single-instance lock, so the new build never becomes
-# the one actually running. Stop it before the new files land.
-pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
-sleep 1
-sleep 1
-
-# If a page that is not a Navi bridge still answers on 8675 — the
+# The stop itself already happened — and was proven — before the
+# files above were touched (build .91). What remains here is the
+# backstop warning: if a page that is not a Navi bridge still answers on 8675 — the
 # operator's own earlier UI for Navi also served this address — the
 # launcher would land on that program's page, not this dashboard.
 # It is not this installer's process to kill; warn, by name, now.
@@ -1179,6 +1371,57 @@ if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
 fi
 
 
+# --- Relaunch what the install stopped, and verify it (build
+# .91, issue #91, Cause 3) ---
+# An install that replaced a RUNNING bridge used to end here with
+# the new files on disk and nothing serving: the update only took
+# effect when the operator thought to launch the app. Now, when a
+# bridge was stopped at the top of this install, she is relaunched
+# through start.sh and the install verifies the bridge answering
+# on the port is the NEW build (status stamp match) before it
+# calls itself done. Over a stopped app, or with --no-relaunch,
+# nothing is launched — and --no-relaunch says so plainly.
+RELAUNCH_OK=""
+RELAUNCH_NOW=""
+if [ -n "$STOPPED_BRIDGE" ] && [ -z "$NO_RELAUNCH" ]; then
+  RELAUNCH_NOW=1
+  echo "==> A bridge was running when this install began — relaunching Apex on the new build"
+  nohup "$INSTALL_DIR/start.sh" >> "$INSTALL_DIR/start.log" 2>&1 &
+  NEW_STAMP="$(sed -n 's/^BRIDGE_BUILD = "\(.*\)".*/\1/p' "$INSTALL_DIR/bridge.py" 2>/dev/null | head -n 1)"
+  if [ -n "$NEW_STAMP" ]; then
+    waited=0
+    while [ "$waited" -lt 90 ]; do
+      body="$(curl -fsS --max-time 3 "http://127.0.0.1:8675/api/status" 2>/dev/null || true)"
+      case "$body" in
+        *'"app": "Navi: Apex"'*)
+          if printf '%s' "$body" | grep -qF "\"bridge\": \"$NEW_STAMP\""; then
+            RELAUNCH_OK=1
+            break
+          fi
+          ;;
+      esac
+      sleep 2; waited=$((waited + 2))
+    done
+  fi
+  if [ -n "$RELAUNCH_OK" ]; then
+    echo "    verified live: the bridge answering on port 8675 reports the new build ($NEW_STAMP)"
+  else
+    echo "WARNING: Apex was relaunched but the new build could not be verified answering on port 8675." >&2
+    echo "         Watch $INSTALL_DIR/start.log, and start her by hand with: $INSTALL_DIR/start.sh" >&2
+  fi
+fi
+
+# Closing lines — exactly one story, and it is the true one.
 echo ""
-echo "Done. Launch \"Apex\" from your application menu, or run:"
-echo "    $INSTALL_DIR/start.sh"
+if [ -n "$NO_RELAUNCH" ] && [ -n "$STOPPED_BRIDGE" ]; then
+  echo "Done — but Apex is NOT running: the bridge this install replaced was stopped and --no-relaunch asked not to restart her."
+  echo "Start her with: $INSTALL_DIR/start.sh"
+elif [ -n "$RELAUNCH_OK" ]; then
+  echo "Done — Apex is running again on the new build."
+elif [ -n "$RELAUNCH_NOW" ]; then
+  echo "Done — the files are in place, but see the warning above: Apex may not be running yet."
+  echo "Start her with: $INSTALL_DIR/start.sh"
+else
+  echo "Done. Launch \"Apex\" from your application menu, or run:"
+  echo "    $INSTALL_DIR/start.sh"
+fi

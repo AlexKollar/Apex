@@ -23,6 +23,8 @@
   /* DHD glyph tuning (build .74): ring and wedges resolve from the theme like the other nav icons; the center stays warm red-orange in the glyph itself. */
   body[data-theme="nord"] .nav-ico-dhd { color:#88c0d0; }
   body[data-theme="terminal"] .nav-ico-dhd { color:#4ade80; }
+  body[data-theme="nord"] .nav-ico-mesh { color:#88c0d0; }
+  body[data-theme="terminal"] .nav-ico-mesh { color:#4ade80; }
   body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
   body[data-theme="nocturne"] { color-scheme:dark; --bg:#060a14; --panel:#0b1220; --panel2:#0d1526; --line:#1e3a5f; --text:#dbeafe; --dim:#9db8d9; --cy:#22d3ee; --am:#f471b5; --red:#fb7185; --green:#34d399; --ver-alpha:#fb7185; --ver-beta:#fbbf24; --ver-stable:#22d3ee; --syn-cmd:#22d3ee; --syn-bad:#ff7a93; --syn-flag:#67e8f9; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f471b5; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#04070f; }
   body[data-theme="abyss"] { color-scheme:dark; --bg:#010304; --panel:#041014; --panel2:#061a1e; --line:#0f3038; --text:#cfe3e8; --dim:#b8ccd1; --cy:#22e6ee; --am:#67e8f9; --red:#f87171; --green:#2dd4bf; --ver-alpha:#f87171; --ver-beta:#e7c65a; --ver-stable:#22e6ee; --syn-cmd:#67e8f9; --syn-bad:#ff8a8a; --syn-flag:#5eead4; --syn-str:#e7c65a; --syn-path:#cbd5e1; --syn-kw:#7dd3d8; --syn-num:#d9e8ec; --syn-op:#8be9e2; --exec-bg:#000000; }
@@ -112,11 +114,18 @@
      number is read from the VERSION file at the install root (the
      bridge reports it on /api/status and CONFIG.version follows
      it), so the menu always shows the file's truth. It reads in
-     GitHub tag form - v + number + status tag ("v0.1.7") -
+     GitHub tag form - v + number + status tag ("v0.1.8") -
      centered in the footer's row, and the collapsed rail keeps
      the same whole string, centered: at 11px mono it fits the
      54px rail without clipping. */
-  #nav-version { margin-top:auto; border-top:1px solid var(--line); padding:9px 8px 0; color:var(--dim); font-size:11px; white-space:nowrap; text-align:center; }
+  /* Build .87 (Alex's ruling): Docs and Settings leave the main
+     stack and sit at the foot of the menu, stacked directly over
+     the version line — Docs on top, Settings directly over the
+     version: the auto margin that used to push the version down
+     now sits on Docs, so the pair anchors to the bottom and the
+     version follows Settings with no gap. */
+  #nav-Docs { margin-top:auto; }
+  #nav-version { border-top:1px solid var(--line); padding:9px 8px 0; color:var(--dim); font-size:11px; white-space:nowrap; text-align:center; }
   #nav-version .nv-num { color:var(--text); font-weight:700; }
   #nav-version .nv-val { font-weight:700; }
   #nav-version.st-alpha .nv-val, #nav-version.st-edge .nv-val { color:var(--ver-alpha); }
@@ -166,6 +175,11 @@
      stacked wordmark/tagline away; desktop never renders it. */
   .bar-title { display:none; }
   main { padding:16px; min-width:0; height:100%; min-height:0; overflow-y:auto; }
+  /* Card squash guard (build .86, issue #79): a card in a scroll
+     column keeps its full content height — flex:0 0 auto, so a
+     Local chip card (or any card list with the same pattern) is
+     never sliced mid-text by a flex parent again. */
+  main .card { flex:0 0 auto; }
   main.chat-view { display:flex; flex-direction:column; overflow:hidden; }
   main.chat-view > h3, main.chat-view > .card { flex:0 0 auto; }
   #msgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; }
@@ -350,8 +364,27 @@
   a.ghost { background:none; color:var(--text); border:1px solid var(--line); padding:6px 10px; border-radius:4px; cursor:pointer; }
   .chipbtn { border:1px solid var(--cy); color:var(--cy); background:none; border-radius:999px; padding:3px 10px; cursor:pointer; margin:0 4px 4px 0; }
   .srcs { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+  /* Build 8 (#88): the one pill row under a reply never wraps —
+     Mesh pill first, then the source pills, all on one line.
+     Inside the row the pills may shrink: the Mesh pill keeps its
+     full text (flex none), and a source pill ellipsizes before
+     it could push the row — and with it the page — sideways at
+     phone widths. */
+  .srcs.pillrow { flex-wrap:nowrap; min-width:0; }
+  .srcs.pillrow .meshpill { flex:0 0 auto; }
+  .srcs.pillrow .srcpill { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .srcpill { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:999px; padding:2px 9px; }
   .srcpill .srcsep { color:var(--cy); }
+  /* The Mesh attribution pill (Build 3): a borrowed reply's
+     "who wrote this" as one compact pill in Mesh Cyan — #22D3EE,
+     the signature theme's --cy — modeled on .srcpill's geometry.
+     Text and border ride the theme's cyan slot (every theme
+     tunes it readable on its own surfaces; signature, glass,
+     nocturne and abyss hold #22D3EE itself) over a translucent
+     cyan ground — the fixed rgba is Mesh Cyan at 10%, and
+     color-mix re-derives the ground from the theme's cyan where
+     the engine supports it. */
+  .meshpill { display:inline-flex; align-items:center; gap:5px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--cy); border:1px solid rgba(34,211,238,.45); border-color:color-mix(in srgb, var(--cy) 55%, transparent); border-radius:999px; padding:2px 9px; background:rgba(34,211,238,.10); background:color-mix(in srgb, var(--cy) 12%, transparent); }
   pre.out { background:#000; border:1px solid var(--line); border-radius:4px; padding:8px; white-space:pre-wrap; overflow:auto; }
   .ac-wrap { position:relative; }
   .ac { position:absolute; left:0; right:0; bottom:calc(100% + 4px); background:var(--panel); border:1px solid var(--cy); border-radius:4px; overflow:hidden; z-index:20; box-shadow:0 8px 24px rgba(0,0,0,.5); }
@@ -494,7 +527,7 @@
     #app.closed nav button .lbl { display:inline; }
     #app.closed .nav-tip { display:none; }
     .nav-tip { display:none; }
-    #nav-version { width:100%; margin-top:auto; }
+    #nav-version { width:100%; }
     #app.closed #nav-version { text-align:center; padding:9px 8px 0; }
     #app.closed #nav-version .nv-pre { display:inline; }
     main { height:auto; min-height:0; overflow:visible; padding:12px; }
@@ -562,7 +595,7 @@
 // every setting — backend included — is the operator's explicit
 // choice and is honored as saved. Chats, memory, and documents are
 // stored under separate keys and are never reset by this.
-var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.7","versionStatus":"stable","updaterChannel":"stable","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}},"dhd":{"enabled":false,"active":false,"domain":"","mode":"off","status":"off","publicUrl":"","lanIp":"","lanUrl":"","wanIp":"","wanState":"undetected","wanNote":"","publicVerified":false,"outsideReach":"none","nextStep":"","domainResolvesHere":false,"certExpiresAt":null,"certDaysLeft":null,"certPending":false,"lastError":""}};
+var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.8","versionStatus":"stable","updaterChannel":"stable","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}},"dhd":{"enabled":false,"active":false,"domain":"","mode":"off","status":"off","publicUrl":"","lanIp":"","lanUrl":"","wanIp":"","wanState":"undetected","wanNote":"","publicVerified":false,"outsideReach":"none","nextStep":"","domainResolvesHere":false,"certExpiresAt":null,"certDaysLeft":null,"certPending":false,"lastError":""},"mesh":{"enabled":false,"role":"both","nodeName":"","borrow":{"enabled":true,"graceMs":2000,"peers":[]},"lend":{"enabled":false,"maxSharePercent":25,"maxGenerationsPerHour":20,"perPeerPerHour":10,"idleOnly":true,"idleAfterSeconds":60},"port":8765,"nodeId":"","ledger":true,"ledgerInBackup":false}};
 // Backend: this app is always Live — it talks to bridge.py, which
 // proxies the real llamafile server and runs real shell commands.
 // There is no backend switch in the shipped app (build .49): a saved
@@ -570,7 +603,7 @@ var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.1.7","versionStatus":
 // Live below, so it can never strand the app in a dead mode. The
 // in-page mock code remains only as the bridge-unreachable fallback
 // paths' simulator inside this file; it is never a selectable mode.
-var CONFIG = { backend: "live", version: "0.1.7", versionStatus: "stable", updaterChannel: "stable", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
+var CONFIG = { backend: "live", version: "0.1.8", versionStatus: "stable", updaterChannel: "stable", threat: "Guarded", sudo: false, operatorName: "", theme: "nord", installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
 Object.assign(CONFIG, NAVI_SETTINGS);
 try {
   var savedCfg = localStorage.getItem("navi.config");
@@ -600,10 +633,24 @@ try {
 // build must never strand the app in a dead mode.
 CONFIG.backend = "live";
 function saveCfg() { try { localStorage.setItem("navi.config", JSON.stringify(CONFIG)); } catch (e) {} }
+function gateGuard(r) {
+  // Issue #71 (build .86): when this session's access cookie is
+  // gone, the bridge's API answers 403 {"error":"access code
+  // required"} — the dashboard must bounce to the gate page
+  // instead of rendering confidently-empty tabs. Reloading lands
+  // on the gate page the bridge serves in place of the dashboard;
+  // the returned promise never settles, so no empty state paints
+  // in the meantime.
+  if (r && r.status === 403) {
+    try { window.location.reload(); } catch (e) {}
+    return new Promise(function () {});
+  }
+  return r;
+}
 function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nord"; }
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
 
-var NAV = ["Chat", "Voice", "Chips", "Memory", "RAG", "Vault", "DHD", "Updater", "GitHub", "Settings", "Docs"];
+var NAV = ["Chat", "Voice", "Chips", "Memory", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
 // to its rail, the icon alone identifies the view.
@@ -635,7 +682,15 @@ function dhdGlyphSvg() {
   inner += "<circle cx='12' cy='12' r='4.9' fill='#f4502a' stroke='none'/>";
   return inner;
 }
+// The Mesh glyph (build .86): Hexlink — two interlocking
+// hexagon outlines with a small link node where they meet, drawn
+// as stroke paths in currentColor with the nav-ico-mesh class, so
+// the themes tune it exactly the way they tune .nav-ico-dhd.
+function meshGlyphSvg() {
+  return "<path d='M9 3.5 13.8 6.3v5.4L9 14.5 4.2 11.7V6.3z'/><path d='M15 9.5l4.8 2.8v5.4L15 20.5l-4.8-2.8v-5.4z'/><circle cx='12' cy='12' r='1.7' fill='currentColor' stroke='none'/>";
+}
 function navIcon(name) {
+  if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
@@ -700,6 +755,15 @@ var SUDO_WARNING_LINE = "Sudo Mode Gives Navi Admin Privs... Be mindful so you d
 var chatMode = "navi";
 try { var savedChatMode = localStorage.getItem("navi.chatMode"); if (savedChatMode === "cli" || savedChatMode === "navi") chatMode = savedChatMode; } catch (e) {}
 function persistChatMode() { try { localStorage.setItem("navi.chatMode", chatMode); } catch (e) {} }
+// Navi Mesh (Ring 1, build .85): the per-chat local-only escape —
+// when latched, this chat session never borrows a paired machine.
+// Persisted per chat session exactly like the chat-mode latch.
+var meshLocal = false;
+try { meshLocal = localStorage.getItem("navi.meshLocal") === "1"; } catch (e) {}
+function persistMeshLocal() { try { localStorage.setItem("navi.meshLocal", meshLocal ? "1" : "0"); } catch (e) {} }
+var meshBorrowNoticed = false;  // the first-borrow notice fires once per page session
+var meshPrivacyAcked = false;   // the first-enable borrowing privacy copy, seen and saved past
+try { meshPrivacyAcked = localStorage.getItem("navi.meshPrivacyAck") === "1"; } catch (e) {}
 // Her voice: the last /api/voice answer (settings + engine
 // availability), the live call as this page drives it (turns mirror
 // the bridge's record), and the push-to-talk recorder. In mock mode
@@ -712,6 +776,11 @@ var hardwareState = null;    // live: last GET /api/hardware answer ({profile});
 var hardwareMsg = "";
 var publicState = null;      // live: last /api/status publicServer report; mock: the baked CONFIG shape
 var dhdState = null;         // live: last /api/status dhd report; mock: the baked CONFIG shape (build .74)
+var meshState = null;        // live: last /api/status mesh report (build .85); mock: derived from the baked CONFIG shape
+var meshMsg = "";
+var meshPngMsg = "";         // the PNG card import's own verdict, shown at the drop zone (Build 7)
+var meshPngDrag = false;     // the drop zone is lit while a file drags over it (Build 7)
+var meshDetailsOpen = false;
 var dhdMsg = "";
 var dhdCodeShown = false;
 var dhdOperation = null;     // the page's current DHD operation card state
@@ -807,9 +876,13 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-09.84";
+var BRIDGE_BUILD = "2026-11-09.91";
+var SHIPPED_BUILD_SEQ = 10;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
+var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
+var bridgeBuildSeq = 0;  // build .91: the buildSeq the answering bridge last reported
+var bridgeRoot = "";   // live: the bridge's install tree, from /api/status (build .86, issue #79)
 // Known chats: every conversation is saved; the Memory tab switches
 // between them. "messages" always references the active chat's list.
 var chats = null;
@@ -843,7 +916,15 @@ var docs = [];
 // was reached). Nothing here is simulated: in Mock backend
 // mode no check runs at all (checks go through the live bridge),
 // and the view says so.
-var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", pollTimer: null };
+var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", pollTimer: null };
+// Whether the channel on screen is the operator's own pick
+// (Build 2): the bridge stamps a panel choice as explicit and
+// reports both the effective channel and the stamp on
+// /api/status and every check. An Edge build sitting on Stable
+// WITHOUT the stamp is on its inherited default — which the
+// bridge resolves to Edge — never a mismatch; WITH the stamp it
+// is a real choice, and the panel says what that choice costs.
+var updaterChannelExplicit = false;
 // Chips screen: three tabs — Navi User Repo (NUR) (the GitHub navi-chips
 // catalog + installs, served live by the bridge), Chip Studio (the
 // code editor), and Workflows (chips chained output → input).
@@ -863,7 +944,7 @@ function loadChipCatalog() {
   if (CONFIG.backend !== "live" || chipCatalogBusy) return;
   chipCatalogBusy = true;
   if (view === "Chips") render();
-  fetch("/api/chips/catalog").then(function (r) { return r.json(); }).then(function (j) { chipCatalog = j; chipCatalogBusy = false; if (view === "Chips") render(); }).catch(function (e) { chipCatalog = { error: "GitHub search failed: " + e.message, fetchedAt: null, chips: [] }; chipCatalogBusy = false; if (view === "Chips") render(); });
+  fetch("/api/chips/catalog").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { chipCatalog = j; chipCatalogBusy = false; if (view === "Chips") render(); }).catch(function (e) { chipCatalog = { error: "GitHub search failed: " + e.message, fetchedAt: null, chips: [] }; chipCatalogBusy = false; if (view === "Chips") render(); });
 }
 var chipMsg = "";
 // RAG screen: two tabs — Packs (the GitHub navi-rag catalog +
@@ -914,12 +995,12 @@ function loadRagCatalog() {
   if (CONFIG.backend !== "live" || ragCatalogBusy) return;
   ragCatalogBusy = true;
   if (view === "RAG") render();
-  fetch("/api/rag/catalog").then(function (r) { return r.json(); }).then(function (j) { ragCatalog = j; ragCatalogBusy = false; if (view === "RAG") render(); }).catch(function (e) { ragCatalog = { error: "GitHub search failed: " + e.message, fetchedAt: null, packs: [] }; ragCatalogBusy = false; if (view === "RAG") render(); });
+  fetch("/api/rag/catalog").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { ragCatalog = j; ragCatalogBusy = false; if (view === "RAG") render(); }).catch(function (e) { ragCatalog = { error: "GitHub search failed: " + e.message, fetchedAt: null, packs: [] }; ragCatalogBusy = false; if (view === "RAG") render(); });
 }
 function refreshRagPacks(thenRender) {
   if (CONFIG.backend !== "live" || ragPacksFetching) return;
   ragPacksFetching = true;
-  fetch("/api/rag/packs").then(function (r) { return r.json(); }).then(function (j) {
+  fetch("/api/rag/packs").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) {
       ragPacksState = (j && j.packs) || []; ragPacksFetching = false; if (thenRender) render();
     })
     .catch(function () { ragPacksFetching = false; });
@@ -940,7 +1021,8 @@ var GH_ITEMS = [
   { id: "chips", label: "Installed chips", blurb: "The full chips — restored working, not just named." },
   { id: "rag", label: "RAG packs", blurb: "Their documents, built indexes, and which packs are active." },
   { id: "workflows", label: "Workflows", blurb: "Her saved chains of chips." },
-  { id: "vault", label: "The Vault", blurb: "The shared desk of notes — hers and yours, as plain markdown files." }
+  { id: "vault", label: "The Vault", blurb: "The shared desk of notes — hers and yours, as plain markdown files." },
+  { id: "mesh-cards", label: "Mesh pairing cards", blurb: "The pairing-card pictures — hers, minted fresh, and one for every paired machine. Her node keypair never rides." }
 ];
 // Soul, Memory, and Settings & config are ticked automatically
 // (build .36): every backup carries them, so any item list —
@@ -1298,7 +1380,7 @@ var DOC_GROUPS = [
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "github", "installing"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "github", "installing"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -2453,7 +2535,8 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
   "<p><b>Navi User Repo (NUR)</b> searches GitHub for repos tagged <span class='mono'>navi-chips</span> — that topic is the whole store. The Saints Sec Chips and Community Chips tabs are where you find and install chips: a card there shows whether you already have the chip, and that is all it does with it. A chip that is already on this machine — installed from its repo, or forged in Chip Studio under the same name — reads <b>INSTALLED</b> on its catalog card and its Install button sits grayed out: there is no second install over the copy you have. Install tracks the latest release; a newer release offers an update, which you take from the chip's card on the Local Chips tab. <b>Chip Studio</b> is where chips are written: a full code editor with highlighting, find, templates, and a live structure check. To publish: public repo, the <span class='mono'>navi-chips</span> topic, a release tag as the version.</p>" +
-  "<p><b>Editing a chip you already have.</b> <b>Local Chips</b> is where you manage the chips you have — its card carries every management action: <b>Run</b>, <b>Download .png</b>, <b>Edit in Studio</b>, <b>Edit README</b>, <b>Export for GitHub</b>, <b>Publish to GitHub</b>, <b>Check for updates</b> / <b>Update</b>, and <b>Delete</b>. Any chip in the folder can go back to the Studio — press <b>Edit in Studio</b> on its card in Navi User Repo (NUR) → Local Chips, or pick it in the Studio's <b>Open a chip</b> list: forged chips, GitHub installs, and chips you once exported and installed again all open with their whole file set, root.py and modules together. Saving re-forges the chip with your changes inside. If the chip came from GitHub, saving marks it <b>edited locally</b>: the app says plainly that your copy no longer matches the published one, and an Update will refuse rather than quietly overwrite your edits. To share your version, use <b>Export for GitHub</b> in Navi User Repo (NUR) and cut a new release. Knowledge packs work the same way: <b>Edit in RAG Studio</b> on the RAG tab reopens any pack — documents in or out, name and description adjusted — and saving rebuilds its index on your machine.</p></div>" +
+  "<p><b>Editing a chip you already have.</b> <b>Local Chips</b> is where you manage the chips you have — its card carries every management action: <b>Run</b>, <b>Download .png</b>, <b>Edit in Studio</b>, <b>Edit README</b>, <b>Export for GitHub</b>, <b>Publish to GitHub</b>, <b>Check for updates</b> / <b>Update</b>, and <b>Delete</b>. Any chip in the folder can go back to the Studio — press <b>Edit in Studio</b> on its card in Navi User Repo (NUR) → Local Chips, or pick it in the Studio's <b>Open a chip</b> list: forged chips, GitHub installs, and chips you once exported and installed again all open with their whole file set, root.py and modules together. Saving re-forges the chip with your changes inside. If the chip came from GitHub, saving marks it <b>edited locally</b>: the app says plainly that your copy no longer matches the published one, and an Update will refuse rather than quietly overwrite your edits. To share your version, use <b>Export for GitHub</b> in Navi User Repo (NUR) and cut a new release. Knowledge packs work the same way: <b>Edit in RAG Studio</b> on the RAG tab reopens any pack — documents in or out, name and description adjusted — and saving rebuilds its index on your machine.</p>" +
+  "<p><b>Installs prove themselves.</b> When a chip installs, the bridge re-scans the chips folder before it answers: if the cartridge landed on disk but does not list, the answer says so, and why — an install is never reported done on faith. A cartridge whose payload will not parse is listed in Local Chips as <b>couldn't be read</b> — visible and deletable, but it cannot run, and the pill row above the composer skips it. <b>Older chips still run:</b> installing walks the repo's folders recursively, so a chip laid out as a package keeps its relative paths and its imports resolve at run time; a repo's <span class='mono'>chip-requirements.txt</span> is read and the chip's card shows the declared dependencies plainly — they are <b>not installed automatically</b>; and every chip sandbox carries the legacy <span class='mono'>navi.py</span> shim (<span class='mono'>get_parameters</span>, old semantics) unless the chip ships its own.</p></div>" +
     "<div class='doc-sec'><h4>Running chips from chat, and Workflows</h4>" +
   "<p>Any loaded chip runs from the conversation: <span class='mono'>/chip &lt;name&gt;</span>, “run the &lt;name&gt; chip”, its name alone, or its pill in the row above the composer — its output lands in the thread. The bridge genuinely runs it: code defining <span class='mono'>run()</span> executes with a working <span class='mono'>navi_internal</span>; a chip that only declares an output shows that instead. <b>Workflows</b> chain chips in order — each chip's output becomes the next chip's input, and the last output is the result.</p></div>" +
     "<div class='doc-sec'><h4>Writing a chip, step by step</h4>" +
@@ -2507,7 +2590,7 @@ var DOC_PAGES = [
   "<li>On the repo page, open the About gear and add the topic <span class='mono'>navi-chips</span> — a topic is a label, and this label is how Navi finds chips.</li>" +
   "<li>Publish a <b>release</b> (GitHub's way of saying: this exact version, ready to download) — the version tag is created with that publish, so tag it with the same version.</li></ol>" +
   "<p><b>Signed in to GitHub?</b> Skip the ZIP: <b>Publish to GitHub</b> on the chip's card does the middle steps for you — it creates the public repo (an existing one is updated, and she says so), sets the <span class='mono'>navi-chips</span> topic on its own, and uploads the same files the export builds. The repo name is pre-filled from the chip's name and yours to edit before anything uploads. The release is still yours to publish — Navi never releases. And the README page is yours too: <b>Edit README</b> on the chip's card edits the generated page; your text is kept inside the chip and ships in the export and the upload alike, with a restore back to the generated page.</p>" +
-  "<p><b>Inside the export:</b> <span class='mono'>root.py</span> and the helper files at the top (install downloads every Python file at the repo root — root.py, or the entry named in the manifest, is the chip; the rest are its modules); <span class='mono'>navi-chip.json</span>, a small card with the name, description, version, and entry file; the chip <span class='mono'>.png</span>; and a generated <span class='mono'>README.md</span> page. <b>Installs and updates:</b> Navi User Repo (NUR) searches GitHub for the <span class='mono'>navi-chips</span> topic; Install brings the whole file set down as a chip; a release with a bigger tag offers every install an update. Knowledge packs publish the same way — see the RAG page.</p></div>" },
+  "<p><b>Inside the export:</b> <span class='mono'>root.py</span> and the helper files (install downloads every Python file in the repo <b>recursively</b>, keeping folder paths, so package layouts survive — root.py, or the entry named in the manifest, is the chip; the rest are its modules; a <span class='mono'>chip-requirements.txt</span> at the repo top is read and shown on the chip's card as declared dependencies, never installed automatically); <span class='mono'>navi-chip.json</span>, a small card with the name, description, version, and entry file; the chip <span class='mono'>.png</span>; and a generated <span class='mono'>README.md</span> page. <b>Installs and updates:</b> Navi User Repo (NUR) searches GitHub for the <span class='mono'>navi-chips</span> topic; Install brings the whole file set down as a chip; a release with a bigger tag offers every install an update. Knowledge packs publish the same way — see the RAG page.</p></div>" },
   { id: "rag", title: "RAG packs & exports", related: ["chips-publishing", "settings"], html:
     "<div class='doc-sec'><h4>RAG — knowledge packs</h4>" +
   "<p>Her knowledge comes in <b>packs</b>, chip-style like her chips, managed in the <b>RAG tab</b>. A pack is a GitHub repo tagged <span class='mono'>navi-rag</span> whose documents are its <span class='mono'>.md</span>/<span class='mono'>.txt</span> files and the extracted text of its <span class='mono'>.pdf</span> files (a PDF gives up its words at the door; only the text is stored).</p>" +
@@ -2594,6 +2677,51 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Turning it off</h4>" +
   "<p>Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.</p>" +
   "<p>Turning DHD off does not touch Apex Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.</p></div>" },
+  { id: "mesh", title: "Navi Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
+    "<div class='doc-sec'><h4>What Mesh is</h4>" +
+  "<p><b>Navi Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
+  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group shows Navi Mesh as a fourth row, under DHD. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu, right after DHD — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
+  "<p>That Servers row is also where Mesh warnings live — the persistent place to check when something feels off. Its dot and line read the connection state at a glance: grey when Mesh is off or no machine is paired yet, green when a paired machine is reachable (amber while a borrow or a lend is actually running), and amber with the reason in short words — <i>“&lt;machine&gt; unreachable”</i>, <i>“&lt;machine&gt; dropped”</i> — when a connection breaks. The chat notice still speaks in the moment a borrow falls back; the status row is what keeps the warning on screen afterwards, until the machine answers again.</p></div>" +
+    "<div class='doc-sec'><h4>Pairing — the card is the handshake</h4>" +
+  "<p>Each machine has a <b>Mesh card</b> — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a <b>capabilities block</b> — the machine's own report of its hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under.</p><ol>" +
+  "<li>On the first machine, open the <b>Mesh page</b>, turn Mesh on, and give the machine a name.</li>" +
+  "<li>Choose <b>Download PNG card</b> and carry the picture file to the second machine.</li>" +
+  "<li>On the second machine, turn Mesh on, then drop the picture onto the <b>Paired machines</b> area — or use <b>Upload a PNG card</b> — and the peer is added.</li>" +
+  "<li>Do the same in the other direction — each machine needs the other's card.</li></ol>" +
+  "<p><b>Pairing is the consent act:</b> a paired machine is a trusted machine, and a paired machine's signed requests are accepted on that basis alone. Either side can unpair by removing the card. The <b>Can borrow</b> toggle on a peer is the borrowing machine's own choice about that peer: untick it there and that machine will not borrow from the peer, while staying paired — it does not gate what the peer accepts.</p>" +
+  "<p><b>The card is a picture — the only way it travels.</b> <b>Download PNG card</b> saves the card as a .png. Its face is the card a person reads — the machine's name, its node identity, and the offer in words: its capabilities, the lending limits it is configured with, and whether it lends when idle or even while busy. The whole card rides inside the picture, in the same data-in-a-picture format the chips use, so Apex keeps one cartridge language. On the other machine, drop the picture onto the Mesh page's <b>Paired machines</b> area, or use <b>Upload a PNG card</b> there, and the peer is added. Earlier builds also offered the card as copyable text; that path is gone — there is nothing to paste anymore, and a text card saved from an earlier build can no longer be used. Machines already paired are unaffected.</p>" +
+  "<p><b>Send the picture as a file.</b> The data inside the picture survives only if the file's bytes arrive untouched. Put it inside a <b>.zip</b> before sending it through a chat app — Discord and its kind recompress the pictures people upload and strip the data out, leaving a picture that looks like the card and pairs nothing. When that has happened, the Mesh page says so in those words and tells you to resend the original inside a .zip. A damaged picture — cut short, or with its payload tampered with — is refused just as loudly, never silently ignored.</p></div>" +
+    "<div class='doc-sec'><h4>Borrowing — automatic, with off switches</h4>" +
+  "<p>Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with its <i>via &lt;name&gt;</i> pill. The first borrowed reply of a session also raises a notice card in the thread, so borrowing never starts silently.</p>" +
+  "<p>Three off switches, from widest to narrowest:</p><ul>" +
+  "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
+  "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
+  "<li><b>This chat only</b>, beside the composer, holds one chat session on this machine — no borrow is attempted for it at all. It stays latched for the session, like the CLI/Navi latch.</li></ul>" +
+  "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set on the Mesh page) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
+    "<div class='doc-sec'><h4>Lending — automatic when idle, off means off</h4>" +
+  "<p>Lending can only be turned <b>on</b> from the lending machine's own dashboard, <b>in person</b>, at that machine. It cannot be armed through the DHD door. Turning it off works from anywhere you are signed in — and <b>Stop lending now</b> ends lending and aborts a borrowed generation already running, mid-flight, at once.</p>" +
+  "<p>Open this page through the DHD door and the <b>Lend this machine</b> switch shows the lock itself: while lending is off it renders locked — dimmed, not clickable — with the reason in plain words directly under the switch, because lending can only be turned on in person. While lending is on, the switch stays live on the remote view, since turning lending off works from anywhere; a note under it says turning it back on will require being at the machine. The lock is the bridge's, not the page's: the bridge refuses a lending turn-on that arrives through the DHD door regardless of what any client renders.</p>" +
+  "<p>A lender serves only inside the limits set on its card:</p><ul>" +
+  "<li><b>Idle only</b> (on by default): the machine must have been quiet for 60 seconds, and no local generation may be running.</li>" +
+  "<li><b>Share cap:</b> borrowed work may take at most a set share of any rolling hour — <b>25%</b> as shipped.</li>" +
+  "<li><b>Generation caps:</b> at most a set number of borrowed generations an hour — <b>20</b> as shipped — and a set number for any one machine — <b>10</b> as shipped.</li></ul>" +
+  "<p>The three caps are yours to set, on the lending machine itself: they sit in the <b>Lending</b> section of its Mesh page, beside the Caps line that shows the current values, and they take effect as soon as you save — no restart. Set them for the machine it is; a strong server can take far more than the shipped defaults. Your card advertises the caps you set, so a paired machine sees the real offer before it asks.</p>" +
+  "<p><b>Idle only</b> has an override in the same section: the <b>Lend only when idle</b> switch, on as shipped. Turn it off and the machine lends without waiting for a quiet minute — borrowed generations run alongside your own work, and your own replies may slow down. The caps still apply, and lending still serves one borrowed generation at a time: a request that arrives mid-generation waits for the next slot, exactly as before. Your card states the posture either way — <i>lends when idle</i> or <i>lends even while busy</i>.</p>" +
+  "<p>Your own work always wins: a local request takes the next slot ahead of any new borrowed work, though it never kills a borrowed answer already running. A request whose assembled context exceeds the lender's context setting is refused whole — never silently truncated.</p></div>" +
+    "<div class='doc-sec'><h4>Privacy — what travels, what never does</h4>" +
+  "<p><b>What travels</b> when you borrow: the assembled prompt for that one reply — your Soul and Memory text, any Vault or knowledge-pack material the question pulled in, and the recent conversation — sent encrypted to the lending machine, whose model reads it to write the reply. The lender keeps none of it: no prompt or reply text is written to disk on the lending machine, ever. But that machine's operator owns the machine it runs on. <b>Only borrow from machines you trust with the conversation.</b> The Mesh page shows this in plain words the first time borrowing is enabled.</p>" +
+  "<p><b>What never travels:</b> your files and data stores, your credentials and access codes, and command-line access. Mesh carries chat requests and replies, nothing else. Mesh keys and dashboard codes are separate credentials that share nothing in either direction: a guest signed in through DHD can never reach Mesh, and a paired Mesh peer gains no dashboard access.</p>" +
+  "<p>Every Mesh request is signed with the borrowing machine's Ed25519 node key and checked against the key on its paired card; stale or unsigned requests are refused with no detail given. The connection is pinned to the certificate fingerprint on the card — if the machine answering presents a different certificate, the borrower refuses and says so in plain words.</p></div>" +
+    "<div class='doc-sec'><h4>The ledger and balances</h4>" +
+  "<p>Each machine keeps a small ledger of Mesh work: who, which direction, how long, how it ended — metadata only, never content. The Mesh page's roster shows each paired machine's <b>balance</b> in seconds lent minus seconds borrowed, next to its capability line and live status (reachable, lending, busy, idle, unreachable). That status is kept current by the bridge itself: while Mesh is on, every paired peer is checked in the background about every thirty seconds — and immediately when a peer is paired and when Mesh is turned on — so a pair reaches “checked” on its own, with no chat sent. A failed check stays on the roster with its reason and how long it has been since the peer last answered — <i>unreachable — unauthorized (last checked 42s ago)</i> — until a newer check replaces it; the age keeps growing while the peer stays down, because failed checks refresh the reason, not the clock. “not checked yet” appears only before a peer's first check has ever completed. A machine's addresses never appear in the roster or anywhere else on screen — they are plumbing for the transport, not display. Balances are a record, not a rule: Ring 1 has no give-to-get enforcement. The ledger stays out of GitHub backups unless you tick <b>Include the Mesh ledger in backups</b> (off by default); the node keypair never rides a backup either way. The pairing-card pictures ride on their own tick — <b>Mesh pairing cards</b> in Settings → GitHub &amp; Backup carries this machine's own card as a PNG, minted fresh as the backup runs, plus a re-drawn picture for every paired peer; a restore lands them in <span class='mono'>config/mesh/cards/</span> and re-pairs the peers through the same card check a hand import passes, and the restoring machine's own card picture is kept as a file — it never overwrites that machine's identity. A fresh reinstall keeps <span class='mono'>config/mesh/</span> on the installer's keep-list, so a machine never loses its identity — or its pairings — to an update.</p></div>" +
+    "<div class='doc-sec'><h4>Getting there — the doors</h4>" +
+  "<p>Mesh always travels through its <b>own dedicated TLS listener</b> on the Mesh port (8765 by default), whether or not DHD is on — and the certificate it serves is the Mesh certificate, the one the paired card pins, in every configuration. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated port. There is no plaintext Mesh listener. Ring 1 does no NAT traversal, no relay, and no racing between lenders: the first reachable lender serves.</p></div>" +
+    "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
+  "<li><b>Certificate fingerprint does not match.</b> The machine that answered is not presenting the certificate on its card — the card is stale, or something else is answering at that address. Re-copy the card from that machine's Mesh page and re-add the peer.</li>" +
+  "<li><b>Replies keep saying “answered locally” with a busy, cap, or idle note.</b> The lender is doing its job: it is mid-answer, over its caps for the hour, or not idle yet. The note names which. Wait, or raise the caps on the lender.</li>" +
+  "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
+  "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
+  "<li><b>“This image has no readable Mesh card data.”</b> The PNG card arrived without its payload — almost always because a chat app recompressed it on the way. Resend the original card file inside a .zip, or by any channel that moves files untouched, and import that.</li></ul></div>" },
   { id: "settings", title: "Settings & persona", related: ["installing", "voice", "github"], html:
     "<div class='doc-sec'><h4>Her persona — Soul and Memory</h4>" +
   "<p>Navi's personality is two documents in <span class='mono'>config/</span>: <span class='mono'>soul.md</span> (who she is) and <span class='mono'>memory.md</span> (what she carries). The bridge builds her system prompt from them on every chat. Both are editable in Settings, along with what she calls you. Nothing overwrites them once they exist: updates, reinstalls, and even a --fresh install stash and restore them, along with her installed chips and the llamafile. Only a first install creates them fresh.</p></div>" +
@@ -2653,9 +2781,10 @@ var DOC_PAGES = [
   "<li><b>Settings &amp; config</b> — what she calls you, her theme, her installed commands, and her voice choice and voice settings.</li>" +
   "<li>Her <b>installed chips</b> — the whole chips, so they come back working, not just named.</li>" +
   "<li>Her <b>RAG packs</b> — their documents, their built indexes, and which ones are switched on.</li>" +
-  "<li>Her <b>workflows</b> — the saved chains of chips.</li></ul>" +
+  "<li>Her <b>workflows</b> — the saved chains of chips.</li>" +
+  "<li>Her <b>Mesh pairing cards</b> — the pictures themselves: her own card, minted fresh as the backup runs, and a re-drawn picture for every machine she is paired with, so a restored Navi can re-pair without meeting everyone from nothing. Her node keypair is never among them — a restored machine still mints its own identity.</li></ul>" +
   "<p>Some things are <b>never</b> backed up, on purpose: your chat transcripts and call logs (those are history, not identity), caches and log files, her <b>hardware profile</b> (a new machine gets profiled fresh at its own install — an old machine's numbers must never be forced onto it), and her voice model files (big downloads that reinstall themselves; her voice <i>settings</i> are backed up).</p>" +
-  "<p>The essentials checklist in Settings → GitHub &amp; Backup starts with all six essentials ticked. <b>Soul, Memory, and Settings &amp; config are ticked automatically and stay ticked</b> — they are what makes an imported Navi her, so every backup carries them. Installed chips, RAG packs, and workflows are yours to choose; untick one of those and it tells you what it means: an import from that backup will no longer be fully ready-to-fly, because the unticked part stays behind.</p></div>" +
+  "<p>The essentials checklist in Settings → GitHub &amp; Backup starts with every essential ticked. <b>Soul, Memory, and Settings &amp; config are ticked automatically and stay ticked</b> — they are what makes an imported Navi her, so every backup carries them. Installed chips, RAG packs, workflows, the Vault, and Mesh pairing cards are yours to choose; untick one of those and it tells you what it means: an import from that backup will no longer be fully ready-to-fly, because the unticked part stays behind.</p></div>" +
     "<div class='doc-sec'><h4>When backups happen, and bringing her back</h4>" +
   "<p>You pick how often: <b>every day, every 3 days, every 5 days, or every 7 days</b>. Navi checks the clock herself — when she starts, and while she is running — and when a backup is due and she is signed in, she runs it. That is the honest limit: <b>backups happen while Navi is running.</b> If the machine is off when one comes due, it simply runs at her next start. Settings → GitHub &amp; Backup shows the last backup's time and what it wrote, and the same for the last import — and the status column carries a <b>Backup</b> section with the last backup's time and result at a glance (or says plainly that no backup has run yet).</p>" +
   "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — transcripts, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" },
@@ -2677,16 +2806,18 @@ var DOC_PAGES = [
   "<li><b>Bazzite</b> — Fedora-based but immutable, so it is its own case (below).</li></ul>" +
   "<p>Everything else — profiling your machine, the model download, what an update keeps, the startup choice — is the same on every family. On <b>Bazzite</b> the installer never layers packages onto the system with <span class='mono'>rpm-ostree</span> and never asks for a reboot: her window is built inside a Fedora <b>distrobox</b> when you have one, and when you don't, the window build is skipped — in plain words, during the install — and you get the complete core install: the bridge and the dashboard, which <span class='mono'>start.sh</span> opens in your browser. Create a Fedora distrobox later and re-run the installer to add the window. And if your distro isn't one the installer recognizes, it says so, guesses no package manager, installs everything it can user-space, and completes the core install just the same.</p>" +
   "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
-  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.6a → v0.1.7</b>, with the actual versions — and only when the VERSION file after the restart reads the version the update promised. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. That command carries your startup and voice choices as flags (<span class='mono'>--startup</span> / <span class='mono'>--voice</span>), so the installer never has to ask a question — which is the whole point in a shell with no terminal to answer one, like her own CLI shell: there, an installer that asks dies at the first question (issue #75, field-proven on a staged update), while the flagged command runs straight through. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
-  "<p><b>Two channels: Stable and Edge.</b> The Updater follows one release channel, chosen at the top of the Updater tab. <b>Stable</b> (the default) follows full releases only — cut from the project's main branch and tagged with the bare version number, like <b>v0.1.7</b>. <b>Edge</b> follows the newest release including pre-releases — test builds cut from the project's separate dev branch and tagged with an <span class='mono'>e</span>, like <b>v0.1.8e</b>. Edge is how you get a build before it is finished: newer, less settled. An Edge build of a version is the preview of that version, never an upgrade over its full release — when the full release of the same numbers lands, graduating to it is the update. Switching back to Stable never downgrades you; it simply waits for the next full release to pass what you run. The <b>About this release</b> dropdown at the bottom of the Updater tab carries the release page of the version you are running — its name, tag, whether it is a full release or an Edge pre-release, its published date, the link to GitHub, and its full patch notes — fetched with the same check, straight from the release page.</p>" +
+  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.6a → v0.1.7</b>, with the actual versions — and only when the install after the restart reads as what the update promised: the VERSION file's version — and, for a same-version build refresh, the build number the relaunched bridge reports and the one baked into the bridge on disk, since a refresh deliberately keeps the same version number. Before staging, the package itself is proven to be the build on offer: a package left beside the app by an earlier update is reused only when its size matches the offered package's, and the build number inside its bridge must match the release's, or it is fetched fresh. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's <span class='mono'>./install.sh</span> in a terminal. That command carries your startup and voice choices as flags (<span class='mono'>--startup</span> / <span class='mono'>--voice</span>), so the installer never has to ask a question — which is the whole point in a shell with no terminal to answer one, like her own CLI shell: there, an installer that asks dies at the first question (issue #75, field-proven on a staged update), while the flagged command runs straight through. The helper keeps a <b>step log</b> while it works — <span class='mono'>apply-trace.log</span> in the update's folder under <span class='mono'>updates/</span>, its path named on the apply record — timestamping every step it completes, with a heartbeat while it waits, so an interrupted apply shows exactly where it stopped; if the helper itself fails or is stopped, the record is closed as failed at that step with the reason in words, and if the helper is killed outright — the one death it cannot record itself — the bridge's <b>apply watchdog</b> closes the record the same way, quoting the step log's last line, instead of leaving it claiming to be installing forever. A relaunched bridge that never answers fails the record at the restarting step, naming the build that was expected and what was found instead. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
+  "<p><b>An update never needs a reboot — and it proves it took.</b> Before any file is replaced, the installer finds the bridge that is running — by its pid file, by the process holding her port, and by every bridge process working out of the install folder — and stops it <i>provably</i>: it waits for the process to be gone and the port to be free, escalates to a forced end if a polite signal is not enough, and if the port still cannot be cleared it aborts before touching a single file, naming the process that holds the port and the exact command that ends it (<span class='mono'>kill -9 &lt;pid&gt;</span>). Nothing is left nameless: a stuck process is a named process, with its remedy printed. If a bridge was running when the install began, the installer also relaunches her at the end and checks that the bridge answering reports the new build before it says <span class='mono'>Done.</span> — an update is not finished when the files land, but when the new build is the thing answering. The apply helper runs the same escalation before its own relaunch, and a dashboard left open across the update notices the bridge is newer than the page and offers a reload in the status column, so the new UI is one click away rather than one reboot. (An installer run that should leave her stopped can say so: <span class='mono'>--no-relaunch</span> — and it prints plainly that Apex is not running.)</p>" +
+  "<p><b>Two channels: Stable and Edge.</b> The Updater follows one release channel, set by the <b>Release channel</b> card directly under the Current card in the Updater tab — the panel reads Current, then Release channel, then the patch notes, then the Check for updates / Download &amp; install buttons. <b>Stable</b> follows full releases only — cut from the project's main branch and tagged with the bare version number, like <b>v0.1.7</b>. <b>Edge</b> follows the newest release including pre-releases — test builds cut from the project's separate dev branch and tagged with an <span class='mono'>e</span>, like <b>v0.1.8e</b>. Edge is how you get a build before it is finished: newer, less settled. <b>Until you choose a channel yourself, the default follows the build you are running</b>: an Edge build defaults to the Edge channel, a full release to Stable — a preview is never silently stranded on a channel that does not carry it. A channel you pick in the panel is yours and it stays. And if you are running an Edge build and set the channel to Stable yourself, the Updater says so plainly, in a notice in the panel: Edge builds and refreshes of your preview are published only on Edge, so none will be offered while the channel stands. An Edge build of a version is the preview of that version, never an upgrade over its full release — when the full release of the same numbers lands, graduating to it is the update. Switching back to Stable never downgrades you; it simply waits for the next full release to pass what you run. The <b>About this release</b> dropdown in the Updater tab carries the release page of the version you are running — its name, tag, whether it is a full release or an Edge pre-release, its published date, the link to GitHub, and its full patch notes — fetched with the same check, straight from the release page.</p>" +
+  "<p><b>Checks also happen in the background.</b> While the bridge runs, it re-checks your channel on its own every three hours, the first run shortly after startup, and the dashboard folds the verdict in quietly: an available update shows as <b>Update available</b> without you pressing anything, and a stale one clears. It never interrupts an install already under way. <b>Edge publications of one version are numbered</b> — Build 1, Build 2, and so on: the Updater's Current line shows the build you are running, and when the same Edge version is republished with fixes, the offer is a <b>refresh</b> of the preview you already run (Build 2 replaces Build 1), labeled with its build — not a new version. When the offered update is an Edge pre-release, an amber notice in the Updater says so plainly: preview contents can change between builds, your Soul, Memory, chips and packs carry over as always, and the next full release supersedes the preview automatically; graduating to that full release gets a green notice instead, because updating leaves the preview line.</p>" +
   "<p><b>Turn Sudo Mode on before you update.</b> The installer's system step needs root, and without it an update can stall or finish without its system packages — field-proven the hard way. So when an update is available and Sudo Mode is off, the Updater shows a red warning directly above the <b>Download &amp; install</b> button: <i>Enable Sudo Mode before updating.</i> Turn Sudo Mode on (in the status column) and the warning is replaced by a quiet green <i>Sudo Mode is on — ready to update.</i> It is a warning, not a lock — the button still works, because you may know your machine needs nothing new.</p>" +
-  "<p><b>Once you opt in, the install chain moves.</b> The moment you press Download &amp; install, the step chain — downloading, verifying, staging, installing, DHD prerequisites, restarting — appears directly above the release notes, with a slim progress bar across the top of its card: the bar for the glance, the chain for the receipts. And if the Installing step runs long, the chain says why, in place: <i>Taking a while? This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster.</i> No countdown and no ETA — on a modest machine an honest note beats a lying estimate.</p>" +
-  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.1.7</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.1.8 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.1.8e</b> and this full release reads <b>v0.1.7</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
+  "<p><b>Once you opt in, the install chain moves.</b> The moment you press Download &amp; install, the step chain — downloading, verifying, staging, installing, DHD prerequisites, restarting — appears below the buttons, as the panel's tail, with a slim progress bar across the top of its card: the bar for the glance, the chain for the receipts. And if the Installing step runs long, the chain says why, in place: <i>Taking a while? This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster.</i> No countdown and no ETA — on a modest machine an honest note beats a lying estimate.</p>" +
+  "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.1.8</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.1.9 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.1.9e</b> and this full release reads <b>v0.1.8</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
   "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
-  "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still running after a reinstall. Quit the app fully and relaunch.</li>" +
+  "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still answering after a reinstall. The installer and the Updater now stop the old bridge and prove it stopped before new files land, so this should not survive an update; if you meet it after starting a bridge by hand, quit the app fully and relaunch — and if a process ever holds her port and will not stop, the failure that reports it names the process and the exact <span class='mono'>kill -9</span> command that ends it.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
   "<li><b>She doesn't answer.</b> Every chat request is bounded — at most 1,024 tokens of generation — and the bridge waits up to ten minutes for a CPU-bound reply to finish. If the wait runs out, the message in the thread says the model was still generating; that never means the server died. An empty reply from the model is reported the same way, in the thread, rather than swallowed as silence.</li>" +
   "<li><b>The llamafile won't start.</b> Press Connect — in app-launch mode the bridge starts the server itself and reports the specific failure.</li>" +
@@ -2922,8 +3053,11 @@ function srcPills(sources) {
   // pill per source, pack › document, drawn under the message it
   // belongs to. Only a message that actually drew on a pack
   // carries any — once the conversation moves on, they stop.
+  // The pills are returned BARE (no row wrapper of their own):
+  // pillRow() owns the one row under a reply, so a Mesh pill and
+  // source pills can share it — Build 8 (#88).
   if (!sources || !sources.length) return "";
-  return "<div class='srcs' aria-label='Sources'>" + sources.map(function (s) { return "<span class='srcpill'>" + esc(s.pack) + " <span class='srcsep' aria-hidden='true'>›</span> " + esc(s.document) + "</span>"; }).join("") + "</div>";
+  return sources.map(function (s) { return "<span class='srcpill'>" + esc(s.pack) + " <span class='srcsep' aria-hidden='true'>›</span> " + esc(s.document) + "</span>"; }).join("");
 }
 // Ghost-hint history for the chat composer: the CLI lines already
 // run in this conversation, newest first — terminal blocks carry
@@ -2970,13 +3104,13 @@ function liveChat(text, speak) {
     if (x.exec) content += "\n\n[terminal]\n" + execContextText(x.exec);
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
-  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous" };
+  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused }; });
+    .then(function (j) { vaultLoadedAt = 0; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null }; });
 }
 function isDhdChatIntent(text) {
-  return /dhd/i.test(text || "") && /(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)/i.test(text || "") && !/^s*(how|what|why|explain)/i.test(text || "");
+  return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
 }
 function liveShell(cmd) {
   return fetch("/api/shell", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: cmd, sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
@@ -3356,7 +3490,7 @@ function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 function renderLlama() {
   var h = "<div class='stat'><span class='dot" + (llama.status === "running" ? " pdot" : "") + "' style='background:" + (llama.status === "running" ? "#34d399" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>LLAMAFILE</span><br>";
   if (llama.status === "running") {
-    h += "<span class='mono' style='color:#34d399;font-weight:700'>Running</span><details style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Server details</summary><div style='margin-top:2px'><div style='color:var(--text);font-size:12px;font-weight:700'>Local Llamafile Server</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:8080</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Apex Web UI</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:" + BRIDGE_PORT + "</div></div></details><button class='ghost' id='llama-disc' style='margin-top:6px'>Disconnect</button>";
+    h += "<span class='mono' style='color:#34d399;font-weight:700'>Running</span><details style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Server details</summary><div style='margin-top:2px'><div style='color:var(--text);font-size:12px;font-weight:700'>Local Llamafile Server</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:8080</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Apex Web UI</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:" + BRIDGE_PORT + "</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Bridge</div><div class='mono' style='color:var(--dim);font-size:12px'>build " + BRIDGE_BUILD + (bridgeRoot ? " · " + esc(bridgeRoot) : "") + "</div></div></details><button class='ghost' id='llama-disc' style='margin-top:6px'>Disconnect</button>";
   } else {
     h += "<button class='ghost' id='llama-conn' style='border-color:#f87171;color:#f87171;font-weight:700;margin-top:4px'>Disconnected. Click to Connect.</button>";
     if (llama.error) h += "<div style='color:#f87171;font-size:12px;margin-top:4px'>" + esc(llama.error) + "</div>";
@@ -3838,6 +3972,467 @@ function wireDhdStatus() {
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.lanUrl).catch(function () {});
   };
 }
+function meshViewState() {
+  // One shape for both sources: the bridge's /api/status mesh
+  // report (live) and the baked CONFIG.mesh block (mock mode and
+  // the first paint before the first poll lands).
+  if (meshState) return meshState;
+  var m = CONFIG.mesh || {};
+  var b = m.borrow || {}, l = m.lend || {};
+  return {
+    enabled: !!m.enabled, role: m.role || "both", nodeName: m.nodeName || "", nodeId: m.nodeId || "",
+    borrowEnabled: b.enabled !== false, graceMs: b.graceMs != null ? b.graceMs : 2000,
+    lendEnabled: !!l.enabled,
+    lend: { maxSharePercent: l.maxSharePercent != null ? l.maxSharePercent : 25, maxGenerationsPerHour: l.maxGenerationsPerHour != null ? l.maxGenerationsPerHour : 20, perPeerPerHour: l.perPeerPerHour != null ? l.perPeerPerHour : 10, idleOnly: l.idleOnly !== false, idleAfterSeconds: l.idleAfterSeconds != null ? l.idleAfterSeconds : 60 },
+    ledgerInBackup: !!m.ledgerInBackup, borrowing: false, lendingNow: false,
+    viaDhd: false,
+    state: m.enabled ? ((b.peers || []).length ? "on" : "no-peers") : "off", warning: "",
+    peers: (b.peers || []).map(function (p) { return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0 }; })
+  };
+}
+function meshDotColor(m) {
+  // Build .87: the payload's summary state drives the dot, in
+  // the status column's established dot language only — grey
+  // off / no peers, green reachable, amber borrowing/lending or
+  // any warning (an unreachable OR a dropped peer; the row's
+  // line carries which, in words). No new dot color is invented
+  // for Mesh: the warning surfaces through the same language
+  // every other Servers row speaks. Payloads from before .87
+  // (no state field) fall through to the older derivation.
+  if (!m.enabled) return "#9fb3c8";
+  if (m.state === "warning") return "#f5b544";
+  if (m.state === "no-peers") return "#9fb3c8";
+  if (m.borrowing || m.lendingNow) return "#f5b544";
+  if (m.peers && m.peers.length && m.peers.every(function (p) { return p.reachable === false; })) return "#f5b544";
+  return "#34d399";
+}
+function meshFmtSec(sec) {
+  var s = Math.round(sec || 0);
+  return (s > 0 ? "+" : s < 0 ? "−" : "") + Math.abs(s) + "s";
+}
+function meshAgeText(sec) {
+  // Build 7 (#87): the age of a peer's last probe, the way the
+  // roster speaks it — "42s", "3m", "2h" — inside "(last checked
+  // … ago)". Null (never probed) renders nothing.
+  if (sec == null) return "";
+  var s = Math.max(0, Math.round(sec));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.round(s / 60) + "m";
+  return Math.round(s / 3600) + "h";
+}
+function meshUnreachableText(p) {
+  // Build 7 (#87): a failed check keeps its reason and its age —
+  // "unreachable — unauthorized (last checked 42s ago)" — and
+  // never decays back to "not checked yet"; that phrase is
+  // reserved for a peer no probe has ever completed for.
+  var t = "unreachable";
+  if (p.lastProbeError) t += " — " + p.lastProbeError;
+  var age = meshAgeText(p.lastProbeAgeSec);
+  if (age) t += " (last checked " + age + " ago)";
+  return t;
+}
+function meshPillHtml(mesh) {
+  // The Mesh attribution pill itself (Build 3), BARE since
+  // Build 8 (#88): pillRow() owns the one row under a reply and
+  // puts this pill first in it, ahead of any source pills.
+  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Navi Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
+}
+function pillRow(mesh, sources) {
+  // Build 8 (#88): ONE row under a reply carries every pill —
+  // the Mesh attribution FIRST, then the source pills. Before,
+  // each kind rendered its own wrapping .srcs row, so a reply
+  // that was both borrowed and pack-informed stacked two rows
+  // with the Mesh pill on the bottom — the field report that
+  // filed #88. The row never wraps (flex-nowrap): on a phone the
+  // pills shrink and ellipsize inside it instead of pushing the
+  // page sideways or stacking.
+  var pills = "";
+  if (mesh && mesh.servedBy === "mesh") pills += meshPillHtml(mesh);
+  pills += srcPills(sources);
+  if (!pills) return "";
+  var hasMesh = !!(mesh && mesh.servedBy === "mesh");
+  var hasSrc = !!(sources && sources.length);
+  var label = hasMesh && hasSrc ? "Answered by a paired machine — sources" : hasMesh ? "Answered by a paired machine" : "Sources";
+  return "<div class='srcs pillrow' aria-label='" + label + "'>" + pills + "</div>";
+}
+function meshLineHtml(mesh) {
+  // The quiet line under a reply Mesh touched (build .85): who
+  // answered, or why this machine answered instead. Same register
+  // as the source pills — metadata, never part of the reply.
+  // Build 3: a mesh-served reply carries its attribution as a
+  // PILL — Hexlink glyph + "via <name>" in Mesh Cyan, one glance,
+  // no prose line — rendered by pillRow() since Build 8, never
+  // from here. The fallback lines below stay plain text: a
+  // dropped or busy lender is a notice, not an attribution, and
+  // local replies carry nothing at all — absence means local.
+  if (!mesh) return "";
+  if (mesh.servedBy === "mesh") return "";
+  if (mesh.notice) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(mesh.notice) + "</div>";
+  if (mesh.fellBack) {
+    var why = mesh.reason === "busy" ? " was busy"
+      : mesh.reason === "cap" ? " is at its lending cap for the hour"
+      : mesh.reason === "idle" ? " is not idle yet"
+      : mesh.reason === "lending-off" ? " is not lending right now"
+      : mesh.reason === "fingerprint" ? " presented a certificate that does not match its card"
+      : mesh.reason === "unauthorized" ? " did not accept this machine's signature"
+      : mesh.reason === "too-large" ? " could not fit this chat in its context"
+      : mesh.reason === "unreachable" ? " could not be reached"
+      : "";
+    return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc((mesh.node || "The paired machine") + why + " — answered locally") + "</div>";
+  }
+  return "";
+}
+function renderMeshStatus() {
+  var m = meshViewState();
+  var dot = meshDotColor(m);
+  var line = "Off";
+  if (m.enabled) {
+    // Build .87: a warning from the payload outranks every other
+    // line — the row is the persistent warning surface, so a
+    // dropped or unreachable peer is what the row SAYS, in the
+    // payload's own short words ("<name> dropped"). Short by
+    // construction, and the span wraps rather than widening the
+    // column on a phone.
+    if (m.state === "warning" && m.warning) line = m.warning;
+    else if (m.borrowing) line = "Borrowing now";
+    else if (m.lendingNow) line = "Lending now";
+    else if (m.lendEnabled && m.borrowEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle") + " · borrowing automatic";
+    else if (m.lendEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle");
+    else if (m.borrowEnabled) line = m.peers && m.peers.length ? "On — borrowing automatic" : "On — no peers paired yet";
+    else line = "On — borrowing and lending both off";
+  }
+  var h = "<div class='stat'><span class='dot" + (m.enabled ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>Navi Mesh</span><br>" +
+    "<span class='v mono' style='font-weight:700;overflow-wrap:anywhere'>" + esc(line) + "</span>";
+  h += "<details id='mesh-details'" + (meshDetailsOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Mesh details</summary><div style='margin-top:6px'>";
+  if (!m.enabled) {
+    h += "<div style='color:var(--dim);font-size:12px'>Mesh is off. Turn it on from the Mesh page to pair this machine with your others.</div>";
+  } else {
+    h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>THIS MACHINE</div><div style='font-size:12px'>" + esc(m.nodeName || "Unnamed") + (m.nodeId ? " · <span class='mono'>" + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
+    if (m.peers && m.peers.length) {
+      h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>PAIRED MACHINES</div>";
+      m.peers.forEach(function (p) {
+        var reach = (p.status && p.status !== "unknown") ? p.status : p.reachable === true ? "reachable" : p.reachable === false ? "unreachable" : "not checked yet";
+        if (p.status === "unreachable" || (p.status == null && p.reachable === false)) reach = meshUnreachableText(p);
+        h += "<div style='font-size:12px;margin-top:2px'>" + esc(p.name) + " <span style='color:var(--dim)'>· " + reach + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>";
+      });
+    } else {
+      h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>No machines paired yet — pairing is a card exchange, on the Mesh page.</div>";
+    }
+  }
+  h += "</div></details></div>";
+  return h;
+}
+function wireMeshStatus() {
+  var det = document.getElementById("mesh-details");
+  if (det) det.addEventListener("toggle", function () { meshDetailsOpen = det.open; });
+}
+function meshSave(patch) {
+  if (patch.borrowEnabled) { meshPrivacyAcked = true; try { localStorage.setItem("navi.meshPrivacyAck", "1"); } catch (e) {} }
+  if (CONFIG.backend !== "live") {
+    var m = CONFIG.mesh = CONFIG.mesh || { enabled: false, role: "both", nodeName: "", borrow: { enabled: true, graceMs: 2000, peers: [] }, lend: { enabled: false, maxSharePercent: 25, maxGenerationsPerHour: 20, perPeerPerHour: 10, idleOnly: true, idleAfterSeconds: 60 }, port: 8765, nodeId: "", ledger: true, ledgerInBackup: false };
+    m.borrow = m.borrow || { enabled: true, graceMs: 2000, peers: [] };
+    m.lend = m.lend || { enabled: false, maxSharePercent: 25, maxGenerationsPerHour: 20, perPeerPerHour: 10, idleOnly: true, idleAfterSeconds: 60 };
+    if (patch.enabled != null) m.enabled = patch.enabled;
+    if (patch.nodeName != null) m.nodeName = patch.nodeName;
+    if (patch.borrowEnabled != null) m.borrow.enabled = patch.borrowEnabled;
+    if (patch.graceMs != null) m.borrow.graceMs = patch.graceMs;
+    if (patch.lendEnabled != null) m.lend.enabled = patch.lendEnabled;
+    if (patch.maxSharePercent != null) m.lend.maxSharePercent = patch.maxSharePercent;
+    if (patch.maxGenerationsPerHour != null) m.lend.maxGenerationsPerHour = patch.maxGenerationsPerHour;
+    if (patch.perPeerPerHour != null) m.lend.perPeerPerHour = patch.perPeerPerHour;
+    if (patch.idleOnly != null) m.lend.idleOnly = patch.idleOnly;
+    if (patch.ledgerInBackup != null) m.ledgerInBackup = patch.ledgerInBackup;
+    saveCfg(); meshMsg = "Saved (mock mode — simulated)."; render(); return;
+  }
+  fetch("/api/mesh/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok) { meshState = j.mesh; meshMsg = "Saved."; }
+      else meshMsg = (j && j.error) || "The bridge refused that change.";
+      render();
+    })
+    .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+}
+function meshSwitchRow(id, on, label, ariaLabel, locked) {
+  // Build 6 (#86): a locked switch is the same switch, dimmed
+  // and disabled — no new visual language. It is used for the
+  // Lend switch on the DHD-door view while lending is off: the
+  // bridge refuses that turn-on in person only, so the control
+  // says so instead of dressing as a working toggle.
+  var lockAttrs = locked ? " disabled aria-disabled='true'" : "";
+  var lockStyle = locked ? " style='opacity:.45;cursor:not-allowed'" : "";
+  return "<div style='display:flex;align-items:center;gap:8px;margin-top:8px'><button class='switch' id='" + id + "' role='switch' aria-checked='" + (on ? "true" : "false") + "' aria-label='" + esc(ariaLabel) + "'" + lockAttrs + lockStyle + "><span class='knob'></span></button><span>" + esc(label) + "</span></div>";
+}
+function meshCapLine(caps) {
+  // One node's capability line for the roster: hardware class,
+  // GPU (or CPU), RAM, model, speed class, caps — the peer's own
+  // self-report from its card / latest probe. Absent fields are
+  // skipped, never invented. Addresses are NEVER part of this
+  // line: a peer's addresses are plumbing, not display.
+  if (!caps) return "";
+  var bits = [];
+  if (caps.hardwareClass) bits.push(caps.hardwareClass);
+  if (caps.gpu) bits.push(caps.gpu);
+  else if (caps.cpu) bits.push(caps.cpu);
+  if (caps.ramGB) bits.push((Math.round(caps.ramGB * 10) / 10) + " GiB RAM");
+  bits.push("model " + (caps.model || "navi"));
+  if (caps.speedClass) bits.push(caps.speedClass);
+  if (caps.caps) bits.push("lends at most " + caps.caps.maxSharePercent + "% of each hour, " + caps.caps.maxGenerationsPerHour + " generations an hour");
+  // Build 7 (Fix F2): the posture closes the line, stated the
+  // same way on the machine's own row and every peer row.
+  bits.push(caps.idleOnly === false ? "lends even while busy" : "lends when idle");
+  return bits.join(" · ");
+}
+function meshRosterHtml() {
+  // The Mesh page's roster (build .86): this node and every
+  // paired node — name, capability line, live status, balance.
+  // Names and capabilities only: no address ever renders here.
+  var m = meshViewState();
+  var h = "<div class='card'><h3>Mesh roster</h3>";
+  if (!m.enabled) {
+    h += "<p style='color:var(--dim)'>Mesh is off — turn it on with the controls above and the roster fills in as machines are paired.</p></div>";
+    return h;
+  }
+  var selfStatus = m.lendingNow ? "lending now" : m.borrowing ? "borrowing now" : "idle";
+  var selfDot = (m.lendingNow || m.borrowing) ? "#f5b544" : "#34d399";
+  h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
+    "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + selfDot + "'></span><b>" + esc(m.nodeName || "This machine") + "</b><span style='color:var(--dim);font-size:12px'>this machine · " + selfStatus + "</span></div>" +
+    (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") + "</div>";
+  (m.peers || []).forEach(function (p) {
+    var status = p.reachable === false ? meshUnreachableText(p) : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
+    var dot = p.reachable === false ? "#f87171" : p.probeBusy ? "#f5b544" : p.reachable === true ? "#34d399" : "#9fb3c8";
+    h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
+      "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + dot + "'></span><b>" + esc(p.name) + "</b><span style='color:var(--dim);font-size:12px'>" + status + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
+      (meshCapLine(p.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(p.capabilities)) + "</div>" : "") + "</div>";
+  });
+  if (!m.peers || !m.peers.length) h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>No machines paired yet — pair one with the card exchange above.</p>";
+  h += "</div>";
+  return h;
+}
+function meshCardHtml() {
+  var m = meshViewState();
+  var lend = m.lend || {};
+  var h = "<div class='card'><h3>Navi Mesh</h3>" +
+    "<p style='color:var(--dim)'>Pooled inference across your machines: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is a card you carry by hand — a paired machine is a trusted machine.</p>";
+  // Build 6 (#86): save confirmations and refusals render here,
+  // at the controls, directly under the intro — not at the foot
+  // of the card, where a person mid-click never sees them.
+  if (meshMsg) h += "<p style='font-size:12px'>" + esc(meshMsg) + "</p>";
+  h += meshSwitchRow("mesh-master", m.enabled, "Navi Mesh", "Navi Mesh master switch");
+  if (m.enabled) {
+    h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's name <input id='mesh-name' type='text' value='" + esc(m.nodeName || "") + "' placeholder='e.g. Home server' aria-label='This machine’s Mesh name' style='min-height:44px'></label>" +
+      (m.nodeId ? "<span class='mono' style='font-size:11px;color:var(--dim)'>node " + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
+    h += "<h4 style='margin:14px 0 0'>Borrowing</h4>";
+    h += meshSwitchRow("mesh-borrow", m.borrowEnabled, "Borrow from my paired machines (automatic)", "Borrow from paired machines — automatic when a lender is reachable, with this off switch");
+    if (m.borrowEnabled && !meshPrivacyAcked) {
+      h += "<p style='font-size:12px;border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:8px'>Borrowing sends this chat's full context — including your Soul and Memory pages and recent conversation — to the lending machine, whose model reads it to write the reply. It is encrypted on the way and the lender keeps none of it, but that machine's operator owns the machine it runs on. Only borrow from machines you trust with the conversation.</p>";
+    }
+    h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>Grace when a lender is busy <input id='mesh-grace' type='number' min='0' max='30000' step='100' value='" + (m.graceMs != null ? m.graceMs : 2000) + "' aria-label='Borrow grace in milliseconds' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'> ms</label></div>" +
+      "<p style='color:var(--dim);font-size:12px'>If a lender is busy, this machine waits up to the grace for it to free up, then answers locally. A freed lender serves the next request — never a half-written reply.</p>";
+    h += "<h4 style='margin:14px 0 0'>Lending</h4>";
+    // Build 6 (#86): on the DHD-door view (viaDhd) with lending
+    // off, the switch renders LOCKED — the bridge refuses a
+    // remote turn-on, so the control shows the lock and the
+    // reason sits directly under it. With lending on, the
+    // switch stays live (off works from anywhere) with the
+    // turn-back-on note. Locally (viaDhd false) this section
+    // renders exactly as it always has.
+    var lendLocked = !!m.viaDhd && !m.lendEnabled;
+    // Build 7 (Fix F2): the switch's own words follow the
+    // idle-only posture — with the override off, "automatic when
+    // idle" would be a false label on a live control.
+    var lendIdleOnly = lend.idleOnly !== false;
+    h += meshSwitchRow("mesh-lend", m.lendEnabled, lendIdleOnly ? "Lend this machine (automatic when idle)" : "Lend this machine (automatic, even while busy)", lendIdleOnly ? "Lend this machine — automatic when idle, inside the caps below" : "Lend this machine — automatic, even while busy, inside the caps below", lendLocked);
+    if (lendLocked) h += "<p style='color:var(--dim);font-size:12px'>Lending can only be turned on at this machine, in person — and this view is through the DHD door, so the switch is locked here. Turning it off works from anywhere.</p>";
+    else if (m.viaDhd && m.lendEnabled) h += "<p style='color:var(--dim);font-size:12px'>You are viewing through the DHD door: you can turn lending off from here, but turning it back on will require being at this machine, in person.</p>";
+    h += "<p style='color:var(--dim);font-size:12px'>Caps: at most " + (lend.maxSharePercent != null ? lend.maxSharePercent : 25) + "% of each hour · " + (lend.maxGenerationsPerHour != null ? lend.maxGenerationsPerHour : 20) + " borrowed generations an hour · " + (lend.perPeerPerHour != null ? lend.perPeerPerHour : 10) + " per machine" + (lend.idleOnly !== false ? " · idle only (" + (lend.idleAfterSeconds != null ? lend.idleAfterSeconds : 60) + "s quiet)" : "") + ". Your own work always takes the next slot.</p>" +
+      // Build 7 (Fix F): the caps are operator settings, set
+      // right here in the Lending section — inline with the Lend
+      // switch and the Caps line above, never behind a panel or
+      // in Settings. Same input family as the grace field; the
+      // row wraps on a phone and every input is a 44px target.
+      // Saving rides the card's Save button (wireMeshCard), and
+      // the bridge applies the new caps to the next admission
+      // and the next card it shows — no restart.
+      "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'>" +
+      "<label style='font-size:12px'>Share of each hour <input id='mesh-cap-share' type='number' min='1' max='100' step='1' value='" + (lend.maxSharePercent != null ? lend.maxSharePercent : 25) + "' aria-label='Lending cap — share of each hour, percent' style='width:84px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'> %</label>" +
+      "<label style='font-size:12px'>Generations per hour <input id='mesh-cap-gen' type='number' min='1' max='10000' step='1' value='" + (lend.maxGenerationsPerHour != null ? lend.maxGenerationsPerHour : 20) + "' aria-label='Lending cap — borrowed generations per hour' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label>" +
+      "<label style='font-size:12px'>Per machine per hour <input id='mesh-cap-peer' type='number' min='1' max='10000' step='1' value='" + (lend.perPeerPerHour != null ? lend.perPeerPerHour : 10) + "' aria-label='Lending cap — borrowed generations per machine per hour' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label></div>" +
+      "<p style='color:var(--dim);font-size:12px'>Set these for the machine this is — a strong server can take far more than the shipped defaults (25%, 20 an hour, 10 per machine). Your card advertises what you set here, so a paired machine sees the real offer.</p>" +
+      "<p style='color:var(--dim);font-size:12px'>Lending can only be turned ON here, on this machine's own dashboard — never through the DHD door. Turning it off works from anywhere you are signed in. When you lend, this machine's model reads prompts assembled on your paired machines to answer them; the bridge keeps none of their content — the ledger holds only who, which direction, and how long.</p>";
+    // Build 7 (Fix F2): the idle-only override, in the same
+    // always-visible Lending section as the caps — the switch
+    // flips on click like the others (wireMeshCard), the bridge
+    // saves it into the lend block, and admission reads it on
+    // the next request. The line under it states the current
+    // posture's consequence in plain words, both ways.
+    h += meshSwitchRow("mesh-idle-only", lendIdleOnly, "Lend only when idle", "Lend only when idle — off means this machine lends without waiting for a quiet minute");
+    h += lendIdleOnly
+      ? "<p style='color:var(--dim);font-size:12px'>On: this machine lends only after " + (lend.idleAfterSeconds != null ? lend.idleAfterSeconds : 60) + " seconds of quiet. Turn it off and it lends without waiting to be idle.</p>"
+      : "<p style='color:var(--dim);font-size:12px'>Off: this machine lends without waiting to be idle — borrowed generations run alongside your own work, and your own replies may slow down. The caps above still apply, and lending still serves one borrowed generation at a time.</p>";
+    if (m.lendEnabled) h += "<p><button type='button' class='ghost' id='mesh-stop' aria-label='Stop lending now — ends lending and aborts any borrowed generation in flight' style='min-height:44px;color:#f87171;border-color:#f87171'>Stop lending now</button></p>";
+    h += "<h4 style='margin:14px 0 0'>Paired machines</h4>";
+    if (m.peers && m.peers.length) {
+      m.peers.forEach(function (p) {
+        var reachDot = p.reachable === true ? "#34d399" : p.reachable === false ? "#f87171" : "#9fb3c8";
+        h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
+          "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + reachDot + "'></span><b>" + esc(p.name) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.short || "") + "</span><span style='color:var(--dim);font-size:12px'>balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
+          "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Borrow from " + esc(p.name) + " — this machine borrows from it while this is on'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
+          "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div></div>";
+      });
+    } else {
+      h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Download your PNG card here, carry the file to the other machine, and bring its PNG card back to drop below.</p>";
+    }
+    h += "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'><button type='button' class='act' id='mesh-card-png' aria-label='Download my Mesh card as a PNG picture' style='min-height:44px'>Download PNG card</button></div>" +
+      "<p style='color:var(--dim);font-size:12px'>Your card is a picture: a face you can read — name, node, the offer — with the whole card riding inside the picture, the way chips travel. Pairing is the picture, only — there is no text card to copy or paste anymore. Send the file itself; for a chat app, put it inside a .zip first, because chat apps recompress pictures and strip the data out.</p>";
+    // Build 7 (spec section 13): the PNG import — a visible drop
+    // target plus an upload control, both feeding the one
+    // importer (wireMeshCard). Drag-and-drop is the desktop
+    // path; the upload button is the path that works everywhere,
+    // phones included: a 44px target, and the zone wraps its
+    // words instead of widening the page at 360-430px.
+    h += "<div id='mesh-png-zone' style='margin-top:12px;border:1.5px dashed " + (meshPngDrag ? "var(--accent)" : "var(--line)") + ";border-radius:6px;padding:12px;text-align:center'>" +
+      "<p style='font-size:12px;margin:0'>Pair by picture — drop the other machine's PNG card here</p>" +
+      "<p style='margin:8px 0 0'><label for='mesh-png-file' class='act' style='display:inline-flex;align-items:center;min-height:44px;padding:0 14px;cursor:pointer'>Upload a PNG card</label>" +
+      "<input type='file' id='mesh-png-file' accept='image/png,.png' aria-label='Upload a Mesh PNG card file' style='display:none'></p>" +
+      "<p style='color:var(--dim);font-size:11px;margin:8px 0 0'>The picture must arrive as the original file — inside a .zip for chat apps, which recompress pictures and strip the card data out.</p>" +
+      (meshPngMsg ? "<p style='font-size:12px;margin:8px 0 0'>" + esc(meshPngMsg) + "</p>" : "") +
+      "</div>";
+    h += "<div style='display:flex;align-items:center;gap:8px;margin-top:10px'><input type='checkbox' id='mesh-ledger-backup' aria-label='Include the Mesh ledger in backups'" + (m.ledgerInBackup ? " checked" : "") + " style='width:20px;height:20px'><label for='mesh-ledger-backup' style='font-size:12px'>Include the Mesh ledger in backups (off by default — the ledger is metadata, but whose machines talked is yours)</label></div>";
+    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
+  }
+  h += "</div>";
+  return h;
+}
+function meshPngFileName() {
+  // The download's file name, from this machine's Mesh name —
+  // cosmetic only; the bridge names nothing.
+  var m = meshViewState();
+  var base = String(m.nodeName || "mesh").replace(/[^A-Za-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
+  return (base || "mesh") + "-mesh-card.png";
+}
+function meshImportPngFile(file) {
+  // THE PNG card importer (Build 7, spec section 13): the file-
+  // upload control and the drag-and-drop zone both land here,
+  // so both paths run the same bytes through the same bridge
+  // parser — there is no second, weaker path. The verdict,
+  // success or one of the bridge's specific refusals, renders
+  // at the drop zone in meshPngMsg: never a silent no-op.
+  if (!file) return;
+  if (CONFIG.backend !== "live") { meshPngMsg = "Pairing needs the live bridge — the bench does not simulate Mesh traffic."; render(); return; }
+  meshPngMsg = "Reading " + file.name + "…"; render();
+  var reader = new FileReader();
+  reader.onload = function () {
+    var url = String(reader.result || "");
+    var b64 = url.indexOf(",") !== -1 ? url.split(",")[1] : "";
+    if (!b64) { meshPngMsg = "That file could not be read — try the upload again."; render(); return; }
+    fetch("/api/mesh/peers/png", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ png: b64 }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) { meshState = j.mesh; meshPngMsg = "Peer added from the picture. Pairing is complete when this machine's card is added on the other side too."; }
+        else meshPngMsg = (j && j.error) || "That picture was refused.";
+        render();
+      })
+      .catch(function () { meshPngMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  reader.onerror = function () { meshPngMsg = "That file could not be read — try the upload again."; render(); };
+  reader.readAsDataURL(file);
+}
+function wireMeshCard() {
+  var master = document.getElementById("mesh-master");
+  if (master) master.onclick = function () { var m = meshViewState(); meshSave({ enabled: !m.enabled }); };
+  var borrow = document.getElementById("mesh-borrow");
+  if (borrow) borrow.onclick = function () { var m = meshViewState(); meshSave({ borrowEnabled: !m.borrowEnabled }); };
+  var lend = document.getElementById("mesh-lend");
+  if (lend) lend.onclick = function () { var m = meshViewState(); meshSave({ lendEnabled: !m.lendEnabled }); };
+  var idleOnly = document.getElementById("mesh-idle-only");
+  if (idleOnly) idleOnly.onclick = function () { var m = meshViewState(); var l = m.lend || {}; meshSave({ idleOnly: l.idleOnly === false ? true : false }); };
+  var save = document.getElementById("mesh-save");
+  if (save) save.onclick = function () {
+    var nameEl = document.getElementById("mesh-name");
+    var graceEl = document.getElementById("mesh-grace");
+    var ledgerEl = document.getElementById("mesh-ledger-backup");
+    var patch = {};
+    if (nameEl) patch.nodeName = nameEl.value;
+    if (graceEl) patch.graceMs = parseInt(graceEl.value, 10);
+    if (ledgerEl) patch.ledgerInBackup = !!ledgerEl.checked;
+    // Build 7 (Fix F): the lending caps ride the same save.
+    var shareEl = document.getElementById("mesh-cap-share");
+    var genEl = document.getElementById("mesh-cap-gen");
+    var peerCapEl = document.getElementById("mesh-cap-peer");
+    if (shareEl) patch.maxSharePercent = parseInt(shareEl.value, 10);
+    if (genEl) patch.maxGenerationsPerHour = parseInt(genEl.value, 10);
+    if (peerCapEl) patch.perPeerPerHour = parseInt(peerCapEl.value, 10);
+    meshSave(patch);
+  };
+  var stop = document.getElementById("mesh-stop");
+  if (stop) stop.onclick = function () {
+    if (CONFIG.backend !== "live") { meshSave({ lendEnabled: false }); return; }
+    fetch("/mesh/lend/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = "Lending is off — any borrowed generation in flight was stopped."; } else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+      .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  var pngDl = document.getElementById("mesh-card-png");
+  if (pngDl) pngDl.onclick = function () {
+    if (CONFIG.backend !== "live") { meshMsg = "Mock mode — the live bridge issues the real PNG card."; render(); return; }
+    fetch("/api/mesh/card.png").then(function (r) {
+      var ct = r.headers.get("Content-Type") || "";
+      if (ct.indexOf("image/png") === -1) return r.json().then(function (j) { meshMsg = (j && j.error) || "The bridge could not produce a PNG card."; render(); });
+      return r.blob().then(function (b) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(b);
+        a.download = meshPngFileName();
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        meshMsg = "PNG card downloaded — send the file itself (inside a .zip for chat apps)."; render();
+      });
+    }).catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  var pngFile = document.getElementById("mesh-png-file");
+  if (pngFile) pngFile.onchange = function () {
+    var f = pngFile.files && pngFile.files[0];
+    pngFile.value = "";
+    if (f) meshImportPngFile(f);
+  };
+  var pngZone = document.getElementById("mesh-png-zone");
+  if (pngZone) {
+    pngZone.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      if (!meshPngDrag) { meshPngDrag = true; pngZone.style.borderColor = "var(--accent)"; }
+    });
+    pngZone.addEventListener("dragleave", function () {
+      meshPngDrag = false; pngZone.style.borderColor = "var(--line)";
+    });
+    pngZone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      meshPngDrag = false;
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) meshImportPngFile(f); else render();
+    });
+  }
+  mainEl.querySelectorAll("[data-mesh-borrow]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-borrow");
+      var now = b.getAttribute("aria-checked") === "true";
+      if (CONFIG.backend !== "live") { meshMsg = "Peer consent needs the live bridge."; render(); return; }
+      fetch("/api/mesh/peers/can-borrow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId, canBorrow: !now }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) meshState = j.mesh; else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+        .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-remove]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-remove");
+      if (CONFIG.backend !== "live") { meshMsg = "Unpairing needs the live bridge."; render(); return; }
+      fetch("/api/mesh/peers/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = "Peer removed."; } else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+        .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
+}
 function wireLocalNetwork() {
   var det = document.getElementById("local-net-details");
   if (det) det.addEventListener("toggle", function () { localNetOpen = det.open; });
@@ -4173,6 +4768,29 @@ function pttToggle(target) {
   if (pttRecording) { stopPtt(); return; }
   startPtt(target);
 }
+function applyBackgroundUpdate(u) {
+  // Background re-check (build .86): the bridge re-checks on its
+  // own while it runs and /api/status carries the verdict. It
+  // folds into the Updater's PASSIVE states only — a check in
+  // flight, an apply, or a finished/failed state on screen is
+  // never overridden by the background word.
+  if (!u || CONFIG.backend !== "live") return;
+  if (updater.state === "checking" || updater.state === "applying" || updater.state === "updated" || updater.state === "failed" || updater.state === "applyfailed") return;
+  if (u.updateAvailable && u.latest) {
+    if (updater.state !== "available" || updater.latest !== u.latest) {
+      updater.state = "available";
+      updater.latest = u.latest;
+      updater.bgTag = u.latest;
+      if (view === "Updater") render();
+    }
+  } else if (updater.state === "available" && updater.bgTag && updater.bgTag === updater.latest) {
+    // The background word now reports no update: a stale
+    // "available" for that same tag clears.
+    updater.state = "uptodate";
+    updater.bgTag = "";
+    if (view === "Updater") render();
+  }
+}
 function refreshUpdaterUi() {
   if (view === "Updater") render();
   else renderStatus(null);
@@ -4201,7 +4819,12 @@ function checkForUpdates() {
       updater.notes = j.notes || "";
       updater.notesSource = j.notesSource || "";
       if (j.channel) updater.channel = j.channel;
+      if (typeof j.channelExplicit === "boolean") updaterChannelExplicit = j.channelExplicit;
       updater.prerelease = !!j.prerelease;
+      // Edge build sequence (build .86): the candidate's Build
+      // number and this build's own, from the check payload.
+      updater.buildSeq = (typeof j.buildSeq === "number") ? j.buildSeq : null;
+      if (typeof j.currentBuildSeq === "number") updater.currentBuildSeq = j.currentBuildSeq;
       // The running version's own release page (build .83):
       // the "About this release" dropdown renders it — name,
       // tag, date, link, and the full patch notes.
@@ -4334,12 +4957,20 @@ function updaterStatusHtml() {
   if (updater.state === "failed") return "<span style='color:#f5b544'>The last check didn't complete: " + esc(updater.error) + "</span><br><span style='color:var(--dim)'>That is all the check can honestly say — it never guesses that you are up to date.</span>";
   if (updater.state === "applyfailed") return "<span style='color:#f5b544'>The update didn't finish: " + esc(updater.applyError) + "</span>" + (updater.stagedDir ? "<br><span style='color:var(--dim)'>The staged package is still in place — the manual fallback is below.</span>" : "");
   if (updater.state === "updated") return "<span style='color:#34d399'>Updated <b class='mono'>" + esc(updater.fromLabel) + "</b> → <b class='mono'>" + esc(updater.toLabel) + "</b></span><br><span style='color:var(--dim)'>Confirmed from the VERSION file after the restart — the version above is the one now running.</span>";
-  if (updater.state === "uptodate") return "<span style='color:var(--dim)'>You're on the latest release" + (updater.latest ? " — GitHub's newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>, the same as yours" : "") + ".</span>";
+  if (updater.state === "uptodate") {
+    // Build 2: an Edge build checked on the Stable channel must
+    // not be told Stable's newest is "the same as yours" — the
+    // running preview is not on that channel at all. The line
+    // names the channel the check followed instead.
+    if (CONFIG.versionStatus === "edge" && updater.channel === "stable" && updater.latest) return "<span style='color:var(--dim)'>That check followed the <b>Stable</b> channel — its newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>. You're running an Edge build (v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "), which the Stable channel doesn't carry — there is nothing on this channel to offer you.</span>";
+    return "<span style='color:var(--dim)'>You're on the latest release" + (updater.latest ? " — GitHub's newest is <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>, the same as yours" : "") + ".</span>";
+  }
   if (updater.state === "available") {
+    var buildTxt = (updater.buildSeq && updaterSameNumbers()) ? " · Build " + updater.buildSeq + " — a refresh of the preview you are running" : "";
     var when = updater.publishedAt ? new Date(updater.publishedAt) : null;
     var whenTxt = when && !isNaN(when.getTime()) ? " · published " + when.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
     var sizeTxt = updater.assetSize ? " · " + (updater.assetSize / 1048576).toFixed(1) + " MB package" : "";
-    return "<span style='color:var(--text)'>Available: <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b></span><span style='color:var(--dim)'>" + esc(whenTxt + sizeTxt) + "</span>" +
+    return "<span style='color:var(--text)'>Available: <b class='mono'>v" + esc(updater.latest.replace(/^v/i, "")) + "</b>" + esc(buildTxt) + "</span><span style='color:var(--dim)'>" + esc(whenTxt + sizeTxt) + "</span>" +
       (updater.releaseUrl ? "<br><a class='ghost' href='" + esc(updater.releaseUrl) + "' target='_blank' rel='noreferrer' style='margin-top:6px'>Release notes on GitHub</a>" : "") +
       (updater.stageError ? "<br><span style='color:#f5b544'>" + esc(updater.stageError) + "</span>" : "");
   }
@@ -4355,14 +4986,61 @@ function setUpdaterChannel(chan) {
   if (updater.channel === chan && updater.state !== "idle") return;
   updater.channel = chan;
   CONFIG.updaterChannel = chan;
+  updaterChannelExplicit = true;
   updater.state = "idle";
   updater.latest = "";
   updater.notes = "";
   render();
   if (CONFIG.backend === "live") {
-    fetch("/api/settings/updater-channel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: chan }) }).catch(function () {});
-    checkForUpdates();
+    // The fresh check runs once the choice is persisted (Build
+    // 2): the bridge treats a stamped choice as authoritative
+    // when it resolves the check's channel, so the save landing
+    // first is what makes the verdict belong to the new channel.
+    fetch("/api/settings/updater-channel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: chan }) })
+      .then(function () { checkForUpdates(); })
+      .catch(function () { checkForUpdates(); });
   }
+}
+function updaterSameNumbers() {
+  var t = String(updater.latest || "").replace(/^v/i, "").replace(/[eb]$/i, "");
+  return !!t && t === String(CONFIG.version || "");
+}
+function updaterEdgeNoticeHtml() {
+  // The Edge notices (build .86): shown while an update is on
+  // offer and the offer (or the running build) is on the preview
+  // line. The AMBER preview notice is calmer than the red Sudo
+  // warning; both can show, stacked in the warnings seat above
+  // the notes. Graduation gets a positive GREEN notice instead
+  // of a warning. Ordinary full releases on the Stable channel
+  // get no notice at all.
+  if (updater.state !== "available") return "";
+  var curEdge = CONFIG.versionStatus === "edge";
+  var candEdge = !!updater.prerelease || /e$/i.test(String(updater.latest || "").replace(/^v/i, ""));
+  var carry = "Your Soul, Memory, chips and packs carry over, as always.";
+  if (curEdge && !candEdge) {
+    return "<div class='card' style='margin-top:10px;border-color:#34d399'><b style='color:#34d399'>The full release is out.</b><br><span style='color:var(--dim)'>Updating leaves the preview line: v" + esc(String(updater.latest || "").replace(/^v/i, "")) + " is the finished release of the version you have been previewing. " + carry + "</span></div>";
+  }
+  if (!candEdge) return "";
+  if (curEdge && updaterSameNumbers() && updater.buildSeq) {
+    return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>A refreshed build of v" + esc(String(updater.latest || "").replace(/^v/i, "")) + ".</b><br><span style='color:var(--dim)'>Build " + updater.buildSeq + " replaces Build " + updater.currentBuildSeq + " — the same preview version, rebuilt; not a new version. Preview contents can change between builds. " + carry + " And the next full release supersedes the preview automatically.</span></div>";
+  }
+  return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>A newer preview from the Edge line.</b><br><span style='color:var(--dim)'>This machine is on the preview line: Edge builds arrive before they are finished, and preview contents can change between builds. " + carry + " And the next full release supersedes the preview automatically.</span></div>";
+}
+function updaterChannelNoticeHtml() {
+  // The channel-mismatch notice (Build 2): this build is an Edge
+  // preview and the operator has EXPLICITLY set the Updater to
+  // the Stable channel — a real choice with a real cost, stated
+  // plainly in the warnings seat: Edge builds are never published
+  // to Stable, so no Edge update or refresh of this preview will
+  // ever be offered while the channel stands. Calm amber, the
+  // Edge preview notice's family — a heads-up, not an alarm. An
+  // Edge build with no explicit choice never lands here (its
+  // effective channel IS Edge), and neither does a Stable build.
+  // The status column's single "Up to date" / "Update available"
+  // voice is not touched.
+  if (CONFIG.backend !== "live") return "";
+  if (CONFIG.versionStatus !== "edge" || updater.channel !== "stable" || !updaterChannelExplicit) return "";
+  return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b style='color:#f5b544'>An Edge preview on the Stable channel.</b><br><span style='color:var(--dim)'>You're running an Edge build (v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "), and the Release channel below is set to Stable by your choice. Edge builds and refreshes of this preview are published only on the Edge channel, so none will be offered here. Switch the channel to Edge (pre-release) to keep following the preview line — the next full release supersedes the preview on either channel.</span></div>";
 }
 function updaterChannelHtml() {
   if (CONFIG.backend !== "live") return "";
@@ -4456,8 +5134,9 @@ function serversSummaryDots() {
   var d = dhdViewState();
   var dhdDot = d.status === "healthy" ? "#34d399" : (d.status === "degraded" || d.status === "starting") ? "#f5b544" : "#9fb3c8";
   var llamaDot = llama.status === "running" ? "#34d399" : "#9fb3c8";
+  var meshDot = meshDotColor(meshViewState());
   function dot(c) { return "<span class='dot' style='background:" + c + ";margin-left:6px'></span>"; }
-  return dot(llamaDot) + dot(nodeDot) + dot(dhdDot);
+  return dot(llamaDot) + dot(nodeDot) + dot(dhdDot) + dot(meshDot);
 }
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
@@ -4489,6 +5168,9 @@ function renderStatus(live) {
     (bridgeStale && CONFIG.backend === "live"
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +
+    (pageStale && CONFIG.backend === "live"
+      ? "<div class='stat' style='border:1px solid #f5b544;color:#f5b544'><b>THIS PAGE IS FROM THE PREVIOUS BUILD</b><br>The bridge answering on port " + BRIDGE_PORT + " is running Build " + bridgeBuildSeq + ", but this page is Build " + SHIPPED_BUILD_SEQ + " — the update landed while this dashboard was open, and the page itself is the stale half now. Reload to land on the new build.<br><button id='page-stale-reload' style='margin-top:8px;min-height:44px;padding:8px 16px;background:none;border:1px solid #f5b544;border-radius:8px;color:#f5b544;cursor:pointer;font:inherit;font-weight:700' aria-label='Reload the dashboard onto the new build'>Reload the dashboard</button></div>"
+      : "") +
     "<div class='stat' style='border-bottom:1px solid var(--line);padding:8px 0 10px'>" + updHtml + "</div>" +
     // The Servers block carries the standard .stat boundary
     // (build .80, issue #67): the #66 parent was a bare <details>
@@ -4497,10 +5179,11 @@ function renderStatus(live) {
     // the block gets the same margin, padding, and divider as
     // every other status block — expanded and collapsed alike,
     // since the wrapper renders in both states.
-    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Llamafile, Apex Node and DHD' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
+    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Llamafile, Apex Node, DHD and Navi Mesh' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
     renderLlama() +
     renderLocalNetwork() +
     renderDhdStatus() +
+    renderMeshStatus() +
     "</details></div>" +
     renderSudo() +
     renderVoiceStatus() +
@@ -4514,11 +5197,14 @@ function renderStatus(live) {
   wireLlama();
   wireLocalNetwork();
   wireDhdStatus();
+  wireMeshStatus();
   var sdet = document.getElementById("servers-details");
   if (sdet) sdet.addEventListener("toggle", function () { serversOpen = sdet.open; });
   wireVoiceStatus();
   var uw = document.getElementById("updater-warn");
   if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
+  var psr = document.getElementById("page-stale-reload");
+  if (psr) psr.onclick = function () { location.reload(); };
   if (CONFIG.backend === "live" && !voiceState && !voiceFetching && !naviThinking) refreshVoice(false);
   if (CONFIG.backend === "live" && !ragPacksState && !ragPacksFetching && !naviThinking) refreshRagPacks(false);
   if (!githubState && !githubFetching) fetchGithub(false);
@@ -4800,6 +5486,19 @@ function localChipCardHtml(c) {
     }
   }
   var delName = c.sourceKey ? c.sourceKey : (cat ? cat.fullName : "local/" + stem);
+  var reqLine = (c.requirements && c.requirements.length)
+    ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Declares dependencies: " + esc(c.requirements.join(", ")) + " — not installed automatically</div>"
+    : "";
+  if (c.unreadable) {
+    // Issue #79 (build .86): a cartridge that does not parse is
+    // shown honestly — it can't run or be edited, it is skipped
+    // by the pill row and the runners, but it is still here, and
+    // still deletable, instead of silently absent.
+    return "<div class='card' style='flex:0 0 auto'><b>" + esc(c.name) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(c.file) + "</span>" +
+      "<p style='color:#f5b544;font-size:12px'>This chip's cartridge couldn't be read — the .png is in the chips folder, but the code inside it doesn't parse, so it can't run. It still shows here so it can be deleted.</p>" +
+      reqLine +
+      "<div style='margin-top:6px'><button class='ghost' data-cdelete='" + esc(delName) + "' aria-label='Delete chip " + esc(c.name) + "'>Delete</button></div></div>";
+  }
   // Update actions belong to GitHub-installed chips only — a
   // forged chip has no repo to check against. The button rides
   // the same data-cupdate path the catalog card used: the update
@@ -4814,6 +5513,7 @@ function localChipCardHtml(c) {
   return "<div class='card'><b>" + esc(c.name) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(c.file) + "</span>" + (c.locallyEdited ? " <span class='mono' style='color:#f5b544;font-size:11px'>EDITED LOCALLY" + (c.sourceKey ? " · DIVERGES FROM " + esc(c.sourceKey) : "") + "</span>" : (c.sourceKey ? " <span class='mono' style='color:var(--dim);font-size:11px'>INSTALLED FROM " + esc(c.sourceKey) + "</span>" : ""))
   + "<div class='lchip-actions'><div class='lchip-side'><label style='color:var(--dim);font-size:12px'>Version <input id='chipver-" + esc(stem) + "' type='text' value='0.1.0' style='width:80px' aria-label='Export version for chip " + esc(c.name) + "'></label><button class='ghost' data-chipexport='" + esc(c.file) + "' aria-label='Export chip " + esc(c.name) + " for GitHub'>Export for GitHub</button><button class='ghost' data-chippub='" + esc(c.file) + "' aria-label='Publish chip " + esc(c.name) + " to GitHub'>Publish to GitHub</button><button class='ghost' data-chipreadme='" + esc(c.file) + "' aria-label='Edit README for chip " + esc(c.name) + "'>Edit README</button><button class='ghost' data-chipedit='" + esc(c.file) + "' aria-label='Edit chip " + esc(c.name) + " in Chip Studio'>Edit in Studio</button>"
   + upd + "<button class='ghost' data-cdelete='" + esc(delName) + "' aria-label='Delete chip " + esc(c.name) + "'>Delete</button>"
+  + reqLine
   + (exp ? (exp.error ? "<span style='color:#f5b544;font-size:12px'>" + esc(exp.error) + "</span>" : "<span style='font-size:12px'>Repo ZIP ready: <a class='ghost' href='/api/chips/export-file?name=" + encodeURIComponent(exp.file) + "' download='" + esc(exp.file) + "'>" + esc(exp.file) + "</a></span><span class='mono' style='color:var(--dim);font-size:11px'>" + exp.files.map(function (f) { return esc(f); }).join(" · ") + "</span>") : "")
   + "</div><div class='lchip-main'><button class='act' data-lchip='" + esc(stem) + "'>Run</button><a class='ghost' href='/api/chips/file?name=" + encodeURIComponent(c.file) + "' download='" + esc(c.file) + "'>Download .png</a></div></div>"
   + pubPanelHtml(pub, "chip", c.file) + readmeEdHtml(red, "chip", c.file)
@@ -5065,7 +5765,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Updater") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -5100,8 +5800,8 @@ function render() {
         if (!isCurrent && isLongNavi(m.text)) {
           var openAttr = chatFoldState[foldKey] ? " open" : "";
           var lineCount = String(m.text).split("\n").length;
-          h += "<details class='foldcard' data-fold='" + esc(foldKey) + "'" + openAttr + "><summary>Navi reply · " + esc(firstHintLine(m.text, true)) + " · " + lineCount + " lines · " + String(m.text).length + " chars</summary><div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>" + srcPills(m.sources) + "</details>";
-        } else { h += "<div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>"; if (m.who === "NAVI") h += srcPills(m.sources); }
+          h += "<details class='foldcard' data-fold='" + esc(foldKey) + "'" + openAttr + "><summary>Navi reply · " + esc(firstHintLine(m.text, true)) + " · " + lineCount + " lines · " + String(m.text).length + " chars</summary><div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>" + pillRow(m.mesh, m.sources) + "</details>";
+        } else { h += "<div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>"; if (m.who === "NAVI") h += pillRow(m.mesh, m.sources); }
       } else if (m.text) h += "<div>" + esc(m.text) + "</div>";
       if (m.exec) {
         if (!isCurrent) {
@@ -5111,6 +5811,8 @@ function render() {
         } else h += execChatHtml(m.exec);
       }
       if (m.operation) h += operationCardHtml(m.operation);
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Navi Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
+      if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       h += "</div>";
     });
@@ -5126,7 +5828,7 @@ function render() {
     // what's runnable from right here. Mock mode's shelf is the
     // simulator's set; live mode's is the chips in chips/ —
     // which starts empty and fills only with real installs.
-    var pillChips = CONFIG.backend === "live" ? (wfData ? wfData.chips.map(function (c) { return { id: String(c.file || "").replace(/.png$/i, ""), name: c.name }; }) : []) : CHIP_DEFS;
+    var pillChips = CONFIG.backend === "live" ? (wfData ? wfData.chips.filter(function (c) { return !c.unreadable; }).map(function (c) { return { id: String(c.file || "").replace(/.png$/i, ""), name: c.name }; }) : []) : CHIP_DEFS;
     // The composer dock (build .66): everything under the thread —
     // the chips shelf, the bar, the toggle row — renders inside
     // one .composer zone so it reads as a single docked unit.
@@ -5151,10 +5853,14 @@ function render() {
     // every composer state, instead of floating at the thread's
     // foot. Same button, same id, same wiring — new seat.
     var clearChatBtn = (messages.length ? "<button class='ghost' id='chat-clear' aria-label='Clear this chat and start fresh' style='margin-left:auto'>Clear chat</button>" : "") + "<span id='hist-note'></span>";
+    // Navi Mesh (build .85): the per-chat local-only escape rides
+    // the hint row beside the mode latch — a pressed state, kept
+    // per chat session like the latch itself.
+    var meshLocalBtn = "<button type='button' id='chat-mesh-local' aria-pressed='" + (meshLocal ? "true" : "false") + "' aria-label='This chat only: keep it on this machine — while on, this chat never borrows a paired machine' title='This chat only: keep it on this machine' style='" + (meshLocal ? "border-color:var(--cy);color:var(--cy)" : "") + "'>This chat only" + (meshLocal ? " ●" : "") + "</button>";
     h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
-      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + clearChatBtn + "</div>"
-      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + clearChatBtn + "</div>") + "</div>";
+      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
+      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
   } else if (view === "Chips") {
     h += "<h3>Chips</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='Chips sections' style='margin-bottom:10px'><button class='" + (chipsTab === "management" ? "act" : "ghost") + "' data-ctab='management' aria-label='Navi User Repo tab'>Navi User Repo (NUR)</button><button class='" + (chipsTab === "studio" ? "act" : "ghost") + "' data-ctab='studio' aria-label='Chip studio tab'>Chip Studio</button><button class='" + (chipsTab === "workflows" ? "act" : "ghost") + "' data-ctab='workflows' aria-label='Chip workflows tab'>Workflows</button></div>";
@@ -5325,7 +6031,7 @@ function render() {
     } else {
       h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>";
       h += "<div style='margin-top:10px;max-height:300px;overflow-y:auto' aria-label='Call transcript'>" + call.turns.map(function (t) {
-        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? srcPills(t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
+        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
       }).join("") + "</div>";
       h += "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>or type what you'd say:</span></div>";
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='call-type' type='text' placeholder='Show me the contents of /home/name/' aria-label='Type what you would say on the call'><button class='act' id='call-say'>Speak</button></div>";
@@ -5370,6 +6076,15 @@ function render() {
     h += vaultHtml();
   } else if (view === "DHD") {
     h += dhdHtml();
+  } else if (view === "Mesh") {
+    // The Mesh page (build .86; order set in build .87 by Alex's
+    // ruling): the full Mesh controls FIRST — the same card
+    // Settings → System used to carry, wired by wireMeshCard
+    // exactly as before — and the roster BELOW them. Wherever
+    // the options and the roster coexist, options come first.
+    h += "<h3>Navi Mesh</h3>";
+    h += meshCardHtml();
+    h += meshRosterHtml();
   } else if (view === "RAG") {
     h += "<h3>RAG · knowledge packs</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='RAG sections' style='margin-bottom:10px'><button class='" + (ragTab === "packs" ? "act" : "ghost") + "' data-ragtab='packs' aria-label='Knowledge packs tab'>Packs</button><button class='" + (ragTab === "studio" ? "act" : "ghost") + "' data-ragtab='studio' aria-label='RAG Studio tab'>RAG Studio</button></div>";
@@ -5431,32 +6146,49 @@ function render() {
       }
     }
   } else if (view === "Updater") {
-    h += "<h3>Updater</h3><div class='card'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")</span><br>" + updaterStatusHtml() + "</div>";
-    // The Sudo Mode warning (build .81, #70): red, directly
-    // above the Download & install button, only while an update
-    // is on offer and Sudo Mode is off — field-proven on
-    // NeoArcadia (2026-11-08/09) that the installer's system
-    // step needs root, and without it an update can stall or
-    // finish without its system packages. A warning, never a
-    // lock: the button still works. Sudo Mode on swaps it for
-    // a quiet green ready line.
+    // Panel order (Alex's definitive order, 2026-11-09
+    // 05:38 EST — supersedes every earlier composition,
+    // including the channel-last order): the SAME sequence
+    // in every state — (1) Current/status card, (2) warnings
+    // directly under it, (3) the Release channel card,
+    // (4) the patch-notes surfaces, (5) the actions block —
+    // the Check and Download & install buttons, directly
+    // under the notes — (6) below the buttons, the live
+    // progress chain while an apply runs AND the outcome
+    // cards (the updated result / update log and the manual
+    // fallback) once an apply has finished. No state splits
+    // the order. Verified against the rendered DOM per
+    // state, not the string order of this composition.
+    h += "<h3>Updater</h3><div class='card'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")" + (CONFIG.versionStatus === "edge" ? " · Build " + updater.currentBuildSeq : "") + "</span><br>" + updaterStatusHtml() + "</div>";
+    // The warnings seat. The Sudo Mode warning (build .81, #70):
+    // red, only while an update is on offer and Sudo Mode is off
+    // — field-proven on NeoArcadia (2026-11-08/09) that the
+    // installer's system step needs root, and without it an
+    // update can stall or finish without its system packages. A
+    // warning, never a lock: the button still works. Sudo Mode
+    // on swaps it for a quiet green ready line. The Edge preview
+    // notice (build .86) stacks in the same seat.
     if (updater.state === "available") {
       h += CONFIG.sudo
         ? "<p style='color:#34d399;font-size:13px;margin:8px 0 0'>Sudo Mode is on — ready to update.</p>"
         : "<p style='color:#f87171;font-size:13px;margin:8px 0 0'>⚠ <b>Enable Sudo Mode before updating.</b> The installer's system step needs root. Without it, an update can stall or finish without its system packages.</p>";
     }
+    h += updaterChannelNoticeHtml();
+    h += updaterEdgeNoticeHtml();
     h += updaterChannelHtml();
-    h += "<button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "applying" ? " disabled" : "") + ">" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
-    if (updater.state === "available") h += "<button class='ghost' id='up-apply'>Download &amp; install v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
-    // The install chain sits directly above the release notes
-    // once the operator opts in (build .81, #70): the process
-    // unfolds where the eyes already are, and the notes come
-    // last instead of pushing the chain off-screen.
-    if (updater.state === "applying") h += updaterProgressHtml();
-    if (updater.state === "updated") h += updaterUpdatedHtml();
-    if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
     h += updaterNotesHtml();
     if (CONFIG.backend === "live") h += updaterCurrentHtml();
+    h += "<div style='margin-top:10px'><button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "applying" ? " disabled" : "") + " style='min-height:44px'>" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
+    if (updater.state === "available") h += "<button class='ghost' id='up-apply' style='min-height:44px'>Download &amp; install v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
+    h += "</div>";
+    if (updater.state === "applying") h += updaterProgressHtml();
+    // The outcome cards: an apply that has finished leaves its
+    // record BELOW the actions block, in the same chain seat
+    // the live progress occupies while the apply runs — the
+    // updated result card (with the update log) and, on a
+    // failure with a staged package, the manual fallback.
+    if (updater.state === "updated") h += updaterUpdatedHtml();
+    if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
   } else if (view === "GitHub") {
     h += githubViewHtml();
   } else if (view === "Docs") {
@@ -5478,6 +6210,23 @@ function render() {
     if (settingsTab === "system") h += "<div class='card'><h3>Apex Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
       "<p style='color:var(--dim)'>The Apex Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
       "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
+    // Navi Mesh (build .86): the full controls live on the
+    // Mesh page now — Settings → System keeps only this summary
+    // pointer, the way the Apex Node pointer relates to the DHD
+    // page. One line of state + the jump.
+    if (settingsTab === "system") (function () {
+      var m = meshViewState();
+      var line = !m.enabled ? "Off — Mesh pairs this machine with your others for pooled inference."
+        : m.lendingNow ? "On — lending now."
+        : m.borrowing ? "On — borrowing now."
+        : m.lendEnabled && m.borrowEnabled ? "On — lending when idle · borrowing automatic."
+        : m.lendEnabled ? "On — lending when idle."
+        : m.borrowEnabled ? "On — borrowing automatic."
+        : "On — borrowing and lending both off.";
+      h += "<div class='card'><h3>Navi Mesh</h3>" +
+        "<p style='color:var(--dim)'>" + esc(line) + " Pairing, lending and borrowing controls, the roster of your machines, and the ledger all live on the Mesh page.</p>" +
+        "<p><button type='button' class='act' id='mesh-pointer' aria-label='Open the Mesh page' style='min-height:44px'>Open the Mesh page</button></p></div>";
+    })();
     // Hardware profile (build .34): what the installer detected on
     // this machine and the runtime settings it chose from it.
     if (settingsTab === "system") (function () {
@@ -5624,7 +6373,12 @@ function sendChat(text) {
     // output, no model framing around it.
     if (r.mode === "cli" || r.mode === "command-line") messages.push({ who: "SHELL", text: "", exec: r.exec });
     else {
-      var nm = { who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null };
+      var nm = { who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null, mesh: r.mesh || null };
+      // Navi Mesh (build .85): the first mesh-served reply of a
+      // session raises the notice card under the message — the
+      // operator should never learn borrowing happened only from
+      // a footnote.
+      if (r.mesh && r.mesh.servedBy === "mesh" && !meshBorrowNoticed) { nm.meshFirst = true; meshBorrowNoticed = true; }
       // Memory from chat (build .81, #72): a reply can carry
       // memory work as payload data — file it against the store
       // and hang the receipts on this message.
@@ -5701,11 +6455,13 @@ function wire() {
     if (upClear) upClear.onclick = function () { pendingUpload = null; render(); };
     mainEl.querySelectorAll("[data-chip-pill]").forEach(function (b) { b.onclick = function () { route("/chip " + b.getAttribute("data-chip-pill")); }; });
     if (CONFIG.backend === "live" && !wfData && !naviThinking) {
-      fetch("/api/workflows").then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chat") render(); }).catch(function () {});
+      fetch("/api/workflows").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chat") render(); }).catch(function () {});
     }
     mainEl.querySelectorAll("details[data-fold]").forEach(function (d) { d.addEventListener("toggle", function () { chatFoldState[d.getAttribute("data-fold")] = d.open; }); });
     var clearBtn = document.getElementById("chat-clear");
     if (clearBtn) clearBtn.onclick = function () { messages.length = 0; Object.keys(chatFoldState).forEach(function (k) { if (k.indexOf(String(activeChatId) + ":") === 0) delete chatFoldState[k]; }); persist(); render(); };
+    var meshLocalBtnEl = document.getElementById("chat-mesh-local");
+    if (meshLocalBtnEl) meshLocalBtnEl.onclick = function () { meshLocal = !meshLocal; persistMeshLocal(); render(); };
     var micBtn = document.getElementById("chat-mic");
     if (micBtn) micBtn.onclick = function () { pttToggle("chat"); };
     var chatCallBtn = document.getElementById("chat-call");
@@ -5820,7 +6576,7 @@ function wire() {
       }; });
     }
     if (CONFIG.backend === "live" && !wfData) {
-      fetch("/api/workflows").then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chips") render(); }).catch(function () {});
+      fetch("/api/workflows").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chips") render(); }).catch(function () {});
     }
     if (chipsTab === "studio") {
       var ta = document.getElementById("st-code");
@@ -6303,6 +7059,8 @@ function wire() {
     mainEl.querySelectorAll("[data-mempropno]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-mempropno"), false); }; });
   } else if (view === "DHD") {
     wireDhd();
+  } else if (view === "Mesh") {
+    wireMeshCard();
   } else if (view === "Vault") {
     var vq = function (sel) { return mainEl.querySelector(sel); };
     var vqa = function (sel) { return mainEl.querySelectorAll(sel); };
@@ -6600,8 +7358,11 @@ function wire() {
       fetch("/api/hardware/redetect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { hardwareState = j; hardwareMsg = j && j.profile ? "Re-detected this machine and returned to auto settings — they apply the next time the model server starts." : "Re-detect failed: " + ((j && j.error) || "unknown error"); render(); }).catch(function () { hardwareMsg = "The bridge did not answer — is it running?"; render(); });
     };
     wireApexNode();
+    wireMeshCard();
     var pubPointer = document.getElementById("pub-pointer");
     if (pubPointer) pubPointer.onclick = function () { view = "DHD"; dockOpen = false; render(); };
+    var meshPointer = document.getElementById("mesh-pointer");
+    if (meshPointer) meshPointer.onclick = function () { view = "Mesh"; dockOpen = false; render(); };
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
     var soulSave = document.getElementById("soul-save");
     if (soulSave) soulSave.onclick = function () { var ta = document.getElementById("soul-doc"); if (ta) CONFIG.soul = ta.value; savePersona(); };

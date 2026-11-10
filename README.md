@@ -7,13 +7,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.7 — tag v0.1.7
+## Latest release — 0.1.8 — tag v0.1.8
 
-- **Apex 0.1.7 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.7 — and takes Latest. The version language is new from here on: full releases wear bare numbers cut from main; pre-releases are Edge builds with the e suffix (0.1.7e), cut from a separate dev branch. The old alpha/"a" naming is retired, and older tags written that way still read correctly, as Edge.
-- **Release channels, and the current release's page (#76).** The Updater follows a channel you choose and it remembers: Stable (the default) follows full releases only; Edge follows the newest release including pre-releases. An "About this release" dropdown in the Updater carries everything the running version's GitHub release page offers — name, tag, Edge/full badge, published date, the link, the package asset, and the full patch notes rendered in place.
-- **The installer stops dying in shells with no terminal (#75).** A terminal now counts only if it opens: the installer tests opening /dev/tty instead of checking whether the device node is readable, so a terminal-less run (her own CLI shell is the field-proven case) gets the plain re-run-with-flags instruction instead of dying mid-prompt. The one-click apply and the manual fallback both pass --startup and --voice from the install's own settings, so an update never depends on the staged installer being able to ask anything.
-- **The Updater warns you first (#70).** With an update available and Sudo Mode off, a red warning sits above Download & install — enable Sudo Mode so the installer's system step can run; with it on, a quiet green "ready to update" line takes its place. A warning, never a lock. Once you opt in, the install chain renders above the release notes with a slim progress bar across its card, and a "Taking a while?" note explains the long Installing step (likely the UI rebuild) instead of leaving you guessing.
-- **Navi pulls memories from chat (#72).** Say "remember this" — or let her save on her own when something durable comes up; she judges inside the same reply, no second pass, no slowdown. Nothing is saved silently: every save leaves a receipt in chat with exactly what she wrote and a one-tap Undo; corrections replace the old entry instead of duplicating, secrets are refused on every path, and the Memory tab shows how each entry got there — by hand, from chat (asked), from chat (her call), or from chat (correction) — with the mode setting: she saves on her own (default), ask first, or only when I say.
+- **Apex 0.1.8 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.8 — and takes Latest. It graduates the 0.1.8e Edge line (Builds 1–10) with its content unchanged: same build stamp, same code — only the version's identity flipped from Edge to stable.
+- **Navi Mesh, Ring 1 (#78).** Your machines pool inference: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is by PNG card, carried by hand; borrowing is automatic for paired machines; lending is idle-only, inside caps you set, and armed only in person on the lender. Field-proven on a real two-machine pair.
+- **The pairing cards fly with the backup (#89); the text card is retired (#90).** Mesh pairing cards join the GitHub backup essentials — your own card minted fresh, a picture per paired peer — so a lost machine re-pairs from its pictures instead of starting cold. Pairing is the picture only now; a text card saved from an earlier build can no longer be pasted.
+- **Updates never need a reboot (#91).** The installer proves the old bridge stopped before replacing a single file — or aborts, naming the process that holds the port and the command that ends it. A manual install relaunches Apex and verifies the new build is answering; a dashboard left open across an update offers a one-click reload onto the new build's page.
+- **Lending, kept honest (#87, #88).** Paired peers are health-checked in the background and the roster says what it found; lend caps and the idle-only override are settings on the lending machine; a borrowed reply's pills share one row — Mesh first — at every width.
 
 [Read the changelog](CHANGELOG.md)
 
@@ -223,7 +223,9 @@ fallback, served by the bridge at the same address.
       this machine in config/github-auth.json, owner-only, never
       backed up or logged), and backup/import of the ready-to-fly
       essentials — Soul, Memory, settings/config, installed chips,
-      RAG packs with their indexes and active states, workflows —
+      RAG packs with their indexes and active states, workflows,
+      Mesh pairing cards (the PNG pictures; the node keypair
+      never rides) —
       to a repo under your own account (default navi-backup,
       private by default), on your interval (every 1/3/5/7 days,
       checked on launch and while the bridge runs). Import previews
