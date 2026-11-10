@@ -127,19 +127,17 @@
   #app.closed { grid-template-columns:54px minmax(0,1fr) 230px; }
   /* The status column starts hidden (Build 6, #114, as
      corrected): on desktop widths the column's 230px goes to
-     the content until the operator opens it with the Status
-     toggle in the menu chrome. Scoped to desktop — on phones
+     the content until the operator opens it with the pane
+     button in her presence bar. Scoped to desktop — on phones
      the column is the dock overlay, whose semantics are
      unchanged and never gated by this class. The class is in
      the static markup, so the first paint is already the
      two-column frame; the grid transition animates only the
      operator's toggles. */
-  #status-toggle { display:none; }
   @media (min-width:801px) {
     #app.no-status { grid-template-columns:196px minmax(0,1fr) 0px; }
     #app.no-status.closed { grid-template-columns:54px minmax(0,1fr) 0px; }
     #app.no-status aside { display:none; }
-    #status-toggle { display:flex; }
   }
   nav { border-right:1px solid var(--line); background:var(--panel2); padding:14px 10px; height:100%; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
   /* Her version at the foot of the menu, under a divider bar: the
@@ -253,8 +251,17 @@
      at the top left — name, dot, and the living line, social-
      chat style — and the status column's toggle hugging the
      right edge, a full 44px target in the panel-icon language. */
-  .chat-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-  .chat-presence { display:flex; align-items:center; gap:9px; flex:1 1 auto; min-width:0; }
+  /* Her presence bar (Build 8): frame chrome above every view —
+     her portrait, dot, name and living line, with the status
+     column's pane button hugging the right edge. One persistent
+     element, mounted outside the per-view render. The pane
+     button's own rules are its pre-#123 ones (Build 6), restored
+     with the button: a 44px target whose pressed state wears
+     the accent. */
+  #presence-bar { display:flex; align-items:center; gap:10px; flex:0 0 auto; margin-bottom:10px; }
+  #chat-status-toggle { flex:0 0 auto; width:44px; height:44px; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+  #chat-status-toggle[aria-pressed="true"] { color:var(--cy); border-color:var(--cy); }
+  #presence-bar .chat-presence { display:flex; align-items:center; gap:9px; flex:1 1 auto; min-width:0; }
   .chat-presence .dot { flex:0 0 auto; }
   .chat-presence-name { font-weight:700; line-height:1.25; }
   .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -280,28 +287,34 @@
      chrome only: the small-screen block shows it and puts the
      stacked wordmark/tagline away; desktop never renders it. */
   .bar-title { display:none; }
-  main { padding:16px; min-width:0; height:100%; min-height:0; overflow-y:auto; }
+  main { padding:16px; min-width:0; height:100%; min-height:0; overflow-y:auto; display:flex; flex-direction:column; }
+  /* The view container (Build 8): render() writes views here,
+     below the persistent presence bar, so the frame classes
+     (chat-view / docs-view / docs-pop / view-in) land on it —
+     it carries the sizing and scrolling role main had alone
+     before the bar existed. */
+  #view-root { flex:1 1 auto; min-height:0; overflow-y:auto; }
   /* Card squash guard (build .86, issue #79): a card in a scroll
      column keeps its full content height — flex:0 0 auto, so a
      Local chip card (or any card list with the same pattern) is
      never sliced mid-text by a flex parent again. */
   main .card { flex:0 0 auto; }
-  main.chat-view { display:flex; flex-direction:column; overflow:hidden; }
+  #view-root.chat-view { display:flex; flex-direction:column; overflow:hidden; }
   /* The Docs view's own layout frame (issue #119): the view is
      a fixed frame — header still, and below it two panes that
      scroll independently, the topic menu and the article, each
      filling the frame's height exactly. No page-level scroll. */
-  main.docs-view { display:flex; flex-direction:column; overflow:hidden; }
-  main.docs-view > h3 { flex:0 0 auto; }
+  #view-root.docs-view { display:flex; flex-direction:column; overflow:hidden; }
+  #view-root.docs-view > h3 { flex:0 0 auto; }
   .docs-frame { display:flex; flex-direction:column; flex:1; min-height:0; }
   .docs-panes { display:flex; gap:16px; flex:1; min-height:0; margin-top:10px; }
   .docs-wiki-nav { min-width:190px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; min-height:0; }
   .docs-wiki-body { flex:1; min-width:260px; overflow-y:auto; overscroll-behavior:contain; min-height:0; }
-  main.docs-pop { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
-  main.chat-view > h3, main.chat-view > .card { flex:0 0 auto; }
+  #view-root.docs-pop { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
+  #view-root.chat-view > h3, #view-root.chat-view > .card { flex:0 0 auto; }
   #msgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; }
-  #msgs + div, main.chat-view > .row { flex:0 0 auto; }
-  main.chat-view > .row { padding-top:8px; }
+  #msgs + div, #view-root.chat-view > .row { flex:0 0 auto; }
+  #view-root.chat-view > .row { padding-top:8px; }
   aside { border-left:1px solid var(--line); background:var(--panel2); padding:14px; height:100%; max-height:100%; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
   aside h3, main h3 { color:var(--dim); font-size:11px; letter-spacing:.18em; text-transform:uppercase; margin:0 0 8px; }
   .stat { margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--line); } .stat .v { color:var(--text); }
@@ -342,7 +355,7 @@
   input.rich { position:relative; background:transparent; color:transparent; caret-color:var(--text); font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; line-height:1.5; }
   input.rich::placeholder { color:var(--dim); opacity:1; }
   .modehint { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-top:6px; }
-  main.chat-view > .modehint { flex:0 0 auto; }
+  #view-root.chat-view > .modehint { flex:0 0 auto; }
   .modehint button { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; border:1px solid var(--line); color:var(--dim); background:none; border-radius:999px; padding:2px 10px; cursor:pointer; }
   .modehint button.cli { border-color:#34d399; color:#34d399; }
   .modehint .modegroup { display:inline-flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
@@ -546,7 +559,7 @@
   button.act:active, button.ghost:active, a.act:active, a.ghost:active, .chipbtn:active, nav button:active { transform:scale(.97); }
   .card:hover { border-color:#2e4356; }
   @keyframes view-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
-  main.view-in { animation:view-in var(--motion-view) ease both; }
+  #view-root.view-in { animation:view-in var(--motion-view) ease both; }
   /* Navi's typing indicator + presence pulse */
   @keyframes navi-typing { 0%,60%,100% { transform:translateY(0); opacity:.35; } 30% { transform:translateY(-3px); opacity:1; } }
   .tdots { display:inline-flex; gap:3px; align-items:center; }
@@ -615,7 +628,7 @@
   .ptt { border:1px solid var(--cy); color:var(--cy); background:none; border-radius:999px; padding:8px 18px; cursor:pointer; font:inherit; font-weight:700; }
   .ptt.rec { background:var(--red); border-color:var(--red); color:#000; }
   @media (prefers-reduced-motion: reduce) { .wave i { animation:none; } }
-  @media (prefers-reduced-motion: reduce) { .tdots i, .pdot { animation:none; } main.view-in { animation:none; } #app { transition:none; } .glitching { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .tdots i, .pdot { animation:none; } #view-root.view-in { animation:none; } #app { transition:none; } .glitching { animation:none; } }
   /* Small screens — everything in this block is breakpoint-scoped;
      the desktop frame above it is untouched. Build .61 removed the
      fixed 100dvh grid (the cause of the old STATUS-over-chips
@@ -680,8 +693,10 @@
     #app.closed #nav-version { text-align:center; padding:9px 8px 0; }
     #app.closed #nav-version .nv-pre { display:inline; }
     main { height:auto; min-height:0; overflow:visible; padding:12px; }
-    main.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
-    main.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    /* The presence bar's button keeps its 44px sizing (the
+       base rule above) on phones too. */
+    #view-root.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    #view-root.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     .status-tabs { top:-12px; margin-top:-12px; }
@@ -742,7 +757,7 @@
     <div class="tagline mono" id="tagline">Powered by Navi</div>
     <div class="bar-title mono">Apex | powered by Navi</div>
   </nav>
-  <main id="main"></main>
+  <main id="main"><div id="presence-bar"></div><div id="view-root"></div></main>
   <aside id="status"></aside>
 </div>
 <script>
@@ -1172,11 +1187,12 @@ try {
 // never persisted — a page always comes up content-only.
 var dockOpen = false;
 // Status column visibility on desktop (Build 6, #114, as
-// corrected): hidden at every launch, behind the Status
-// toggle in the menu chrome — and deliberately NOT persisted:
-// "closed by default" means every launch, so no storage key
-// exists for it. On phones this state does nothing; the dock
-// (dockOpen above) is the column's door there, as always.
+// corrected): hidden at every launch, behind the pane button
+// in her presence bar (Build 8; the menu chrome's text toggle
+// was retired by the operator's ruling) — and deliberately
+// NOT persisted: "closed by default" means every launch, so
+// no storage key exists for it. On phones the dock (dockOpen
+// above) is the column's other door, as always.
 var statusHidden = true;
 // navi.llamafile connection state, driven by the status element: it
 // starts stopped ("Disconnected. Click to Connect."); only a successful
@@ -1991,6 +2007,8 @@ function docsHomeHtml() {
 // closes; if the host refuses the close, the note says the rest.
 function renderDocsPop() {
   docsCaptureNav();
+  var pbar = document.getElementById("presence-bar");
+  if (pbar) pbar.style.display = "none";
   if (navEl) navEl.style.display = "none";
   if (statusEl) statusEl.style.display = "none";
   if (toggleBtn) toggleBtn.style.display = "none";
@@ -3029,7 +3047,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
-  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. At the top of the Chat window sits her <b>presence header</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's door is the frame's own now — the <b>Status</b> toggle in the menu chrome on a desktop, the panel button in the phone's top bar — one control per size, on every view, raising the rail in place wherever you are; the phone's top bar itself is pinned, so the door is there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
+  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Above every view sits her <b>presence bar</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. The bar is part of the frame, not of any one page: it stays over Chat, Settings, Docs — everywhere — and at its top right sits the status column's <b>pane button</b>, wearing the panel glyph. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's doors are the frame's own now: the <b>pane button</b> at the presence bar's top right — on every page, at every width — and the panel button in the phone's top bar. Those are the only two doors; every one drives the one column state and raises the rail in place wherever you are; the phone's top bar itself is pinned, so the doors are there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode</h4>" +
   "<p>The status column's sudo switch makes Navi execute commands as root. Turning it on asks for your sudo password once; the bridge validates it by opening <b>one persistent root shell</b> that every sudo command runs inside, so a fingerprint-first PAM stack is consulted exactly once, at authentication. The password lives only in this page's memory — never saved, never logged — and turning sudo off closes the root shell on the spot.</p></div>" +
@@ -3251,7 +3269,7 @@ var DOC_PAGES = [
   "<p><b>Nothing is saved silently.</b> Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap <b>Undo</b>. A save that corrects an existing entry <b>replaces</b> it — the receipt shows the old line struck through, and Undo restores it. <b>Secrets are never saved</b>, on any path: ask her to remember a password, a key, or a card number and she refuses, says why, and the receipt shows no payload.</p>" +
   "<p><b>Settings → Persona</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Persona — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). The entries live in two files, split by who authored them: <b>Settings → Operator</b> holds yours — added by hand, or saved because you asked — under <i>About you — memories for Navi</i>; <b>Persona</b> holds hers, under <i>Her file — what she keeps</i>. Every entry says how it got there.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the toggle at the top right of the Chat window is its door (the menu chrome carries a Status toggle too), and hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the pane button at the top right of her presence bar — the bar above every view — is its door, and on a phone the top bar's panel button is the other; hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
   "<li><b>Operator</b> — what she calls you, your picture and your Operator Badge, and your file: the memories you handed her about you. Your picture rides beside your messages; upload one in the tab (it is trimmed to a square here, kept with your profile, and carried in the settings backup) or let the picture generated from your name stand in. The <b>Operator Badge</b> is your self-portrait in the cartridge format — a card with your chosen face and your name (and this node's name) carried inside the picture. It is not a credential: nothing reads a badge to prove identity, and a badge whose payload is damaged simply reads as no badge.</li>" +
   "<li><b>Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
   "<li><b>Appearance</b> — the theme picker, Potato mode for low-power machines, and the UI scale.</li>" +
@@ -3916,7 +3934,7 @@ function attachAutocomplete(input, opts) {
 applyTheme();
 applyMotion();
 applyUiScale();
-var appEl = document.getElementById("app"), navEl = document.getElementById("nav"), mainEl = document.getElementById("main"), statusEl = document.getElementById("status");
+var appEl = document.getElementById("app"), navEl = document.getElementById("nav"), mainEl = document.getElementById("view-root"), statusEl = document.getElementById("status");
 var toggleBtn = document.createElement("button");
 toggleBtn.id = "nav-toggle";
 toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
@@ -3931,15 +3949,6 @@ toggleBtn.onclick = function () {
   render();
 };
 navEl.appendChild(toggleBtn);
-var statusToggleBtn = document.createElement("button");
-statusToggleBtn.type = "button";
-statusToggleBtn.id = "status-toggle";
-statusToggleBtn.setAttribute("aria-expanded", "false");
-statusToggleBtn.setAttribute("aria-controls", "status");
-statusToggleBtn.setAttribute("aria-label", "Show or hide the status column");
-statusToggleBtn.textContent = "« Status";
-statusToggleBtn.onclick = function () { toggleStatusColumn(); };
-navEl.appendChild(statusToggleBtn);
 // The destinations and the version footer ride in one container:
 // display:contents on desktop (the nav's flex column is unchanged),
 // the full-width overlay panel on small screens.
@@ -4133,8 +4142,9 @@ function cyclePresence() {
 
 }
 setTimeout(cyclePresence, 120000 + Math.random() * 120000);
-// Her presence, computed once (Build 6, #115): the Chat
-// window's presence header reads from this, and only this —
+// Her presence, computed once (Build 6, #115): her presence
+// bar (Build 8 — frame chrome over every view) reads from
+// this, and only this —
 // and in the state where she is simply here, its text IS the
 // status pane's living line (presenceText above), so the two
 // surfaces can never tell different stories. The pane keeps
@@ -4147,6 +4157,26 @@ function presenceState() {
   if (CONFIG.backend !== "live") return { text: "Simulated (mock mode)", dot: "#f5b544", pulse: false, typing: false };
   if (llama.status === "running") return { text: presenceText, dot: "#34d399", pulse: true, typing: false };
   return { text: "Navi is not here — her model is disconnected.", dot: "#9fb3c8", pulse: false, typing: false };
+}
+// Her presence bar (Build 8): Navi's status leaves the Chat
+// view and becomes frame chrome — one persistent element above
+// every view, mounted once here and only ever REPAINTED, never
+// re-created, so the node (and anything riding it) survives
+// every view switch. Its right edge carries the pane button
+// restored to its pre-#123 form (#115's button, Build 6): the
+// panel glyph with aria-pressed, in the persistent top right on
+// every page. presenceState() stays the single source for the
+// dot, the line and the typing dots; the status column's own
+// presence line inside the pane is untouched.
+var presenceBarEl = document.getElementById("presence-bar");
+var chatStatusToggleBtn = null;
+function renderPresenceBar() {
+  if (!presenceBarEl) return;
+  var pres = presenceState();
+  presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div>"
+    + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + ((window.innerWidth <= 800 ? dockOpen : !statusHidden) ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
+  chatStatusToggleBtn = document.getElementById("chat-status-toggle");
+  if (chatStatusToggleBtn) chatStatusToggleBtn.onclick = function () { toggleStatusColumn(); };
 }
 function statusPanelSvg() {
   return "<svg aria-hidden='true' focusable='false' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16' rx='2'/><path d='M15.5 4v16'/><rect x='15.5' y='4' width='5.5' height='16' fill='currentColor' stroke='none' opacity='0.45'/></svg>";
@@ -6612,13 +6642,12 @@ function render() {
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
   toggleBtn.setAttribute("aria-label", smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : "Collapse or expand the side menu");
   toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
-  // The Status toggle rides the rail the same way (Build 6,
-  // #114): a bare chevron on the collapsed rail and on phones
-  // it is not in the bar at all (the dock toggle is the
-  // column's door there; CSS hides this one at <=800px).
-  statusToggleBtn.textContent = statusHidden ? (navClosed && !smallScreen ? "«" : "« Status") : (navClosed && !smallScreen ? "»" : "Status »");
-  statusToggleBtn.setAttribute("aria-expanded", statusHidden ? "false" : "true");
   dockBtn.setAttribute("aria-expanded", dockOpen ? "true" : "false");
+  // Her presence bar repaints with every render (Build 8): the
+  // persistent element keeps its identity; only its contents —
+  // the live presence state and the pane button's pressed
+  // state — are refreshed, on every view.
+  renderPresenceBar();
   dockBtn.setAttribute("aria-label", dockOpen ? "Close the status dock" : "Open the status dock");
   syncNav();
   ensureLiveCommands();
@@ -6630,8 +6659,9 @@ function render() {
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
-    var pres = presenceState();
-    h += "<div class='chat-head'><div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div></div>";
+    // Her presence lives in the persistent bar above every
+    // view now (Build 8) — the Chat view carries no header of
+    // its own; the thread simply starts below the bar.
     var cliMode = llama.status !== "running";
     // No header bar over the thread (build .52, issue #15): the
     // strip that read "Chat · <session> · navi.llamafile

@@ -808,6 +808,25 @@ else
   echo "          the binary icon files; they ship inside the release zip. The install continues"
   echo "          without it, and the app and its menu entry will use a fallback icon."
 fi
+# Navi's chat portrait gets the same treatment as the icon — and
+# for the same reason. The bridge serves it from the install tree
+# (GET /assets/navi-portrait.jpg) for her chat gutter faces and
+# the presence header, and a git clone carries none of the binary
+# asset files (they ship only inside the release zip), so a clone
+# install reaches this line with no portrait to copy: say so in
+# plain words and carry on — chat shows without her picture, and
+# nothing else about the install changes. (Build 7 shipped the
+# portrait inside the zip but this copy step did not exist yet,
+# so Build 7 installs served no picture at all.)
+if [ -f assets/navi-portrait.jpg ]; then
+  $SUDO cp assets/navi-portrait.jpg "$INSTALL_DIR/assets/navi-portrait.jpg"
+else
+  echo "    note: Navi's chat portrait (assets/navi-portrait.jpg) is missing from this copy"
+  echo "          of the sources. That is expected when installing from a git clone — the"
+  echo "          clone does not carry the binary asset files; they ship inside the release"
+  echo "          zip. The install continues without it, and chat will show without her"
+  echo "          picture until Apex is installed from the release zip."
+fi
 if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
   $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
 fi
