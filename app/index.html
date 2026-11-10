@@ -256,6 +256,21 @@
      shelf outgrows the bar; the CHIPS label centers on the row.
      No chips installed, no row at all (the render omits it). */
   .chipsrow { display:flex; align-items:center; gap:8px; overflow-x:auto; padding-bottom:8px; scrollbar-width:thin; }
+  /* ChipDeck (0.1.9e, #94): the binder — sleeves in a wrapping grid,
+     each holding the ACTUAL picture (the cartridge bytes, rendered
+     pixel-sharp) with its state and actions under it. */
+  .deck-grid { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; }
+  .sleeve { flex:0 1 188px; border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:10px; min-width:0; }
+  .sleeve-img { width:96px; height:112px; image-rendering:pixelated; border-radius:4px; display:block; }
+  .sleeve-name { font-weight:700; margin-top:8px; overflow-wrap:anywhere; }
+  .sleeve-state { color:var(--dim); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
+  .deck-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .deck-actions button, .deck-actions a { min-height:40px; display:inline-flex; align-items:center; }
+  .deck-drop { margin-top:10px; border:1px dashed var(--line); border-radius:8px; padding:16px 12px; text-align:center; }
+  @media (max-width: 800px) {
+    .sleeve { flex:1 1 42%; }
+    .deck-actions button, .deck-actions a { min-height:44px; }
+  }
   .chips-label { color:var(--dim); font-size:11px; letter-spacing:.14em; flex:0 0 auto; }
   .chipbtn.chippill { height:32px; min-height:32px; margin:0; padding:0 12px; font-size:12px; display:inline-flex; align-items:center; flex:0 0 auto; }
   .composer #chat-in { height:44px; border-radius:6px; }
@@ -650,7 +665,12 @@ function gateGuard(r) {
 function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nord"; }
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
 
-var NAV = ["Chat", "Voice", "Chips", "Memory", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
+var NAV = ["Chat", "Voice", "Chips", "ChipDeck", "Memory", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
+// Display names (0.1.9e, issue #92): the view keys stay what they
+// have always been; the labels wear the product line — Apex DHD,
+// Apex Mesh.
+var NAV_LABELS = { DHD: "Apex DHD", Mesh: "Apex Mesh" };
+function navLabel(name) { return NAV_LABELS[name] || name; }
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
 // to its rail, the icon alone identifies the view.
@@ -689,7 +709,11 @@ function dhdGlyphSvg() {
 function meshGlyphSvg() {
   return "<path d='M9 3.5 13.8 6.3v5.4L9 14.5 4.2 11.7V6.3z'/><path d='M15 9.5l4.8 2.8v5.4L15 20.5l-4.8-2.8v-5.4z'/><circle cx='12' cy='12' r='1.7' fill='currentColor' stroke='none'/>";
 }
+function chipdeckGlyphSvg() {
+  return "<circle cx='6.2' cy='5.4' r='1.9'/><circle cx='6.2' cy='12' r='1.9'/><circle cx='6.2' cy='18.6' r='1.9'/><path d='M9.4 3.6h9.1a1.9 1.9 0 0 1 1.9 1.9v13a1.9 1.9 0 0 1-1.9 1.9H9.4'/><path d='M15.9 8.2l3.1 4.6h-6.2z'/>";
+}
 function navIcon(name) {
+  if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
@@ -876,8 +900,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-09.91";
-var SHIPPED_BUILD_SEQ = 10;
+var BRIDGE_BUILD = "2026-11-10.92";
+var SHIPPED_BUILD_SEQ = 1;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -960,6 +984,9 @@ var ragForgeDocs = [];       // documents picked in RAG Studio [{title, body}]
 var ragDragOver = false;     // RAG Studio drop zone highlight while dragging
 var ragForgeMsg = "";
 var ragExp = {};             // GitHub export results by pack slug {file, files} or {error}
+var ragCart = {};            // cartridge export results by pack slug {file, size} or {error}
+var deckData = null;         // live: last /api/deck answer (ChipDeck)
+var deckMsg = "";
 var ragPub = {};             // pack slug -> Publish to GitHub panel state
 var ragReadmeEd = {};        // pack slug -> README editor state
 var chipPub = {};            // chip file -> Publish to GitHub panel state
@@ -972,7 +999,7 @@ function pubPanelHtml(pub, kind, key) {
     h += "<span style='font-size:12px'>Publish to GitHub needs a GitHub sign-in — sign in under <b>Settings → GitHub &amp; Backup</b>, or use <b>Export for GitHub</b> and upload the ZIP yourself.</span>";
   } else {
     h += "<label style='font-size:12px'>Repo name <input class='mono' data-pubrepo='" + kind + ":" + esc(key) + "' value='" + esc(pub.repo || "") + "' style='width:220px' aria-label='Repository name'></label> <button class='act' data-pubgo='" + kind + ":" + esc(key) + "'" + (pub.busy ? " disabled" : "") + ">" + (pub.busy ? "Publishing…" : "Publish") + "</button>";
-    h += "<br><span style='color:var(--dim);font-size:12px'>Navi creates the repo if it is new (public — the catalog only finds public repos), sets the topic automatically, and uploads the same files the export builds. All that's left is yours: publish the release on GitHub — the version tag is created with that publish. Navi never releases for you.</span>";
+    h += "<br><span style='color:var(--dim);font-size:12px'>Navi does the whole chain: creates the repo if it is new (public — the catalog only finds public repos), sets the topic automatically, uploads the same files the export builds, then creates the tag and publishes the release with the cartridge picture attached. Nothing is left to do on GitHub.</span>";
   }
   if (pub.msg) h += "<br><span style='font-size:12px;color:#34d399'>" + esc(pub.msg) + (pub.url ? " <a class='ghost' href='" + esc(pub.url) + "' target='_blank' rel='noreferrer'>Open the repo</a>" : "") + "</span>";
   if (pub.err) h += "<br><span style='font-size:12px;color:#f5b544'>" + esc(pub.err) + "</span>";
@@ -1378,7 +1405,7 @@ function docsPageTitle(id) { var hit = DOC_PAGES.filter(function (x) { return x.
 var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
-  { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing"] },
+  { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault"] },
   { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "github", "installing"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
@@ -2535,10 +2562,11 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
   "<p><b>Navi User Repo (NUR)</b> searches GitHub for repos tagged <span class='mono'>navi-chips</span> — that topic is the whole store. The Saints Sec Chips and Community Chips tabs are where you find and install chips: a card there shows whether you already have the chip, and that is all it does with it. A chip that is already on this machine — installed from its repo, or forged in Chip Studio under the same name — reads <b>INSTALLED</b> on its catalog card and its Install button sits grayed out: there is no second install over the copy you have. Install tracks the latest release; a newer release offers an update, which you take from the chip's card on the Local Chips tab. <b>Chip Studio</b> is where chips are written: a full code editor with highlighting, find, templates, and a live structure check. To publish: public repo, the <span class='mono'>navi-chips</span> topic, a release tag as the version.</p>" +
-  "<p><b>Editing a chip you already have.</b> <b>Local Chips</b> is where you manage the chips you have — its card carries every management action: <b>Run</b>, <b>Download .png</b>, <b>Edit in Studio</b>, <b>Edit README</b>, <b>Export for GitHub</b>, <b>Publish to GitHub</b>, <b>Check for updates</b> / <b>Update</b>, and <b>Delete</b>. Any chip in the folder can go back to the Studio — press <b>Edit in Studio</b> on its card in Navi User Repo (NUR) → Local Chips, or pick it in the Studio's <b>Open a chip</b> list: forged chips, GitHub installs, and chips you once exported and installed again all open with their whole file set, root.py and modules together. Saving re-forges the chip with your changes inside. If the chip came from GitHub, saving marks it <b>edited locally</b>: the app says plainly that your copy no longer matches the published one, and an Update will refuse rather than quietly overwrite your edits. To share your version, use <b>Export for GitHub</b> in Navi User Repo (NUR) and cut a new release. Knowledge packs work the same way: <b>Edit in RAG Studio</b> on the RAG tab reopens any pack — documents in or out, name and description adjusted — and saving rebuilds its index on your machine.</p>" +
-  "<p><b>Installs prove themselves.</b> When a chip installs, the bridge re-scans the chips folder before it answers: if the cartridge landed on disk but does not list, the answer says so, and why — an install is never reported done on faith. A cartridge whose payload will not parse is listed in Local Chips as <b>couldn't be read</b> — visible and deletable, but it cannot run, and the pill row above the composer skips it. <b>Older chips still run:</b> installing walks the repo's folders recursively, so a chip laid out as a package keeps its relative paths and its imports resolve at run time; a repo's <span class='mono'>chip-requirements.txt</span> is read and the chip's card shows the declared dependencies plainly — they are <b>not installed automatically</b>; and every chip sandbox carries the legacy <span class='mono'>navi.py</span> shim (<span class='mono'>get_parameters</span>, old semantics) unless the chip ships its own.</p></div>" +
+  "<p><b>Editing a chip you already have.</b> <b>Local Chips</b> is where you manage the chips you have — its card carries every management action: <b>Run</b>, <b>Download .png</b>, <b>Edit in Studio</b>, <b>Edit README</b>, <b>Export for GitHub</b>, <b>Publish to GitHub</b>, <b>Check for updates</b> / <b>Update</b>, and <b>Delete</b>. Uninstalling is not fenced into that one card anymore: an installed chip's catalog card carries <b>Uninstall</b> too, and so does its sleeve in <b>ChipDeck</b> — cartridge and install record go together from any of them, and a chip with local edits asks before it goes. Any chip in the folder can go back to the Studio — press <b>Edit in Studio</b> on its card in Navi User Repo (NUR) → Local Chips, or pick it in the Studio's <b>Open a chip</b> list: forged chips, GitHub installs, and chips you once exported and installed again all open with their whole file set, root.py and modules together. Saving re-forges the chip with your changes inside. If the chip came from GitHub, saving marks it <b>edited locally</b>: the app says plainly that your copy no longer matches the published one, and an Update will refuse rather than quietly overwrite your edits. To share your version, use <b>Export for GitHub</b> in Navi User Repo (NUR) and cut a new release. Knowledge packs work the same way: <b>Edit in RAG Studio</b> on the RAG tab reopens any pack — documents in or out, name and description adjusted — and saving rebuilds its index on your machine.</p>" +
+  "<p><b>Installs prove themselves.</b> When a chip installs, the bridge re-scans the chips folder before it answers: if the cartridge landed on disk but does not list, the answer says so, and why — an install is never reported done on faith. A cartridge whose payload will not parse is listed in Local Chips as <b>couldn't be read</b> — visible and deletable, but it cannot run, and the runners skip it. <b>Older chips still run:</b> installing walks the repo's folders recursively, so a chip laid out as a package keeps its relative paths and its imports resolve at run time; a repo's <span class='mono'>chip-requirements.txt</span> is read and the chip's card shows the declared dependencies plainly — they are <b>not installed automatically</b>; and every chip sandbox carries the legacy <span class='mono'>navi.py</span> shim (<span class='mono'>get_parameters</span>, old semantics) unless the chip ships its own.</p>" +
+  "<p><b>A chip's face is drawn, not rolled.</b> New forges wear the family shell — black body, coral notched bands — with one chunky pixel glyph that means the chip's function: a key for cryptex, a hash mark for a hasher, a book for knowledge, a terminal for a shell tool. The glyph is named in the chip's manifest (<span class='mono'>glyph</span> in navi-chip.json); with no glyph named, a keyword read of the chip's name and description picks one, and a chip nothing claims keeps the older name-seeded pattern as a fallback. Faces are drawn at forge time — installed and published pictures are never redrawn.</p></div>" +
     "<div class='doc-sec'><h4>Running chips from chat, and Workflows</h4>" +
-  "<p>Any loaded chip runs from the conversation: <span class='mono'>/chip &lt;name&gt;</span>, “run the &lt;name&gt; chip”, its name alone, or its pill in the row above the composer — its output lands in the thread. The bridge genuinely runs it: code defining <span class='mono'>run()</span> executes with a working <span class='mono'>navi_internal</span>; a chip that only declares an output shows that instead. <b>Workflows</b> chain chips in order — each chip's output becomes the next chip's input, and the last output is the result.</p></div>" +
+  "<p>Any loaded chip runs from the conversation: <span class='mono'>./&lt;name&gt;</span> — the way you run a program — with its arguments after it (<span class='mono'>./navi-cryptex hex -e -t \"Hello world!\"</span>); a short name resolves (./cryptex finds navi-cryptex), a bare <span class='mono'>./</span> answers with the shelf itself, and typing <span class='mono'>./</span> in the composer offers the chips' names as you type. <span class='mono'>/chip &lt;name&gt;</span> remains as the long-form alias, alongside “run the &lt;name&gt; chip” and its name alone — its output lands in the thread. Under the CLI latch (<span class='mono'>$</span>), <span class='mono'>./</span> is the shell's own again: the latch decides, never a guess. There is no pill row above the composer anymore — the shelf lives in ChipDeck now, and running lives at the keyboard. The bridge genuinely runs it: code defining <span class='mono'>run()</span> executes with a working <span class='mono'>navi_internal</span>; a chip that only declares an output shows that instead. <b>Workflows</b> chain chips in order — each chip's output becomes the next chip's input, and the last output is the result.</p></div>" +
     "<div class='doc-sec'><h4>Writing a chip, step by step</h4>" +
   "<p>A <b>chip</b> is a small Python program Navi can run. A chip is a set of files: <span class='mono'>root.py</span> — the main file, the one Navi runs; every chip has exactly one — and helper files like <span class='mono'>helpers.py</span>, extra Python files root.py brings in with <span class='mono'>import helpers</span>. The rules root.py follows (the Studio checks them and underlines what is missing):</p><ol>" +
   "<li>It brings in Navi with <span class='mono'>import navi_internal</span> and takes hold of her with <span class='mono'>navi_instance = navi_internal.navi_instance</span>.</li>" +
@@ -2589,15 +2617,22 @@ var DOC_PAGES = [
   "<li>On GitHub, make a new <b>public</b> repository (one project's folder on GitHub; public means everyone can see it) and unzip the export at its top.</li>" +
   "<li>On the repo page, open the About gear and add the topic <span class='mono'>navi-chips</span> — a topic is a label, and this label is how Navi finds chips.</li>" +
   "<li>Publish a <b>release</b> (GitHub's way of saying: this exact version, ready to download) — the version tag is created with that publish, so tag it with the same version.</li></ol>" +
-  "<p><b>Signed in to GitHub?</b> Skip the ZIP: <b>Publish to GitHub</b> on the chip's card does the middle steps for you — it creates the public repo (an existing one is updated, and she says so), sets the <span class='mono'>navi-chips</span> topic on its own, and uploads the same files the export builds. The repo name is pre-filled from the chip's name and yours to edit before anything uploads. The release is still yours to publish — Navi never releases. And the README page is yours too: <b>Edit README</b> on the chip's card edits the generated page; your text is kept inside the chip and ships in the export and the upload alike, with a restore back to the generated page.</p>" +
+  "<p><b>Signed in to GitHub?</b> Skip the ZIP: <b>Publish to GitHub</b> on the chip's card does the middle steps for you — it creates the public repo (an existing one is updated, and she says so), sets the <span class='mono'>navi-chips</span> topic on its own, and uploads the same files the export builds. The repo name is pre-filled from the chip's name and yours to edit before anything uploads. And Publish finishes the job: it creates the version tag and publishes the release itself, with the chip picture attached. If that version is already released, Publish refuses and says so — bump the version in the manifest instead of overwriting a release. And the README page is yours too: <b>Edit README</b> on the chip's card edits the generated page; your text is kept inside the chip and ships in the export and the upload alike, with a restore back to the generated page.</p>" +
   "<p><b>Inside the export:</b> <span class='mono'>root.py</span> and the helper files (install downloads every Python file in the repo <b>recursively</b>, keeping folder paths, so package layouts survive — root.py, or the entry named in the manifest, is the chip; the rest are its modules; a <span class='mono'>chip-requirements.txt</span> at the repo top is read and shown on the chip's card as declared dependencies, never installed automatically); <span class='mono'>navi-chip.json</span>, a small card with the name, description, version, and entry file; the chip <span class='mono'>.png</span>; and a generated <span class='mono'>README.md</span> page. <b>Installs and updates:</b> Navi User Repo (NUR) searches GitHub for the <span class='mono'>navi-chips</span> topic; Install brings the whole file set down as a chip; a release with a bigger tag offers every install an update. Knowledge packs publish the same way — see the RAG page.</p></div>" },
+  { id: "chipdeck", title: "ChipDeck — the binder", related: ["chips-guide", "rag", "mesh"], html:
+    "<p style='color:var(--dim)'>One binder for everything that rides a picture.</p>" +
+    "<div class='doc-sec'><h4>What lives in the binder</h4>" +
+  "<p><b>ChipDeck</b> (in the menu, under Chips) is a gallery of sleeves, one per picture-riding thing on this machine: every <b>installed chip</b>, every <b>Apex Mesh pairing card</b> on file in <span class='mono'>config/mesh/cards/</span>, and every <b>knowledge pack</b>, drawn as its cartridge. Each sleeve shows the <b>actual picture</b> — the cartridge's real bytes, not an icon for it — with the thing's state at a glance (installed from where, edited locally, paired, active) and its actions gathered underneath: chips run (straight into chat, as <span class='mono'>./&lt;name&gt;</span>), download their picture, open in Chip Studio, and uninstall; Mesh cards download and unpair; packs activate, deactivate, download their cartridge, and remove.</p>" +
+  "<p><b>Drop a picture on the Deck and it slots in.</b> The data inside the picture says what it is — chip, knowledge cartridge, or Mesh card — and each kind installs through its own door, with its own checks. A picture whose data was stripped on its way to you (chat apps recompress uploads) is refused in plain words, never silently ignored: send originals inside a <span class='mono'>.zip</span>.</p>" +
+  "<p><b>What never rides a picture stays out of the binder:</b> Soul, Memory, settings and config, the Vault's notes, and every key. Those travel in backups only — there is no cartridge for them, by design.</p></div>" },
   { id: "rag", title: "RAG packs & exports", related: ["chips-publishing", "settings"], html:
     "<div class='doc-sec'><h4>RAG — knowledge packs</h4>" +
   "<p>Her knowledge comes in <b>packs</b>, chip-style like her chips, managed in the <b>RAG tab</b>. A pack is a GitHub repo tagged <span class='mono'>navi-rag</span> whose documents are its <span class='mono'>.md</span>/<span class='mono'>.txt</span> files and the extracted text of its <span class='mono'>.pdf</span> files (a PDF gives up its words at the door; only the text is stored).</p>" +
   "<p>Installing one downloads the documents into <span class='mono'>rag-packs/</span> and <b>builds the pack's index there, at install time</b> — feature-hashed term vectors, small local embeddings computed with the standard library alone, no model to download. At question time only your question is embedded, so retrieval stays fluid on CPU.</p>" +
   "<p>Each pack carries an <b>active</b> toggle: only active packs feed her answers, and when a pack informs an answer, the pack and the document it came from appear as a source pill under her message — display only, never part of her reply text, so her voice never reads citations aloud, and a message that drew on no pack carries none. A bare <span class='mono'>/rag</span> in chat lists the packs on this machine and which are active.</p>" +
   "<p><b>RAG Studio</b> (the RAG tab's second tab) forges packs from documents on your disk — picked files, or a folder on this machine — into the same folder, documents, index, and metadata, ready to use immediately. Publishing a pack mirrors chips: a public repo, the <span class='mono'>navi-rag</span> topic, and a release tag as its version — a newer tag is what offers an update.</p>" +
-  "<p>The Packs list's <b>Export for GitHub</b> button packages a pack into exactly that repo shape:</p><ul>" +
+  "<p><b>A pack can ride a picture, too.</b> <b>Export as PNG</b> on a pack's card draws its <b>knowledge cartridge</b>: one picture carrying the pack's manifest and every document's full text, compressed inside the image. Hand someone the picture and they install the pack from the picture alone — <b>Install from a picture…</b> on this tab, or a drop onto ChipDeck — and the index is <b>built on their machine at install time</b> from the texts inside: a cartridge never carries an index, and nothing reads the picture when her answers draw on the pack. Installed from a picture, a pack is a pack in every way — same folder, same index, same active toggle. There is a ceiling: a cartridge may run to 8 MB of picture; past it the export refuses in plain words and the ZIP stays the way to carry that pack — nothing is ever truncated to squeeze into a picture. And the standing warning for every Apex picture: chat apps recompress the pictures people upload and strip the data out, leaving a picture that looks right and carries nothing — send the original file inside a <span class='mono'>.zip</span>.</p>" +
+"<p>The Packs list's <b>Export for GitHub</b> button packages a pack into exactly that repo shape:</p><ul>" +
   "<li>a generated README page (installs skip a root README, so it is never indexed),</li>" +
   "<li>a navi-rag.json manifest,</li>" +
   "<li>the documents under documents/,</li>" +
@@ -2610,7 +2645,7 @@ var DOC_PAGES = [
   "<ol><li>Forge the pack in RAG Studio. On its card in the Packs list, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept with the pack and ships in the export and the upload alike (Restore generated README undoes it).</li>" +
   "<li><b>Signed in to GitHub:</b> type a version like <span class='mono'>0.1.0</span> and press <b>Publish to GitHub</b>. Check the repo name — pre-filled from the pack's name, yours to edit — and confirm. Navi creates the public repo if it is new, sets the <span class='mono'>navi-rag</span> topic on its own, and uploads the files; an existing repo is updated, and she says so.</li>" +
   "<li><b>Not signed in:</b> press <b>Export for GitHub</b> and download the ZIP instead. Make a new public repository on GitHub, unzip the export at its top, and add the topic <span class='mono'>navi-rag</span> (repo page → About gear → Topics).</li>" +
-  "<li>Either way, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so tag it with the same version. Navi never releases for you.</li></ol>" +
+  "<li>With the ZIP route, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so tag it with the same version. Signed in, <b>Publish to GitHub</b> does that step too.</li></ol>" +
   "<p><b>Inside the export:</b></p><ul>" +
   "<li>a <span class='mono'>README.md</span> page (installs skip a root README — it describes the pack, it is never a document),</li>" +
   "<li>the <span class='mono'>navi-rag.json</span> card,</li>" +
@@ -2642,12 +2677,12 @@ var DOC_PAGES = [
   "<p>The <b>Voice tab</b> holds the pipeline and the call itself — her settings (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>) live in <b>Settings → Voice</b>: a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
   { id: "dhd", title: "DHD — Apex from anywhere", related: ["settings", "installing", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What DHD is</h4>" +
-  "<p><b>DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
+  "<p><b>Apex DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
   "<p>Everything is Apex's own work, assembled and managed by Apex itself — no Tailscale, no tunnel or proxy service, no Certbot:</p><ul>" +
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
   "<li>The <b>same access code</b> as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
-  "<p>DHD has its own page in the menu (after the Vault, before the Updater), and the status column's <b>Servers</b> group shows it beside Llamafile and Apex Node [local], each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+  "<p>DHD has its own page in the menu (after the Vault, before the Updater), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex Node [local], Apex Mesh, then Apex DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
@@ -2677,10 +2712,10 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Turning it off</h4>" +
   "<p>Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.</p>" +
   "<p>Turning DHD off does not touch Apex Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.</p></div>" },
-  { id: "mesh", title: "Navi Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
+  { id: "mesh", title: "Apex Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What Mesh is</h4>" +
-  "<p><b>Navi Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
-  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group shows Navi Mesh as a fourth row, under DHD. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu, right after DHD — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
+  "<p><b>Apex Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
+  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex Node</b>, <b>Apex Mesh</b>, <b>Apex DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu, right after DHD — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
   "<p>That Servers row is also where Mesh warnings live — the persistent place to check when something feels off. Its dot and line read the connection state at a glance: grey when Mesh is off or no machine is paired yet, green when a paired machine is reachable (amber while a borrow or a lend is actually running), and amber with the reason in short words — <i>“&lt;machine&gt; unreachable”</i>, <i>“&lt;machine&gt; dropped”</i> — when a connection breaks. The chat notice still speaks in the moment a borrow falls back; the status row is what keeps the warning on screen afterwards, until the machine answers again.</p></div>" +
     "<div class='doc-sec'><h4>Pairing — the card is the handshake</h4>" +
   "<p>Each machine has a <b>Mesh card</b> — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a <b>capabilities block</b> — the machine's own report of its hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under.</p><ol>" +
@@ -2767,7 +2802,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Signing in — only for GitHub things, never for Navi</h4>" +
   "<p>Navi <b>never</b> needs you to sign in. She starts, chats, runs commands, uses her chips and knowledge packs, and works with no internet at all — signed out, forever, if you like. Signing in exists for one reason: a few actions write to GitHub (backups and imports, below), and GitHub only lets an account write to its own things.</p>" +
   "<p><b>What signing in turns on:</b></p><ul>" +
-  "<li><b>Publish to GitHub</b> for your RAG packs and chips (Navi creates the repo, applies the topic, and uploads the files; you just publish the release).</li>" +
+  "<li><b>Publish to GitHub</b> for your RAG packs and chips (Navi does the whole chain — repo, topic, files, tag, and the published release, picture attached).</li>" +
   "<li><b>Automatic backups</b> to a repo under your own account.</li>" +
   "<li><b>Taking part</b> in the GitHub section's live issues, roadmap, and discussions — looking never needed an account; joining in does.</li></ul>" +
   "<p>None of it is required: <b>Export for GitHub</b> is always available, signed in or not — sign-in only adds the upload route; it never gates exporting or publishing by hand.</p>" +
@@ -3270,7 +3305,14 @@ function attachAutocomplete(input, opts) {
     var v = input.value;
     var caret = input.selectionStart == null ? v.length : input.selectionStart;
     var open = false; tokCtx = null;
-    if (v && v.indexOf(" ") === -1 && caret <= v.indexOf(" ") + 1) {
+    if (v && v.indexOf("./") === 0 && v.indexOf(" ") === -1 && CONFIG.backend === "live" && wfData && chatMode !== "cli") {
+      // ./ completes chip names (0.1.9e, issue #97): the shelf,
+      // offered as you type the invocation itself.
+      var dtok = v.slice(2).toLowerCase();
+      items = wfData.chips.filter(function (c) { return !c.unreadable; }).filter(function (c) { var slug = String(c.file || "").replace(/.png$/i, ""); return slug.toLowerCase().indexOf(dtok) === 0 || slug.toLowerCase().replace(/^navi-/, "").indexOf(dtok) === 0; }).map(function (c) { var slug = String(c.file || "").replace(/.png$/i, ""); return { name: "./" + slug, description: String(c.name || slug) + " — chip", source: "chip" }; }).slice(0, 8);
+      if (items.length) { active = 0; paint(); box.style.display = "block"; input.dataset.acOpen = "1"; open = true; }
+    }
+    if (!open && v && v.indexOf(" ") === -1 && caret <= v.indexOf(" ") + 1) {
       var t = v.toLowerCase();
       items = getCommands().filter(function (c) { return c.name.indexOf(t) === 0 && c.name !== t; }).slice(0, 8);
       if (items.length) { active = 0; paint(); box.style.display = "block"; input.dataset.acOpen = "1"; open = true; }
@@ -3407,8 +3449,8 @@ navEl.appendChild(navMenu);
 NAV.forEach(function (name) {
   var b = document.createElement("button");
   b.id = "nav-" + name;
-  b.setAttribute("aria-label", name);
-  b.innerHTML = "<span class='ic'>" + navIcon(name) + "</span><span class='lbl'>" + name + "</span><span class='nav-tip' aria-hidden='true'>" + name + "</span>";
+  b.setAttribute("aria-label", navLabel(name));
+  b.innerHTML = "<span class='ic'>" + navIcon(name) + "</span><span class='lbl'>" + navLabel(name) + "</span><span class='nav-tip' aria-hidden='true'>" + navLabel(name) + "</span>";
   b.onclick = function () { view = name; if (window.innerWidth <= 800) { navClosed = true; dockOpen = false; } render(); if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); } };
   navMenu.appendChild(b);
 });
@@ -3488,7 +3530,7 @@ function cyclePresence() {
 setTimeout(cyclePresence, 120000 + Math.random() * 120000);
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 function renderLlama() {
-  var h = "<div class='stat'><span class='dot" + (llama.status === "running" ? " pdot" : "") + "' style='background:" + (llama.status === "running" ? "#34d399" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>LLAMAFILE</span><br>";
+  var h = "<div class='stat'><span class='dot" + (llama.status === "running" ? " pdot" : "") + "' style='background:" + (llama.status === "running" ? "#34d399" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>NAVI</span> <span class='mono' style='color:var(--dim);font-size:11px'>llamafile · port 8080</span><br>";
   if (llama.status === "running") {
     h += "<span class='mono' style='color:#34d399;font-weight:700'>Running</span><details style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Server details</summary><div style='margin-top:2px'><div style='color:var(--text);font-size:12px;font-weight:700'>Local Llamafile Server</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:8080</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Apex Web UI</div><div class='mono' style='color:var(--dim);font-size:12px'>http://localhost:" + BRIDGE_PORT + "</div><div style='color:var(--text);font-size:12px;font-weight:700;margin-top:4px'>Bridge</div><div class='mono' style='color:var(--dim);font-size:12px'>build " + BRIDGE_BUILD + (bridgeRoot ? " · " + esc(bridgeRoot) : "") + "</div></div></details><button class='ghost' id='llama-disc' style='margin-top:6px'>Disconnect</button>";
   } else {
@@ -3705,7 +3747,7 @@ function dhdHtml() {
   var ps = publicState || CONFIG.publicServer || { accessCode: "" };
   var code = d.accessCode || ps.accessCode || "";
   var modeLine = !d.active ? "Off" : d.mode === "domain" ? "Domain certificate (Let's Encrypt)" : "Self-signed certificate";
-  var h = "<h3>DHD - the way home</h3>";
+  var h = "<h3>Apex DHD - the way home</h3>";
   h += "<p style='color:var(--dim);max-width:640px'>DHD takes the same Apex you use at home and gives it a public door: Apex itself stands up a reverse proxy with TLS on this machine - no Tailscale, no tunnel service, no Certbot - and you reach her from anywhere with one address and the access code. One click is the whole setup.</p>";
   h += "<div class='card'><div class='row' style='justify-content:space-between'><b>DHD - public access <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[public]</span></b>" +
     "<button class='ghost' id='dhd-toggle' role='switch' aria-checked='" + (d.enabled ? "true" : "false") + "' aria-label='DHD - public access to Apex from anywhere' style='min-width:64px;min-height:44px;font-weight:700;border-color:" + (d.enabled ? "var(--green)" : "var(--line)") + ";color:" + (d.enabled ? "var(--green)" : "var(--dim)") + "'>" + (d.enabled ? "ON" : "OFF") + "</button></div>" +
@@ -3846,7 +3888,7 @@ function renderDhdStatus() {
   var d = dhdViewState();
   var dot = d.status === "healthy" ? "#34d399" : (d.status === "degraded" || d.status === "starting") ? "#f5b544" : "#9fb3c8";
   var line = !d.active ? "Off - no public door" : d.status === "degraded" ? "On - domain saved, certificate pending" : d.publicVerified ? "On - " + d.domain + ", reachable anywhere" : "On - listening, outside reach unverified";
-  var h = "<div class='stat'><span class='dot" + (d.active ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>DHD</span> <span style='border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px;color:var(--dim)'>[public]</span><br>" +
+  var h = "<div class='stat'><span class='dot" + (d.active ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>APEX DHD</span><br>" +
     "<span class='v mono' style='font-weight:700'>" + esc(line) + "</span>";
   h += "<details id='dhd-details'" + (dhdDetailsOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Access details</summary><div style='margin-top:6px'>";
   if (d.active && d.publicVerified && d.publicUrl) {
@@ -4035,7 +4077,7 @@ function meshPillHtml(mesh) {
   // The Mesh attribution pill itself (Build 3), BARE since
   // Build 8 (#88): pillRow() owns the one row under a reply and
   // puts this pill first in it, ahead of any source pills.
-  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Navi Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
+  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Apex Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
 }
 function pillRow(mesh, sources) {
   // Build 8 (#88): ONE row under a reply carries every pill —
@@ -4101,7 +4143,7 @@ function renderMeshStatus() {
     else if (m.borrowEnabled) line = m.peers && m.peers.length ? "On — borrowing automatic" : "On — no peers paired yet";
     else line = "On — borrowing and lending both off";
   }
-  var h = "<div class='stat'><span class='dot" + (m.enabled ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>Navi Mesh</span><br>" +
+  var h = "<div class='stat'><span class='dot" + (m.enabled ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>Apex Mesh</span><br>" +
     "<span class='v mono' style='font-weight:700;overflow-wrap:anywhere'>" + esc(line) + "</span>";
   h += "<details id='mesh-details'" + (meshDetailsOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Mesh details</summary><div style='margin-top:6px'>";
   if (!m.enabled) {
@@ -4212,13 +4254,13 @@ function meshRosterHtml() {
 function meshCardHtml() {
   var m = meshViewState();
   var lend = m.lend || {};
-  var h = "<div class='card'><h3>Navi Mesh</h3>" +
+  var h = "<div class='card'><h3>Apex Mesh</h3>" +
     "<p style='color:var(--dim)'>Pooled inference across your machines: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is a card you carry by hand — a paired machine is a trusted machine.</p>";
   // Build 6 (#86): save confirmations and refusals render here,
   // at the controls, directly under the intro — not at the foot
   // of the card, where a person mid-click never sees them.
   if (meshMsg) h += "<p style='font-size:12px'>" + esc(meshMsg) + "</p>";
-  h += meshSwitchRow("mesh-master", m.enabled, "Navi Mesh", "Navi Mesh master switch");
+  h += meshSwitchRow("mesh-master", m.enabled, "Apex Mesh", "Apex Mesh master switch");
   if (m.enabled) {
     h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's name <input id='mesh-name' type='text' value='" + esc(m.nodeName || "") + "' placeholder='e.g. Home server' aria-label='This machine’s Mesh name' style='min-height:44px'></label>" +
       (m.nodeId ? "<span class='mono' style='font-size:11px;color:var(--dim)'>node " + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
@@ -5136,7 +5178,7 @@ function serversSummaryDots() {
   var llamaDot = llama.status === "running" ? "#34d399" : "#9fb3c8";
   var meshDot = meshDotColor(meshViewState());
   function dot(c) { return "<span class='dot' style='background:" + c + ";margin-left:6px'></span>"; }
-  return dot(llamaDot) + dot(nodeDot) + dot(dhdDot) + dot(meshDot);
+  return dot(llamaDot) + dot(nodeDot) + dot(meshDot) + dot(dhdDot);
 }
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
@@ -5179,11 +5221,11 @@ function renderStatus(live) {
     // the block gets the same margin, padding, and divider as
     // every other status block — expanded and collapsed alike,
     // since the wrapper renders in both states.
-    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Llamafile, Apex Node, DHD and Navi Mesh' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
+    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Navi, Apex Node, Apex Mesh and Apex DHD' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
     renderLlama() +
     renderLocalNetwork() +
-    renderDhdStatus() +
     renderMeshStatus() +
+    renderDhdStatus() +
     "</details></div>" +
     renderSudo() +
     renderVoiceStatus() +
@@ -5324,6 +5366,7 @@ function nurCardHtml(c) {
   // included) — shows its Install grayed out and dead, never a
   // second live install over the copy already on this machine.
   else if (c.installed) main += "<button class='act' disabled aria-label='" + esc(c.name) + " is already installed' style='opacity:.45;cursor:default'>Install</button>";
+  if (c.installed && c.inCatalog) main += "<button class='ghost' data-cuninstall='" + esc(c.fullName) + "' aria-label='Uninstall chip " + esc(c.name) + "' style='margin-top:6px'>Uninstall</button>";
   var head = "<div style='display:flex;gap:8px;align-items:flex-start;flex:none'><div style='flex:1;min-width:0'><b style='display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35'>" + esc(c.name) + "</b><span class='mono' style='color:var(--dim);font-size:11px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4'>" + esc(c.fullName) + "</span></div><span style='flex:0 0 auto'>" + badge + "</span></div>";
   var front = "<div class='flip-face'>" + head
     + (c.description ? "<p style='color:var(--dim);font-size:12px;line-height:1.45;margin:4px 0 0;flex:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden'>" + esc(c.description) + "</p>" : "")
@@ -5643,7 +5686,7 @@ function githubSettingsHtml() {
   if (!gh) { return "<div class='card'>Loading GitHub state…</div>"; }
   if (gh.liveError) h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>" + esc(gh.liveError) + "</div>";
   // Sign-in card.
-  h += "<div class='card'><h3>Sign-in — optional, always</h3><p style='color:var(--dim)'>Navi <b>never</b> requires a GitHub sign-in: she runs, chats, works offline, and uses her chips and packs with no account at all. Sign-in exists only for the GitHub-backed actions — publishing, backup, and import. It uses GitHub's <b>Device Flow</b>: GitHub gives you a short code, you enter it in your own browser, and GitHub tells the app you're in. No password ever passes through the app, and no client secret is embedded in it." + (CONFIG.backend === "live" ? " The token is kept only on this machine (config/github-auth.json, readable only by you) — never in the backup, never logged." : " In mock mode the flow is simulated; the live bridge runs it against GitHub for real.") + "</p><p style='color:var(--dim)'><b>What signing in turns on:</b></p><ul style='color:var(--dim);margin:4px 0 4px 18px'><li><b>Publish to GitHub</b> for your RAG packs and chips — Navi creates the repo, applies the navi-rag / navi-chips topic, and uploads the files for you; you just publish the release.</li><li><b>Automatic backups</b> to a repo under your own account, on the schedule you pick below.</li><li><b>Taking part</b> in the GitHub section's live issues, roadmap, and discussions — looking never needed an account; joining in does.</li></ul><p style='color:var(--dim)'>And the standing truth: none of it is required. <b>Export for GitHub</b> — packaging your packs and chips as a repo-ready ZIP — is always available, signed in or not. Sign-in only adds the upload route; it never gates exporting or publishing by hand.</p>";
+  h += "<div class='card'><h3>Sign-in — optional, always</h3><p style='color:var(--dim)'>Navi <b>never</b> requires a GitHub sign-in: she runs, chats, works offline, and uses her chips and packs with no account at all. Sign-in exists only for the GitHub-backed actions — publishing, backup, and import. It uses GitHub's <b>Device Flow</b>: GitHub gives you a short code, you enter it in your own browser, and GitHub tells the app you're in. No password ever passes through the app, and no client secret is embedded in it." + (CONFIG.backend === "live" ? " The token is kept only on this machine (config/github-auth.json, readable only by you) — never in the backup, never logged." : " In mock mode the flow is simulated; the live bridge runs it against GitHub for real.") + "</p><p style='color:var(--dim)'><b>What signing in turns on:</b></p><ul style='color:var(--dim);margin:4px 0 4px 18px'><li><b>Publish to GitHub</b> for your RAG packs and chips — Navi does the whole chain for you — repo, navi-rag / navi-chips topic, files, tag, and the published release with the picture attached.</li><li><b>Automatic backups</b> to a repo under your own account, on the schedule you pick below.</li><li><b>Taking part</b> in the GitHub section's live issues, roadmap, and discussions — looking never needed an account; joining in does.</li></ul><p style='color:var(--dim)'>And the standing truth: none of it is required. <b>Export for GitHub</b> — packaging your packs and chips as a repo-ready ZIP — is always available, signed in or not. Sign-in only adds the upload route; it never gates exporting or publishing by hand.</p>";
   if (gh.signedIn) {
     h += "<p class='mono' style='font-size:13px;color:var(--green)'>Signed in as @" + esc(gh.login) + (CONFIG.backend !== "live" ? " <span style='color:var(--dim);font-size:11px'>(simulated account — mock mode has no real GitHub behind it)</span>" : "") + "</p><button class='ghost' id='gh-signout'>Sign out</button>";
   } else if (githubDevice) {
@@ -5735,6 +5778,47 @@ function voiceSettingsHtml() {
   return h;
 }
 
+function deckSleeveChip(c) {
+  var stem = String(c.file || "").replace(/.png$/i, "");
+  var delName = c.sourceKey ? c.sourceKey : "local/" + stem;
+  var state = c.unreadable ? "Couldn't be read — deletable, not runnable"
+    : c.sourceKey ? "Installed from " + c.sourceKey
+    : "Forged here / dropped in";
+  if (c.locallyEdited) state += " · EDITED LOCALLY";
+  return "<div class='sleeve'><img class='sleeve-img' src='/api/chips/file?name=" + encodeURIComponent(c.file) + "' alt='The cartridge picture for " + esc(c.name) + "'><div class='sleeve-name'>" + esc(c.name) + "</div><div class='sleeve-state'>Chip" + (c.glyph ? " · " + esc(c.glyph) + " face" : "") + "<br>" + esc(state) + "</div><div class='deck-actions'>"
+    + (c.unreadable ? "" : "<button class='act' data-deckrun='" + esc(stem) + "' aria-label='Run chip " + esc(c.name) + " in chat'>Run</button>")
+    + "<a class='ghost' href='/api/chips/file?name=" + encodeURIComponent(c.file) + "' download='" + esc(c.file) + "'>Download picture</a>"
+    + (c.unreadable ? "" : "<button class='ghost' data-deckstudio='" + esc(c.file) + "' aria-label='Open chip " + esc(c.name) + " in Chip Studio'>Studio</button>")
+    + "<button class='ghost' data-deckuninstall='" + esc(delName) + "' aria-label='Uninstall chip " + esc(c.name) + "'>Uninstall</button></div></div>";
+}
+function deckSleeveMesh(c) {
+  var state = c.own ? "This machine's own card" : c.paired ? "Paired" : "Card on file — not paired";
+  return "<div class='sleeve'><img class='sleeve-img' src='/api/deck/file?name=" + encodeURIComponent(c.file) + "' alt='The Mesh pairing card picture for " + esc(c.name) + "' style='width:112px;height:84px;image-rendering:auto'><div class='sleeve-name'>" + esc(c.name) + "</div><div class='sleeve-state'>Apex Mesh card<br>" + esc(state) + "</div><div class='deck-actions'>"
+    + "<a class='ghost' href='/api/deck/file?name=" + encodeURIComponent(c.file) + "' download='" + esc(c.file) + "'>Download picture</a>"
+    + (c.paired && !c.own ? "<button class='ghost' data-deckunpair='" + esc(c.nodeId) + "' aria-label='Unpair " + esc(c.name) + "'>Unpair</button>" : "")
+    + "</div></div>";
+}
+function deckSleeveRag(p) {
+  return "<div class='sleeve'><img class='sleeve-img' src='/api/rag/cartridge.png?slug=" + encodeURIComponent(p.slug) + "' alt='The knowledge cartridge picture for " + esc(p.name) + "' onerror='this.style.display=\"none\"'><div class='sleeve-name'>" + esc(p.name) + "</div><div class='sleeve-state'>Knowledge pack · " + p.docCount + " documents<br>" + (p.active ? "Active — feeds her answers" : "Off") + "</div><div class='deck-actions'>"
+    + "<button class='ghost' data-deckragtoggle='" + esc(p.fullName) + "' data-active='" + (p.active ? "1" : "") + "' aria-label='" + (p.active ? "Deactivate" : "Activate") + " pack " + esc(p.name) + "'>" + (p.active ? "Deactivate" : "Activate") + "</button>"
+    + "<a class='ghost' href='/api/rag/cartridge.png?slug=" + encodeURIComponent(p.slug) + "' download='" + esc(p.slug) + "-cartridge.png'>Download picture</a>"
+    + "<button class='ghost' data-deckragdelete='" + esc(p.fullName) + "' aria-label='Remove pack " + esc(p.name) + "'>Remove</button></div></div>";
+}
+function deckHtml() {
+  var h = "<h3>ChipDeck</h3>";
+  h += "<p style='color:var(--dim)'>The binder: everything on this machine that rides a picture — chips, Apex Mesh pairing cards, knowledge cartridges — each sleeve holding the actual picture, its state, and its actions. What never rides a picture stays out: Soul, Memory, settings, the Vault, and keys live in backups, never in cartridges.</p>";
+  h += "<div class='deck-drop' id='deck-drop'><b>Drop a picture to slot it in</b><br><span style='color:var(--dim);font-size:12px'>A chip, a knowledge cartridge, or a Mesh card — the data inside the picture says which. Or</span> <button class='ghost' id='deck-pick'>pick a picture…</button><input id='deck-file' type='file' accept='image/png' style='display:none' aria-label='Choose a picture to install'></div>";
+  if (deckMsg) h += "<p>" + esc(deckMsg) + "</p>";
+  if (CONFIG.backend !== "live") { h += "<div class='card'>ChipDeck reads the live bridge — switch the backend to Live in Settings.</div>"; return h; }
+  if (!deckData) { h += "<p style='color:var(--dim)'>Opening the binder…</p>"; return h; }
+  h += "<h3 style='margin-top:16px'>Chips · " + deckData.chips.length + "</h3>";
+  h += deckData.chips.length ? "<div class='deck-grid'>" + deckData.chips.map(deckSleeveChip).join("") + "</div>" : "<p style='color:var(--dim)'>No chips yet — install one from Navi User Repo (NUR), forge one in Chip Studio, or drop its picture above.</p>";
+  h += "<h3 style='margin-top:16px'>Apex Mesh cards · " + deckData.meshCards.length + "</h3>";
+  h += deckData.meshCards.length ? "<div class='deck-grid'>" + deckData.meshCards.map(deckSleeveMesh).join("") + "</div>" : "<p style='color:var(--dim)'>No pairing cards on file — cards land in config/mesh/cards/ when a backup restores them; your own card is on the Mesh page.</p>";
+  h += "<h3 style='margin-top:16px'>Knowledge cartridges · " + deckData.ragPacks.length + "</h3>";
+  h += deckData.ragPacks.length ? "<div class='deck-grid'>" + deckData.ragPacks.map(deckSleeveRag).join("") + "</div>" : "<p style='color:var(--dim)'>No knowledge packs yet — forge or install one on the RAG tab and its cartridge picture shows here.</p>";
+  return h;
+}
 function render() {
   // A popped docs window is docs-only: no nav, no status column,
   // no polling behind the wiki.
@@ -5811,31 +5895,24 @@ function render() {
         } else h += execChatHtml(m.exec);
       }
       if (m.operation) h += operationCardHtml(m.operation);
-      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Navi Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       h += "</div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='who'>NAVI</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div>";
     h += "</div>";
-    // No quick-action suggestion pills above the composer — the
-    // operator asked for that row gone. The installed-chips pill
-    // row below stays (that is his shelf, not a suggestion). Clear
-    // chat used to sit here, at the thread's foot; build .52 moved
-    // it down into the composer block (issue #13) — it rides the
-    // hint row under the chat bar now.
-    // Her loaded chips line the bottom, as pills: what's installed is
-    // what's runnable from right here. Mock mode's shelf is the
-    // simulator's set; live mode's is the chips in chips/ —
-    // which starts empty and fills only with real installs.
-    var pillChips = CONFIG.backend === "live" ? (wfData ? wfData.chips.filter(function (c) { return !c.unreadable; }).map(function (c) { return { id: String(c.file || "").replace(/.png$/i, ""), name: c.name }; }) : []) : CHIP_DEFS;
+    // No pill rows above the composer at all (0.1.9e, issue
+    // #97): the quick-action suggestions went first, and now the
+    // installed-chips pill shelf retires with them — chips run
+    // from the keyboard instead (./<name> in chat, bare ./ for
+    // the shelf), and their browsable home is ChipDeck. Clear
+    // chat rides the hint row under the chat bar (build .52,
+    // issue #13).
     // The composer dock (build .66): everything under the thread —
-    // the chips shelf, the bar, the toggle row — renders inside
-    // one .composer zone so it reads as a single docked unit.
+    // the bar, the toggle row — renders inside one .composer zone
+    // so it reads as a single docked unit.
     h += "<div class='composer'>";
-    if (pillChips.length) {
-      h += "<div class='chipsrow'><span class='chips-label'>CHIPS</span>" + pillChips.map(function (c) { return "<button class='chipbtn chippill' data-chip-pill='" + esc(c.id) + "' aria-label='Run chip " + esc(c.name) + "'>▸ " + esc(c.name) + "</button>"; }).join("") + "</div>";
-    }
     if (voiceMsg) h += "<div style='color:#f5b544;font-size:12px;margin:4px 0'>" + esc(voiceMsg) + "</div>";
     // The call, in the chat window: a call started here (or in
     // the Voice view) runs in place — timer, state, push-to-talk,
@@ -5927,7 +6004,7 @@ function render() {
       h += "<button class='act' id='st-forge' style='margin-top:8px'>" + (d.file ? "Save changes · re-forge chip" : "Forge chip") + "</button>";
       if (studioMade) h += "<div class='card' style='margin-top:10px'>Forged <b>" + esc(studioMade) + "</b> — find it on the Local Chips tab of Navi User Repo (NUR), under Forged. <a class='ghost' href='/api/chips/file?name=" + encodeURIComponent(studioMade) + "' download='" + esc(studioMade) + "'>Download the chip .png</a></div>";
       h += "<h3 style='margin-top:12px'>The chip API, in full</h3><div class='api-m'><span style='color:var(--dim);font-size:12px'>Every function a chip can call — what it takes, what it gives back, and when to reach for it — is written up on the wiki's <b>Navi Chip Functions</b> page. Open it beside the editor and read while you write:</span><br><button class='ghost' id='studio-api-docs' style='margin-top:4px' aria-label='Open the documentation at Navi Chip Functions page'>Open the chip API docs ⧉</button></div>";
-      h += "<h3 style='margin-top:16px'>Publish it to GitHub</h3><ol style='color:var(--dim)'><li>Forge the chip here.</li><li>On its card under Navi User Repo (NUR) → Local Chips, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept inside the chip and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the chip's card, check the repo name (pre-filled from the chip's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-chips</span> topic on its own, and uploads root.py and every module file at the root, a navi-chip.json manifest, the chip .png, and the README. An existing repo is updated, and she says so.</li><li>Not signed in? Use <b>Export for GitHub</b> instead: it builds the same file set as a repo-ready ZIP — create a public GitHub repo and unzip the export at its root, then add the <span class='mono'>navi-chips</span> topic yourself.</li><li>Either way, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so use the version in the manifest. Navi never releases for you. A newer release later offers every install an update, and installs download the whole file set.</li><li>Navi User Repo (NUR) finds it on the next search.</li></ol>";
+      h += "<h3 style='margin-top:16px'>Publish it to GitHub</h3><ol style='color:var(--dim)'><li>Forge the chip here.</li><li>On its card under Navi User Repo (NUR) → Local Chips, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept inside the chip and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the chip's card, check the repo name (pre-filled from the chip's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-chips</span> topic on its own, and uploads root.py and every module file at the root, a navi-chip.json manifest, the chip .png, and the README. An existing repo is updated, and she says so.</li><li>Not signed in? Use <b>Export for GitHub</b> instead: it builds the same file set as a repo-ready ZIP — create a public GitHub repo and unzip the export at its root, then add the <span class='mono'>navi-chips</span> topic yourself.</li><li>With the ZIP route, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so use the version in the manifest. With Publish to GitHub there is no last step: the release is published for you, picture attached. A newer release later offers every install an update, and installs download the whole file set.</li><li>Navi User Repo (NUR) finds it on the next search.</li></ol>";
     } else if (chipsTab === "workflows") {
       h += "<p style='color:var(--dim)'>A workflow chains chips together: the first chip runs, its output becomes the next chip's input, and so on — the last chip's output is the result.</p>";
       if (chipMsg) h += "<p>" + esc(chipMsg) + "</p>";
@@ -6082,7 +6159,7 @@ function render() {
     // Settings → System used to carry, wired by wireMeshCard
     // exactly as before — and the roster BELOW them. Wherever
     // the options and the roster coexist, options come first.
-    h += "<h3>Navi Mesh</h3>";
+    h += "<h3>Apex Mesh</h3>";
     h += meshCardHtml();
     h += meshRosterHtml();
   } else if (view === "RAG") {
@@ -6101,13 +6178,14 @@ function render() {
       else if (ragForgeDocs.length) h += "<p style='color:var(--dim);font-size:12px'>" + ragForgeDocs.length + " selected: " + ragForgeDocs.map(function (d) { return esc(d.title); }).join(", ") + "</p>";
       if (!ragEdit) h += "<div class='row' style='margin-top:8px'><input class='grow' id='rf-dir' type='text' placeholder='…or a folder on this machine — e.g. /home/name/documents (its .md/.txt/.pdf files, subfolders included)' aria-label='Folder of documents on this machine'></div>";
       h += "<button class='act' id='rf-forge' style='margin-top:8px'>" + (ragEdit ? "Save changes · re-index pack" : "Package pack") + "</button>";
-      h += "<div class='card' style='margin-top:14px'><b>Publishing a pack</b><ol style='color:var(--dim);margin:8px 0 8px 18px;padding:0'><li>Forge the pack here in RAG Studio.</li><li>On its card in the Packs list, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept with the pack and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the pack's card, check the repo name (pre-filled from the pack's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-rag</span> topic on its own, and uploads the files. An existing repo is updated, and she says so.</li><li>Not signed in? Press <b>Export for GitHub</b> instead and download the ZIP, then create a <b>public GitHub repo</b> yourself, unzip the export at its root, and add the <span class='mono'>navi-rag</span> topic.</li><li>Either way, the last step is yours: on GitHub, <b>publish the release</b> — the version tag is created with that publish, so use the pack version from the manifest. Navi never releases for you. The Packs catalog finds the repo by its topic, and a newer release is what offers everyone an update.</li></ol><span style='color:var(--dim)'>What's in the export and the upload — the same file set both ways: a <span class='mono'>README.md</span> (the pack's GitHub page; installing skips a root README, so it is never indexed as a document), a <span class='mono'>navi-rag.json</span> manifest (name, version, document list), the built <span class='mono'>index.json</span> as a reference copy (installing Navi rebuilds it locally from the documents), the documents under <span class='mono'>documents/</span>, and a <span class='mono'>.gitignore</span>. The ZIP lands in <span class='mono'>rag-exports/</span>.</span></div>";
+      h += "<div class='card' style='margin-top:14px'><b>Publishing a pack</b><ol style='color:var(--dim);margin:8px 0 8px 18px;padding:0'><li>Forge the pack here in RAG Studio.</li><li>On its card in the Packs list, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept with the pack and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the pack's card, check the repo name (pre-filled from the pack's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-rag</span> topic on its own, and uploads the files. An existing repo is updated, and she says so.</li><li>Not signed in? Press <b>Export for GitHub</b> instead and download the ZIP, then create a <b>public GitHub repo</b> yourself, unzip the export at its root, and add the <span class='mono'>navi-rag</span> topic.</li><li>With the ZIP route, the last step is yours: on GitHub, <b>publish the release</b> — the version tag is created with that publish, so use the pack version from the manifest. With Publish to GitHub the release is published for you, knowledge cartridge attached (a pack too big for a picture releases without one, and says so). The Packs catalog finds the repo by its topic, and a newer release is what offers everyone an update.</li></ol><span style='color:var(--dim)'>What's in the export and the upload — the same file set both ways: a <span class='mono'>README.md</span> (the pack's GitHub page; installing skips a root README, so it is never indexed as a document), a <span class='mono'>navi-rag.json</span> manifest (name, version, document list), the built <span class='mono'>index.json</span> as a reference copy (installing Navi rebuilds it locally from the documents), the documents under <span class='mono'>documents/</span>, and a <span class='mono'>.gitignore</span>. The ZIP lands in <span class='mono'>rag-exports/</span>.</span></div>";
     } else if (CONFIG.backend !== "live") {
       h += "<div class='card'>Knowledge packs run through the live bridge — switch the backend to Live in Settings and this tab searches GitHub for the navi-rag topic, with install, delete, update, and per-pack active toggles. The packs folder starts empty in every mode: Navi ships with no pre-installed packs.</div>";
     } else {
       if (!ragCatalog && !ragCatalogBusy) loadRagCatalog();
       h += "<div class='row'><b>On GitHub · topic: navi-rag</b><span style='color:var(--dim)'>" + (ragCatalog && ragCatalog.fetchedAt ? "searched " + esc(String(ragCatalog.fetchedAt).slice(0, 10)) : ragCatalogBusy ? "searching…" : "not searched yet") + "</span><button class='ghost' id='rag-refresh'>Search GitHub</button></div>";
       h += "<p style='color:var(--dim)'>Every public repo tagged navi-rag is a knowledge pack — its .md/.txt/.pdf documents, indexed on this machine at install time. Only <b>active</b> packs feed her answers, and when a pack informs an answer, its pack and document show as a pill under that message — never spoken, and never carried onto messages that did not draw on a pack. Ask her in chat; a bare <span class='mono'>/rag</span> lists what's installed and what's active.</p>";
+      h += "<div class='row'><span style='color:var(--dim);font-size:12px'>Have a pack as a picture? A knowledge cartridge installs from the picture alone — its index is built here, on this machine.</span><button class='ghost' id='rag-cart-pick'>Install from a picture…</button><input id='rag-cart-file' type='file' accept='image/png' style='display:none' aria-label='Choose a knowledge cartridge PNG'></div>";
       if (ragMsg) h += "<p>" + esc(ragMsg) + "</p>";
       if (ragCatalogBusy) h += "<p style='color:var(--dim)'>Searching GitHub for navi-rag…</p>";
       else if (ragCatalog && ragCatalog.error) h += "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(ragCatalog.error) + "</div>";
@@ -6139,12 +6217,16 @@ function render() {
           var pub = ragPub[p.slug];
           var red = ragReadmeEd[p.slug];
           var expHtml = exp ? (exp.error ? "<br><span style='color:#f5b544;font-size:12px'>" + esc(exp.error) + "</span>" : "<br><span style='font-size:12px'>Repo ZIP ready: <a class='ghost' href='/api/rag/export-file?name=" + encodeURIComponent(exp.file) + "' download='" + esc(exp.file) + "'>" + esc(exp.file) + "</a></span><br><span class='mono' style='color:var(--dim);font-size:11px'>" + exp.files.map(function (f) { return esc(f); }).join(" · ") + "</span>") : "";
-          return "<div class='card' style='grid-column:1/-1;border-radius:8px;margin-bottom:0'><b>" + esc(p.name) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(p.slug) + "/ · " + (p.source === "github" ? esc(p.fullName) : "local pack" + (p.installedRef && p.installedRef !== "local pack" ? " · " + esc(p.installedRef) : "")) + "</span>" + (p.locallyEdited ? " <span class='mono' style='color:#f5b544;font-size:11px'>EDITED LOCALLY" + (p.source === "github" ? " · DIVERGES FROM " + esc(p.fullName) : "") + "</span>" : "") + (p.description ? "<br><span style='color:var(--dim)'>" + esc(p.description) + "</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + p.docCount + " documents · " + p.chunkCount + " indexed chunks · " + (p.active ? "active" : "off") + "</span><br><span class='mono' style='color:var(--dim);font-size:11px'>" + p.documents.map(function (d) { return esc(d); }).join(" · ") + "</span><br><label style='font-size:12px'><input type='checkbox' data-ragtoggle='" + esc(p.fullName) + "'" + (p.active ? " checked" : "") + "> Active — feeds her answers</label> <button class='ghost' data-ragedit='" + esc(p.slug) + "' aria-label='Edit pack " + esc(p.name) + " in RAG Studio'>Edit in RAG Studio</button> <button class='ghost' data-ragdelete='" + esc(p.fullName) + "'>Delete</button><br><label style='font-size:12px'>Version <input id='ragver-" + esc(p.slug) + "' class='mono' value='0.1.0' style='width:70px' aria-label='Export version for " + esc(p.name) + "'></label> <button class='ghost' data-ragexport='" + esc(p.slug) + "'>Export for GitHub</button> <button class='ghost' data-ragpub='" + esc(p.slug) + "' aria-label='Publish pack " + esc(p.name) + " to GitHub'>Publish to GitHub</button> <button class='ghost' data-ragreadme='" + esc(p.slug) + "' aria-label='Edit README for pack " + esc(p.name) + "'>Edit README</button>" + expHtml + pubPanelHtml(pub, "rag", p.slug) + readmeEdHtml(red, "rag", p.slug) + "</div>";
+          var cart = ragCart[p.slug];
+          var cartHtml = cart ? (cart.error ? "<br><span style='color:#f5b544;font-size:12px'>" + esc(cart.error) + "</span>" : "<br><span style='font-size:12px'>Knowledge cartridge ready: <a class='ghost' href='/api/rag/export-file?name=" + encodeURIComponent(cart.file) + "' download='" + esc(cart.file) + "'>" + esc(cart.file) + "</a></span> <span class='mono' style='color:var(--dim);font-size:11px'>" + cart.size + " bytes — one picture; send it inside a .zip so nothing recompresses it</span>") : "";
+          return "<div class='card' style='grid-column:1/-1;border-radius:8px;margin-bottom:0'><b>" + esc(p.name) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(p.slug) + "/ · " + (p.source === "github" ? esc(p.fullName) : "local pack" + (p.installedRef && p.installedRef !== "local pack" ? " · " + esc(p.installedRef) : "")) + "</span>" + (p.locallyEdited ? " <span class='mono' style='color:#f5b544;font-size:11px'>EDITED LOCALLY" + (p.source === "github" ? " · DIVERGES FROM " + esc(p.fullName) : "") + "</span>" : "") + (p.description ? "<br><span style='color:var(--dim)'>" + esc(p.description) + "</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + p.docCount + " documents · " + p.chunkCount + " indexed chunks · " + (p.active ? "active" : "off") + "</span><br><span class='mono' style='color:var(--dim);font-size:11px'>" + p.documents.map(function (d) { return esc(d); }).join(" · ") + "</span><br><label style='font-size:12px'><input type='checkbox' data-ragtoggle='" + esc(p.fullName) + "'" + (p.active ? " checked" : "") + "> Active — feeds her answers</label> <button class='ghost' data-ragedit='" + esc(p.slug) + "' aria-label='Edit pack " + esc(p.name) + " in RAG Studio'>Edit in RAG Studio</button> <button class='ghost' data-ragdelete='" + esc(p.fullName) + "'>Delete</button><br><label style='font-size:12px'>Version <input id='ragver-" + esc(p.slug) + "' class='mono' value='0.1.0' style='width:70px' aria-label='Export version for " + esc(p.name) + "'></label> <button class='ghost' data-ragexport='" + esc(p.slug) + "'>Export for GitHub</button> <button class='ghost' data-ragcartridge='" + esc(p.slug) + "' aria-label='Export pack " + esc(p.name) + " as a PNG knowledge cartridge'>Export as PNG</button> <button class='ghost' data-ragpub='" + esc(p.slug) + "' aria-label='Publish pack " + esc(p.name) + " to GitHub'>Publish to GitHub</button> <button class='ghost' data-ragreadme='" + esc(p.slug) + "' aria-label='Edit README for pack " + esc(p.name) + "'>Edit README</button>" + expHtml + cartHtml + pubPanelHtml(pub, "rag", p.slug) + readmeEdHtml(red, "rag", p.slug) + "</div>";
         }).join("") + "</div>";
       } else {
         h += "<h3 style='margin-top:16px'>On this machine · rag-packs/</h3><p style='color:var(--dim)'>No packs yet — the folder starts empty. Install one from the catalog above or forge your own in RAG Studio.</p>";
       }
     }
+  } else if (view === "ChipDeck") {
+    h += deckHtml();
   } else if (view === "Updater") {
     // Panel order (Alex's definitive order, 2026-11-09
     // 05:38 EST — supersedes every earlier composition,
@@ -6223,7 +6305,7 @@ function render() {
         : m.lendEnabled ? "On — lending when idle."
         : m.borrowEnabled ? "On — borrowing automatic."
         : "On — borrowing and lending both off.";
-      h += "<div class='card'><h3>Navi Mesh</h3>" +
+      h += "<div class='card'><h3>Apex Mesh</h3>" +
         "<p style='color:var(--dim)'>" + esc(line) + " Pairing, lending and borrowing controls, the roster of your machines, and the ledger all live on the Mesh page.</p>" +
         "<p><button type='button' class='act' id='mesh-pointer' aria-label='Open the Mesh page' style='min-height:44px'>Open the Mesh page</button></p></div>";
     })();
@@ -6453,7 +6535,6 @@ function wire() {
     }
     var upClear = document.getElementById("chat-upload-clear");
     if (upClear) upClear.onclick = function () { pendingUpload = null; render(); };
-    mainEl.querySelectorAll("[data-chip-pill]").forEach(function (b) { b.onclick = function () { route("/chip " + b.getAttribute("data-chip-pill")); }; });
     if (CONFIG.backend === "live" && !wfData && !naviThinking) {
       fetch("/api/workflows").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chat") render(); }).catch(function () {});
     }
@@ -6510,7 +6591,7 @@ function wire() {
       var chipPost = function (path, full, done) {
         fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ full_name: full }) })
           .then(function (r) { return r.json(); })
-          .then(function (j) { done(j); chipCatalog = null; if (view === "Chips") render(); })
+          .then(function (j) { done(j); chipCatalog = null; wfData = null; if (view === "Chips") render(); })
           .catch(function () { chipMsg = "The bridge could not be reached."; render(); });
       };
       // Edit in Studio, from a chip's Local Chips card (the
@@ -6545,7 +6626,8 @@ function wire() {
         });
         mainEl.querySelectorAll("[data-cinstall]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-cinstall"); chipMsg = "Downloading " + full + " into the chips folder…"; render(); chipPost("/api/chips/install", full, function (j) { chipMsg = j.ok ? "Installed " + full + " — its chip is in the chips folder, on the pill row, and /chip runs it." : (j.error || "Install failed."); }); }; });
         mainEl.querySelectorAll("[data-cupdate]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-cupdate"); chipPost("/api/chips/update", full, function (j) { chipMsg = !j.ok ? (j.error || "Update check failed.") : (j.updated ? "Updated " + full + " to the latest on GitHub." : full + " is already up to date."); }); }; });
-        mainEl.querySelectorAll("[data-cdelete]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-cdelete"); chipPost("/api/chips/delete", full, function (j) { chipMsg = j.ok ? "Deleted " + full + " from the installed chips." : (j.error || "Delete failed."); }); }; });
+        mainEl.querySelectorAll("[data-cdelete]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-cdelete"); var lc = wfData && wfData.chips ? wfData.chips.filter(function (x) { return x.sourceKey === full || ("local/" + String(x.file || "").replace(/.png$/i, "")) === full; })[0] : null; if (lc && lc.locallyEdited && !window.confirm("This chip has local edits — deleting removes the cartridge and your edits with it. Delete anyway?")) return; chipPost("/api/chips/delete", full, function (j) { chipMsg = j.ok ? "Deleted " + full + " from the installed chips." : (j.error || "Delete failed."); }); }; });
+        mainEl.querySelectorAll("[data-cuninstall]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-cuninstall"); var cat = chipCatalog && chipCatalog.chips ? chipCatalog.chips.filter(function (x) { return x.fullName === full; })[0] : null; if (cat && cat.locallyEdited && !window.confirm("This chip has local edits — uninstalling removes the cartridge and your edits with it. Uninstall anyway?")) return; chipPost("/api/chips/delete", full, function (j) { chipMsg = j.ok ? "Uninstalled " + full + " — its cartridge and install record are gone." : (j.error || "Uninstall failed."); }); }; });
         mainEl.querySelectorAll("[data-chipedit]").forEach(function (b) { b.onclick = function () { openChipInStudio(b.getAttribute("data-chipedit")); }; });
       };
       bindNurCards();
@@ -7222,6 +7304,21 @@ function wire() {
     mainEl.querySelectorAll(".rf-doc-body").forEach(function (t) { t.oninput = function () { var i = Number(t.getAttribute("data-rfdoc")); if (ragForgeDocs[i]) ragForgeDocs[i].body = t.value; }; });
     var rfNew = document.getElementById("rf-new");
     if (rfNew) rfNew.onclick = function () { ragEdit = null; ragEditPrefill = null; ragForgeDocs = []; ragForgeMsg = ""; render(); };
+    mainEl.querySelectorAll("[data-ragcartridge]").forEach(function (b) { b.onclick = function () { var slug = b.getAttribute("data-ragcartridge"); var verEl = document.getElementById("ragver-" + slug); var version = (verEl && verEl.value.trim()) || "0.1.0"; ragCart[slug] = { error: "Drawing the cartridge…" }; render(); fetch("/api/rag/export-png", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug: slug, version: version }) }).then(function (r) { return r.json(); }).then(function (j) { ragCart[slug] = j.ok ? { file: j.file, size: j.size } : { error: j.error || "Export failed." }; render(); }).catch(function () { ragCart[slug] = { error: "The bridge didn't answer." }; render(); }); }; });
+    var ragCartPick = document.getElementById("rag-cart-pick");
+    if (ragCartPick) ragCartPick.onclick = function () { var f = document.getElementById("rag-cart-file"); if (f) f.click(); };
+    var ragCartFile = document.getElementById("rag-cart-file");
+    if (ragCartFile) ragCartFile.onchange = function () {
+      var file = ragCartFile.files && ragCartFile.files[0];
+      if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var b64 = String(rd.result || "").split(",")[1] || "";
+        ragMsg = "Installing the pack from its picture — building its index here…"; render();
+        fetch("/api/rag/install-cartridge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ png: b64 }) }).then(function (r) { return r.json(); }).then(function (j) { ragMsg = j.ok ? "Installed from its picture — the pack is on this machine and active." : (j.error || "Install failed."); ragPacksState = null; render(); }).catch(function () { ragMsg = "The bridge didn't answer."; render(); });
+      };
+      rd.readAsDataURL(file);
+    };
     mainEl.querySelectorAll("[data-ragexport]").forEach(function (b) { b.onclick = function () { var slug = b.getAttribute("data-ragexport"); var verEl = document.getElementById("ragver-" + slug); var version = (verEl && verEl.value.trim()) || "0.1.0"; ragExp[slug] = { error: "Building the repo ZIP…" }; render(); fetch("/api/rag/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug: slug, version: version }) }).then(function (r) { return r.json(); }).then(function (j) { ragExp[slug] = j.ok ? { file: j.file, files: j.files || [] } : { error: j.error || "Export failed." }; render(); }).catch(function () { ragExp[slug] = { error: "The bridge didn't answer." }; render(); }); }; });
 
     var readRagFiles = function (files) {
@@ -7288,6 +7385,42 @@ function wire() {
         .then(function (j) { ragForgeMsg = j.ok ? "Packaged — the pack is in rag-packs/, active and ready. Ask her something it knows, or list packs with /rag in chat." : (j.error || "Packaging failed."); if (j.ok) { ragForgeDocs = []; ragPacksState = null; ragTab = "packs"; } render(); })
         .catch(function () { ragForgeMsg = "The bridge didn't answer."; render(); });
     };
+  } else if (view === "ChipDeck") {
+    if (CONFIG.backend === "live" && !deckData) {
+      fetch("/api/deck").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { deckData = j; if (view === "ChipDeck") render(); }).catch(function () {});
+    }
+    var deckPost = function (path, body, done) {
+      fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { done(j); deckData = null; wfData = null; ragPacksState = null; if (view === "ChipDeck") render(); })
+        .catch(function () { deckMsg = "The bridge could not be reached."; render(); });
+    };
+    var deckInstallFile = function (file) {
+      if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var b64 = String(rd.result || "").split(",")[1] || "";
+        deckMsg = "Reading the picture…"; render();
+        deckPost("/api/deck/install", { png: b64 }, function (j) { deckMsg = j.ok ? "Slotted in — " + (j.name || "the picture") + " is in the binder now." : (j.error || "That picture could not be installed."); });
+      };
+      rd.readAsDataURL(file);
+    };
+    var dz = document.getElementById("deck-drop");
+    if (dz) {
+      dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.style.borderColor = "var(--accent)"; });
+      dz.addEventListener("dragleave", function () { dz.style.borderColor = ""; });
+      dz.addEventListener("drop", function (e) { e.preventDefault(); dz.style.borderColor = ""; var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; deckInstallFile(f); });
+    }
+    var dp = document.getElementById("deck-pick");
+    if (dp) dp.onclick = function () { var f = document.getElementById("deck-file"); if (f) f.click(); };
+    var df = document.getElementById("deck-file");
+    if (df) df.onchange = function () { deckInstallFile(df.files && df.files[0]); };
+    mainEl.querySelectorAll("[data-deckrun]").forEach(function (b) { b.onclick = function () { var slug = b.getAttribute("data-deckrun"); view = "Chat"; render(); sendChat("./" + slug); }; });
+    mainEl.querySelectorAll("[data-deckstudio]").forEach(function (b) { b.onclick = function () { loadChipIntoStudio(b.getAttribute("data-deckstudio"), function () { view = "Chips"; chipsTab = "studio"; deckMsg = ""; render(); }, function (msg) { deckMsg = msg; render(); }); }; });
+    mainEl.querySelectorAll("[data-deckuninstall]").forEach(function (b) { b.onclick = function () { var full = b.getAttribute("data-deckuninstall"); var lc = deckData && deckData.chips ? deckData.chips.filter(function (x) { return (x.sourceKey || ("local/" + String(x.file || "").replace(/.png$/i, ""))) === full; })[0] : null; if (lc && lc.locallyEdited && !window.confirm("This chip has local edits — uninstalling removes the cartridge and your edits with it. Uninstall anyway?")) return; deckPost("/api/chips/delete", { full_name: full }, function (j) { deckMsg = j.ok ? "Uninstalled — cartridge and record are gone." : (j.error || "Uninstall failed."); }); }; });
+    mainEl.querySelectorAll("[data-deckunpair]").forEach(function (b) { b.onclick = function () { deckPost("/api/mesh/peers/remove", { nodeId: b.getAttribute("data-deckunpair") }, function (j) { deckMsg = j.ok ? "Unpaired — the card picture stays in the binder; the pairing is gone." : "Unpair failed."; }); }; });
+    mainEl.querySelectorAll("[data-deckragtoggle]").forEach(function (b) { b.onclick = function () { deckPost("/api/rag/toggle", { full_name: b.getAttribute("data-deckragtoggle"), active: !b.getAttribute("data-active") }, function (j) { deckMsg = j.ok ? "" : (j.error || "Toggle failed."); }); }; });
+    mainEl.querySelectorAll("[data-deckragdelete]").forEach(function (b) { b.onclick = function () { deckPost("/api/rag/delete", { full_name: b.getAttribute("data-deckragdelete") }, function (j) { deckMsg = j.ok ? "Removed — the pack's documents and index are gone." : (j.error || "Remove failed."); }); }; });
   } else if (view === "Updater") {
     var upCheck = document.getElementById("up-check");
     if (upCheck) upCheck.onclick = function () { checkForUpdates(); };
@@ -7401,7 +7534,7 @@ function wire() {
     mainEl.querySelectorAll("[data-ragpub]").forEach(function (b) { b.onclick = function () { var slug = b.getAttribute("data-ragpub"); var p = (ragPacksState || []).find(function (x) { return x.slug === slug; }); ragPub[slug] = ragPub[slug] && ragPub[slug].open ? { open: false } : { open: true, repo: repoSlug(p ? p.name : slug) }; render(); }; });
     mainEl.querySelectorAll("[data-chippub]").forEach(function (b) { b.onclick = function () { var file = b.getAttribute("data-chippub"); var c = wfData && wfData.chips ? wfData.chips.find(function (x) { return x.file === file; }) : null; chipPub[file] = chipPub[file] && chipPub[file].open ? { open: false } : { open: true, repo: repoSlug(c ? c.name : String(file).replace(/\.png$/i, "")) }; render(); }; });
     mainEl.querySelectorAll("[data-pubrepo]").forEach(function (inp) { inp.oninput = function () { var parts = inp.getAttribute("data-pubrepo").split(":"); var st = pubStore(parts[0])[parts.slice(1).join(":")]; if (st) st.repo = inp.value; }; });
-    mainEl.querySelectorAll("[data-pubgo]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-pubgo").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var st = pubStore(kind)[key]; if (!st) return; st.busy = true; st.msg = ""; st.err = ""; render(); var url = kind === "rag" ? "/api/rag/publish" : "/api/chips/publish"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key), repo_name: st.repo } : { file: key, version: pubVersion(kind, key), repo_name: st.repo }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { st.busy = false; if (j.ok) { st.msg = (j.created ? "Repo created and files uploaded to " : "Repo updated — files uploaded to ") + (j.repo || st.repo) + ". The rest is yours: publish the release on GitHub — the version tag is created with that publish."; st.url = j.repoUrl || ""; st.err = ""; } else { st.err = j.error || "Publish failed."; } render(); }).catch(function () { st.busy = false; st.err = "The bridge didn't answer."; render(); }); }; });
+    mainEl.querySelectorAll("[data-pubgo]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-pubgo").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var st = pubStore(kind)[key]; if (!st) return; st.busy = true; st.msg = ""; st.err = ""; render(); var url = kind === "rag" ? "/api/rag/publish" : "/api/chips/publish"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key), repo_name: st.repo } : { file: key, version: pubVersion(kind, key), repo_name: st.repo }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { st.busy = false; if (j.ok) { st.msg = (j.created ? "Repo created: " : "Repo updated: ") + (j.repo || st.repo) + (j.release ? " — release " + j.release.tag + " is published" + (j.release.asset ? ", with " + j.release.asset + " attached" : "") + "." : " — files uploaded.") + (j.assetSkipped ? " " + j.assetSkipped : ""); st.url = (j.release && j.release.url) || j.repoUrl || ""; st.err = ""; } else { st.err = j.error || "Publish failed."; } render(); }).catch(function () { st.busy = false; st.err = "The bridge didn't answer."; render(); }); }; });
     function openReadme(kind, key) { var st = readmeStore(kind)[key]; if (st && st.open) { readmeStore(kind)[key] = { open: false }; render(); return; } readmeStore(kind)[key] = { open: true, loading: true, text: "", edited: false, msg: "", err: "" }; render(); var url = kind === "rag" ? "/api/rag/readme" : "/api/chips/readme"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key) } : { file: key, version: pubVersion(kind, key) }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { var cur = readmeStore(kind)[key]; if (!cur || !cur.open) return; cur.loading = false; if (j.ok) { cur.text = j.readme || ""; cur.edited = !!j.edited; } else { cur.err = j.error || "The README could not be loaded."; } render(); }).catch(function () { var cur = readmeStore(kind)[key]; if (cur) { cur.loading = false; cur.err = "The bridge didn't answer."; render(); } }); }
     mainEl.querySelectorAll("[data-ragreadme]").forEach(function (b) { b.onclick = function () { openReadme("rag", b.getAttribute("data-ragreadme")); }; });
     mainEl.querySelectorAll("[data-chipreadme]").forEach(function (b) { b.onclick = function () { openReadme("chip", b.getAttribute("data-chipreadme")); }; });

@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.91"
+BRIDGE_BUILD = "2026-11-10.92"
 # Edge build sequence (build .86): this package is its Edge
-# version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
+# version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 10
+SHIPPED_BUILD_SEQ = 1
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2485,7 +2485,7 @@ def mesh_settings(cfg):
 
 def mesh_openssl_missing_error():
     return (
-        "Navi Mesh needs the openssl program to create this machine's node key, "
+        "Apex Mesh needs the openssl program to create this machine's node key, "
         "and openssl was not found on this machine. Install openssl (the same "
         "prerequisite DHD uses) and try again."
     )
@@ -6838,6 +6838,35 @@ def github_api(method, url, token=None, body=None, form=False):
         return 0, str(e)
 
 
+def github_api_raw(method, url, token, data, content_type):
+    # github_api's sibling for binary bodies (release assets ride
+    # the uploads host as raw bytes, not JSON). Same contract:
+    # (status, parsed JSON or text), never raises for HTTP errors.
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "navi-apex-bridge",
+        "Content-Type": content_type,
+    }
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            try:
+                return resp.status, json.loads(raw)
+            except Exception:
+                return resp.status, raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, raw
+    except Exception as e:
+        return 0, str(e)
+
+
 def github_err_text(resp):
     if isinstance(resp, dict):
         return str(resp.get("message") or resp.get("error_description") or resp.get("error") or resp)[:240]
@@ -7909,6 +7938,7 @@ def fetch_chip_payload(repo):
         "code": code[:200000],
         "output": str(manifest.get("output") or ""),
         "requirements": requirements,
+        "glyph": str(manifest.get("glyph") or ""),
         "files": _valid_chip_files(
             [{"path": "root.py", "content": code[:200000]}] + files,
             code[:200000],
@@ -8053,50 +8083,369 @@ def _png_chunk(kind, data):
     return out
 
 
+# --- Cartridge faces (0.1.9e, issue #92 graphics pass) --------------
+# A chip's face is DRAWN, not rolled: one chunky pixel glyph that
+# means the chip's function, on the family shell — black body, coral
+# notched bands top and bottom. The glyph is named in the chip's
+# metadata ("glyph" in the payload, and in navi-chip.json at export):
+# an explicit glyph wins; otherwise a keyword heuristic over the
+# chip's name and description picks one; a chip nothing claims keeps
+# the legacy name-seeded pattern face, which remains only as that
+# fallback. Faces are minted at forge time — installed and published
+# pictures are never rewritten.
+GLYPH_PIXELS = {
+    "key": [
+        ".####.......",
+        "#....#......",
+        "#....#......",
+        ".####.#####.",
+        "......#..#..",
+        "......#..##.",
+        "......#.....",
+        "......#.....",
+        "......#.....",
+        "............",
+        "............",
+        "............",
+    ],
+    "lock": [
+        "....####....",
+        "...#....#...",
+        "...#....#...",
+        "...#....#...",
+        "..########..",
+        "..########..",
+        "..###..###..",
+        "..###..###..",
+        "..########..",
+        "..########..",
+        "............",
+        "............",
+    ],
+    "hash": [
+        "............",
+        "...#..#.....",
+        "...#..#.....",
+        ".#########..",
+        "...#..#.....",
+        "...#..#.....",
+        ".#########..",
+        "...#..#.....",
+        "...#..#.....",
+        "............",
+        "............",
+        "............",
+    ],
+    "text": [
+        ".##########.",
+        ".#........#.",
+        ".#.######.#.",
+        ".#........#.",
+        ".#.######.#.",
+        ".#........#.",
+        ".#.####...#.",
+        ".#........#.",
+        ".##########.",
+        "............",
+        "............",
+        "............",
+    ],
+    "swap": [
+        "............",
+        "....#####...",
+        "...#....##..",
+        "..#########.",
+        "...#....##..",
+        "....#####...",
+        "....#####...",
+        "...##....#..",
+        "..#########.",
+        "...##....#..",
+        "....#####...",
+        "............",
+    ],
+    "gear": [
+        "............",
+        ".....##.....",
+        "..#..##..#..",
+        "..#.####.#..",
+        "....####....",
+        ".##########.",
+        ".##########.",
+        "....####....",
+        "..#.####.#..",
+        "..#..##..#..",
+        ".....##.....",
+        "............",
+    ],
+    "network": [
+        ".....##.....",
+        "....#..#....",
+        "....#..#....",
+        ".....##.....",
+        "....#..#....",
+        "...#....#...",
+        "..#......#..",
+        ".#........#.",
+        "#..#....#..#",
+        "#..#....#..#",
+        ".##......##.",
+        "............",
+    ],
+    "image": [
+        ".##########.",
+        ".#........#.",
+        ".#..#.....#.",
+        ".#.###....#.",
+        ".#.#####..#.",
+        ".##########.",
+        ".#......###.",
+        ".#....#####.",
+        ".#..#######.",
+        ".##########.",
+        "............",
+        "............",
+    ],
+    "music": [
+        "........##..",
+        ".......#..#.",
+        ".......#...#",
+        ".......#....",
+        ".......#....",
+        "......##....",
+        ".....####...",
+        "....######..",
+        "....######..",
+        ".....####...",
+        "............",
+        "............",
+    ],
+    "dice": [
+        "............",
+        ".##########.",
+        ".##########.",
+        ".##......##.",
+        ".##..##..##.",
+        ".##..##..##.",
+        ".##......##.",
+        ".##..##..##.",
+        ".##..##..##.",
+        ".##########.",
+        ".##########.",
+        "............",
+    ],
+    "book": [
+        "............",
+        ".#........#.",
+        ".##......##.",
+        ".#.#....#.#.",
+        ".#..#..#..#.",
+        ".#..#..#..#.",
+        ".#...##...#.",
+        ".#........#.",
+        ".#........#.",
+        "..########..",
+        "............",
+        "............",
+    ],
+    "terminal": [
+        "............",
+        ".##########.",
+        ".#........#.",
+        ".#.##.....#.",
+        ".#..##....#.",
+        ".#.##.....#.",
+        ".#......###.",
+        ".#........#.",
+        ".##########.",
+        "............",
+        "............",
+        "............",
+    ],
+    "shield": [
+        "............",
+        "..########..",
+        "..########..",
+        "..##....##..",
+        "..##....##..",
+        "...#....#...",
+        "...#.##.#...",
+        "....####....",
+        ".....##.....",
+        ".....##.....",
+        "......#.....",
+        "............",
+    ],
+    "clock": [
+        "............",
+        "....####....",
+        "..##....##..",
+        "..#......#..",
+        "..#..#...#..",
+        "..#..##..#..",
+        "..#......#..",
+        "..#......#..",
+        "..##....##..",
+        "....####....",
+        "............",
+        "............",
+    ],
+    "chart": [
+        "............",
+        "............",
+        ".......#....",
+        ".......#....",
+        "...#...#....",
+        "...#...#.#..",
+        "...#...###..",
+        ".#.#...###..",
+        ".###...###..",
+        ".#########..",
+        ".#########..",
+        "............",
+    ],
+    "star": [
+        "............",
+        ".....#......",
+        ".....#......",
+        "....###.....",
+        ".#########..",
+        "..#######...",
+        "...#####....",
+        "....###.....",
+        "...##.##....",
+        "...#...#....",
+        "..#.....#...",
+        "............",
+    ],
+}
+
+_GLYPH_KEYWORDS = [
+    ("key", ("cryptex", "cipher", "encrypt", "decrypt", "encode", "decode", "key")),
+    ("hash", ("hash", "md5", "sha1", "sha256", "sha512", "digest")),
+    ("lock", ("password", "vault", "lock", "secret")),
+    ("swap", ("translate", "convert", "swap", "exchange")),
+    ("music", ("music", "audio", "song", "sound", "play")),
+    ("image", ("image", "photo", "picture", "camera")),
+    ("dice", ("dice", "random", "game", "fun", "joke")),
+    ("book", ("book", "knowledge", "docs", "read", "library")),
+    ("network", ("mesh", "network", "net", "peer", "sync")),
+    ("shield", ("scan", "security", "shield", "guard", "nmap", "vuln")),
+    ("terminal", ("shell", "terminal", "command", "cli", "exec")),
+    ("clock", ("clock", "time", "schedule", "timer", "alarm")),
+    ("chart", ("chart", "stats", "graph", "metric", "report")),
+    ("text", ("text", "word", "string", "note", "write")),
+    ("gear", ("tool", "config", "setting", "util")),
+    ("star", ("oracle", "fortune", "magic", "star")),
+]
+
+
+def pick_chip_glyph(payload):
+    # The face a payload earns: its own declared glyph first, then
+    # the keyword heuristic over name + description, else None —
+    # and None is what keeps the legacy seeded face.
+    g = str((payload or {}).get("glyph") or "").strip().lower()
+    if g in GLYPH_PIXELS:
+        return g
+    hay = (
+        str((payload or {}).get("name") or "")
+        + " "
+        + str((payload or {}).get("description") or "")
+    ).lower()
+    for name, words in _GLYPH_KEYWORDS:
+        if any(w in hay for w in words):
+            return name
+    return None
+
+
+def _cartridge_face_png(payload, keyword):
+    # The drawn family face: black shell, coral notched bands, one
+    # drawn glyph in the window. Falls back to the legacy seeded
+    # pattern when no glyph claims the chip.
+    W, H = 96, 112
+    glyph = pick_chip_glyph(payload)
+    raw = bytearray()
+    if glyph is None:
+        palette = [
+            (34, 211, 238), (245, 181, 68), (52, 211, 153),
+            (248, 113, 113), (167, 139, 250),
+        ]
+        h = 0
+        seed = 7
+        for ch in payload["name"]:
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+            seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
+        accent = palette[h % len(palette)]
+        blocks = []
+        for _ in range(64):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            blocks.append(seed / 0x7FFFFFFF > 0.55)
+        for y in range(H):
+            raw.append(0)
+            for x in range(W):
+                r, g, b = 10, 14, 18
+                if (8 <= y < 18) or (88 <= y < 100):
+                    r, g, b = accent
+                elif 10 <= x < W - 10 and 26 <= y < 78:
+                    bx = int((x - 10) / 9.5)
+                    by = int((y - 26) / 6.5)
+                    if blocks[(by * 8 + bx) % 64]:
+                        r, g, b = accent
+                    else:
+                        r, g, b = 16, 22, 29
+                elif x < 4 or x >= W - 4 or y < 4 or y >= H - 4:
+                    r, g, b = 34, 48, 61
+                raw += bytes([r, g, b])
+    else:
+        coral = (255, 111, 97)
+        shell = (8, 9, 11)
+        frame = (38, 44, 52)
+        window = (14, 17, 21)
+        grid = GLYPH_PIXELS[glyph]
+        gx, gy, cell = 18, 26, 5
+        for y in range(H):
+            raw.append(0)
+            for x in range(W):
+                r, g, b = shell
+                if x < 3 or x >= W - 3 or y < 3 or y >= H - 3:
+                    r, g, b = frame
+                in_band = (7 <= y < 17) or (95 <= y < 105)
+                if in_band and 3 <= x < W - 3:
+                    # The notch: a stepped bite out of the band's
+                    # inner edge, repeating across its width.
+                    notch = ((x // 12) % 2 == 0) and (
+                        (y == 16 and 7 <= y) or (y == 95)
+                    )
+                    r, g, b = shell if notch else coral
+                elif gx <= x < gx + 60 and gy <= y < gy + 60:
+                    cx = (x - gx) // cell
+                    cy = (y - gy) // cell
+                    if 0 <= cy < 12 and 0 <= cx < 12 and grid[cy][cx] == "#":
+                        r, g, b = coral
+                    else:
+                        r, g, b = window
+                raw += bytes([r, g, b])
+    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 def build_cartridge_png(payload):
     # The PICO-8 trick in Battle Network dress: the visible image is
     # a battle-chip label; the chip's whole codebase rides inside the
     # PNG in a tEXt chunk (keyword "navi-chip", JSON payload).
-    W, H = 96, 112
-    palette = [
-        (34, 211, 238), (245, 181, 68), (52, 211, 153),
-        (248, 113, 113), (167, 139, 250),
-    ]
-    h = 0
-    seed = 7
-    for ch in payload["name"]:
-        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
-        seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
-    accent = palette[h % len(palette)]
-    blocks = []
-    for _ in range(64):
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        blocks.append(seed / 0x7FFFFFFF > 0.55)
-    raw = bytearray()
-    for y in range(H):
-        raw.append(0)
-        for x in range(W):
-            r, g, b = 10, 14, 18
-            if (8 <= y < 18) or (88 <= y < 100):
-                r, g, b = accent
-            elif 10 <= x < W - 10 and 26 <= y < 78:
-                bx = int((x - 10) / 9.5)
-                by = int((y - 26) / 6.5)
-                if blocks[(by * 8 + bx) % 64]:
-                    r, g, b = accent
-                else:
-                    r, g, b = 16, 22, 29
-            elif x < 4 or x >= W - 4 or y < 4 or y >= H - 4:
-                r, g, b = 34, 48, 61
-            raw += bytes([r, g, b])
-    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    face = _cartridge_face_png(payload, "navi-chip")
     text = b"navi-chip\x00" + json.dumps(payload).encode()
+    # Rebuild with the payload chunk ahead of the image data.
+    ihdr_end = 8 + 12 + 13
     return (
-        b"\x89PNG\r\n\x1a\n"
-        + _png_chunk(b"IHDR", ihdr)
+        face[:ihdr_end]
         + _png_chunk(b"tEXt", text)
-        + _png_chunk(b"IDAT", zlib.compress(bytes(raw)))
-        + _png_chunk(b"IEND", b"")
+        + face[ihdr_end:]
     )
 
 
@@ -8148,12 +8497,91 @@ def parse_cartridge_png(data):
                         "code": code,
                         "output": str(payload.get("output") or ""),
                         "files": _valid_chip_files(payload.get("files"), code),
+                        "glyph": str(payload.get("glyph") or ""),
                     }
                 return None
         if kind == b"IEND":
             break
         pos += 8 + length + 4
     return None
+
+
+def deck_contents(cfg):
+    # Everything that rides a picture, for ChipDeck (0.1.9e, #94):
+    # installed chips, the Mesh pairing cards on disk, and the
+    # knowledge packs (each pack's cartridge is built on demand by
+    # /api/rag/cartridge.png). State is read from the same stores
+    # the owning pages read — the Deck is a view, not a store.
+    chips = [
+        {
+            "file": c["file"], "name": c["name"],
+            "description": c.get("description") or "",
+            "glyph": pick_chip_glyph(c) or "",
+            "source": c.get("source"), "sourceKey": c.get("sourceKey"),
+            "locallyEdited": bool(c.get("locallyEdited")),
+            "unreadable": bool(c.get("unreadable")),
+        }
+        for c in local_chips()
+    ]
+    cards = []
+    try:
+        ms = mesh_settings(cfg)
+        paired_ids = {
+            str(p.get("nodeId") or "")
+            for p in (ms["borrow"]["peers"] or [])
+            if isinstance(p, dict)
+        }
+    except Exception:
+        paired_ids = set()
+    try:
+        card_files = sorted(os.listdir(MESH_CARDS_DIR))
+    except Exception:
+        card_files = []
+    for fn in card_files:
+        if not fn.lower().endswith(".png"):
+            continue
+        entry = {"file": fn, "name": fn[:-4], "nodeId": "", "own": fn == "own.png", "paired": False}
+        try:
+            with open(os.path.join(MESH_CARDS_DIR, fn), "rb") as f:
+                peer, _e = parse_mesh_card_png(f.read())
+            if peer is not None:
+                entry["name"] = peer.get("name") or entry["name"]
+                entry["nodeId"] = str(peer.get("nodeId") or "")
+                entry["paired"] = entry["nodeId"] in paired_ids
+        except Exception:
+            pass
+        cards.append(entry)
+    packs = [
+        {
+            "slug": p["slug"], "name": p["name"],
+            "description": p.get("description") or "",
+            "fullName": p["fullName"], "active": bool(p["active"]),
+            "docCount": p["docCount"],
+        }
+        for p in local_rag_packs()
+    ]
+    return {"chips": chips, "meshCards": cards, "ragPacks": packs}
+
+
+def _png_text_keywords(data):
+    keys = []
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return keys
+    pos = 8
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            break
+        if kind == b"tEXt":
+            chunk_data = data[pos + 8:pos + 8 + length]
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                keys.append(chunk_data[:nul].decode("utf-8", "replace"))
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    return keys
 
 
 def local_chips():
@@ -8231,6 +8659,69 @@ def match_local_chip(query, chips):
             if q.startswith(key + " "):
                 return chip, (query or "").strip()[len(key):].strip()
     return None, ""
+
+
+def _chip_keys(chip):
+    return {
+        chip["slug"].lower(),
+        chip["name"].lower(),
+        re.sub(r"[^a-z0-9]+", "-", chip["name"].lower()).strip("-"),
+    }
+
+
+def resolve_chip_invocation(rest, chips):
+    # The ./ resolver (0.1.9e, issue #97): "./name args..." with the
+    # name resolved in widening rings — the exact slug or name, then
+    # the name with a leading "navi-" forgiven on either side
+    # ("./cryptex" finds navi-cryptex), then a unique prefix. Returns
+    # (chip, args) on a run, (None, candidates) when more than one
+    # chip fits, and (None, []) when nothing does.
+    text = (rest or "").strip()
+    if not text:
+        return None, []
+    parts = text.split(None, 1)
+    token = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    for chip in chips:
+        if token in _chip_keys(chip):
+            return chip, args
+    bare = token[5:] if token.startswith("navi-") else token
+    for chip in chips:
+        keys = {k[5:] if k.startswith("navi-") else k for k in _chip_keys(chip)}
+        if bare in keys:
+            return chip, args
+    hits = []
+    for chip in chips:
+        keys = set(_chip_keys(chip)) | {
+            k[5:] if k.startswith("navi-") else k for k in _chip_keys(chip)
+        }
+        if any(k.startswith(token) or k.startswith(bare) for k in keys if k):
+            hits.append(chip)
+    if len(hits) == 1:
+        return hits[0], args
+    return None, hits
+
+
+def chip_shelf_reply(inv):
+    # The shelf as a chat reply: every chip on this machine with its
+    # one-line description, for a bare "/chip" or a bare "./".
+    shelf = local_chips()
+    if not shelf:
+        return (
+            "No chips are installed yet — the shelf is empty. Open the Chips tab and "
+            "install one from the GitHub catalog (Navi User Repo) or forge your own in Chip "
+            "Studio; then it lands here and " + inv + " <name> runs it."
+        )
+    lines = []
+    for c in shelf:
+        d = (c.get("description") or "").strip()
+        if len(d) > 90:
+            d = d[:87] + "..."
+        lines.append("• " + c["name"] + (" — " + d if d else ""))
+    return (
+        "On the shelf — " + inv + " <name> runs one:\n"
+        + "\n".join(lines)
+    )
 
 
 _CHIP_SLASH = re.compile(r"^/chip\s+(.+)$", re.I)
@@ -9119,6 +9610,7 @@ def build_chip_repo_files(chip, version):
         "entry": "root.py",
         "files": [f["path"] for f in chip_files],
         "output": chip.get("output") or "",
+        "glyph": pick_chip_glyph(chip) or "",
         "generatedBy": "Apex — Chip Studio chip export",
     }
     lines = [
@@ -9150,9 +9642,13 @@ def build_chip_repo_files(chip, version):
         "",
         "## Publishing an update",
         "",
-        "Edit the code, bump `version` in `navi-chip.json`, push, and publish",
-        "a new release — the version tag is created with that publish (this export is `"
-        + version + "`). A newer release is what offers everyone who",
+        "Edit the code, bump `version` in `navi-chip.json`, and press",
+        "**Publish to GitHub** on the chip's card in Apex — Publish does",
+        "everything: repo, files, topic, the version tag, and the published",
+        "release with this picture attached (this export is `"
+        + version + "`). Publishing by hand from an export ZIP works too —",
+        "push the files and publish a release; the version tag is created",
+        "with that publish. A newer release is what offers everyone who",
         "installed the chip an update. Keep the `navi-chips` topic on the",
         "repo — that is how Navi finds it.",
         "",
@@ -9214,17 +9710,23 @@ def export_chip(fname, version):
     return zip_name, [arc for arc, _data in files]
 
 
-def github_publish_files(repo_name, files, topic, description):
-    # The publish loop, shared by RAG packs and chips: create the
-    # repo on the signed-in account when it is not there (public —
-    # the catalogs only find public repos), apply the topic with no
-    # prompt, and upload the exact file set the export builds.
-    # Navi never publishes the release: she creates the repo,
-    # applies the topic (that is the tagging), and uploads the
-    # files; publishing the release is the operator's one step,
-    # and the version tag is created with that publish. Returns
-    # a result dict; failures carry the real reason and never
-    # fake a success.
+def github_publish_files(repo_name, files, topic, description, release=None):
+    # The publish loop, shared by RAG packs and chips — the WHOLE
+    # chain in one action (0.1.9e): create the repo on the signed-in
+    # account when it is not there (public — the catalogs only find
+    # public repos), apply the topic with no prompt, upload the
+    # exact file set the export builds, then create the tag and
+    # PUBLISH the release (never a draft), named from the manifest
+    # version, with the cartridge picture attached as the release
+    # asset. The retired never-releases line is gone: Publish
+    # does everything — repo, files, topic, tag, release, picture
+    # attached. `release` carries {version, title, notes, assetName,
+    # assetData}; when it is None the loop stops after the upload,
+    # as before. A tag that already has a release is refused BEFORE
+    # anything uploads — a release is never overwritten silently.
+    # Returns a result dict; failures carry the real reason and
+    # never fake a success (a failure after the upload says plainly
+    # that the files landed and the release did not).
     auth = github_auth()
     if not auth:
         return {"ok": False, "error": "You are not signed in to GitHub. Sign in under Settings → GitHub & Backup, or use Export for GitHub and upload the ZIP yourself."}
@@ -9248,6 +9750,16 @@ def github_publish_files(repo_name, files, topic, description):
             if fresh:
                 state["token"] = fresh["token"]
                 st, resp = github_api(method, url, state["token"], body)
+        return st, resp
+
+    def pub_raw(method, url, data, content_type):
+        st, resp = github_api_raw(method, url, state["token"], data, content_type)
+        if st == 401 and not state["renewed"]:
+            state["renewed"] = True
+            fresh = github_refresh_auth()
+            if fresh:
+                state["token"] = fresh["token"]
+                st, resp = github_api_raw(method, url, state["token"], data, content_type)
         return st, resp
 
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(repo_name or "")).strip("-.")[:100]
@@ -9277,6 +9789,18 @@ def github_publish_files(repo_name, files, topic, description):
         created = True
     elif st != 200:
         return {"ok": False, "error": "GitHub would not answer for that repo (HTTP " + str(st) + "): " + github_err_text(_repo)}
+    # Release pre-check: a version that already has a release is
+    # refused before a single file uploads — bump the version in
+    # the manifest instead. (A leftover tag with NO release does
+    # not block: creating the release below adopts it.)
+    rel_tag = None
+    if release and release.get("version"):
+        rel_tag = "v" + str(release["version"]).strip().lstrip("v")
+        stg, rel_existing = pub("GET", base + "/releases/tags/" + urllib.parse.quote(rel_tag))
+        if stg == 401:
+            return reauth_error()
+        if stg == 200 and isinstance(rel_existing, dict):
+            return {"ok": False, "error": rel_tag + " is already released on " + login + "/" + name + " — bump the version in the manifest and publish again. Nothing was uploaded and the existing release was not touched."}
     # Topic: merge with whatever is already there, never prompt.
     _st3, topics_resp = pub("GET", base + "/topics")
     if _st3 == 401:
@@ -9304,12 +9828,46 @@ def github_publish_files(repo_name, files, topic, description):
             return reauth_error()
         if st4 not in (200, 201):
             return {"ok": False, "error": "Uploading " + arc + " failed (HTTP " + str(st4) + "): " + github_err_text(resp4)}
-    return {
+    result = {
         "ok": True, "error": None, "created": created,
         "repo": login + "/" + name,
         "repoUrl": "https://github.com/" + login + "/" + name,
         "files": [arc for arc, _d in files],
     }
+    if rel_tag:
+        notes = str(release.get("notes") or "")
+        if len(notes) > 120000:
+            notes = notes[:120000]
+        st5, rel = pub("POST", base + "/releases", {
+            "tag_name": rel_tag,
+            "name": str(release.get("title") or rel_tag),
+            "body": notes,
+            "draft": False,
+            "prerelease": False,
+        })
+        if st5 == 401:
+            return {"ok": False, "error": "The files are uploaded to " + login + "/" + name + ", but GitHub rejected the sign-in when the release step ran and Navi could not renew it. Sign out and back in under Settings \u2192 GitHub & Backup, then publish again — the files are already there."}
+        if st5 not in (200, 201) or not isinstance(rel, dict):
+            return {"ok": False, "error": "The repo, topic, and files are on GitHub (" + login + "/" + name + "), but GitHub would not create the release (HTTP " + str(st5) + "): " + github_err_text(rel) + " If the sign-in token cannot create releases, publish the " + rel_tag + " release on GitHub yourself — the files and the picture are already uploaded."}
+        rel_info = {
+            "tag": rel_tag,
+            "url": rel.get("html_url") or ("https://github.com/" + login + "/" + name + "/releases/tag/" + rel_tag),
+            "asset": None,
+        }
+        asset_name = str(release.get("assetName") or "")
+        asset_data = release.get("assetData")
+        if asset_name and isinstance(asset_data, (bytes, bytearray)) and rel.get("id"):
+            up_url = ("https://uploads.github.com/repos/" + login + "/" + name
+                      + "/releases/" + str(rel["id"]) + "/assets?name="
+                      + urllib.parse.quote(asset_name))
+            st6, _asset = pub_raw("POST", up_url, bytes(asset_data), "application/octet-stream")
+            if st6 == 401:
+                return {"ok": False, "error": "The release " + rel_tag + " is published on " + login + "/" + name + ", but GitHub rejected the sign-in when the picture attach ran. Attach " + asset_name + " to the release on GitHub — it is already at the repo root too."}
+            if st6 not in (200, 201):
+                return {"ok": False, "error": "The release " + rel_tag + " is published on " + login + "/" + name + ", but attaching the picture failed (HTTP " + str(st6) + "): " + github_err_text(_asset) + " The picture is at the repo root; attach " + asset_name + " to the release on GitHub if you want it there too."}
+            rel_info["asset"] = asset_name
+        result["release"] = rel_info
+    return result
 
 
 def _rag_pack_index(slug):
@@ -9319,6 +9877,141 @@ def _rag_pack_index(slug):
         return index if isinstance(index, dict) else None
     except Exception:
         return None
+
+
+# --- Knowledge cartridges (0.1.9e, issue #93) -----------------------
+# A RAG pack can ride a picture the way a chip does: one PNG whose
+# "navi-rag" tEXt chunk carries the pack's manifest and ALL of its
+# document texts, zlib-compressed and base64'd. Installing from the
+# picture validates it like a repo install and writes the pack with
+# write_rag_pack — which builds the search index LOCALLY, at install
+# time, from the carried texts. A cartridge never carries an index,
+# and nothing at query time ever reads the picture: once installed,
+# a pack is a pack. The ceiling is the finished picture's size: past
+# it the answer is an honest refusal, never a silent truncation.
+RAG_CARTRIDGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def build_rag_cartridge_png(payload):
+    face = _cartridge_face_png(
+        {"name": payload.get("name") or "knowledge", "glyph": "book"}, "navi-rag"
+    )
+    blob = base64.b64encode(
+        zlib.compress(json.dumps(payload).encode("utf-8"), 9)
+    )
+    text = b"navi-rag\x00" + blob
+    ihdr_end = 8 + 12 + 13
+    return face[:ihdr_end] + _png_chunk(b"tEXt", text) + face[ihdr_end:]
+
+
+def parse_rag_cartridge_png(data):
+    # (payload, error): the inverse of build_rag_cartridge_png,
+    # with the Mesh card import's honesty rules — a picture with no
+    # payload, a damaged one, and the wrong kind of picture each get
+    # their own words.
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return None, "That file is not a PNG image — a knowledge cartridge travels as a .png picture."
+    data = bytes(data)
+    pos = 8
+    blob = None
+    saw_other = False
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+        chunk_data = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                if chunk_data[:nul] == b"navi-rag":
+                    (crc_stored,) = struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])
+                    if binascii.crc32(kind + chunk_data) & 0xFFFFFFFF != crc_stored:
+                        return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+                    blob = chunk_data[nul + 1:]
+                else:
+                    saw_other = True
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    if blob is None:
+        if saw_other:
+            return None, "That picture carries a different kind of payload — it is not a knowledge cartridge. Knowledge cartridges are exported from RAG Studio."
+        return None, "This image has no readable knowledge-cartridge data — it may have been recompressed by a chat app, which strips the data out of the picture while leaving the picture itself looking fine. Send the original file inside a .zip instead."
+    try:
+        payload = json.loads(zlib.decompress(base64.b64decode(blob)).decode("utf-8"))
+    except Exception:
+        return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+    if not isinstance(payload, dict) or payload.get("format") != "navi-rag/1":
+        return None, "That picture's cartridge data is not in the shape a knowledge cartridge carries — nothing was installed."
+    return payload, ""
+
+
+def rag_cartridge_payload(slug):
+    # The cartridge payload for an installed pack: its manifest and
+    # every document's full text, read back from the pack folder.
+    src = rag_pack_documents(slug)
+    if src is None:
+        return None
+    index = _rag_pack_index(slug) or {}
+    return {
+        "format": "navi-rag/1",
+        "name": src["name"],
+        "description": src["description"],
+        "version": "0.1.0",
+        "documents": src["documents"],
+        "generatedBy": "Apex — RAG Studio cartridge export",
+        "chunkCountAtExport": index.get("chunkCount") or 0,
+    }
+
+
+def install_rag_cartridge(payload):
+    # The one cartridge install path (Deck drops and the RAG tab's
+    # picture install both land here). Validation mirrors a repo
+    # install's caps; the pack is written by write_rag_pack, so its
+    # index is built on this machine from the carried texts.
+    name = str(payload.get("name") or "").strip()[:120]
+    description = str(payload.get("description") or "")[:500]
+    documents = []
+    for raw in payload.get("documents") or []:
+        if not isinstance(raw, dict):
+            continue
+        body = str(raw.get("body") or "")
+        if not body.strip():
+            continue
+        if len(body) > RAG_MAX_DOC_CHARS:
+            return None, "One document in this cartridge is longer than a pack document may be (" + str(RAG_MAX_DOC_CHARS) + " characters) — nothing was installed."
+        documents.append({"title": str(raw.get("title") or "document")[:200], "body": body})
+    if not name:
+        return None, "This cartridge's pack has no name — nothing was installed."
+    if not documents:
+        return None, "This cartridge carries no documents — nothing was installed."
+    if len(documents) > RAG_MAX_DOCS:
+        return None, "This cartridge carries " + str(len(documents)) + " documents — a pack caps at " + str(RAG_MAX_DOCS) + ". Nothing was installed."
+    rows = load_rag_installs()
+    slug = chip_slug(name)
+    taken = {r.get("local_dir") for r in rows if r.get("full_name") != "local/" + slug}
+    taken |= {
+        e for e in os.listdir(RAG_PACKS_DIR)
+        if os.path.isdir(os.path.join(RAG_PACKS_DIR, e))
+    } if os.path.isdir(RAG_PACKS_DIR) else set()
+    if slug in taken or any(r.get("full_name") == "local/" + slug for r in rows):
+        return None, "A pack named " + name + " is already on this machine — remove it first, or rename the cartridge's pack."
+    write_rag_pack(slug, name, description, documents)
+    rows.append({
+        "full_name": "local/" + slug,
+        "name": name,
+        "html_url": "",
+        "installed_tag": None,
+        "installed_ref": "knowledge cartridge (.png)",
+        "installed_pushed_at": None,
+        "installed_at": _now_iso(),
+        "local_dir": slug,
+        "active": True,
+        "doc_count": len(documents),
+    })
+    save_rag_installs(rows)
+    return slug, ""
 
 
 def local_rag_packs():
@@ -11067,7 +11760,7 @@ class Handler(BaseHTTPRequestHandler):
             # card and whose payload is the card.
             _cfg = load_config()
             if not mesh_settings(_cfg)["enabled"]:
-                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on from the Mesh page first."})
+                self._send(200, {"ok": False, "error": "Apex Mesh is off on this machine — turn it on from the Mesh page first."})
                 return
             _ok, _err = mesh_ensure_identity(_cfg)
             if not _ok:
@@ -11270,6 +11963,21 @@ class Handler(BaseHTTPRequestHandler):
                             full = os.path.join(base, name)
                             z.write(full, os.path.relpath(full, VAULT_DIR).replace(os.sep, "/"))
             self._send(200, buf.getvalue(), "application/zip")
+        elif self.path.split("?")[0] == "/api/rag/cartridge.png":
+            # The pack as a picture, built on demand from the pack
+            # folder (issue #93): the sleeve image the RAG tab and
+            # ChipDeck show, and the file a download saves.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            slug = os.path.basename((qs.get("slug") or [""])[0])
+            payload = rag_cartridge_payload(slug) if slug else None
+            if payload is None:
+                self._send(404, {"error": "not found"})
+            else:
+                png = build_rag_cartridge_png(payload)
+                if len(png) > RAG_CARTRIDGE_MAX_BYTES:
+                    self._send(404, {"error": "too big for a picture"})
+                else:
+                    self._send(200, png, "image/png")
         elif self.path == "/api/rag/packs":
             self._send(200, {"packs": local_rag_packs()})
         elif self.path.split("?")[0] == "/api/rag/pack-source":
@@ -11288,7 +11996,10 @@ class Handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             name = os.path.basename((qs.get("file") or qs.get("name") or [""])[0])
             path = os.path.join(RAG_EXPORTS_DIR, name)
-            if name.endswith(".zip") and os.path.isfile(path):
+            if name.endswith(".png") and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            elif name.endswith(".zip") and os.path.isfile(path):
                 with open(path, "rb") as f:
                     self._send(200, f.read(), "application/zip")
             else:
@@ -11306,6 +12017,25 @@ class Handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             name = os.path.basename((qs.get("file") or qs.get("name") or [""])[0])
             path = os.path.join(CHIPS_DIR, name)
+            if name.endswith(".png") and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            else:
+                self._send(404, {"error": "not found"})
+        elif self.path == "/api/deck":
+            # ChipDeck (0.1.9e, #94): the binder's contents — every
+            # picture-riding thing on this machine, with its state.
+            # (Loads its own config: this route sits above the
+            # handler's shared cfg assignment.)
+            self._send(200, deck_contents(load_config()))
+        elif self.path.split("?")[0] == "/api/deck/file":
+            # A Mesh pairing card's picture, for its ChipDeck
+            # sleeve (chips ride /api/chips/file, packs ride
+            # /api/rag/cartridge.png). Basename-jailed to the
+            # cards folder, .png only.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = os.path.basename((qs.get("name") or [""])[0])
+            path = os.path.join(MESH_CARDS_DIR, name)
             if name.endswith(".png") and os.path.isfile(path):
                 with open(path, "rb") as f:
                     self._send(200, f.read(), "image/png")
@@ -12120,24 +12850,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, payload)
                 return
             if (last or "").strip().lower() == "/chip":
-                _shelf = local_chips()
-                if _shelf:
-                    _lines = []
-                    for c in _shelf:
-                        _d = (c.get("description") or "").strip()
-                        if len(_d) > 90:
-                            _d = _d[:87] + "..."
-                        _lines.append("• " + c["name"] + (" — " + _d if _d else ""))
-                    _reply = (
-                        "On the shelf — /chip <name> runs one (the pills above the composer do too):\n"
-                        + "\n".join(_lines)
-                    )
-                else:
-                    _reply = (
-                        "No chips are installed yet — the shelf is empty. Open the Chips tab and "
-                        "install one from the GitHub catalog (Navi User Repo) or forge your own in Chip "
-                        "Studio; then it lands here and /chip <name> runs it."
-                    )
+                _reply = chip_shelf_reply("./")
                 payload = {
                     "reply": _reply,
                     "exec": None,
@@ -12146,6 +12859,66 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_reply, cfg)
+                self._send(200, payload)
+                return
+            # "./name args..." runs a chip the way ./ runs a
+            # program (0.1.9e, issue #97) — the composer's pill
+            # shelf is retired, and this is the keyboard way in.
+            # Bare "./" answers with the shelf. The latch decides
+            # collisions: a $-forced line or a CLI-latched composer
+            # never reaches here, so under the latch "./x" is still
+            # the shell's own.
+            _lt = (last or "").strip()
+            if (
+                _lt.startswith("./")
+                and not _lt.startswith("$")
+                and chat_mode != "cli"
+            ):
+                _rest = _lt[2:]
+                if not _rest.strip():
+                    _reply = chip_shelf_reply("./")
+                    payload = {
+                        "reply": _reply,
+                        "exec": None,
+                        "mode": "chip",
+                        "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    }
+                    if data.get("speak"):
+                        payload["spoken"] = speak_reply(_reply, cfg)
+                    self._send(200, payload)
+                    return
+                _chip, _cargs = resolve_chip_invocation(_rest, local_chips())
+                if isinstance(_cargs, list):
+                    if _cargs:
+                        _reply = (
+                            "That name fits more than one chip on this machine: "
+                            + ", ".join(c["name"] for c in _cargs)
+                            + " — say which one, as ./<name>."
+                        )
+                    else:
+                        _reply = (
+                            "No chip by that name is loaded on this machine. "
+                            + chip_shelf_reply("./")
+                        )
+                    payload = {
+                        "reply": _reply,
+                        "exec": None,
+                        "mode": "chip",
+                        "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    }
+                    if data.get("speak"):
+                        payload["spoken"] = speak_reply(_reply, cfg)
+                    self._send(200, payload)
+                    return
+                _result = execute_chip(_chip, _cargs, cfg)
+                payload = {
+                    "reply": "Slotted in " + _chip["name"] + " and ran it — here's what it gave me:",
+                    "exec": _result,
+                    "mode": "chip",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_result.get("output") or payload["reply"], cfg)
                 self._send(200, payload)
                 return
             _query = chip_invocation(last)
@@ -12513,6 +13286,7 @@ class Handler(BaseHTTPRequestHandler):
                     "code": code[:200000],
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
+                    "glyph": str(data.get("glyph") or "")[:40],
                 }
                 os.makedirs(CHIPS_DIR, exist_ok=True)
                 with open(os.path.join(CHIPS_DIR, fname), "wb") as f:
@@ -12852,10 +13626,60 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None, "file": zip_name, "files": repo_files})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e), "file": None, "files": []})
+        elif self.path == "/api/rag/export-png":
+            # Export as a knowledge cartridge (issue #93): the pack
+            # as ONE picture in rag-exports/, beside the ZIP export.
+            # Past the size ceiling the refusal is honest — the ZIP
+            # stays the way to carry a big pack — and nothing is
+            # truncated to fit.
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            payload = rag_cartridge_payload(slug)
+            if payload is None:
+                self._send(200, {"ok": False, "error": "That pack is not in rag-packs/.", "file": None})
+                return
+            payload["version"] = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            png = build_rag_cartridge_png(payload)
+            if len(png) > RAG_CARTRIDGE_MAX_BYTES:
+                self._send(200, {"ok": False, "error": "This pack is too big for a picture — its cartridge would run " + str(len(png)) + " bytes against the " + str(RAG_CARTRIDGE_MAX_BYTES) + "-byte ceiling. Use the ZIP export for this one; nothing was written.", "file": None})
+                return
+            os.makedirs(RAG_EXPORTS_DIR, exist_ok=True)
+            fname = slug + "-cartridge.png"
+            with open(os.path.join(RAG_EXPORTS_DIR, fname), "wb") as f:
+                f.write(png)
+            self._send(200, {"ok": True, "error": None, "file": fname, "size": len(png)})
+        elif self.path == "/api/rag/install-cartridge":
+            # Install a pack from its picture alone (issue #93):
+            # the dashboard sends the picture's bytes base64'd;
+            # the payload validates and installs through the one
+            # cartridge path, index built locally at install.
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
+                return
+            if len(raw) > RAG_CARTRIDGE_MAX_BYTES:
+                self._send(200, {"ok": False, "error": "That file is larger than a knowledge cartridge may be (" + str(RAG_CARTRIDGE_MAX_BYTES) + " bytes) — nothing was installed."})
+                return
+            payload, perr = parse_rag_cartridge_png(raw)
+            if payload is None:
+                self._send(200, {"ok": False, "error": perr})
+                return
+            slug, ierr = install_rag_cartridge(payload)
+            if slug is None:
+                self._send(200, {"ok": False, "error": ierr})
+                return
+            self._send(200, {"ok": True, "error": None, "slug": slug})
         elif self.path == "/api/rag/publish":
             # Publish to GitHub: upload the export's exact file set
             # to a repo on the signed-in account (created when
-            # missing, navi-rag topic applied). Navi never releases.
+            # missing, navi-rag topic applied), and — since
+            # 0.1.9e — the tag and the PUBLISHED release too,
+            # with the knowledge cartridge attached. Publish
+            # does everything; there is no manual release step.
             data = self._body()
             slug = os.path.basename(str(data.get("slug") or ""))
             version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
@@ -12866,7 +13690,36 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 index = _rag_pack_index(slug) or {}
                 repo_name = str(data.get("repo_name") or "").strip() or (index.get("name") or slug)
-                result = github_publish_files(repo_name, files, "navi-rag", index.get("description") or "")
+                # The knowledge cartridge rides along: at the repo
+                # root as the pack's picture, and attached to the
+                # release. A pack too big for a picture publishes
+                # without one, and says so in the result.
+                asset_skip = None
+                cart_name = slug + "-cartridge.png"
+                cart_png = None
+                try:
+                    cart_png = build_rag_cartridge_png(rag_cartridge_payload(slug))
+                    if len(cart_png) > RAG_CARTRIDGE_MAX_BYTES:
+                        asset_skip = ("The pack is too big for a picture ("
+                                      + str(len(cart_png)) + " bytes against the "
+                                      + str(RAG_CARTRIDGE_MAX_BYTES) + "-byte ceiling), so the release carries no cartridge — the files and documents are all there. The ZIP export carries the pack whole.")
+                        cart_png = None
+                except Exception as e:
+                    cart_png = None
+                    asset_skip = "The knowledge cartridge could not be built (" + str(e) + "), so the release carries no cartridge — the files and documents are all there."
+                if cart_png:
+                    files = files + [(cart_name, cart_png)]
+                _rreadme = next((d for a, d in files if a == "README.md"), "")
+                release = {
+                    "version": version,
+                    "title": (index.get("name") or slug) + " v" + version.lstrip("v"),
+                    "notes": _rreadme if isinstance(_rreadme, str) else "",
+                    "assetName": cart_name if cart_png else "",
+                    "assetData": cart_png,
+                }
+                result = github_publish_files(repo_name, files, "navi-rag", index.get("description") or "", release)
+                if asset_skip and result.get("ok"):
+                    result["assetSkipped"] = asset_skip
                 self._send(200, result)
         elif self.path == "/api/rag/readme":
             # The effective README for the editor: the operator's
@@ -12925,7 +13778,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": str(e)})
             else:
                 repo_name = str(data.get("repo_name") or "").strip() or chip.get("name") or ""
-                result = github_publish_files(repo_name, files, "navi-chips", chip.get("description") or "")
+                _png = next(((a, d) for a, d in files if a.endswith(".png") and isinstance(d, (bytes, bytearray))), (None, None))
+                _readme = next((d for a, d in files if a == "README.md"), "")
+                release = {
+                    "version": version,
+                    "title": (chip.get("name") or "Chip") + " v" + version.lstrip("v"),
+                    "notes": _readme if isinstance(_readme, str) else "",
+                    "assetName": _png[0] or "",
+                    "assetData": _png[1],
+                }
+                result = github_publish_files(repo_name, files, "navi-chips", chip.get("description") or "", release)
                 self._send(200, result)
         elif self.path == "/api/chips/readme":
             data = self._body()
@@ -12958,6 +13820,84 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)})
+        elif self.path == "/api/deck/install":
+            # Drop-to-install on ChipDeck (0.1.9e, #94): one door
+            # for every picture — the payload keyword inside the
+            # PNG says what it is, and each kind installs through
+            # its own kind's one path (chip picture install, the
+            # knowledge-cartridge path, the Mesh card pairing).
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
+                return
+            keys = _png_text_keywords(raw)
+            if "navi-mesh-card" in keys:
+                peer, perr = parse_mesh_card_png(raw)
+                if peer is None:
+                    self._send(200, {"ok": False, "error": perr})
+                    return
+                err = mesh_add_peer(cfg, peer)
+                if err:
+                    self._send(200, {"ok": False, "error": err})
+                    return
+                # The card's picture joins the binder's card folder
+                # (the backup's naming: peer-<node>.png) — pairing
+                # through the Deck keeps the picture it paired from,
+                # exactly as a backup restore lands it.
+                try:
+                    os.makedirs(MESH_CARDS_DIR, exist_ok=True)
+                    cname = "peer-" + str(peer.get("nodeId") or "card")[:12] + ".png"
+                    with open(os.path.join(MESH_CARDS_DIR, cname), "wb") as f:
+                        f.write(raw)
+                except Exception:
+                    pass
+                mesh_probe_peers_soon()
+                self._send(200, {"ok": True, "error": None, "kind": "mesh", "name": peer.get("name") or ""})
+                return
+            if "navi-rag" in keys:
+                payload, perr = parse_rag_cartridge_png(raw)
+                if payload is None:
+                    self._send(200, {"ok": False, "error": perr})
+                    return
+                slug, ierr = install_rag_cartridge(payload)
+                if slug is None:
+                    self._send(200, {"ok": False, "error": ierr})
+                    return
+                self._send(200, {"ok": True, "error": None, "kind": "rag", "name": payload.get("name") or slug})
+                return
+            if "navi-chip" in keys:
+                payload = parse_cartridge_png(raw)
+                if payload is None:
+                    self._send(200, {"ok": False, "error": "That picture's chip data could not be read — it may have been recompressed on its way here, which strips the data out. Send the original file inside a .zip instead."})
+                    return
+                slug = chip_slug(payload["name"])
+                filename = slug + ".png"
+                if os.path.isfile(os.path.join(CHIPS_DIR, filename)):
+                    self._send(200, {"ok": False, "error": payload["name"] + " is already on this machine — its picture is in the chips folder."})
+                    return
+                os.makedirs(CHIPS_DIR, exist_ok=True)
+                with open(os.path.join(CHIPS_DIR, filename), "wb") as f:
+                    f.write(raw)
+                rows = [r for r in load_chip_installs() if r.get("full_name") != "local/" + slug]
+                rows.append({
+                    "full_name": "local/" + slug,
+                    "name": payload["name"],
+                    "html_url": "",
+                    "installed_tag": None,
+                    "installed_ref": "chip " + filename + " (from its picture)",
+                    "installed_pushed_at": None,
+                    "installed_at": _now_iso(),
+                    "local_file": filename,
+                    "requirements": list(payload.get("requirements") or []),
+                })
+                save_chip_installs(rows)
+                self._send(200, {"ok": True, "error": None, "kind": "chip", "name": payload["name"]})
+                return
+            self._send(200, {"ok": False, "error": "That picture carries nothing the binder can slot in — no chip, knowledge cartridge, or Mesh card data inside it. A picture that was recompressed on its way here loses its data while looking the same; send the original inside a .zip."})
         elif self.path == "/api/chips/install":
             # Installing a chip means the chip itself lands here:
             # its source is downloaded from the repo at the ref
@@ -13068,6 +14008,19 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(os.path.join(CHIPS_DIR, target["local_file"]))
                 except Exception:
                     pass
+            elif full.startswith("local/"):
+                # 0.1.9e audit fix: a chip dropped into chips/ by
+                # hand has NO install record, so the record-driven
+                # delete above removed nothing while the UI said
+                # "Deleted" — the cartridge stayed on the shelf.
+                # A local/ delete names the file by its stem; take
+                # the picture with the (absent) record.
+                _stem = re.sub(r"[^a-z0-9-]+", "-", full[len("local/"):].lower()).strip("-")
+                if _stem:
+                    try:
+                        os.remove(os.path.join(CHIPS_DIR, _stem + ".png"))
+                    except Exception:
+                        pass
             self._send(200, {"ok": True, "error": None})
         elif self.path == "/api/chips/create":
             # Chip Studio: forge a new chip into a .png chip —
@@ -13085,6 +14038,7 @@ class Handler(BaseHTTPRequestHandler):
                     "code": code[:200000],
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
+                    "glyph": str(data.get("glyph") or "")[:40],
                 }
                 slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "chip"
                 filename = slug + ".png"

@@ -1,6 +1,6 @@
-# Navi Mesh — your machines, one pool of inference
+# Apex Mesh — your machines, one pool of inference
 
-Navi Mesh lets your own machines share the work of answering. A modest laptop assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is **whole-request**: one machine answers, start to finish. There is no split answer and no streaming between machines in Ring 1.
+Apex Mesh lets your own machines share the work of answering. A modest laptop assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is **whole-request**: one machine answers, start to finish. There is no split answer and no streaming between machines in Ring 1.
 
 Mesh is off until you turn it on, and it works between machines **you** pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange.
 
