@@ -1,6 +1,6 @@
 # DHD — Apex from anywhere
 
-DHD — Dial-Home Device, the way home — is Apex's public door. Apex Node [local] lets a phone on your home network open Apex; DHD extends the **same dashboard** to a genuinely public address, so you can reach the Apex on your own machine from anywhere — work, the road, anywhere with a browser.
+DHD — Dial-Home Device, the way home — is Apex's public door. Apex | Node [local] lets a phone on your home network open Apex; DHD extends the **same dashboard** to a genuinely public address, so you can reach the Apex on your own machine from anywhere — work, the road, anywhere with a browser.
 
 Everything is Apex's own work, assembled and managed by Apex itself. There is no Tailscale, no tunnel or proxy service, and no Certbot:
 
@@ -8,13 +8,13 @@ Everything is Apex's own work, assembled and managed by Apex itself. There is no
 - **TLS from the first click.** With no domain, Apex generates a **self-signed certificate** and the door opens on it. With a domain, Apex's **built-in ACME client** obtains a real Let's Encrypt certificate and renews it on its own.
 - The **same access code** as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.
 
-DHD has its own page in the menu (after the Vault, before the Updater), and the status column's **Servers** group shows it beside Llamafile and Apex Node [local], each row with its own pulsing dot and its own dropdown of details. Directly under Navi's status, bracketed by separators, sits the update line: a green **Up to date**, or a yellow **Update available** when a check found one — that one line is the whole entry.
+DHD has its own page, reached from the menu's **Apex | Systems** group (its Node and DHD entries both open it), and the status column's **Servers** group shows it beside Llamafile and Apex | Node [local], each row with its own pulsing dot and its own dropdown of details. Directly under Navi's status, bracketed by separators, sits the update line: a green **Up to date**, or a yellow **Update available** when a check found one — that one line is the whole entry.
 
-The DHD page is the one house for Apex's server controls: the **Apex Node** [local] controls — the home-network door's on/off choice, its live state, and the access code — sit on the DHD page under the DHD options, so both ways of reaching Apex are managed in one place. Settings → System keeps only a pointer to them. The relocation is display-only: same config keys, same API paths, same code and cookie.
+The DHD page is the one house for Apex's server controls: the **Apex | Node** [local] controls — the home-network door's on/off choice, its live state, and the access code — sit on the DHD page under the DHD options, so both ways of reaching Apex are managed in one place. Settings → System keeps only a pointer to them. The relocation is display-only: same config keys, same API paths, same code and cookie.
 
 ## Turning it on — one click
 
-1. Open the **DHD** page from the menu.
+1. Open the **DHD** page from the menu's Apex | Systems group.
 2. Flip the **master switch**. That is the click.
 3. Apex does the rest in order: it generates the certificate, brings its proxy up on 80/443 in front of the bridge, and runs a local reachability check — the proxy must answer on 443 from this machine ("answered on this machine"; it proves the local half only). The page then reports the live state, the LAN address under its own label, and the public address when there is one.
 4. Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the **access code** (shown on the DHD page, on this machine only), and you are in — a full session, Updater included: a remote session can run the one-click update end to end, exactly like sitting at the machine.
@@ -64,6 +64,6 @@ The domain is **optional and addable at any time**: leave the field empty as lon
 
 ## Turning it off
 
-Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.
+Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex | Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.
 
-Turning DHD off does not touch Apex Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.
+Turning DHD off does not touch Apex | Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.

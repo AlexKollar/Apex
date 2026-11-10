@@ -252,7 +252,7 @@ fallback, served by the bridge at the same address.
 - config/navi.config.json — backend mode, paths, ports, startup mode,
   and the settings this package was exported with (sudo mode, threat
   level, operator name, installed commands) — the app ships as the
-  project stands. Its public_server block holds the Apex Node
+  project stands. Its public_server block holds the Apex | Node
   toggle (on the DHD page): off by default; on, the bridge binds
   0.0.0.0:8675 at launch and non-loopback visitors must enter the
   block's access code (the bridge generates one per install) before
@@ -294,7 +294,7 @@ the operator name her persona uses when she addresses you.
 ## DHD — Apex from anywhere
 
 DHD (Dial-Home Device — the way home) is Apex's public door, its own
-menu page in the dashboard. Apex Node serves Apex on your home
+menu page in the dashboard. Apex | Node serves Apex on your home
 network; DHD extends the same dashboard to a genuinely public address
 on your own machine, and everything is Apex's own work — no Tailscale,
 no external tunnel or proxy service, no Certbot. One click on the DHD

@@ -49,13 +49,12 @@
   body[data-theme="nord"] #nav-Chat .ic { color:#88c0d0; }
   body[data-theme="nord"] #nav-Voice .ic { color:#b48ead; }
   body[data-theme="nord"] #nav-Chips .ic { color:#ebcb8b; }
-  body[data-theme="nord"] #nav-Memory .ic { color:#8fbcbb; }
   body[data-theme="nord"] #nav-RAG .ic { color:#81a1c1; }
   body[data-theme="nord"] #nav-Vault .ic { color:#bf616a; }
   body[data-theme="nord"] #nav-Updater .ic { color:#a3be8c; }
-  body[data-theme="nord"] #nav-GitHub .ic { color:#d08770; }
-  body[data-theme="nord"] #nav-Settings .ic { color:#d8dee9; }
-  body[data-theme="nord"] #nav-Docs .ic { color:#d98a94; }
+  body[data-theme="nord"] #nav-child-utilities-GitHub .ic { color:#d08770; }
+  body[data-theme="nord"] #nav-child-utilities-Settings .ic { color:#d8dee9; }
+  body[data-theme="nord"] #nav-child-utilities-Docs .ic { color:#d98a94; }
   body[data-theme="nord"] nav button.on, body[data-theme="nord"] nav button.on:hover { background:#2e3440; color:#eceff4; box-shadow:inset 2px 0 0 #88c0d0; }
   body[data-theme="nord"] nav button:hover { background:rgba(136,192,208,.14); }
   body[data-theme="nord"] .card:hover { border-color:#5e81ac; }
@@ -87,13 +86,12 @@
   body[data-theme="terminal"] #nav-Chat .ic { color:#4ade80; }
   body[data-theme="terminal"] #nav-Voice .ic { color:#a3e635; }
   body[data-theme="terminal"] #nav-Chips .ic { color:#34d399; }
-  body[data-theme="terminal"] #nav-Memory .ic { color:#86efac; }
   body[data-theme="terminal"] #nav-RAG .ic { color:#2dd4bf; }
   body[data-theme="terminal"] #nav-Vault .ic { color:#fde047; }
   body[data-theme="terminal"] #nav-Updater .ic { color:#bef264; }
-  body[data-theme="terminal"] #nav-GitHub .ic { color:#facc15; }
-  body[data-theme="terminal"] #nav-Settings .ic { color:#dcfce7; }
-  body[data-theme="terminal"] #nav-Docs .ic { color:#6ee7b7; }
+  body[data-theme="terminal"] #nav-child-utilities-GitHub .ic { color:#facc15; }
+  body[data-theme="terminal"] #nav-child-utilities-Settings .ic { color:#dcfce7; }
+  body[data-theme="terminal"] #nav-child-utilities-Docs .ic { color:#6ee7b7; }
   body[data-theme="terminal"] nav button.on, body[data-theme="terminal"] nav button.on:hover { background:#052e16; color:#dcfce7; box-shadow:inset 2px 0 0 #4ade80; }
   body[data-theme="terminal"] .md-h { color:#a3e635; }
   body[data-theme="terminal"] .md-code { background:#000000; color:#86efac; border-color:#14532d; }
@@ -120,11 +118,12 @@
      54px rail without clipping. */
   /* Build .87 (Alex's ruling): Docs and Settings leave the main
      stack and sit at the foot of the menu, stacked directly over
-     the version line — Docs on top, Settings directly over the
-     version: the auto margin that used to push the version down
-     now sits on Docs, so the pair anchors to the bottom and the
-     version follows Settings with no gap. */
-  #nav-Docs { margin-top:auto; }
+     the version line. Superseded in 0.1.9e Build 4: the foot is
+     the Apex | Utilities group now — its container (.nav-util)
+     carries the auto margin, its children (Settings, Docs,
+     GitHub) open UPWARD over the header, and the version follows
+     the group with no gap. */
+  .nav-util { margin-top:auto; display:flex; flex-direction:column; }
   #nav-version { border-top:1px solid var(--line); padding:9px 8px 0; color:var(--dim); font-size:11px; white-space:nowrap; text-align:center; }
   #nav-version .nv-num { color:var(--text); font-weight:700; }
   #nav-version .nv-val { font-weight:700; }
@@ -160,6 +159,52 @@
   #app.closed .nav-tip { display:block; }
   #app.closed nav button:hover .nav-tip, #app.closed nav button:focus-visible .nav-tip { opacity:1; }
   @media (prefers-reduced-motion: reduce) { .nav-tip { transition:none; } }
+  /* Grouped menu + motion (0.1.9e Build 4; Alex: "beautifully
+     animated and fluid — lean into the web tech"). The language:
+     groups open and close on the grid-template-rows technique
+     (the same one the Docs topics use) — a ~300ms unfold on a
+     soft cubic-bezier settle, chosen for feel (Alex: beauty has
+     the floor on these small surfaces) — the
+     chevron turns with the state, and children arrive with a
+     slight stagger — each child's transition-delay is set from
+     its index when the menu is built, and only transform/opacity
+     animate, so the surfaces stay on the GPU path and hold 60fps
+     on modest hardware. No backdrop filters on animated elements,
+     no idle animation loops: transitions fire on state changes
+     only. The Utilities group at the foot opens upward — its
+     children stack ABOVE the header in the DOM, so the same
+     height motion reads as a drop-up. View switches keep the
+     standing .22s view-in fade (below). Under
+     prefers-reduced-motion every one of these collapses to an
+     instant state change (the global rule at the foot of this
+     block and the standing reduced-motion rules). */
+  .nav-break { border-top:1px solid var(--line); margin:8px 4px; flex:0 0 auto; }
+  #app.closed .nav-break { margin:8px 2px; }
+  .nav-group-head { font-weight:700; color:var(--text); }
+  .nav-group-head .nav-chev { margin-left:auto; font-size:11px; color:var(--dim); transition:transform .3s cubic-bezier(.22,.8,.3,1); }
+  .nav-group-head[aria-expanded="false"] .nav-chev { transform:rotate(-90deg); }
+  #app.closed .nav-group-head .nav-chev, #app.closed .nav-group-head .lbl { display:none; }
+  #app.closed .nav-group-head { justify-content:center; }
+  .nav-children { display:grid; grid-template-rows:1fr; transition:grid-template-rows .3s cubic-bezier(.22,.8,.3,1); min-height:0; }
+  .nav-children.closed { grid-template-rows:0fr; }
+  .nav-children > button { min-height:0; overflow:hidden; min-width:0; }
+  .nav-children .nav-child { opacity:1; transform:none; transition:opacity .26s cubic-bezier(.22,.8,.3,1), transform .26s cubic-bezier(.22,.8,.3,1), background .14s ease, color .14s ease; }
+  .nav-children.closed .nav-child { opacity:0; transform:translateY(-4px); pointer-events:none; }
+  #nav-children-utilities .nav-child { transform:none; }
+  .nav-children.closed#nav-children-utilities .nav-child { transform:translateY(4px); }
+  nav button { transition:background .14s ease, color .14s ease; }
+  /* The Chats tab + panel (Build 4): the tab is a full-width row
+     fixed at the top of the status column, above Navi's status
+     box; the panel opens under it with the groups' own height
+     motion. */
+  .chats-tab { display:flex; align-items:center; gap:8px; width:100%; min-height:44px; padding:8px 10px; margin-bottom:12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--text); font:inherit; font-weight:700; cursor:pointer; text-align:left; transition:background .14s ease, border-color .14s ease; }
+  .chats-tab:hover { border-color:var(--cy); }
+  .chats-tab .chats-count { color:var(--dim); font-size:11px; }
+  .chats-tab .chats-chev { margin-left:auto; color:var(--dim); font-size:11px; transition:transform .3s cubic-bezier(.22,.8,.3,1); }
+  .chats-tab[aria-expanded="false"] .chats-chev { transform:rotate(-90deg); }
+  .chats-panel { display:grid; grid-template-rows:1fr; transition:grid-template-rows .3s cubic-bezier(.22,.8,.3,1); }
+  .chats-inner { overflow:hidden; min-height:0; }
+  @media (prefers-reduced-motion: reduce) { .nav-children, .chats-panel, .nav-group-head .nav-chev, .chats-tab .chats-chev, .nav-children .nav-child { transition:none; } }
   #nav-toggle { color:var(--dim); border:1px solid var(--line); margin-bottom:8px; }
   /* The destination buttons and the version footer live in one
      container so the small-screen rules can lift them out of the
@@ -539,6 +584,15 @@
     #nav-menu { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; display:flex; flex-direction:column; gap:4px; padding:10px; overflow-y:auto; background:var(--panel2); transform:translateX(-104%); visibility:hidden; transition:transform .3s ease, visibility 0s linear .3s; }
     #app:not(.closed) #nav-menu { transform:translateX(0); visibility:visible; transition:transform .3s ease; }
     #nav-menu button[id^="nav-"] { flex:0 0 auto; width:100%; min-height:48px; justify-content:flex-start; }
+    /* Grouped menu on phones (Build 4): groups expand inline in
+       the full-width overlay — no flyouts — children and headers
+       alike meet the 48px row the other destinations get, and the
+       Utilities children open upward within the same panel,
+       never off-screen (the panel itself scrolls). */
+    #nav-menu .nav-children > button { min-height:48px; }
+    #nav-menu .nav-group-head { min-height:48px; }
+    #nav-menu .nav-util { margin-top:auto; }
+    #nav-menu .nav-break { margin:6px 2px; }
     #app.closed nav button .lbl { display:inline; }
     #app.closed .nav-tip { display:none; }
     .nav-tip { display:none; }
@@ -665,11 +719,24 @@ function gateGuard(r) {
 function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nord"; }
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
 
-var NAV = ["Chat", "Voice", "Chips", "ChipDeck", "Memory", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
-// Display names (0.1.9e, issue #92): the view keys stay what they
-// have always been; the labels wear the product line — Apex DHD,
-// Apex Mesh.
-var NAV_LABELS = { DHD: "Apex DHD", Mesh: "Apex Mesh" };
+var NAV = ["Chat", "Voice", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
+// The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
+// Apex | Systems group (Node / Mesh / DHD — Node and DHD both open
+// the DHD view, whose page holds the Node controls); the flat work
+// surfaces; and the Apex | Utilities drop-up at the foot (Settings,
+// Docs, GitHub). NAV keeps every REACHABLE view key for the
+// active-state sweep; NAV_GROUPS drives what the menu renders, and
+// the Memory view is retired — its chats live on as the Chats tab
+// on Chat, its memory entries under Settings -> Memories.
+var NAV_GROUPS = {
+  systems: { label: "Apex | Systems", children: [["Node", "DHD"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
+  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Docs", "Docs"], ["GitHub", "GitHub"]] }
+};
+var NAV_FLAT = ["Chat", "Voice", "Chips", "ChipDeck", "RAG", "Vault", "Updater"];
+// Display names (0.1.9e, issue #92; the pipe separator is Build 4):
+// the view keys stay what they have always been; the labels wear
+// the product line — Apex | DHD, Apex | Mesh.
+var NAV_LABELS = { DHD: "Apex | DHD", Mesh: "Apex | Mesh" };
 function navLabel(name) { return NAV_LABELS[name] || name; }
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
@@ -713,6 +780,8 @@ function chipdeckGlyphSvg() {
   return "<circle cx='6.2' cy='5.4' r='1.9'/><circle cx='6.2' cy='12' r='1.9'/><circle cx='6.2' cy='18.6' r='1.9'/><path d='M9.4 3.6h9.1a1.9 1.9 0 0 1 1.9 1.9v13a1.9 1.9 0 0 1-1.9 1.9H9.4'/><path d='M15.9 8.2l3.1 4.6h-6.2z'/>";
 }
 function navIcon(name) {
+  if (name === "Apex | Systems") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='3.5' width='19' height='7' rx='1.8'/><rect x='2.5' y='13.5' width='19' height='7' rx='1.8'/><circle cx='6.5' cy='7' r='1' fill='currentColor' stroke='none'/><circle cx='6.5' cy='17' r='1' fill='currentColor' stroke='none'/></svg>";
+  if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
@@ -720,6 +789,19 @@ function navIcon(name) {
 }
 var view = "Chat";
 var navClosed = false;
+// Menu group state (0.1.9e Build 4): both groups start expanded —
+// the menu's standing spirit is destinations visible — and the
+// operator's choice persists per group.
+var navGroupsOpen = { systems: true, utilities: true };
+try {
+  var savedGroups = JSON.parse(localStorage.getItem("navi.navGroups") || "null");
+  if (savedGroups) { navGroupsOpen.systems = savedGroups.systems !== false; navGroupsOpen.utilities = savedGroups.utilities !== false; }
+} catch (e) {}
+function persistNavGroups() { try { localStorage.setItem("navi.navGroups", JSON.stringify(navGroupsOpen)); } catch (e) {} }
+// The Chats tab on Chat (0.1.9e Build 4): the panel beside the
+// status column starts shut; the tab is the door, and opening it
+// never disturbs the thread or the composer.
+var chatsPanelOpen = false;
 try {
   var savedNavClosed = localStorage.getItem("navi.navClosed");
   if (savedNavClosed !== null) navClosed = savedNavClosed === "1";
@@ -900,14 +982,14 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-10.94";
-var SHIPPED_BUILD_SEQ = 3;
+var BRIDGE_BUILD = "2026-11-10.95";
+var SHIPPED_BUILD_SEQ = 4;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
 var bridgeBuildSeq = 0;  // build .91: the buildSeq the answering bridge last reported
 var bridgeRoot = "";   // live: the bridge's install tree, from /api/status (build .86, issue #79)
-// Known chats: every conversation is saved; the Memory tab switches
+// Known chats: every conversation is saved; the Chats tab switches
 // between them. "messages" always references the active chat's list.
 var chats = null;
 var activeChatId = 1;
@@ -918,7 +1000,7 @@ var memory = [];
 // context with the next message; an image is stored (as a data URL,
 // capped) and referenced by name — the local model is text-only, so
 // nothing anywhere claims she can see it. Every upload is also
-// indexed in navi.uploads so the Memory view's "Uploaded files"
+// indexed in navi.uploads so the Chats tab's "Uploaded files"
 // section can find and delete it later.
 var pendingUpload = null;
 var uploads = [];
@@ -1637,7 +1719,7 @@ try {
 } catch (e) {}
 // Memory entries (build .81, issue #72): an entry is an object
 // now — {t: the fact, o: how it got there: manual / trigger /
-// autonomous / correction} — so the Memory tab can say where each
+// autonomous / correction} — so Settings → Memories can say where each
 // entry came from and a chat receipt's Undo can find its entry.
 // Entries saved by earlier builds are plain strings; they
 // normalize to "manual" on load, which is exactly what they were.
@@ -1964,7 +2046,7 @@ function mockChat(text) {
   var chipHit = matchChipText(text, CHIP_DEFS);
   if (chipHit) return { text: "Slotted in " + chipHit.name + " and ran it — here's what it gave me:", exec: { command: "chip " + chipHit.id, output: chipHit.output } };
   if (/chip/i.test(text)) return { text: "Chips live in the Chips tab — each one a little chip with its code inside the picture. My shelf starts empty: forge one in Chip Studio (in live mode it writes a real chip) and it can run right here — type /chip followed by its name and its output lands in our conversation.", exec: null };
-  if (/remember|memory/i.test(text)) return { text: "Memory lives in the Memory tab — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
+  if (/remember|memory/i.test(text)) return { text: "Memory lives under Settings → Memories — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
   return { text: "(Mock reply) I'm here — I heard you: \"" + text + "\" — in live mode the llamafile answers with the real me. Try: show me the contents of /home/name/ — or keep talking; I like that too.", exec: null };
 }
 // The dashboard's mock backend starts with an EMPTY chip shelf, like
@@ -2544,7 +2626,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under <b>Memory → Uploaded files</b>, where you can find it later and delete it.</p>" +
-  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Conversations are saved as known chats — switch in Memory.</p>" +
+  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Conversations are saved as known chats — switch from the <b>Chats</b> tab at the top of the status column, right beside Navi's status, without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode</h4>" +
   "<p>The status column's sudo switch makes Navi execute commands as root. Turning it on asks for your sudo password once; the bridge validates it by opening <b>one persistent root shell</b> that every sudo command runs inside, so a fingerprint-first PAM stack is consulted exactly once, at authentication. The password lives only in this page's memory — never saved, never logged — and turning sudo off closes the root shell on the spot.</p></div>" +
@@ -2623,7 +2705,7 @@ var DOC_PAGES = [
   { id: "chipdeck", title: "ChipDeck — the binder", related: ["chips-guide", "rag", "mesh"], html:
     "<p style='color:var(--dim)'>One binder for everything that rides a picture.</p>" +
     "<div class='doc-sec'><h4>What lives in the binder</h4>" +
-  "<p><b>ChipDeck</b> (in the menu, under Chips) is a gallery of sleeves, one per picture-riding thing on this machine: every <b>installed chip</b>, every <b>Apex Mesh pairing card</b> on file in <span class='mono'>config/mesh/cards/</span>, and every <b>knowledge pack</b>, drawn as its cartridge. Each sleeve shows the <b>actual picture</b> — the cartridge's real bytes, not an icon for it — with the thing's state at a glance (installed from where, edited locally, paired, active) and its actions gathered underneath: chips run (straight into chat, as <span class='mono'>./&lt;name&gt;</span>), download their picture, open in Chip Studio, and uninstall; Mesh cards download and unpair; packs activate, deactivate, download their cartridge, and remove.</p>" +
+  "<p><b>ChipDeck</b> (in the menu, under Chips) is a gallery of sleeves, one per picture-riding thing on this machine: every <b>installed chip</b>, every <b>Apex | Mesh pairing card</b> on file in <span class='mono'>config/mesh/cards/</span>, and every <b>knowledge pack</b>, drawn as its cartridge. Each sleeve shows the <b>actual picture</b> — the cartridge's real bytes, not an icon for it — with the thing's state at a glance (installed from where, edited locally, paired, active) and its actions gathered underneath: chips run (straight into chat, as <span class='mono'>./&lt;name&gt;</span>), download their picture, open in Chip Studio, and uninstall; Mesh cards download and unpair; packs activate, deactivate, download their cartridge, and remove.</p>" +
   "<p><b>Drop a picture on the Deck and it slots in.</b> The data inside the picture says what it is — chip, knowledge cartridge, or Mesh card — and each kind installs through its own door, with its own checks. The receipt names the version the picture itself carries, and a chip's sleeve states it too — a picture forged before versions rode inside simply shows none, and nothing guesses one for it. A picture whose data was stripped on its way to you (chat apps recompress uploads) is refused in plain words, never silently ignored: send originals inside a <span class='mono'>.zip</span>.</p>" +
   "<p><b>What never rides a picture stays out of the binder:</b> Soul, Memory, settings and config, the Vault's notes, and every key. Those travel in backups only — there is no cartridge for them, by design.</p></div>" },
   { id: "rag", title: "RAG packs & exports", related: ["chips-publishing", "settings"], html:
@@ -2678,12 +2760,12 @@ var DOC_PAGES = [
   "<p>The <b>Voice tab</b> holds the pipeline and the call itself — her settings (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>) live in <b>Settings → Voice</b>: a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
   { id: "dhd", title: "DHD — Apex from anywhere", related: ["settings", "installing", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What DHD is</h4>" +
-  "<p><b>Apex DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
+  "<p><b>Apex | DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex | Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
   "<p>Everything is Apex's own work, assembled and managed by Apex itself — no Tailscale, no tunnel or proxy service, no Certbot:</p><ul>" +
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
   "<li>The <b>same access code</b> as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
-  "<p>DHD has its own page in the menu (after the Vault, before the Updater), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex Node [local], Apex Mesh, then Apex DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+  "<p>DHD has its own page, reached from the menu's <b>Apex | Systems</b> group (Node and DHD both open it — the Node controls live on it), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
@@ -2711,12 +2793,12 @@ var DOC_PAGES = [
   "<p><b>With a domain, the warning goes away.</b> Apex's built-in ACME client talks to Let's Encrypt directly: it places an order, proves you control the domain by serving the HTTP-01 challenge through its own proxy on port 80, finalizes, downloads the certificate, installs it, and reloads the proxy. No Certbot, no external ACME tool.</p>" +
   "<p><b>Renewal is automatic.</b> Let's Encrypt certificates live 90 days. Apex checks the expiry when the bridge starts and once a day after that, and renews on its own when 30 days or fewer remain — same ACME flow, no operator action. The DHD page always shows the current expiry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it off</h4>" +
-  "<p>Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.</p>" +
-  "<p>Turning DHD off does not touch Apex Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.</p></div>" },
-  { id: "mesh", title: "Apex Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
+  "<p>Flip the master switch on the DHD page back off. The proxy stops, ports 80/443 close, and Apex answers only on this machine and — if Apex | Node is on — your home network, exactly as before DHD. Your domain and certificate stay saved on the machine, so turning DHD back on later is the same one click.</p>" +
+  "<p>Turning DHD off does not touch Apex | Node, the access code, or anything else. If you also forwarded ports on your router, you can leave the forwards in place (nothing is listening) or remove them — either is fine.</p></div>" },
+  { id: "mesh", title: "Apex | Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What Mesh is</h4>" +
-  "<p><b>Apex Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
-  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex Node</b>, <b>Apex Mesh</b>, <b>Apex DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu, right after DHD — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
+  "<p><b>Apex | Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
+  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex | Node</b>, <b>Apex | Mesh</b>, <b>Apex | DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu's Apex | Systems group — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
   "<p>That Servers row is also where Mesh warnings live — the persistent place to check when something feels off. Its dot and line read the connection state at a glance: grey when Mesh is off or no machine is paired yet, green when a paired machine is reachable (amber while a borrow or a lend is actually running), and amber with the reason in short words — <i>“&lt;machine&gt; unreachable”</i>, <i>“&lt;machine&gt; dropped”</i> — when a connection breaks. The chat notice still speaks in the moment a borrow falls back; the status row is what keeps the warning on screen afterwards, until the machine answers again.</p></div>" +
     "<div class='doc-sec'><h4>Pairing — the card is the handshake</h4>" +
   "<p>Each machine has a <b>Mesh card</b> — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a <b>capabilities block</b> — the machine's own report of its hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under.</p><ol>" +
@@ -2764,12 +2846,13 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Memory from chat — she writes things down herself</h4>" +
   "<p>Navi pulls memories out of the conversation itself, two ways. <b>The trigger:</b> tell her <i>remember this</i>, <i>remember: …</i>, or <i>save this to your memory</i> — or tap <b>Save to memory</b> under any of your messages in Chat — and she writes the fact down. <b>On her own:</b> when you say something durable — a fact about you, a preference, a decision, a commitment, a correction — she saves it in the same reply she was already giving, with no extra round-trip. Small talk, command output, and questions are never saved.</p>" +
   "<p><b>Nothing is saved silently.</b> Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap <b>Undo</b>. A save that corrects an existing entry <b>replaces</b> it — the receipt shows the old line struck through, and Undo restores it. <b>Secrets are never saved</b>, on any path: ask her to remember a password, a key, or a card number and she refuses, says why, and the receipt shows no payload.</p>" +
-  "<p>The <b>Memory</b> tab holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and in the Memory tab — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). Every entry in the Memory list says how it got there: added by hand, from chat because you asked, from chat on her call, or from chat as a correction.</p></div>" +
+  "<p><b>Settings → Memories</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Memories — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). Every entry in the Memories list says how it got there: added by hand, from chat because you asked, from chat on her call, or from chat as a correction.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p><b>Memory</b> holds local memory entries and the known chats. <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<p>The <b>Chats</b> tab — fixed at the top of the status column beside Navi's status, on the Chat page — is the chat manager: the known chats (switch, new, delete) and the uploaded files. What she remembers from chat lives under <b>Settings → Memories</b>. <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
   "<li><b>Operator &amp; Persona</b> — what she calls you, and the Soul and Memory editors.</li>" +
   "<li><b>Appearance</b> — the theme picker.</li>" +
   "<li><b>Voice</b> — her voice settings.</li>" +
+  "<li><b>Memories</b> — what she remembers from chat: the entries, the save-mode leash, and anything waiting on your word. (The Memory <i>document</i> itself is edited under Operator &amp; Persona.)</li>" +
   "<li><b>GitHub &amp; Backup</b> — sign-in and the backup/import block.</li>" +
   "<li><b>System</b> — the hardware profile (the detected profile, its override, and re-detect), plus installed commands.</li></ul>" +
   "<p>There is no backend switch: the app always talks Live to the real bridge and llamafile, and the llamafile's Running state in the status column is the live signal.</p>" +
@@ -2787,8 +2870,8 @@ var DOC_PAGES = [
   "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li></ul>" +
   "<p>Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
   "<p><b>Hardware profile.</b> Settings' System tab shows the profile the installer made of your machine: what it detected (the CPU and its core count, how much memory, the graphics chip — separate or built in, and its memory), and the settings it chose from that — threads, context size, batch size, and graphics layers. Her settings are picked from <i>your</i> machine at install, never copied from the developer's: a modest laptop gets the proven gentle numbers, a strong machine gets more room. Type your own numbers to override them, or press <b>Re-detect</b> to profile the machine again and return to the automatic choice. The installer writes what it found and why it chose it to <span class='mono'>hardware-profile.log</span> in the install folder.</p></div>" +
-    "<div class='doc-sec'><h4>Apex Node — Apex on your phone or tablet</h4>" +
-  "<p>The <b>DHD page</b> holds the <b>Apex Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
+    "<div class='doc-sec'><h4>Apex | Node — Apex on your phone or tablet</h4>" +
+  "<p>The <b>DHD page</b> holds the <b>Apex | Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex | Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
   "<p>If a restart ever fails, the row says so in plain words: it names the step that failed (the old bridge would not stop, the new bridge did not answer, or the answering bridge's bind does not match your choice), states the state that is <b>actually live</b> — the old bridge keeps serving its old setting, untouched, until a new one is confirmed — and offers the fallbacks: press <b>Restart bridge</b> to try again, or quit Apex fully and relaunch. A restart never leaves a half-state behind.</p>" +
   "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits is asked for the code once; its browser is remembered after that. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: every phone let in with the old one is shut out and will be asked again.</p>" +
   "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. The code is the only lock on that door. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
@@ -2851,7 +2934,7 @@ var DOC_PAGES = [
   "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.1.7</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.1.8 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.1.8e</b> and this full release reads <b>v0.1.7</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
-  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
+  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex | Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
   "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still answering after a reinstall. The installer and the Updater now stop the old bridge and prove it stopped before new files land, so this should not survive an update; if you meet it after starting a bridge by hand, quit the app fully and relaunch — and if a process ever holds her port and will not stop, the failure that reports it names the process and the exact <span class='mono'>kill -9</span> command that ends it.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
@@ -3447,14 +3530,92 @@ navEl.appendChild(toggleBtn);
 var navMenu = document.createElement("div");
 navMenu.id = "nav-menu";
 navEl.appendChild(navMenu);
-NAV.forEach(function (name) {
+function goView(name) {
+  view = name;
+  if (window.innerWidth <= 800) { navClosed = true; dockOpen = false; }
+  render();
+  if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); }
+}
+function navBtn(id, label, iconName, targetView) {
   var b = document.createElement("button");
-  b.id = "nav-" + name;
-  b.setAttribute("aria-label", navLabel(name));
-  b.innerHTML = "<span class='ic'>" + navIcon(name) + "</span><span class='lbl'>" + navLabel(name) + "</span><span class='nav-tip' aria-hidden='true'>" + navLabel(name) + "</span>";
-  b.onclick = function () { view = name; if (window.innerWidth <= 800) { navClosed = true; dockOpen = false; } render(); if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); } };
-  navMenu.appendChild(b);
-});
+  b.type = "button";
+  b.id = id;
+  b.setAttribute("aria-label", label);
+  b.innerHTML = "<span class='ic'>" + navIcon(iconName || label) + "</span><span class='lbl'>" + label + "</span><span class='nav-tip' aria-hidden='true'>" + label + "</span>";
+  b.onclick = function () { goView(targetView); };
+  return b;
+}
+function navGroupHeader(gid) {
+  var g = NAV_GROUPS[gid];
+  var b = document.createElement("button");
+  b.type = "button";
+  b.id = "nav-group-" + gid;
+  b.className = "nav-group-head";
+  b.setAttribute("aria-expanded", navGroupsOpen[gid] ? "true" : "false");
+  b.setAttribute("aria-controls", "nav-children-" + gid);
+  b.setAttribute("aria-label", g.label + " — expand or collapse the group");
+  b.innerHTML = "<span class='ic'>" + navIcon(g.label) + "</span><span class='lbl'>" + g.label + "</span><span class='nav-chev' aria-hidden='true'>▾</span><span class='nav-tip' aria-hidden='true'>" + g.label + "</span>";
+  b.onclick = function () {
+    // On the collapsed rail the header is a door, not a toggle:
+    // it opens the rail so the children can be reached.
+    if (document.getElementById("app").classList.contains("closed") && window.innerWidth > 800) { navClosed = false; try { localStorage.setItem("navi.navClosed", "0"); } catch (e) {} render(); return; }
+    navGroupsOpen[gid] = !navGroupsOpen[gid];
+    persistNavGroups();
+    syncNav();
+  };
+  return b;
+}
+function navGroupWrap(gid) {
+  var wrap = document.createElement("div");
+  wrap.className = "nav-children" + (navGroupsOpen[gid] ? "" : " closed");
+  wrap.id = "nav-children-" + gid;
+  NAV_GROUPS[gid].children.forEach(function (pair, i) {
+    var b = navBtn("nav-child-" + gid + "-" + pair[0], pair[0], pair[1], pair[1]);
+    b.classList.add("nav-child");
+    b.style.transitionDelay = (i * 55) + "ms";
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+// The menu (0.1.9e Build 4): Chat pinned; a break; the Apex |
+// Systems dropdown; a break; the flat work surfaces; and at the
+// foot, the Apex | Utilities drop-up over the version line.
+navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
+var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
+navMenu.appendChild(navGroupHeader("systems"));
+navMenu.appendChild(navGroupWrap("systems"));
+var navBrk2 = document.createElement("div"); navBrk2.className = "nav-break"; navBrk2.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk2);
+["Voice", "Chips", "ChipDeck", "RAG", "Vault", "Updater"].forEach(function (name) { navMenu.appendChild(navBtn("nav-" + name, navLabel(name), name, name)); });
+var navUtil = document.createElement("div"); navUtil.className = "nav-util"; navUtil.id = "nav-util";
+navUtil.appendChild(navGroupWrap("utilities"));
+navUtil.appendChild(navGroupHeader("utilities"));
+navMenu.appendChild(navUtil);
+// syncNav: the active sweep + group states, applied to the static
+// menu DOM on every render WITHOUT rebuilding it — a rebuilt menu
+// would restart the groups' open/close transitions on every status
+// poll; this sweep restarts nothing. The DHD view lights its own
+// "DHD" child (the Node child is a shortcut entry to the same
+// view and never carries the active state — Build 4's honest
+// choice, noted in the build report).
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Voice: "nav-Voice", Chips: "nav-Chips", ChipDeck: "nav-ChipDeck", RAG: "nav-RAG", Vault: "nav-Vault", Updater: "nav-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+function syncNav() {
+  var want = NAV_ACTIVE_IDS[view] || "";
+  ["nav-Chat", "nav-Voice", "nav-Chips", "nav-ChipDeck", "nav-RAG", "nav-Vault", "nav-Updater", "nav-child-systems-Node", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-utilities-Settings", "nav-child-utilities-Docs", "nav-child-utilities-GitHub"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
+    if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
+  });
+  ["systems", "utilities"].forEach(function (gid) {
+    var wrap = document.getElementById("nav-children-" + gid);
+    if (wrap) {
+      var closed = !navGroupsOpen[gid];
+      if (wrap.classList.contains("closed") !== closed) wrap.classList.toggle("closed", closed);
+      wrap.setAttribute("aria-hidden", closed ? "true" : "false");
+    }
+    var head = document.getElementById("nav-group-" + gid);
+    if (head) head.setAttribute("aria-expanded", navGroupsOpen[gid] ? "true" : "false");
+  });
+}
 // The dock toggle (build .64): the opposing end of the phone top
 // bar from the hamburger. It opens the whole status column as a
 // full-width overlay; the small-screen CSS shows it, the desktop
@@ -3582,13 +3743,13 @@ function renderLocalNetwork() {
     if (hasCode) {
       h += "<div style='color:var(--dim);font-size:11px;letter-spacing:.06em;margin-top:8px'>ACCESS CODE</div>" +
         "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:6px 10px;font-weight:700;letter-spacing:.2em'>" + esc(ps.accessCode) + "</span>" +
-        "<button class='ghost' id='local-net-copy-code' aria-label='Copy the Apex Node access code' style='min-height:40px'>" + (localNetCopied === "code" ? "Copied" : "Copy code") + "</button></div>";
+        "<button class='ghost' id='local-net-copy-code' aria-label='Copy the Apex | Node access code' style='min-height:40px'>" + (localNetCopied === "code" ? "Copied" : "Copy code") + "</button></div>";
     }
   } else {
-    h += "<div style='color:var(--dim);font-size:12px'>Apex Node is off. Its controls live on the DHD page, under the DHD options.</div>";
+    h += "<div style='color:var(--dim);font-size:12px'>Apex | Node is off. Its controls live on the DHD page, under the DHD options.</div>";
   }
-  h += "<button class='ghost' id='local-net-settings' aria-label='Open the DHD page for the Apex Node toggle and Regenerate' style='margin-top:8px;display:block;width:100%;text-align:center;font-weight:700;min-height:40px'>Open DHD page</button>" +
-    (live ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The Apex Node toggle and Regenerate live there.</div>" : "") +
+  h += "<button class='ghost' id='local-net-settings' aria-label='Open the DHD page for the Apex | Node toggle and Regenerate' style='margin-top:8px;display:block;width:100%;text-align:center;font-weight:700;min-height:40px'>Open DHD page</button>" +
+    (live ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The Apex | Node toggle and Regenerate live there.</div>" : "") +
     "</div></details></div>";
   return h;
 }
@@ -3709,7 +3870,7 @@ function dhdPrereqCardHtml(d) {
   return h + "</div>";
 }
 function apexNodeCardHtml() {
-  // Apex Node (the home-network door; display name decided
+  // Apex | Node (the home-network door; display name decided
   // 2026-11-08): its controls live on the DHD page, under the
   // DHD options - Settings keeps only a pointer. Same config
   // keys, same API paths, same fluid bridge-restart activation
@@ -3721,10 +3882,10 @@ function apexNodeCardHtml() {
       // the status column's section — a last-known report from a
       // bridge that has stopped answering never reads as live.
       var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
-      h += "<div class='card'><h3>Apex Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>";
+      h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>";
       h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
       h += "<p style='color:var(--am)'><b>Warning:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. Share the code like a house key.</p>";
-      h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Apex Node toggle'>" + (ps.enabled ? "Apex Node: On" : "Apex Node: Off") + "</button></p>";
+      h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Apex | Node toggle'>" + (ps.enabled ? "Apex | Node: On" : "Apex | Node: Off") + "</button></p>";
       h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
       if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
       else if (rst.status === "failed") h += "<br><span style='color:#f87171'><b>Restart failed — step: " + esc(rst.step === "stop" ? "stopping the old bridge" : rst.step === "verify" ? "checking the new bridge's bind" : "the new bridge answering") + ".</b> " + esc(rst.message || "") + "</span>";
@@ -3732,9 +3893,9 @@ function apexNodeCardHtml() {
       else if (ps.pending) h += "<br><span style='color:var(--am)'>The saved choice is not live yet — the running bridge still uses the old setting. Press Restart bridge and Apex applies it herself.</span>";
       else h += "<br>The running bridge matches the saved choice.";
       h += "</p>";
-      if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Apex Node choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
+      if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Apex | Node choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
       if (ps.enabled || rowLive) {
-        h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Apex Node access code'>Regenerate</button></p>";
+        h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Apex | Node access code'>Regenerate</button></p>";
         h += "<p style='color:var(--dim)'>A phone visiting Apex is asked for this code once; its browser is remembered after that. Regenerating makes a new code and shuts out every phone the old one let in.</p>";
         if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
         h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
@@ -3748,7 +3909,7 @@ function dhdHtml() {
   var ps = publicState || CONFIG.publicServer || { accessCode: "" };
   var code = d.accessCode || ps.accessCode || "";
   var modeLine = !d.active ? "Off" : d.mode === "domain" ? "Domain certificate (Let's Encrypt)" : "Self-signed certificate";
-  var h = "<h3>Apex DHD - the way home</h3>";
+  var h = "<h3>Apex | DHD - the way home</h3>";
   h += "<p style='color:var(--dim);max-width:640px'>DHD takes the same Apex you use at home and gives it a public door: Apex itself stands up a reverse proxy with TLS on this machine - no Tailscale, no tunnel service, no Certbot - and you reach her from anywhere with one address and the access code. One click is the whole setup.</p>";
   h += "<div class='card'><div class='row' style='justify-content:space-between'><b>DHD - public access <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[public]</span></b>" +
     "<button class='ghost' id='dhd-toggle' role='switch' aria-checked='" + (d.enabled ? "true" : "false") + "' aria-label='DHD - public access to Apex from anywhere' style='min-width:64px;min-height:44px;font-weight:700;border-color:" + (d.enabled ? "var(--green)" : "var(--line)") + ";color:" + (d.enabled ? "var(--green)" : "var(--dim)") + "'>" + (d.enabled ? "ON" : "OFF") + "</button></div>" +
@@ -3764,7 +3925,7 @@ function dhdHtml() {
     "OUTSIDE REACH<br><span style='color:var(--text);font-size:14px'>" + (d.publicVerified ? "Verified - the domain resolves to this machine and its certificate is live." : d.active ? "Unverified - " + esc(d.nextStep || "Forward ports 443 and 80 on your router to this machine, or add your domain.") + (d.wanNote ? " " + esc(d.wanNote) : "") : "-") + "</span><br>" +
     "CERTIFICATE<br><span style='color:var(--text);font-size:14px'>" + (d.active ? (d.certPending ? "Domain saved - certificate pending (door answering on the self-signed certificate meanwhile)" : d.certExpiresAt ? "Expires " + esc(String(d.certExpiresAt).slice(0, 10)) + (d.certDaysLeft != null ? " - " + d.certDaysLeft + " days left" : "") + (d.mode === "domain" ? " - Apex renews it on its own at 30 days or less" : "") : "Self-signed, generated by Apex") : "-") + "</span><br>" +
     "THE DOOR ITSELF<br><span style='color:var(--text);font-size:14px'>Proxy on 80/443, forwarding to the bridge on 127.0.0.1:" + BRIDGE_PORT + ". In DHD mode the bridge never binds publicly - the proxy is the only public face, and it serves nothing before the code.</span></div></div>";
-  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex Node and DHD use the same access code and the same acceptance cookie. It is shown only here, on the machine Apex runs on. Anyone who has the code can use Apex in full, from anywhere - share it like a house key. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
+  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex | Node and DHD use the same access code and the same acceptance cookie. It is shown only here, on the machine Apex runs on. Anyone who has the code can use Apex in full, from anywhere - share it like a house key. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
     "<div class='row'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:8px 12px;font-weight:700;letter-spacing:.2em;font-size:16px'>" + (code ? (dhdCodeShown ? esc(code) : "••••-••••") : "No code yet - it is generated when a door first opens") + "</span>" +
     "<button class='ghost' id='dhd-code-show' aria-label='" + (dhdCodeShown ? "Hide the access code" : "Show the access code") + "' style='min-height:40px'>" + (dhdCodeShown ? "Hide" : "Show") + "</button>" +
     "<button class='ghost' id='dhd-code-regen' aria-label='Regenerate the access code - every accepted remote client is signed out' style='min-height:40px'>Regenerate</button></div>" +
@@ -3918,7 +4079,7 @@ function renderDhdStatus() {
   return h;
 }
 function wireApexNode() {
-    // Apex Node card (build .59; fluid activation .61): the
+    // Apex | Node card (build .59; fluid activation .61): the
     // toggle saves the choice through the bridge AND starts the
     // bridge restart that applies it; the row then polls for the
     // relaunched bridge's confirmation (pollPublicRestart).
@@ -3941,7 +4102,7 @@ function wireApexNode() {
             CONFIG.publicServer.activePublic = target;
             CONFIG.publicServer.bindHost = target ? "0.0.0.0" : "127.0.0.1";
             CONFIG.publicServer.pending = false;
-            CONFIG.publicServer.restart = { status: "confirmed", step: "", message: target ? "Restart complete — the bridge that answers now reports Apex Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+            CONFIG.publicServer.restart = { status: "confirmed", step: "", message: target ? "Restart complete — the bridge that answers now reports Apex | Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
             saveCfg();
             publicMsg = CONFIG.publicServer.restart.message;
             render();
@@ -3967,7 +4128,7 @@ function wireApexNode() {
           cps.activePublic = cps.enabled;
           cps.bindHost = cps.enabled ? "0.0.0.0" : "127.0.0.1";
           cps.pending = false;
-          cps.restart = { status: "confirmed", step: "", message: cps.enabled ? "Restart complete — the bridge that answers now reports Apex Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
+          cps.restart = { status: "confirmed", step: "", message: cps.enabled ? "Restart complete — the bridge that answers now reports Apex | Node — on your network." : "Restart complete — the bridge that answers now reports This machine only." };
           saveCfg();
           publicMsg = cps.restart.message;
           render();
@@ -4078,7 +4239,7 @@ function meshPillHtml(mesh) {
   // The Mesh attribution pill itself (Build 3), BARE since
   // Build 8 (#88): pillRow() owns the one row under a reply and
   // puts this pill first in it, ahead of any source pills.
-  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Apex Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
+  return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Apex | Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
 }
 function pillRow(mesh, sources) {
   // Build 8 (#88): ONE row under a reply carries every pill —
@@ -4144,7 +4305,7 @@ function renderMeshStatus() {
     else if (m.borrowEnabled) line = m.peers && m.peers.length ? "On — borrowing automatic" : "On — no peers paired yet";
     else line = "On — borrowing and lending both off";
   }
-  var h = "<div class='stat'><span class='dot" + (m.enabled ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>Apex Mesh</span><br>" +
+  var h = "<div class='stat'><span class='dot" + (m.enabled ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>Apex | Mesh</span><br>" +
     "<span class='v mono' style='font-weight:700;overflow-wrap:anywhere'>" + esc(line) + "</span>";
   h += "<details id='mesh-details'" + (meshDetailsOpen ? " open" : "") + " style='margin-top:2px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Mesh details</summary><div style='margin-top:6px'>";
   if (!m.enabled) {
@@ -4255,13 +4416,13 @@ function meshRosterHtml() {
 function meshCardHtml() {
   var m = meshViewState();
   var lend = m.lend || {};
-  var h = "<div class='card'><h3>Apex Mesh</h3>" +
+  var h = "<div class='card'><h3>Apex | Mesh</h3>" +
     "<p style='color:var(--dim)'>Pooled inference across your machines: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is a card you carry by hand — a paired machine is a trusted machine.</p>";
   // Build 6 (#86): save confirmations and refusals render here,
   // at the controls, directly under the intro — not at the foot
   // of the card, where a person mid-click never sees them.
   if (meshMsg) h += "<p style='font-size:12px'>" + esc(meshMsg) + "</p>";
-  h += meshSwitchRow("mesh-master", m.enabled, "Apex Mesh", "Apex Mesh master switch");
+  h += meshSwitchRow("mesh-master", m.enabled, "Apex | Mesh", "Apex | Mesh master switch");
   if (m.enabled) {
     h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's name <input id='mesh-name' type='text' value='" + esc(m.nodeName || "") + "' placeholder='e.g. Home server' aria-label='This machine’s Mesh name' style='min-height:44px'></label>" +
       (m.nodeId ? "<span class='mono' style='font-size:11px;color:var(--dim)'>node " + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
@@ -5181,6 +5342,37 @@ function serversSummaryDots() {
   function dot(c) { return "<span class='dot' style='background:" + c + ";margin-left:6px'></span>"; }
   return dot(llamaDot) + dot(nodeDot) + dot(meshDot) + dot(dhdDot);
 }
+function wireChatsPanel(root) {
+  if (!root) return;
+  var tab = root.querySelector("#chats-tab");
+  if (tab) tab.onclick = function () { chatsPanelOpen = !chatsPanelOpen; render(); };
+  root.querySelectorAll("[data-switch]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-switch")); var c = chats.filter(function (x) { return x.id === id; })[0]; if (!c) return; activeChatId = c.id; messages = c.messages; persist(); render(); }; });
+  root.querySelectorAll("[data-delchat]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-delchat")); chats = chats.filter(function (x) { return x.id !== id; }); if (!chats.length) seedChats(); if (!chats.some(function (x) { return x.id === activeChatId; })) { activeChatId = chats[0].id; messages = chats[0].messages; } persist(); render(); }; });
+  var newBtn = root.querySelector("#chat-new");
+  if (newBtn) newBtn.onclick = function () { var t = root.querySelector("#chat-title"); var title = t && t.value.trim() ? t.value.trim() : "Chat " + (chats.length + 1); var c = { id: Date.now(), title: title, messages: [] }; chats.push(c); activeChatId = c.id; messages = c.messages; persist(); render(); };
+  root.querySelectorAll("[data-delupload]").forEach(function (b) { b.onclick = function () { uploads.splice(Number(b.getAttribute("data-delupload")), 1); persistUploads(); render(); }; });
+}
+
+function chatsPanelHtml() {
+  // The Chats panel (0.1.9e Build 4): what the retired Memory view
+  // held for conversations — the saved chats (switch, new, delete)
+  // and the Uploaded files section — moved whole onto the Chat
+  // view, in a panel that slides open under the Chats tab at the
+  // top of the status column. Same data, same storage keys, same
+  // handlers (wireChatsPanel binds what the Memory wiring bound).
+  var h = "<div id='chats-panel' class='chats-panel'><div class='chats-inner'>";
+  h += "<p style='color:var(--dim);font-size:12px;margin:2px 0 8px'>Every conversation is saved locally. Switch here and the thread picks that conversation back up.</p>";
+  h += chats.map(function (c) {
+    var on = c.id === activeChatId;
+    return "<div class='card' style='margin-bottom:8px;padding:10px;" + (on ? "border-color:var(--cy)" : "") + "'><b>" + esc(c.title) + "</b> <span style='color:var(--dim);font-size:12px'>" + c.messages.length + " messages</span><div style='margin-top:6px;display:flex;gap:6px'>" +
+      (on ? "<span class='mono' style='color:var(--cy);font-size:11px;align-self:center'>ACTIVE</span>" : "<button class='ghost' data-switch='" + c.id + "' style='min-height:40px'>Switch</button>") +
+      (chats.length > 1 ? "<button class='ghost' data-delchat='" + c.id + "' style='min-height:40px'>Delete</button>" : "") + "</div></div>";
+  }).join("");
+  h += "<div class='row'><input class='grow' id='chat-title' type='text' placeholder='New chat title (optional)' aria-label='New chat title'><button class='act' id='chat-new' style='min-height:44px'>New chat</button></div>";
+  h += "<h3 style='margin-top:14px'>Uploaded files</h3>" + (uploads.length ? uploads.map(function (u, i) { return "<div class='card' style='margin-bottom:8px;padding:10px'>" + esc(u.name) + " <span style='color:var(--dim);font-size:12px'>" + esc(u.kind) + (u.chat ? " · in " + esc(u.chat) : "") + (u.at ? " · " + esc(String(u.at).slice(0, 10)) : "") + "</span> <button class='ghost' data-delupload='" + i + "' aria-label='Delete uploaded file " + esc(u.name) + "' style='min-height:40px'>Delete</button></div>"; }).join("") : "<p style='color:var(--dim);font-size:12px'>Nothing uploaded yet — attach a picture or a text file from the chat composer and it is indexed here.</p>");
+  return h + "</div></div>";
+}
+
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
@@ -5206,6 +5398,7 @@ function renderStatus(live) {
     updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>" + (CONFIG.backend === "live" ? "Not checked yet" : "Live bridge only") + "</div>";
   }
   statusEl.innerHTML =
+    (view === "Chat" ? "<button type='button' id='chats-tab' class='chats-tab' aria-expanded='" + (chatsPanelOpen ? "true" : "false") + "' aria-controls='chats-panel' aria-label='Chats — the chat manager: switch, start, and delete conversations, and see uploaded files'><span>Chats</span><span class='chats-count mono'>" + chats.length + "</span><span class='chats-chev' aria-hidden='true'>▾</span></button>" : "") +
     "<h3>Status</h3>" +
     "<div class='stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='dot pdot' style='background:#34d399'></span><span id='presence-line'>" + esc(presenceText) + "</span></div>" +
     (bridgeStale && CONFIG.backend === "live"
@@ -5222,7 +5415,7 @@ function renderStatus(live) {
     // the block gets the same margin, padding, and divider as
     // every other status block — expanded and collapsed alike,
     // since the wrapper renders in both states.
-    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Navi, Apex Node, Apex Mesh and Apex DHD' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
+    "<div class='stat'><details id='servers-details'" + (serversOpen ? " open" : "") + "><summary aria-label='Servers - Navi, Apex | Node, Apex | Mesh and Apex | DHD' style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700;cursor:pointer;padding:2px 0'>SERVERS" + serversSummaryDots() + "</summary>" +
     renderLlama() +
     renderLocalNetwork() +
     renderMeshStatus() +
@@ -5244,8 +5437,10 @@ function renderStatus(live) {
   var sdet = document.getElementById("servers-details");
   if (sdet) sdet.addEventListener("toggle", function () { serversOpen = sdet.open; });
   wireVoiceStatus();
+  if (view === "Chat" && chatsPanelOpen) statusEl.innerHTML += chatsPanelHtml();
   var uw = document.getElementById("updater-warn");
   if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
+  wireChatsPanel(statusEl);
   var psr = document.getElementById("page-stale-reload");
   if (psr) psr.onclick = function () { location.reload(); };
   if (CONFIG.backend === "live" && !voiceState && !voiceFetching && !naviThinking) refreshVoice(false);
@@ -5794,7 +5989,7 @@ function deckSleeveChip(c) {
 }
 function deckSleeveMesh(c) {
   var state = c.own ? "This machine's own card" : c.paired ? "Paired" : "Card on file — not paired";
-  return "<div class='sleeve'><img class='sleeve-img' src='/api/deck/file?name=" + encodeURIComponent(c.file) + "' alt='The Mesh pairing card picture for " + esc(c.name) + "' style='width:112px;height:84px;image-rendering:auto'><div class='sleeve-name'>" + esc(c.name) + "</div><div class='sleeve-state'>Apex Mesh card<br>" + esc(state) + "</div><div class='deck-actions'>"
+  return "<div class='sleeve'><img class='sleeve-img' src='/api/deck/file?name=" + encodeURIComponent(c.file) + "' alt='The Mesh pairing card picture for " + esc(c.name) + "' style='width:112px;height:84px;image-rendering:auto'><div class='sleeve-name'>" + esc(c.name) + "</div><div class='sleeve-state'>Apex | Mesh card<br>" + esc(state) + "</div><div class='deck-actions'>"
     + "<a class='ghost' href='/api/deck/file?name=" + encodeURIComponent(c.file) + "' download='" + esc(c.file) + "'>Download picture</a>"
     + (c.paired && !c.own ? "<button class='ghost' data-deckunpair='" + esc(c.nodeId) + "' aria-label='Unpair " + esc(c.name) + "'>Unpair</button>" : "")
     + "</div></div>";
@@ -5807,14 +6002,14 @@ function deckSleeveRag(p) {
 }
 function deckHtml() {
   var h = "<h3>ChipDeck</h3>";
-  h += "<p style='color:var(--dim)'>The binder: everything on this machine that rides a picture — chips, Apex Mesh pairing cards, knowledge cartridges — each sleeve holding the actual picture, its state, and its actions. What never rides a picture stays out: Soul, Memory, settings, the Vault, and keys live in backups, never in cartridges.</p>";
+  h += "<p style='color:var(--dim)'>The binder: everything on this machine that rides a picture — chips, Apex | Mesh pairing cards, knowledge cartridges — each sleeve holding the actual picture, its state, and its actions. What never rides a picture stays out: Soul, Memory, settings, the Vault, and keys live in backups, never in cartridges.</p>";
   h += "<div class='deck-drop' id='deck-drop'><b>Drop a picture to slot it in</b><br><span style='color:var(--dim);font-size:12px'>A chip, a knowledge cartridge, or a Mesh card — the data inside the picture says which. Or</span> <button class='ghost' id='deck-pick'>pick a picture…</button><input id='deck-file' type='file' accept='image/png' style='display:none' aria-label='Choose a picture to install'></div>";
   if (deckMsg) h += "<p>" + esc(deckMsg) + "</p>";
   if (CONFIG.backend !== "live") { h += "<div class='card'>ChipDeck reads the live bridge — switch the backend to Live in Settings.</div>"; return h; }
   if (!deckData) { h += "<p style='color:var(--dim)'>Opening the binder…</p>"; return h; }
   h += "<h3 style='margin-top:16px'>Chips · " + deckData.chips.length + "</h3>";
   h += deckData.chips.length ? "<div class='deck-grid'>" + deckData.chips.map(deckSleeveChip).join("") + "</div>" : "<p style='color:var(--dim)'>No chips yet — install one from Navi User Repo (NUR), forge one in Chip Studio, or drop its picture above.</p>";
-  h += "<h3 style='margin-top:16px'>Apex Mesh cards · " + deckData.meshCards.length + "</h3>";
+  h += "<h3 style='margin-top:16px'>Apex | Mesh cards · " + deckData.meshCards.length + "</h3>";
   h += deckData.meshCards.length ? "<div class='deck-grid'>" + deckData.meshCards.map(deckSleeveMesh).join("") + "</div>" : "<p style='color:var(--dim)'>No pairing cards on file — cards land in config/mesh/cards/ when a backup restores them; your own card is on the Mesh page.</p>";
   h += "<h3 style='margin-top:16px'>Knowledge cartridges · " + deckData.ragPacks.length + "</h3>";
   h += deckData.ragPacks.length ? "<div class='deck-grid'>" + deckData.ragPacks.map(deckSleeveRag).join("") + "</div>" : "<p style='color:var(--dim)'>No knowledge packs yet — forge or install one on the RAG tab and its cartridge picture shows here.</p>";
@@ -5824,6 +6019,10 @@ function render() {
   // A popped docs window is docs-only: no nav, no status column,
   // no polling behind the wiki.
   if (DOCS_POP) { renderDocsPop(); return; }
+  // The Memory view retired in Build 4: any state still naming it
+  // (an old deep link, a saved view) lands on Chat, where its
+  // chats now live as the Chats tab.
+  if (view === "Memory") view = "Chat";
   // Focus return for the chat composer: render() rebuilds the whole
   // view, which would strand the operator's cursor after every send.
   // If the composer held focus — or a send just asked for it back —
@@ -5844,7 +6043,7 @@ function render() {
   toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
   dockBtn.setAttribute("aria-expanded", dockOpen ? "true" : "false");
   dockBtn.setAttribute("aria-label", dockOpen ? "Close the status dock" : "Open the status dock");
-  NAV.forEach(function (n) { document.getElementById("nav-" + n).className = n === view ? "on" : ""; });
+  syncNav();
   ensureLiveCommands();
   // While she is generating, the dashboard does no background
   // polling: the status fetch (and its llamafile probe on the
@@ -5896,7 +6095,7 @@ function render() {
         } else h += execChatHtml(m.exec);
       }
       if (m.operation) h += operationCardHtml(m.operation);
-      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       h += "</div>";
@@ -6130,27 +6329,6 @@ function render() {
         return "<div class='card'><b>" + esc(String(c.started_at || "").slice(0, 16).replace("T", " ")) + "</b> <span style='color:var(--dim)'>" + n + " turns" + (c.ended_at ? "" : " · (in progress)") + "</span></div>";
       }).join("");
     }
-  } else if (view === "Memory") {
-    h += "<h3>Known chats</h3><p style='color:var(--dim)'>Every conversation is saved locally. Switch here and Chat picks that conversation back up.</p>";
-    h += chats.map(function (c) {
-      var on = c.id === activeChatId;
-      return "<div class='card' style='" + (on ? "border-color:var(--cy)" : "") + "'><b>" + esc(c.title) + "</b> <span style='color:var(--dim)'>" + c.messages.length + " messages</span> " +
-        (on ? "<span class='mono' style='color:var(--cy);font-size:11px'>ACTIVE</span>" : "<button class='ghost' data-switch='" + c.id + "'>Switch</button>") +
-        (chats.length > 1 ? " <button class='ghost' data-delchat='" + c.id + "'>Delete</button>" : "") + "</div>";
-    }).join("");
-    h += "<div class='row'><input class='grow' id='chat-title' type='text' placeholder='New chat title (optional)' aria-label='New chat title'><button class='act' id='chat-new'>New chat</button></div>";
-    h += "<h3 style='margin-top:16px'>Memory · local only</h3>";
-    // How she remembers from chat (build .81, #72): the mode
-    // selector, the receipt promise, and anything waiting on
-    // the operator's word in Ask first mode.
-    h += "<div class='card'><b>How she remembers from chat</b><br><span style='color:var(--dim)'>Tell her to remember something — or tap <b>Save to memory</b> under any message in Chat — and she writes it down and shows you the receipt, word for word. In the default mode she also saves durable facts on her own judgment, in the same reply, with the same receipt and a one-tap Undo. A save that corrects an existing entry replaces it. Secrets are never saved, on any path.</span><div style='margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'>" + [["autonomous", "She saves on her own"], ["ask", "Ask first"], ["trigger", "Only when I say"]].map(function (o) { var on = (CONFIG.memoryMode || "autonomous") === o[0]; return "<button class='" + (on ? "act" : "ghost") + "' data-memmode='" + o[0] + "' aria-pressed='" + on + "' style='min-height:44px'>" + o[1] + "</button>"; }).join("") + "</div>";
-    if (memoryProposals.length) {
-      h += "<div style='margin-top:10px'><b>Waiting for your word</b>" + memoryProposals.map(function (p) { return "<div class='card' style='margin-top:6px'>“" + esc(p.text) + "”<div style='margin-top:6px'><button class='act' data-memprop='" + p.id + "' aria-label='Save this proposed memory' style='padding:2px 10px'>Save it</button> <button class='ghost' data-mempropno='" + p.id + "' aria-label='Dismiss this proposed memory' style='padding:2px 10px'>Dismiss</button></div></div>"; }).join("") + "</div>";
-    }
-    h += "</div>";
-    h += "<div id='memlist'>" + memory.map(function (m, i) { return "<div class='card'>" + esc(m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[m.o] || "Added by hand") + "</span> <button class='ghost' data-del='" + i + "'>Forget</button></div>"; }).join("") + "</div>";
-    h += "<div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div>";
-    h += "<h3 style='margin-top:16px'>Uploaded files</h3>" + (uploads.length ? uploads.map(function (u, i) { return "<div class='card'>" + esc(u.name) + " <span style='color:var(--dim);font-size:12px'>" + esc(u.kind) + (u.chat ? " · in " + esc(u.chat) : "") + (u.at ? " · " + esc(String(u.at).slice(0, 10)) : "") + "</span> <button class='ghost' data-delupload='" + i + "' aria-label='Delete uploaded file " + esc(u.name) + "'>Delete</button></div>"; }).join("") : "<p style='color:var(--dim)'>Nothing uploaded yet — attach a picture or a text file from the chat composer and it is indexed here.</p>");
   } else if (view === "Vault") {
     h += vaultHtml();
   } else if (view === "DHD") {
@@ -6161,7 +6339,7 @@ function render() {
     // Settings → System used to carry, wired by wireMeshCard
     // exactly as before — and the roster BELOW them. Wherever
     // the options and the roster coexist, options come first.
-    h += "<h3>Apex Mesh</h3>";
+    h += "<h3>Apex | Mesh</h3>";
     h += meshCardHtml();
     h += meshRosterHtml();
   } else if (view === "RAG") {
@@ -6283,21 +6461,21 @@ function render() {
     h += "<h3>Settings</h3>";
     // Topic tabs: every setting lives under exactly one.
     h += "<div role='tablist' aria-label='Settings topics' class='tabbar' style='margin-bottom:10px'>" +
-      [["persona", "Operator & Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
+      [["persona", "Operator & Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["memories", "Memories"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
         return "<button type='button' role='tab' aria-selected='" + (settingsTab === t[0]) + "' class='" + (settingsTab === t[0] ? "act" : "ghost") + "' data-settab='" + t[0] + "'>" + t[1] + "</button>";
       }).join("") + "</div>";
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nordic dark is the default. Nordic is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup mode is chosen during install — the installer asks whether the llamafile server loads on app launch or at system boot, and records it in config/navi.config.json.</p></div>";
-    // Apex Node (build .59 as the Local server; renamed and
+    // Apex | Node (build .59 as the Local server; renamed and
     // relocated in the DHD round): the controls themselves live
     // on the DHD page now (apexNodeCardHtml) — Settings → System
     // keeps only this pointer, so no duplicate control exists.
-    if (settingsTab === "system") h += "<div class='card'><h3>Apex Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
-      "<p style='color:var(--dim)'>The Apex Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
-      "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
+    if (settingsTab === "system") h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
+      "<p style='color:var(--dim)'>The Apex | Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
+      "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex | Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
     // Navi Mesh (build .86): the full controls live on the
     // Mesh page now — Settings → System keeps only this summary
-    // pointer, the way the Apex Node pointer relates to the DHD
+    // pointer, the way the Apex | Node pointer relates to the DHD
     // page. One line of state + the jump.
     if (settingsTab === "system") (function () {
       var m = meshViewState();
@@ -6308,7 +6486,7 @@ function render() {
         : m.lendEnabled ? "On — lending when idle."
         : m.borrowEnabled ? "On — borrowing automatic."
         : "On — borrowing and lending both off.";
-      h += "<div class='card'><h3>Apex Mesh</h3>" +
+      h += "<div class='card'><h3>Apex | Mesh</h3>" +
         "<p style='color:var(--dim)'>" + esc(line) + " Pairing, lending and borrowing controls, the roster of your machines, and the ledger all live on the Mesh page.</p>" +
         "<p><button type='button' class='act' id='mesh-pointer' aria-label='Open the Mesh page' style='min-height:44px'>Open the Mesh page</button></p></div>";
     })();
@@ -6346,6 +6524,20 @@ function render() {
     if (settingsTab === "voice") {
       if (CONFIG.backend === "live" && !voiceState && !voiceFetching) refreshVoice(false);
       h += voiceSettingsHtml();
+    }
+    if (settingsTab === "memories") {
+      h += "<div class='card'><b>Her memory document</b><br><span style='color:var(--dim)'>The document itself — what Navi carries between sessions, in config/memory.md — is edited under <b>Operator &amp; Persona</b>, beside her Soul. This tab holds what she remembers <b>from chat</b>: the entries below and anything waiting on your word.</span><div style='margin-top:8px'><button type='button' class='ghost' id='memdoc-pointer' aria-label='Open Operator and Persona to edit the memory document' style='min-height:44px'>Open the Memory document editor</button></div></div>";
+    h += "<h3 style='margin-top:16px'>Memory · local only</h3>";
+    // How she remembers from chat (build .81, #72): the mode
+    // selector, the receipt promise, and anything waiting on
+    // the operator's word in Ask first mode.
+    h += "<div class='card'><b>How she remembers from chat</b><br><span style='color:var(--dim)'>Tell her to remember something — or tap <b>Save to memory</b> under any message in Chat — and she writes it down and shows you the receipt, word for word. In the default mode she also saves durable facts on her own judgment, in the same reply, with the same receipt and a one-tap Undo. A save that corrects an existing entry replaces it. Secrets are never saved, on any path.</span><div style='margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'>" + [["autonomous", "She saves on her own"], ["ask", "Ask first"], ["trigger", "Only when I say"]].map(function (o) { var on = (CONFIG.memoryMode || "autonomous") === o[0]; return "<button class='" + (on ? "act" : "ghost") + "' data-memmode='" + o[0] + "' aria-pressed='" + on + "' style='min-height:44px'>" + o[1] + "</button>"; }).join("") + "</div>";
+    if (memoryProposals.length) {
+      h += "<div style='margin-top:10px'><b>Waiting for your word</b>" + memoryProposals.map(function (p) { return "<div class='card' style='margin-top:6px'>“" + esc(p.text) + "”<div style='margin-top:6px'><button class='act' data-memprop='" + p.id + "' aria-label='Save this proposed memory' style='padding:2px 10px'>Save it</button> <button class='ghost' data-mempropno='" + p.id + "' aria-label='Dismiss this proposed memory' style='padding:2px 10px'>Dismiss</button></div></div>"; }).join("") + "</div>";
+    }
+    h += "</div>";
+    h += "<div id='memlist'>" + memory.map(function (m, i) { return "<div class='card'>" + esc(m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[m.o] || "Added by hand") + "</span> <button class='ghost' data-del='" + i + "'>Forget</button></div>"; }).join("") + "</div>";
+    h += "<div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div>";
     }
     if (settingsTab === "github") {
       if (!githubState && !githubFetching) fetchGithub(true);
@@ -6488,7 +6680,7 @@ function wire() {
     // Memory receipts (build .81, #72): Undo and proposal
     // decisions act on the receipt object stored on the message,
     // then persist and re-render so the store, the receipt, and
-    // the Memory tab all agree.
+    // Settings → Memories all agree.
     mainEl.querySelectorAll("[data-memundo]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memundo") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc && undoMemoryReceipt(rc)) { persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memsave]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memsave") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, true); persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memdismiss]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memdismiss") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, false); persist(); render(); } }; });
@@ -7132,18 +7324,19 @@ function wire() {
         }
       }; });
     }
-  } else if (view === "Memory") {
-    mainEl.querySelectorAll("[data-switch]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-switch")); var c = chats.filter(function (x) { return x.id === id; })[0]; if (!c) return; activeChatId = c.id; messages = c.messages; persist(); render(); }; });
-    mainEl.querySelectorAll("[data-delchat]").forEach(function (b) { b.onclick = function () { var id = Number(b.getAttribute("data-delchat")); chats = chats.filter(function (x) { return x.id !== id; }); if (!chats.length) seedChats(); if (!chats.some(function (x) { return x.id === activeChatId; })) { activeChatId = chats[0].id; messages = chats[0].messages; } persist(); render(); }; });
-    var newBtn = document.getElementById("chat-new");
-    if (newBtn) newBtn.onclick = function () { var t = document.getElementById("chat-title"); var title = t && t.value.trim() ? t.value.trim() : "Chat " + (chats.length + 1); var c = { id: Date.now(), title: title, messages: [] }; chats.push(c); activeChatId = c.id; messages = c.messages; persist(); render(); };
+  } else if (view === "Settings" && settingsTab === "memories") {
+    // Memories from chat (Build 4): the entries + proposals wiring
+    // the retired Memory view carried, unchanged — same handlers,
+    // same storage. (The Chats panel's chat/upload handlers live in
+    // wireChatsPanel, bound from renderStatus.)
     mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
-    mainEl.querySelectorAll("[data-delupload]").forEach(function (b) { b.onclick = function () { uploads.splice(Number(b.getAttribute("data-delupload")), 1); persistUploads(); render(); }; });
     var memAdd = document.getElementById("mem-add");
     if (memAdd) memAdd.onclick = function () { var inp = document.getElementById("mem-in"); var v = inp ? inp.value.trim() : ""; if (!v) return; memory.push({ t: v, o: "manual" }); persist(); render(); };
     mainEl.querySelectorAll("[data-memmode]").forEach(function (b) { b.onclick = function () { CONFIG.memoryMode = b.getAttribute("data-memmode") || "autonomous"; saveCfg(); render(); }; });
     mainEl.querySelectorAll("[data-memprop]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-memprop"), true); }; });
     mainEl.querySelectorAll("[data-mempropno]").forEach(function (b) { b.onclick = function () { resolveProposalEverywhere(b.getAttribute("data-mempropno"), false); }; });
+    var memPtr = document.getElementById("memdoc-pointer");
+    if (memPtr) memPtr.onclick = function () { settingsTab = "persona"; render(); };
   } else if (view === "DHD") {
     wireDhd();
   } else if (view === "Mesh") {

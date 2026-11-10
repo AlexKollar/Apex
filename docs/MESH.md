@@ -1,6 +1,6 @@
-# Apex Mesh — your machines, one pool of inference
+# Apex | Mesh — your machines, one pool of inference
 
-Apex Mesh lets your own machines share the work of answering. A modest laptop assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is **whole-request**: one machine answers, start to finish. There is no split answer and no streaming between machines in Ring 1.
+Apex | Mesh lets your own machines share the work of answering. A modest laptop assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is **whole-request**: one machine answers, start to finish. There is no split answer and no streaming between machines in Ring 1.
 
 Mesh is off until you turn it on, and it works between machines **you** pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange.
 
@@ -8,7 +8,7 @@ Mesh is off until you turn it on, and it works between machines **you** pair by 
 
 Each machine has a **Mesh card** — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a **capabilities block** — an honest self-report of the machine's hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under, so a borrower can see what it is borrowing from before it asks.
 
-1. On the first machine, open the **Mesh page** (Mesh in the left menu), turn Mesh on, and give the machine a name.
+1. On the first machine, open the **Mesh page** (Mesh in the left menu's Apex | Systems group), turn Mesh on, and give the machine a name.
 2. Choose **Download PNG card** and carry the picture file to the second machine.
 3. On the second machine, turn Mesh on, then drop the picture onto the **Paired machines** area — or use **Upload a PNG card** — and the peer is added.
 4. Do the same in the other direction — each machine needs the other's card.
