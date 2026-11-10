@@ -758,7 +758,15 @@ fi
 
 echo "==> Installing the dashboard, bridge, icon, and config"
 $SUDO cp -r app/* "$INSTALL_DIR/app/"
-$SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
+# Issue #104 (Build 6): the bridge is staged under a pending
+# name, NOT installed — the running version witnesses (bridge.py
+# with its baked-in build sequence, the config's version record,
+# and the VERSION file) all keep naming the OLD build until the
+# version flip at the very end of this installer lands them
+# together. A failure anywhere before the flip therefore leaves
+# an install that honestly reports its old version, and Check
+# for updates re-offers the update instead of crying current.
+$SUDO cp bridge.py "$INSTALL_DIR/bridge.py.pending"
 # The VERSION file is the app's single source of truth for its own
 # version — the bridge reads it on every /api/status and the Updater
 # compares it against the latest release. It is app code, not
@@ -768,7 +776,11 @@ $SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
 # file written by whichever build installed first — and the menu
 # footer flashed the new build's baked 0.1.0 at first paint before
 # the status poll "reverted" it to that stale 1.0.0.)
-$SUDO cp VERSION "$INSTALL_DIR/VERSION"
+# Issue #104 (Build 6): staged as VERSION.pending like the bridge
+# — it becomes the install's VERSION only in the flip at the end,
+# and it is the LAST file the flip moves, because it is the first
+# witness every reader asks.
+$SUDO cp VERSION "$INSTALL_DIR/VERSION.pending"
 $SUDO cp start.sh "$INSTALL_DIR/start.sh"
 $SUDO chmod +x "$INSTALL_DIR/start.sh"
 $SUDO cp run-llamafile.sh "$INSTALL_DIR/run-llamafile.sh"
@@ -826,19 +838,11 @@ cfg["startup"] = "on-ui-launch" if mode == "launch" else "on-boot"
 cfg.setdefault("bridge", {})["host"] = "127.0.0.1"
 cfg["bridge"]["port"] = port
 cfg["install_dir"] = install_dir
-# The config's recorded version is re-stamped from this package's
-# VERSION file as well: the config is carried across installs, so
-# without this its version stays whatever the first-ever install
-# recorded (the retired 1.0.0 placeholder) long after the app has
-# moved on — the stale record behind the menu footer's flash.
-try:
-    with open("VERSION") as f:
-        ver_parts = f.read().strip().splitlines()[0].split()
-    if ver_parts:
-        cfg["version"] = ver_parts[0]
-        cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
-except Exception:
-    pass
+# The config's recorded version is NOT stamped here (issue
+# #104, Build 6): it is one of the version witnesses, so it is
+# stamped in the flip at the end of this installer, from the
+# staged VERSION.pending — stamping it here would let a later
+# failure leave the witnesses disagreeing about the build.
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PY
@@ -1370,6 +1374,36 @@ if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
   echo "    removed: $AUTOSTART_DIR/navi-apex.desktop (the tray autostart an earlier build registered)"
 fi
 
+
+# --- VERSION FLIP (issue #104) ---
+# The install's final act, deliberately last: everything above
+# this line can fail under set -e and leave an install whose
+# witnesses all still name the OLD build, so Check for updates
+# honestly re-offers and a retry starts clean. The flip lands
+# the witnesses in an order that is safe to interrupt: the
+# config's version record first (it is only the fallback
+# witness), the staged bridge second (its baked-in build
+# sequence becomes the disk truth), and the VERSION file LAST
+# of all — it is the primary witness, the one the bridge reads
+# on every /api/status, so it is the last thing that may change.
+echo "==> Stamping the new version (the install's final step)"
+$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$INSTALL_DIR/VERSION.pending" <<'PY'
+import json, sys
+path, ver_path = sys.argv[1], sys.argv[2]
+with open(ver_path) as f:
+    ver_parts = f.read().strip().splitlines()[0].split()
+if ver_parts:
+    with open(path) as f:
+        cfg = json.load(f)
+    cfg["version"] = ver_parts[0]
+    cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+PY
+$SUDO mv "$INSTALL_DIR/bridge.py.pending" "$INSTALL_DIR/bridge.py"
+$SUDO mv "$INSTALL_DIR/VERSION.pending" "$INSTALL_DIR/VERSION"
+echo "    version stamped: $(head -n 1 "$INSTALL_DIR/VERSION")"
+# --- END VERSION FLIP ---
 
 # --- Relaunch what the install stopped, and verify it (build
 # .91, issue #91, Cause 3) ---

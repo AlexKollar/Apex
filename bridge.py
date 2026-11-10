@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-10.95"
+BRIDGE_BUILD = "2026-11-10.96"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 4
+SHIPPED_BUILD_SEQ = 6
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3030,7 +3030,11 @@ def _mesh_card_png_render(card):
     W, H = 720, 452
     BG = (10, 14, 18)
     RIM = (34, 48, 61)
-    ACCENT = (34, 211, 238)
+    # The Mesh family blue (issue #117): a clear network blue,
+    # distinct at a glance from the chips' coral red and the
+    # knowledge packs' green. (It was a cyan until #117 ruled
+    # color is family; cyan sat too close to the RAG green.)
+    ACCENT = (59, 130, 246)
     INK = (230, 241, 245)
     DIM = (159, 179, 200)
     img = bytearray(bytes(BG) * (W * H))
@@ -4957,7 +4961,7 @@ def github_text(url, accept):
 # manual fallback — the staged folder and the one install
 # command — labeled as the fallback it is.
 #
-# Build 5 — the helper can no longer die traceless. The Build 4
+# Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate ran a genuine Build 3 install applying a
 # package through its own Updater: the staged installer ran
 # through to "Done.", and then the detached helper died without
@@ -5411,7 +5415,7 @@ def _tag_parts(tag):
 
 def _write_update_result(rec):
     try:
-        # Build 5: every write carries a freshness stamp, so a
+        # Build 6: every write carries a freshness stamp, so a
         # reader can always tell a live apply from an orphaned
         # one (see the apply watchdog below).
         rec["updatedAt"] = _now_iso()
@@ -5426,7 +5430,7 @@ def _write_update_result(rec):
 
 
 def _apply_watchdog(rec):
-    # The apply watchdog (Build 5): the backstop for the one
+    # The apply watchdog (Build 6): the backstop for the one
     # death the detached helper cannot record itself — killed
     # outright (SIGKILL, the kernel OOM killer, power loss)
     # before it could write again, like the silent death the
@@ -5499,7 +5503,7 @@ def update_result_payload():
     # confirmed outcome or the failure + fallback. No record yet
     # reads as state "none". A record orphaned by a helper that
     # died outright is closed by the apply watchdog on its way
-    # out (Build 5) — never left claiming "working" forever.
+    # out (Build 6) — never left claiming "working" forever.
     try:
         with open(UPDATE_RESULT_PATH) as f:
             rec = json.load(f)
@@ -5538,7 +5542,7 @@ def _unwrap_package(data):
 # stash-and-restore), relaunches the app through start.sh, and
 # finishes the update-result record the panel reads. It is a
 # standalone stdlib script: everything it needs arrives in the
-# job file beside it. Since Build 5 it also keeps the step log
+# job file beside it. Since Build 6 it also keeps the step log
 # (apply-trace.log) described in its own header: the Build 4
 # round-trip gate caught the old helper dying traceless
 # between the installer's "Done." and the relaunch — no log,
@@ -5556,7 +5560,7 @@ APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # the Updater panel reads its confirmation (or its failure and
 # fallback) from. Stdlib only, like the bridge.
 #
-# Build 5 — the helper can no longer die traceless. The Build 4
+# Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate caught it dying silently: the installer ran
 # through to "Done.", then nothing — apply.log 0 bytes, no
 # relaunch log, the record frozen at working/installing, no
@@ -5970,6 +5974,24 @@ def clear_wedged_bridge(root, port, tgt_seq):
     return (False, holder, desc)
 
 
+def _install_log_last_step(log_path):
+    # Issue #104: the installer's own step banners ("==> ...")
+    # name its steps; the last banner in the log is the step the
+    # run had reached when it failed — the tail step a nonzero
+    # exit is reported with when the build itself landed.
+    try:
+        with open(log_path, "rb") as f:
+            text = f.read().decode("utf-8", "replace")
+    except Exception:
+        return "an unnamed step"
+    last = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("==>"):
+            last = line.lstrip("=> ").strip()
+    return last or "an unnamed step"
+
+
 def version_label(number, status):
     return "v" + number + (
         "e" if status in ("edge", "alpha") else
@@ -6055,18 +6077,45 @@ def main():
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
 
+    tail_failure = ""
     if code != 0:
-        reason = why or ("it exited with code " + str(code))
-        fail("install",
-             "Installing the update failed — " + reason + ". The "
-             "installer's own output is in updates/" + job["tagDir"]
-             + "/apply-install.log. Nothing is confirmed updated: "
-             "the app is being relaunched as it lies, and the "
-             "staged package is still in place — the manual "
-             "fallback below finishes the job by hand.")
-        relaunch()
-        STATE["stop_beat"] = True
-        return
+        # Issue #104 (Build 6): a nonzero exit is not the whole
+        # story, in either direction. Classify before reporting:
+        # (2) the exit was nonzero BUT the target build is already
+        # installed on disk — the installer's version flip is its
+        # final act (Build 6), so a matching VERSION file and a
+        # matching baked-in build sequence together prove the new
+        # build landed and only a tail step failed. That is NOT
+        # the manual-fallback failure: fall through to the normal
+        # restart + confirmation with the tail failure recorded,
+        # and let confirmation have the last word. (3) Anything
+        # else is the original failure, unchanged.
+        tgt_seq_chk = job.get("targetBuildSeq")
+        chk_number, _chk_status = read_installed_version(root)
+        chk_seq = read_installed_build_seq(root)
+        installed_ok = bool(
+            chk_number
+            and tuples_equal(
+                version_tuple(chk_number), tuple(job["targetTuple"]))
+            and (tgt_seq_chk is None or chk_seq == tgt_seq_chk))
+        if installed_ok:
+            tail_failure = _install_log_last_step(job["installLog"])
+            trace("installer-tail-failure",
+                  "exit " + str(code) + " but the target build is "
+                  "installed (version " + chk_number + ", buildSeq "
+                  + str(chk_seq) + "); tail step: " + tail_failure)
+        else:
+            reason = why or ("it exited with code " + str(code))
+            fail("install",
+                 "Installing the update failed — " + reason + ". The "
+                 "installer's own output is in updates/" + job["tagDir"]
+                 + "/apply-install.log. Nothing is confirmed updated: "
+                 "the app is being relaunched as it lies, and the "
+                 "staged package is still in place — the manual "
+                 "fallback below finishes the job by hand.")
+            relaunch()
+            STATE["stop_beat"] = True
+            return
 
     # The installer's DHD prerequisite step is a named ladder
     # step of its own: its summary line is read back from the
@@ -6208,6 +6257,7 @@ def main():
         STATE["step"] = "done"
         write_result({
             "state": "done", "step": "done",
+            **({"tailFailure": tail_failure} if tail_failure else {}),
             "afterVersion": after_number,
             "afterStatus": after_status,
             # The worker's composed to-side label when it sent
@@ -6598,7 +6648,7 @@ def _run_update_apply(cfg):
                     stage_root, "apply-install.log"),
                 "relaunchLog": os.path.join(
                     stage_root, "apply-relaunch.log"),
-                # Build 5: the helper's step log — written from
+                # Build 6: the helper's step log — written from
                 # its first instruction, beside the job, with its
                 # path carried on the apply record so the panel,
                 # the watchdog, and anyone reading the wreckage
@@ -7215,6 +7265,9 @@ def github_collect_backup(cfg, dashboard=None):
             files["dashboard.json"] = json.dumps({
                 "operatorName": str(dashboard.get("operatorName") or ""),
                 "theme": str(dashboard.get("theme") or ""),
+                "motion": str(dashboard.get("motion") or ""),
+                "uiScale": (dashboard.get("uiScale")
+                            if dashboard.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
             }, indent=2).encode()
     # The Mesh ledger rides a backup ONLY on the operator's
     # explicit tick (Settings → System → Navi Mesh; Q4, off by
@@ -7469,6 +7522,10 @@ def github_import_changes(cfg, fetched, dashboard=None):
                 diffs.append("operator name → " + (str(dash.get("operatorName") or "") or "Operator"))
             if str(dash.get("theme") or "") != str(dashboard.get("theme") or ""):
                 diffs.append("theme → " + str(dash.get("theme") or ""))
+            if str(dash.get("motion") or "") != str(dashboard.get("motion") or ""):
+                diffs.append("motion → " + str(dash.get("motion") or ""))
+            if dash.get("uiScale") != dashboard.get("uiScale"):
+                diffs.append("UI scale → " + str(dash.get("uiScale") or ""))
         changes.append({
             "item": "settings", "label": labels["settings"],
             "detail": ("Would restore: " + " · ".join(diffs) + ".") if diffs else "Already matches the backup — nothing to change.",
@@ -7675,6 +7732,10 @@ def github_apply_import(cfg, fetched):
                 dashboard_out = {
                     "operatorName": str(parsed.get("operatorName") or ""),
                     "theme": str(parsed.get("theme") or ""),
+                    "motion": (str(parsed.get("motion") or "")
+                               if str(parsed.get("motion") or "") in ("full", "potato") else ""),
+                    "uiScale": (parsed.get("uiScale")
+                                if parsed.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
                 }
         except Exception:
             dashboard_out = None
@@ -8602,6 +8663,42 @@ def _draw_tile_field(rect, wx, wy, win, name, rgb, window_rgb, skip=None):
     finder(0, 13)
 
 
+def _draw_spray(rect, wx, wy, win, name, accent, shade, field, dark, deep):
+    # The knowledge cartridge's window face (issue #117): the
+    # seeded tile spray grown to fill the whole window — no
+    # glyph. Same seed discipline as the tile field (the
+    # cartridge's name through the legacy LCG), on the window's
+    # 20x20 grid. Cells land in the family accent, its shade
+    # (x0.45), its field tone (x0.30), or dark; the fill runs
+    # denser and brighter toward the middle and thins toward
+    # the rim, the way the field-forged sample face reads.
+    cell = win // 20
+    seed = _tile_field_seed(name)
+
+    def rnd():
+        nonlocal seed
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    for cy in range(20):
+        for cx in range(20):
+            dx = (cx - 9.5) / 9.5
+            dy = (cy - 9.5) / 9.5
+            d = min(1.0, (dx * dx + dy * dy) ** 0.5)
+            if rnd() > 0.88 - 0.5 * d:
+                rgb = deep if rnd() < 0.22 else dark
+            else:
+                t = rnd()
+                if t < 0.55 - 0.30 * d:
+                    rgb = accent
+                elif t < 0.82:
+                    rgb = shade
+                else:
+                    rgb = field
+            rect(wx + cx * cell, wy + cy * cell,
+                 wx + (cx + 1) * cell, wy + (cy + 1) * cell, rgb)
+
+
 def _draw_silhouette(rect, wx, wy, win, grid, accent, shade):
     # A 20x20 silhouette over the window's field, drawn like the
     # Mesh renderer's own stamp: the art's cells stamp at full
@@ -8657,7 +8754,7 @@ def _cartridge_face_png(payload, keyword):
     # pairing cards' machinery — the same block font, pixel buffer,
     # and PNG assembly — at card resolution in the classic portrait
     # stance, 528x616 (the old 96x112 face at 5.5x, same proportions).
-    # Family DNA intact: black shell, rim, coral notched bands top
+    # Family DNA intact: black shell, rim, family-accent notched bands top
     # and bottom as the cartridge's contacts (notches on the bands'
     # inner edges), the thing's art large in its window, then its
     # name, its use line, and honest small print. Build 3's window:
@@ -8673,6 +8770,14 @@ def _cartridge_face_png(payload, keyword):
     SHELL = (8, 9, 11)
     RIM = (34, 48, 61)
     CORAL = (255, 111, 97)
+    # Color is family (issue #117): chips keep the coral red;
+    # knowledge packs wear the presence green (52, 211, 153 —
+    # the app's own #34d399); the Mesh pairing cards wear
+    # their blue in _mesh_card_png_render. Every derivation
+    # below — bands, header, shade (x0.45), field (x0.30),
+    # silhouette, spray — follows the family's accent.
+    FACE_ACCENTS = {"navi-chip": CORAL, "navi-rag": (52, 211, 153)}
+    ACCENT = FACE_ACCENTS.get(keyword, CORAL)
     WINDOW = (14, 17, 21)
     INK = (230, 241, 245)
     DIM = (159, 179, 200)
@@ -8703,10 +8808,10 @@ def _cartridge_face_png(payload, keyword):
     BOT_BAND_Y = H - 24 - BAND_H
 
     def band(y0, notch_first):
-        # A coral contact band; along its inner edge a stepped
+        # A family-accent contact band; along its inner edge a stepped
         # bite is taken out of every second cell — the notches
         # the small face drew, at card scale.
-        rect(4, y0, W - 4, y0 + BAND_H, CORAL)
+        rect(4, y0, W - 4, y0 + BAND_H, ACCENT)
         for x in range(4, W - 4):
             if (x // 44) % 2 == 0:
                 for yy in notch_first:
@@ -8721,7 +8826,7 @@ def _cartridge_face_png(payload, keyword):
     else:
         head_l, head_r = "APEX CHIP", "NAVI-CHIPS"
     y = TOP_BAND_Y + BAND_H + 22
-    _mesh_face_draw(img, W, H, MX, y, head_l, 3, CORAL)
+    _mesh_face_draw(img, W, H, MX, y, head_l, 3, ACCENT)
     _mesh_face_draw(
         img, W, H, W - MX - _mesh_face_text_w(head_r, 3), y, head_r, 3, DIM
     )
@@ -8731,10 +8836,11 @@ def _cartridge_face_png(payload, keyword):
     # treatment: a dim QR-style tile field as the window's texture,
     # and the art as a solid silhouette over it — the author's own
     # declared icon first, then the built-in glyph (picked by name
-    # or keyword for a chip, always the book for a knowledge
-    # cartridge). The shade tone is the accent darkened; author
-    # art's 'o' cells draw in it. A chip no art claims (never a
-    # knowledge cartridge) keeps the legacy seeded pattern, plain.
+    # or keyword, chips only). A knowledge cartridge's window is
+    # the seeded spray instead (issue #117) unless the author's
+    # icon claims it. The shade tone is the family accent
+    # darkened; author art's 'o' cells draw in it. A chip no art
+    # claims keeps the legacy seeded pattern, plain.
     WIN = 300
     wx = (W - WIN) // 2
     wy = y
@@ -8742,13 +8848,23 @@ def _cartridge_face_png(payload, keyword):
     rect(wx, wy, wx + WIN, wy + WIN, WINDOW)
     art = _icon_art_of(payload)
     glyph = None
-    if art is None:
-        glyph = pick_chip_glyph(payload) if keyword != "navi-rag" else "book"
+    if art is None and keyword != "navi-rag":
+        glyph = pick_chip_glyph(payload)
         if glyph is not None and glyph in GLYPH_PIXELS:
             art = GLYPH_PIXELS[glyph]
-    if art is not None:
-        shade = tuple(int(c * 0.45) for c in CORAL)
-        field = tuple(int(c * 0.30) for c in CORAL)
+    if keyword == "navi-rag" and art is None:
+        # A knowledge cartridge's center is the spray (issue
+        # #117): the seeded tile field grown to fill the whole
+        # window, in the green family — it outranks even a
+        # declared glyph. Only the author's own icon art
+        # (handled by the silhouette branch below) outranks it.
+        shade = tuple(int(c * 0.45) for c in ACCENT)
+        field = tuple(int(c * 0.30) for c in ACCENT)
+        _draw_spray(rect, wx, wy, WIN, payload.get("name"),
+                    ACCENT, shade, field, WINDOW, BG)
+    elif art is not None:
+        shade = tuple(int(c * 0.45) for c in ACCENT)
+        field = tuple(int(c * 0.30) for c in ACCENT)
         # The art's own halo: the silhouette dilated by one cell in
         # the window color, drawn FIRST — it clears the field out
         # of the object's neighborhood so the eye meets a dark halo,
@@ -8771,12 +8887,15 @@ def _cartridge_face_png(payload, keyword):
                  wx + (cx + 1) * _cell, wy + (cy + 1) * _cell, WINDOW)
         _draw_tile_field(rect, wx, wy, WIN, payload.get("name"), field, WINDOW,
                          skip=_filled)
-        _draw_silhouette(rect, wx, wy, WIN, art, CORAL, shade)
+        _draw_silhouette(rect, wx, wy, WIN, art, ACCENT, shade)
     else:
-        palette = [
-            (34, 211, 238), (245, 181, 68), (52, 211, 153),
-            (248, 113, 113), (167, 139, 250),
-        ]
+        if keyword == "navi-rag":
+            palette = [(52, 211, 153), (45, 180, 130), (74, 222, 180)]
+        else:
+            palette = [
+                (34, 211, 238), (245, 181, 68), (52, 211, 153),
+                (248, 113, 113), (167, 139, 250),
+            ]
         h = 0
         seed = 7
         for ch in str(payload.get("name") or ""):
@@ -8839,8 +8958,6 @@ def _cartridge_face_png(payload, keyword):
     # document count instead.
     foot_bits = []
     ver = str(payload.get("version") or "").strip()
-    if ver:
-        foot_bits.append("V" + ver.upper())
     if keyword == "navi-rag":
         docs = payload.get("documents")
         if isinstance(docs, list):
@@ -8861,9 +8978,19 @@ def _cartridge_face_png(payload, keyword):
                 foot_bits.append(out_line[:18])
         foot_bits.append("NAVI-CHIPS")
     foot = _mesh_face_clean(" - ".join(foot_bits))
-    while foot and _mesh_face_text_w(foot, 2) > W - 2 * MX:
+    # The version rides bottom-RIGHT (issue #117, layout lock):
+    # its own element on the same baseline as the left footer,
+    # omitted when the picture's data does not know it (never
+    # invented). The left footer truncates toward the version,
+    # never into it — the version's width is reserved first.
+    ver_txt = _mesh_face_clean("V" + ver.upper()) if ver else ""
+    ver_w = _mesh_face_text_w(ver_txt, 2) if ver_txt else 0
+    left_max = W - 2 * MX - (ver_w + 24 if ver_txt else 0)
+    while foot and _mesh_face_text_w(foot, 2) > left_max:
         foot = foot[:-1]
     _mesh_face_draw(img, W, H, MX, BOT_BAND_Y - 14 - 16, foot, 2, DIM)
+    if ver_txt:
+        _mesh_face_draw(img, W, H, W - MX - ver_w, BOT_BAND_Y - 14 - 16, ver_txt, 2, DIM)
 
     raw = bytearray()
     for yy in range(H):
