@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-10.92"
+BRIDGE_BUILD = "2026-11-10.93"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
-# Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 1
+# Build 2. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 2
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -7939,6 +7939,9 @@ def fetch_chip_payload(repo):
         "output": str(manifest.get("output") or ""),
         "requirements": requirements,
         "glyph": str(manifest.get("glyph") or ""),
+        # Issue #99: the manifest's version rides inside the
+        # picture, the way its glyph already does.
+        "version": str(manifest.get("version") or ""),
         "files": _valid_chip_files(
             [{"path": "root.py", "content": code[:200000]}] + files,
             code[:200000],
@@ -8359,20 +8362,105 @@ def pick_chip_glyph(payload):
 
 
 def _cartridge_face_png(payload, keyword):
-    # The drawn family face: black shell, coral notched bands, one
-    # drawn glyph in the window. Falls back to the legacy seeded
-    # pattern when no glyph claims the chip.
-    W, H = 96, 112
-    glyph = pick_chip_glyph(payload)
-    raw = bytearray()
-    if glyph is None:
+    # The card-grade family face (0.1.9e Build 2): the cartridge
+    # drawn with the Mesh pairing cards' machinery — the same
+    # block font, pixel buffer, and PNG assembly — at card
+    # resolution in the classic portrait stance, 528x616 (the old
+    # 96x112 face at 5.5x, same proportions). Family DNA intact:
+    # black shell, rim, coral notched bands top and bottom as the
+    # cartridge's contacts (notches on the bands' inner edges),
+    # one drawn glyph large in its window, then the thing's name,
+    # its use line, and honest small print. A chip no glyph claims
+    # keeps the legacy name-seeded pattern, drawn in the window at
+    # the same grade. Faces are minted at forge time — installed
+    # and published pictures are never rewritten.
+    W, H = 528, 616
+    BG = (10, 14, 18)
+    SHELL = (8, 9, 11)
+    RIM = (34, 48, 61)
+    CORAL = (255, 111, 97)
+    WINDOW = (14, 17, 21)
+    INK = (230, 241, 245)
+    DIM = (159, 179, 200)
+    img = bytearray(bytes(SHELL) * (W * H))
+
+    def px(x, y, rgb):
+        if 0 <= x < W and 0 <= y < H:
+            o = (y * W + x) * 3
+            img[o] = rgb[0]
+            img[o + 1] = rgb[1]
+            img[o + 2] = rgb[2]
+
+    def rect(x0, y0, x1, y1, rgb):
+        for yy in range(y0, y1):
+            for xx in range(x0, x1):
+                px(xx, yy, rgb)
+
+    for i in range(4):
+        for x in range(W):
+            px(x, i, RIM)
+            px(x, H - 1 - i, RIM)
+        for y in range(H):
+            px(i, y, RIM)
+            px(W - 1 - i, y, RIM)
+
+    BAND_H = 26
+    TOP_BAND_Y = 24
+    BOT_BAND_Y = H - 24 - BAND_H
+
+    def band(y0, notch_first):
+        # A coral contact band; along its inner edge a stepped
+        # bite is taken out of every second cell — the notches
+        # the small face drew, at card scale.
+        rect(4, y0, W - 4, y0 + BAND_H, CORAL)
+        for x in range(4, W - 4):
+            if (x // 44) % 2 == 0:
+                for yy in notch_first:
+                    px(x, yy, SHELL)
+
+    band(TOP_BAND_Y, (TOP_BAND_Y + BAND_H - 2, TOP_BAND_Y + BAND_H - 1))
+    band(BOT_BAND_Y, (BOT_BAND_Y, BOT_BAND_Y + 1))
+
+    MX = 40
+    if keyword == "navi-rag":
+        head_l, head_r = "KNOWLEDGE", "NAVI-RAG"
+    else:
+        head_l, head_r = "APEX CHIP", "NAVI-CHIPS"
+    y = TOP_BAND_Y + BAND_H + 22
+    _mesh_face_draw(img, W, H, MX, y, head_l, 3, CORAL)
+    _mesh_face_draw(
+        img, W, H, W - MX - _mesh_face_text_w(head_r, 3), y, head_r, 3, DIM
+    )
+    y += 21 + 22
+
+    # The glyph window: rim-framed, dark inside, one drawn glyph
+    # large — or the legacy seeded pattern for a chip (never a
+    # knowledge cartridge) that no glyph claims.
+    WIN = 300
+    wx = (W - WIN) // 2
+    wy = y
+    rect(wx - 6, wy - 6, wx + WIN + 6, wy + WIN + 6, RIM)
+    rect(wx, wy, wx + WIN, wy + WIN, WINDOW)
+    glyph = pick_chip_glyph(payload) if keyword != "navi-rag" else "book"
+    if glyph is not None and glyph in GLYPH_PIXELS:
+        grid = GLYPH_PIXELS[glyph]
+        cell = WIN // 12
+        for cy in range(12):
+            for cx in range(12):
+                if grid[cy][cx] == "#":
+                    rect(
+                        wx + cx * cell, wy + cy * cell,
+                        wx + (cx + 1) * cell, wy + (cy + 1) * cell,
+                        CORAL,
+                    )
+    else:
         palette = [
             (34, 211, 238), (245, 181, 68), (52, 211, 153),
             (248, 113, 113), (167, 139, 250),
         ]
         h = 0
         seed = 7
-        for ch in payload["name"]:
+        for ch in str(payload.get("name") or ""):
             h = (h * 31 + ord(ch)) & 0xFFFFFFFF
             seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
         accent = palette[h % len(palette)]
@@ -8380,51 +8468,88 @@ def _cartridge_face_png(payload, keyword):
         for _ in range(64):
             seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
             blocks.append(seed / 0x7FFFFFFF > 0.55)
-        for y in range(H):
-            raw.append(0)
-            for x in range(W):
-                r, g, b = 10, 14, 18
-                if (8 <= y < 18) or (88 <= y < 100):
-                    r, g, b = accent
-                elif 10 <= x < W - 10 and 26 <= y < 78:
-                    bx = int((x - 10) / 9.5)
-                    by = int((y - 26) / 6.5)
-                    if blocks[(by * 8 + bx) % 64]:
-                        r, g, b = accent
-                    else:
-                        r, g, b = 16, 22, 29
-                elif x < 4 or x >= W - 4 or y < 4 or y >= H - 4:
-                    r, g, b = 34, 48, 61
-                raw += bytes([r, g, b])
-    else:
-        coral = (255, 111, 97)
-        shell = (8, 9, 11)
-        frame = (38, 44, 52)
-        window = (14, 17, 21)
-        grid = GLYPH_PIXELS[glyph]
-        gx, gy, cell = 18, 26, 5
-        for y in range(H):
-            raw.append(0)
-            for x in range(W):
-                r, g, b = shell
-                if x < 3 or x >= W - 3 or y < 3 or y >= H - 3:
-                    r, g, b = frame
-                in_band = (7 <= y < 17) or (95 <= y < 105)
-                if in_band and 3 <= x < W - 3:
-                    # The notch: a stepped bite out of the band's
-                    # inner edge, repeating across its width.
-                    notch = ((x // 12) % 2 == 0) and (
-                        (y == 16 and 7 <= y) or (y == 95)
+        pad = 24
+        cell = (WIN - 2 * pad) / 8.0
+        for by in range(8):
+            for bx in range(8):
+                if blocks[by * 8 + bx]:
+                    rect(
+                        int(wx + pad + bx * cell), int(wy + pad + by * cell),
+                        int(wx + pad + (bx + 1) * cell),
+                        int(wy + pad + (by + 1) * cell),
+                        accent,
                     )
-                    r, g, b = shell if notch else coral
-                elif gx <= x < gx + 60 and gy <= y < gy + 60:
-                    cx = (x - gx) // cell
-                    cy = (y - gy) // cell
-                    if 0 <= cy < 12 and 0 <= cx < 12 and grid[cy][cx] == "#":
-                        r, g, b = coral
-                    else:
-                        r, g, b = window
-                raw += bytes([r, g, b])
+                else:
+                    rect(
+                        int(wx + pad + bx * cell), int(wy + pad + by * cell),
+                        int(wx + pad + (bx + 1) * cell),
+                        int(wy + pad + (by + 1) * cell),
+                        BG,
+                    )
+    y = wy + WIN + 24
+
+    # The name band: auto-fitting like the Mesh cards' name —
+    # start big, shrink until it fits, truncate only at the floor.
+    name = _mesh_face_clean(payload.get("name") or "") or (
+        "KNOWLEDGE PACK" if keyword == "navi-rag" else "CHIP"
+    )
+    scale = 7
+    while scale > 2 and _mesh_face_text_w(name, scale) > W - 2 * MX:
+        scale -= 1
+    if _mesh_face_text_w(name, scale) > W - 2 * MX:
+        name = name[: max(0, (W - 2 * MX) // (6 * scale) - 3)] + "..."
+    _mesh_face_draw(img, W, H, MX, y, name, scale, INK)
+    y += 7 * scale + 16
+
+    # The use line: the description, wrapped at the width that
+    # fits scale 2, up to three lines.
+    max_chars = (W - 2 * MX) // (6 * 2)
+    use = _mesh_face_wrap(
+        _mesh_face_clean(payload.get("description") or ""), max_chars
+    )
+    for line in use[:3]:
+        if y + 14 > BOT_BAND_Y - 44:
+            break
+        _mesh_face_draw(img, W, H, MX, y, line, 2, DIM)
+        y += 14 + 8
+
+    # Footer small print, above the bottom band with clearance:
+    # the version when the picture's own data knows it (never
+    # invented), the output kind, and the family mark. A
+    # knowledge cartridge's footer carries its version and its
+    # document count instead.
+    foot_bits = []
+    ver = str(payload.get("version") or "").strip()
+    if ver:
+        foot_bits.append("V" + ver.upper())
+    if keyword == "navi-rag":
+        docs = payload.get("documents")
+        if isinstance(docs, list):
+            foot_bits.append(
+                str(len(docs)) + (" DOCUMENT" if len(docs) == 1 else " DOCUMENTS")
+            )
+        foot_bits.append("NAVI-RAG")
+    else:
+        # The output KIND, not the output text: a chip whose
+        # run() produces text wears TEXT; one that only declares
+        # an output wears the first words of it (the way a
+        # Mesh card reads its offer).
+        if str(payload.get("code") or "").strip():
+            foot_bits.append("TEXT")
+        else:
+            out_line = _mesh_face_clean(payload.get("output") or "")
+            if out_line:
+                foot_bits.append(out_line[:18])
+        foot_bits.append("NAVI-CHIPS")
+    foot = _mesh_face_clean(" - ".join(foot_bits))
+    while foot and _mesh_face_text_w(foot, 2) > W - 2 * MX:
+        foot = foot[:-1]
+    _mesh_face_draw(img, W, H, MX, BOT_BAND_Y - 14 - 16, foot, 2, DIM)
+
+    raw = bytearray()
+    for yy in range(H):
+        raw.append(0)
+        raw += img[yy * W * 3:(yy + 1) * W * 3]
     ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -8498,6 +8623,11 @@ def parse_cartridge_png(data):
                         "output": str(payload.get("output") or ""),
                         "files": _valid_chip_files(payload.get("files"), code),
                         "glyph": str(payload.get("glyph") or ""),
+                        # Issue #99: the version the picture itself
+                        # carries (Build 2 and later forges); older
+                        # pictures simply have none — "" here, and
+                        # no surface invents one for them.
+                        "version": str(payload.get("version") or ""),
                     }
                 return None
         if kind == b"IEND":
@@ -8517,6 +8647,10 @@ def deck_contents(cfg):
             "file": c["file"], "name": c["name"],
             "description": c.get("description") or "",
             "glyph": pick_chip_glyph(c) or "",
+            # Issue #99: the version the picture itself carries —
+            # "" for pictures forged before it was carried, and
+            # the Deck shows nothing rather than a guess for them.
+            "version": str(c.get("version") or ""),
             "source": c.get("source"), "sourceKey": c.get("sourceKey"),
             "locallyEdited": bool(c.get("locallyEdited")),
             "unreadable": bool(c.get("unreadable")),
@@ -9602,6 +9736,11 @@ def build_chip_repo_files(chip, version):
     # the forged chip, .gitignore.
     slug = re.sub(r"[^a-z0-9]+", "-", chip["name"].lower()).strip("-") or "chip"
     chip_files = chip.get("files") or _valid_chip_files(None, chip.get("code") or "")
+    # Issue #99: the export's version rides inside the forged
+    # picture too, so the artifact states its own version wherever
+    # it travels — the export's manifest and its picture agree.
+    chip = dict(chip)
+    chip["version"] = version
     manifest = {
         "format": "navi-chip/1",
         "name": chip["name"],
@@ -9893,9 +10032,10 @@ RAG_CARTRIDGE_MAX_BYTES = 8 * 1024 * 1024
 
 
 def build_rag_cartridge_png(payload):
-    face = _cartridge_face_png(
-        {"name": payload.get("name") or "knowledge", "glyph": "book"}, "navi-rag"
-    )
+    # Build 2: the knowledge cartridge wears the same card-grade
+    # face as a chip — the face builder reads the pack's own name,
+    # description, version, and document count off the payload.
+    face = _cartridge_face_png(payload, "navi-rag")
     blob = base64.b64encode(
         zlib.compress(json.dumps(payload).encode("utf-8"), 9)
     )
@@ -13287,6 +13427,7 @@ class Handler(BaseHTTPRequestHandler):
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
                     "glyph": str(data.get("glyph") or "")[:40],
+                    "version": str(data.get("version") or "")[:40],
                 }
                 os.makedirs(CHIPS_DIR, exist_ok=True)
                 with open(os.path.join(CHIPS_DIR, fname), "wb") as f:
@@ -13895,7 +14036,7 @@ class Handler(BaseHTTPRequestHandler):
                     "requirements": list(payload.get("requirements") or []),
                 })
                 save_chip_installs(rows)
-                self._send(200, {"ok": True, "error": None, "kind": "chip", "name": payload["name"]})
+                self._send(200, {"ok": True, "error": None, "kind": "chip", "name": payload["name"], "version": str(payload.get("version") or "")})
                 return
             self._send(200, {"ok": False, "error": "That picture carries nothing the binder can slot in — no chip, knowledge cartridge, or Mesh card data inside it. A picture that was recompressed on its way here loses its data while looking the same; send the original inside a .zip."})
         elif self.path == "/api/chips/install":
@@ -13943,7 +14084,7 @@ class Handler(BaseHTTPRequestHandler):
                         why = "its cartridge could not be read back (unparseable cartridge)"
                     self._send(200, {"ok": False, "error": "The chip landed on disk as " + filename + " but does not list: " + why + ". Nothing was kept as installed."})
                     return
-                self._send(200, {"ok": True, "error": None})
+                self._send(200, {"ok": True, "error": None, "version": str(payload.get("version") or "")})
         elif self.path == "/api/chips/update":
             data = self._body()
             full = str(data.get("full_name") or "")
@@ -14039,6 +14180,7 @@ class Handler(BaseHTTPRequestHandler):
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
                     "glyph": str(data.get("glyph") or "")[:40],
+                    "version": str(data.get("version") or "")[:40],
                 }
                 slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "chip"
                 filename = slug + ".png"

@@ -4,7 +4,7 @@ All notable changes to Apex are recorded here. Version language, from 0.1.7 on: 
 
 ## 0.1.9e
 
-Release tag: v0.1.9e — **Build 1 (in bake)**, the whole 0.1.9 QOL line bundled into one build, directed 2026-11-10. Its features:
+Release tag: v0.1.9e — **Build 2**, the second publication of this version (the first was Build 1; the Build 2 notes sit directly below in their own section, and everything under "Build 1" further down is that publication's notes, unchanged). Build 1 bundled the whole 0.1.9 QOL line into one build, directed 2026-11-10. Its features:
 
 - **The server names unify into the Apex product family** (issue #92, in-app pass). The status column's Servers group now reads, in order: **Navi** (the engine row — its detail line keeps the technical truth, "llamafile · port 8080"), **Apex Node**, **Apex Mesh**, **Apex DHD**; the menu and pages wear the same names. Names are display only — config keys, routes, ports, the model id, and every protocol string are untouched.
 - **Chip faces are drawn, not rolled** (issue #92). A new forge wears the family shell — black body, coral notched bands — with one chunky pixel glyph that means the chip's function, named in the chip's metadata (the `glyph` field in navi-chip.json); a keyword read picks one when none is named, and the old name-seeded pattern survives only as the fallback. Installed and published pictures are never redrawn.
@@ -14,6 +14,13 @@ Release tag: v0.1.9e — **Build 1 (in bake)**, the whole 0.1.9 QOL line bundled
 - **ChipDeck** (issue #94). A new top-level surface — the binder, under a binder-rings mark: sleeves holding the actual pictures of everything that rides one (installed chips, Mesh pairing cards, knowledge cartridges), each with its state and its actions gathered — run, download the picture, Studio, uninstall; pair and unpair; activate, deactivate, remove. Drop a picture anywhere on the Deck and it slots in by the payload inside it. Soul, Memory, config, the Vault, and keys never ride cartridges; they stay in backups, where they belong.
 
 - **Publish does everything** (the fully automated chain). Publishing a chip or a pack used to stop at the upload — the release was the operator's manual step on GitHub. **Publish to GitHub** now runs the whole chain in one action: create the repo if it is missing, upload the file set, set the topic (navi-chips / navi-rag), create the tag from the manifest version, and **publish** the release (never a draft) with the cartridge picture attached — the chip PNG for chips, the knowledge cartridge for packs (which also lands at the pack repo's root). Release notes come from the README. A version that is already released is refused before anything uploads — bump the version in the manifest; a release is never overwritten silently. The unsigned route is unchanged: Export-for-GitHub ZIP, everything by hand.
+
+### Build 2
+
+- **Chip faces are cards now.** Build 1's faces wore the family shell at pocket size with a glyph and no words on them. A new forge draws the chip's face at card grade, with the same renderer the Mesh pairing cards use: the family header, the chip's glyph large in its window, then the chip's name, what it does, and in small print its version and output kind — the cartridge reads like a card, because it is one. A chip no glyph claims keeps the name-seeded pattern in the window, at the same grade.
+- **Knowledge cartridges match.** A pack's picture face carries the same card grade now — the book glyph large, the pack's name and what it holds, and in small print its version and how many documents ride inside. The payload inside is unchanged, the ceiling and its plain refusal past it are unchanged, and retrieval still never reads the picture.
+- **The chip picture states its own version** (issue #99). A forged or installed chip now carries its version inside the picture, the way it already carried its glyph: the install receipt names it, the ChipDeck sleeve states it, and the face prints it. A picture forged before versions rode inside simply shows none — nothing guesses a version for it anywhere.
+- **Faces are forge-time, still.** Everything above is drawn when a picture is forged; published and installed pictures keep the faces — and the payloads — they were forged with until they are re-forged.
 
 ## 0.1.8e
 
