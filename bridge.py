@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-10.94"
+BRIDGE_BUILD = "2026-11-10.95"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 3
+SHIPPED_BUILD_SEQ = 4
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -798,7 +798,7 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
     door_line = (
         "Dial-Home Device · you reached this Apex from the internet"
         if is_dhd
-        else "Apex Node · on this network"
+        else "Apex | Node · on this network"
     )
     locked = lock_seconds is not None
     err_html = ""
@@ -2485,7 +2485,7 @@ def mesh_settings(cfg):
 
 def mesh_openssl_missing_error():
     return (
-        "Apex Mesh needs the openssl program to create this machine's node key, "
+        "Apex | Mesh needs the openssl program to create this machine's node key, "
         "and openssl was not found on this machine. Install openssl (the same "
         "prerequisite DHD uses) and try again."
     )
@@ -12262,7 +12262,7 @@ class Handler(BaseHTTPRequestHandler):
             # card and whose payload is the card.
             _cfg = load_config()
             if not mesh_settings(_cfg)["enabled"]:
-                self._send(200, {"ok": False, "error": "Apex Mesh is off on this machine — turn it on from the Mesh page first."})
+                self._send(200, {"ok": False, "error": "Apex | Mesh is off on this machine — turn it on from the Mesh page first."})
                 return
             _ok, _err = mesh_ensure_identity(_cfg)
             if not _ok:
