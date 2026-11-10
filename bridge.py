@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-10.96"
+BRIDGE_BUILD = "2026-11-10.97"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 6
+SHIPPED_BUILD_SEQ = 7
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -7243,6 +7243,15 @@ def github_device_poll(cfg):
     return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err or ("HTTP " + str(st))) + ") — start again to retry."}
 
 
+def _dashboard_image_field(value):
+    # Dashboard-carried image fields (operator picture / operator badge,
+    # issue #116): only a data:image/ URL of sane size rides the backup
+    # slice. Anything else drops to empty - never trusted, never fatal.
+    if isinstance(value, str) and value.startswith("data:image/") and len(value) <= 420000:
+        return value
+    return ""
+
+
 def github_collect_backup(cfg, dashboard=None):
     # The ready-to-fly essentials as {path: bytes}. Only the ticked
     # essentials are gathered; the manifest always rides along and
@@ -7264,6 +7273,8 @@ def github_collect_backup(cfg, dashboard=None):
         if isinstance(dashboard, dict):
             files["dashboard.json"] = json.dumps({
                 "operatorName": str(dashboard.get("operatorName") or ""),
+                "operatorPicture": _dashboard_image_field((dashboard or {}).get("operatorPicture")),
+                "operatorBadge": _dashboard_image_field((dashboard or {}).get("operatorBadge")),
                 "theme": str(dashboard.get("theme") or ""),
                 "motion": str(dashboard.get("motion") or ""),
                 "uiScale": (dashboard.get("uiScale")
@@ -7601,6 +7612,22 @@ def github_import_changes(cfg, fetched, dashboard=None):
             "detail": "Would restore " + str(len(backed_peers)) + " peer pairing-card picture(s) to config/mesh/cards/ and re-pair those peers through the normal card check" + ("; the backup also holds this machine's own card picture, kept as a file — it never replaces the identity of the machine restoring" if own_backed else "") + ". This machine is currently paired with " + str(len(cur_ids)) + ".",
             "willChange": backed_ids != cur_ids or (own_backed and not own_here),
         })
+    if "dashboard.json" in files:
+        try:
+            _backed_dash = json.loads(files["dashboard.json"].decode("utf-8", "replace"))
+        except Exception:
+            _backed_dash = None
+        if isinstance(_backed_dash, dict):
+            _cur_dash = dashboard if isinstance(dashboard, dict) else {}
+            for _key, _label in (("operatorPicture", "Operator picture"), ("operatorBadge", "Operator badge")):
+                _new = _dashboard_image_field(_backed_dash.get(_key))
+                _cur = _dashboard_image_field(_cur_dash.get(_key))
+                if _new and _new != _cur:
+                    changes.append({
+                        "item": "settings", "label": _label,
+                        "detail": "Would restore your " + _label.lower() + " from the backup.",
+                        "willChange": True,
+                    })
     return changes, items
 
 
@@ -7736,6 +7763,8 @@ def github_apply_import(cfg, fetched):
                                if str(parsed.get("motion") or "") in ("full", "potato") else ""),
                     "uiScale": (parsed.get("uiScale")
                                 if parsed.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
+                    "operatorPicture": _dashboard_image_field(parsed.get("operatorPicture")),
+                    "operatorBadge": _dashboard_image_field(parsed.get("operatorBadge")),
                 }
         except Exception:
             dashboard_out = None
@@ -12401,6 +12430,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, build_mesh_card_png(load_config()), "image/png")
             return
+        if _path == "/assets/navi-portrait.jpg":
+            # Issue #116: Navi's bundled portrait (the lamp-post key
+            # art) for the chat presence header and message gutter.
+            # A plain app asset behind the same public gate as every
+            # other dashboard byte; a missing file answers 404, never
+            # a crash.
+            try:
+                with open(os.path.join(ROOT, "assets", "navi-portrait.jpg"), "rb") as _pf:
+                    _pdata = _pf.read()
+                self._send(200, _pdata, "image/jpeg")
+            except OSError:
+                self._send(404, {"ok": False, "error": "portrait not found"})
+            return
         if self.path.split("?")[0] in ("/", "/index.html"):
             with open(os.path.join(ROOT, "app", "index.html"), "rb") as f:
                 html = f.read()
@@ -12500,6 +12542,19 @@ class Handler(BaseHTTPRequestHandler):
                 })
         elif self.path == "/api/voice/calls":
             self._send(200, {"calls": load_voice_calls()})
+        elif self.path == "/api/operator/badge-info":
+            # Issue #116: the fact an Operator Badge may carry about
+            # this install beyond the operator's own profile: the
+            # node's display name, public-by-design and self-asserted
+            # when it rides the badge. Deliberately NOT the Mesh
+            # identity: no node id, no key material, no certificate
+            # fingerprint - a badge is a self-portrait, never a
+            # credential, and nothing anywhere reads this (or a badge)
+            # to authenticate anyone.
+            _ms = mesh_settings(load_config())
+            self._send(200, {
+                "nodeName": str(_ms.get("nodeName") or ""),
+            })
         elif self.path == "/api/chips/catalog":
             # Navi User Repo tab: live GitHub search for the navi-chips
             # topic, merged with the installs recorded on this
@@ -13381,6 +13436,10 @@ class Handler(BaseHTTPRequestHandler):
                 turn = {
                     "who": "navi" if data.get("who") == "navi" else "you",
                     "text": str(data.get("text") or "")[:4000],
+                    # Issue #116: when this turn was spoken (epoch
+                    # seconds), so the transcript can carry the same
+                    # timestamps the chat thread wears.
+                    "ts": int(time.time()),
                 }
                 ex = data.get("exec")
                 if isinstance(ex, dict):

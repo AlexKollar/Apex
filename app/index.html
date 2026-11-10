@@ -22,9 +22,7 @@
   body[data-theme="terminal"] { --bg:#000000; --panel:#020a02; --panel2:#010501; --line:#14532d; --text:#4ade80; --dim:#22c55e; --cy:#4ade80; --am:#a3e635; --red:#f87171; --green:#4ade80; --ver-alpha:#f87171; --ver-beta:#a3e635; --ver-stable:#4ade80; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#a3e635; --syn-str:#fde047; --syn-path:#2dd4bf; --syn-kw:#bef264; --syn-num:#bbf7d0; --syn-op:#f0abfc; --exec-bg:#000000; }
   /* DHD glyph tuning (build .74): ring and wedges resolve from the theme like the other nav icons; the center stays warm red-orange in the glyph itself. */
   body[data-theme="nord"] .nav-ico-dhd { color:#88c0d0; }
-  body[data-theme="nord"] .nav-ico-node { color:#81a1c1; }
   body[data-theme="terminal"] .nav-ico-dhd { color:#4ade80; }
-  body[data-theme="terminal"] .nav-ico-node { color:#86efac; }
   body[data-theme="nord"] .nav-ico-mesh { color:#88c0d0; }
   body[data-theme="terminal"] .nav-ico-mesh { color:#4ade80; }
   body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
@@ -260,8 +258,6 @@
   .chat-presence .dot { flex:0 0 auto; }
   .chat-presence-name { font-weight:700; line-height:1.25; }
   .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #chat-status-toggle { flex:0 0 auto; width:44px; height:44px; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; }
-  #chat-status-toggle[aria-pressed="true"] { color:var(--cy); border-color:var(--cy); }
   .status-tabs { position:sticky; top:-14px; z-index:5; display:flex; gap:6px; padding:12px 0 8px; margin:-14px 0 0; background:var(--panel2); border-bottom:1px solid var(--line); }
   .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
@@ -324,6 +320,13 @@
   .vault-pair .vault-editor { grid-column:1; min-width:0; }
   .vault-pair .vault-files { grid-column:2; min-width:0; }
   .msg { margin-bottom:10px; } .msg .who { font-size:11px; color:var(--dim); letter-spacing:.1em; }
+  /* Issue #116: chat faces — the gutter avatar rides a flex row;
+     the presence header wears her bundled portrait. */
+  .msg-row { display:flex; gap:8px; align-items:flex-start; }
+  .msg-body { flex:1 1 auto; min-width:0; }
+  .m-av { width:28px; height:28px; border-radius:50%; object-fit:cover; flex:0 0 auto; margin-top:1px; background:var(--panel2); }
+  span.m-av { display:inline-flex; align-items:center; justify-content:center; font-size:10px; color:var(--dim); border:1px solid var(--line); }
+  .presence-av { width:34px; height:34px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
   .exec { background:var(--exec-bg,#000); border:1px solid var(--line); border-radius:4px; padding:8px; white-space:pre-wrap; color:#a7f3d0; }
   body[data-theme="casefile"] .exec { color:#f5ecd7; }
   .execstat { font-size:11px; color:var(--dim); padding:2px 2px 0; }
@@ -648,8 +651,8 @@
      shows in full at 360–430px. */
   @media (max-width:800px) {
     html, body { height:auto; overflow:auto; }
-    #app, #app.closed { display:flex; flex-direction:column; height:auto; min-height:calc(100dvh / var(--uiscale, 1)); overflow:visible; }
-    nav { position:sticky; top:0; z-index:90; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:6px; height:60px; overflow:visible; padding:6px 10px; border-right:0; border-bottom:1px solid var(--line); background:var(--panel2); }
+    #app, #app.closed { display:flex; flex-direction:column; height:auto; min-height:calc(100dvh / var(--uiscale, 1)); overflow:visible; padding-top:60px; }
+    nav { position:fixed; left:0; right:0; top:0; z-index:90; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:6px; height:60px; overflow:visible; padding:6px 10px; border-right:0; border-bottom:1px solid var(--line); background:var(--panel2); }
     nav .logo, nav .tagline { display:none; }
     .bar-title { display:block; flex:1 1 auto; min-width:0; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:13px; letter-spacing:.04em; }
     #nav-toggle { order:-1; flex:0 0 auto; width:auto; margin:0; min-width:44px; min-height:44px; padding:8px 10px; font-size:16px; justify-content:center; }
@@ -833,17 +836,226 @@ function applyUiScale() {
   document.body.dataset.uiscale = String(z);
 }
 function opName() { return (CONFIG.operatorName || "").trim() || "Operator"; }
+// ---- Issue #116: chat faces -------------------------------------
+// Navi's picture is the bundled lamp-post portrait asset; the
+// operator's is theirs (upload in Settings -> Operator) or a
+// generated placeholder until they set one. An Operator Badge is a
+// self-portrait in the #100 card format with its payload inside the
+// picture (tEXt, keyword navi-badge) - it is NEVER a credential:
+// nothing anywhere reads a badge to authenticate anyone, and a
+// damaged payload simply reads as no badge at all.
+var NAVI_PORTRAIT_SRC = "assets/navi-portrait.jpg";
+function fmtMsgTime(ts) {
+  if (!ts) return "";
+  var d = new Date(ts < 1e12 ? ts * 1000 : ts), now = new Date();
+  var t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return t;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + ", " + t;
+}
+function msgName(m) {
+  if (!m) return "";
+  if (m.who === "YOU") return opName();
+  if (m.who === "NAVI") return "Navi";
+  if (m.who === "SHELL") return "Shell";
+  return m.who || "";
+}
+function msgWhoHtml(m) {
+  var t = fmtMsgTime(m && m.ts);
+  return esc(msgName(m)) + (t ? " &middot; " + esc(t) : "");
+}
+function callTurnHtml(t) {
+  // One call-transcript turn (issue #116): the same face, name and
+  // timestamp the chat thread wears, with the spoken marker kept.
+  var m = { who: String((t && t.who) || "").toUpperCase(), ts: t && t.ts, text: t && t.text };
+  var who = msgWhoHtml(m) + " &middot; SPOKEN";
+  return "<div class='msg'><div class='msg-row'>" + msgAvatarHtml(m) + "<div class='msg-body'><div class='who'>" + who + "</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div></div></div>";
+}
+var badgeNodeName = "";
+function refreshBadgeInfo() {
+  if (CONFIG.backend !== "live" || badgeNodeName) return;
+  fetch("/api/operator/badge-info").then(function (r) { return r.json(); }).then(function (j) { if (j && j.nodeName) badgeNodeName = String(j.nodeName); }).catch(function () {});
+}
+function badgeFaceHtml() {
+  // The operator's chat picture CAN be the badge's face: with a
+  // badge set, the face window (300x300 at 114,118 in the 528x616
+  // card) is shown as the picture. The crop is presentational only.
+  return CONFIG.operatorBadge || "";
+}
+var _opPlaceholderCache = {};
+function operatorPlaceholderSrc(name) {
+  var key = name || "Operator";
+  if (_opPlaceholderCache[key]) return _opPlaceholderCache[key];
+  try {
+    var cv = document.createElement("canvas"); cv.width = 96; cv.height = 96;
+    var cx = cv.getContext("2d");
+    var seed = 0; for (var i = 0; i < key.length; i++) seed = (seed * 31 + key.charCodeAt(i)) >>> 0;
+    function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    cx.fillStyle = "#101418"; cx.fillRect(0, 0, 96, 96);
+    var cell = 12;
+    for (var y = 0; y < 8; y++) for (var x = 0; x < 8; x++) {
+      if (rnd() < 0.30) { cx.fillStyle = "rgba(255,111,97,0.30)"; cx.fillRect(x * cell, y * cell, cell, cell); }
+    }
+    cx.fillStyle = "#ff6f61"; cx.font = "bold 44px sans-serif";
+    cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.fillText((key.trim().charAt(0) || "O").toUpperCase(), 48, 52);
+    _opPlaceholderCache[key] = cv.toDataURL("image/png");
+  } catch (e) { _opPlaceholderCache[key] = ""; }
+  return _opPlaceholderCache[key];
+}
+function operatorPictureSrc() {
+  if (CONFIG.operatorPicture) return CONFIG.operatorPicture;
+  var bf = badgeFaceHtml();
+  if (bf) return bf;
+  return operatorPlaceholderSrc(opName());
+}
+function msgAvatarHtml(m) {
+  if (!m) return "";
+  if (m.who === "NAVI") return "<img class='m-av' src='" + NAVI_PORTRAIT_SRC + "' alt=''>";
+  if (m.who === "YOU") return "<img class='m-av' src='" + esc(operatorPictureSrc()) + "' alt=''>";
+  if (m.who === "SHELL") return "<span class='m-av m-av-shell' aria-hidden='true'>&gt;_</span>";
+  return "<span class='m-av m-av-shell' aria-hidden='true'></span>";
+}
+// PNG chunk plumbing for the badge payload (same tEXt discipline as
+// the bridge's cartridges: keyword + JSON, invalid = absent).
+var _crcTable = null;
+function _crc32(bytes) {
+  if (!_crcTable) {
+    _crcTable = [];
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      _crcTable[n] = c >>> 0;
+    }
+  }
+  var crc = 0xFFFFFFFF;
+  for (var i = 0; i < bytes.length; i++) crc = _crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function _pngChunk(type, data) {
+  var out = new Uint8Array(12 + data.length);
+  var dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  for (var i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  var crcData = new Uint8Array(4 + data.length);
+  for (var j = 0; j < 4; j++) crcData[j] = type.charCodeAt(j);
+  crcData.set(data, 4);
+  dv.setUint32(8 + data.length, _crc32(crcData));
+  return out;
+}
+function _bytesToDataURL(bytes, mime) {
+  var bin = "";
+  for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return "data:" + mime + ";base64," + btoa(bin);
+}
+function _dataURLToBytes(dataURL) {
+  var b64 = String(dataURL || "").split(",")[1] || "";
+  var bin = atob(b64);
+  var out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function badgeParse(dataURL) {
+  try {
+    var bytes = _dataURLToBytes(dataURL);
+    if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50) return null;
+    var pos = 8;
+    while (pos + 8 <= bytes.length) {
+      var len = (bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3];
+      var type = String.fromCharCode(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]);
+      if (type === "tEXt") {
+        var data = bytes.subarray(pos + 8, pos + 8 + len);
+        var nul = data.indexOf(0);
+        if (nul > 0) {
+          var kw = String.fromCharCode.apply(null, data.subarray(0, nul));
+          if (kw === "navi-badge") {
+            var payload = JSON.parse(new TextDecoder().decode(data.subarray(nul + 1)));
+            if (payload && payload.kind === "operator-badge") return payload;
+            return null;
+          }
+        }
+      }
+      if (type === "IEND") break;
+      pos += 12 + len;
+    }
+  } catch (e) { return null; }
+  return null;
+}
+function badgeForge(faceImg, name, nodeName, cb) {
+  // Signature note: badgeForge(faceImg, name, nodeName, cb) — the
+  // node name is part of the self-asserted payload (issue #116).
+  var W = 528, H = 616;
+  var cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  var cx = cv.getContext("2d");
+  cx.fillStyle = "#0a0a0c"; cx.fillRect(0, 0, W, H);
+  cx.fillStyle = "#ff6f61"; cx.fillRect(0, 0, W, 54); cx.fillRect(0, H - 54, W, 54);
+  cx.fillStyle = "#0a0a0c"; cx.font = "bold 25px sans-serif"; cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.fillText("OPERATOR BADGE", W / 2, 28);
+  cx.font = "bold 17px sans-serif";
+  cx.fillText("A P E X", W / 2, H - 27);
+  var wx = (W - 300) / 2, wy = 118;
+  cx.fillStyle = "#101418"; cx.fillRect(wx - 6, wy - 6, 312, 312);
+  if (faceImg) {
+    var s = Math.max(300 / faceImg.width, 300 / faceImg.height);
+    var dw = faceImg.width * s, dh = faceImg.height * s;
+    cx.save(); cx.beginPath(); cx.rect(wx, wy, 300, 300); cx.clip();
+    cx.drawImage(faceImg, wx + (300 - dw) / 2, wy + (300 - dh) / 2, dw, dh);
+    cx.restore();
+  } else {
+    var ph = new Image();
+    ph.onload = function () {
+      cx.drawImage(ph, wx, wy, 300, 300);
+      badgeForgeFinish(cv, cx, name, nodeName, cb);
+    };
+    ph.onerror = function () { badgeForgeFinish(cv, cx, name, nodeName, cb); };
+    ph.src = operatorPlaceholderSrc(name);
+    return;
+  }
+  badgeForgeFinish(cv, cx, name, nodeName, cb);
+}
+function badgeForgeFinish(cv, cx, name, nodeName, cb) {
+  var W = 528, H = 616;
+  cx.fillStyle = "#e8e8ea"; cx.textAlign = "center"; cx.textBaseline = "middle";
+  var label = (name || "Operator").toUpperCase();
+  var size = 34;
+  cx.font = "bold " + size + "px sans-serif";
+  while (cx.measureText(label).width > W - 60 && size > 14) { size -= 2; cx.font = "bold " + size + "px sans-serif"; }
+  cx.fillText(label, W / 2, 478);
+  cx.font = "15px sans-serif"; cx.fillStyle = "#9a9aa2"; cx.textAlign = "left";
+  cx.fillText("OPERATOR - APEX", 18, 528);
+  cx.textAlign = "right";
+  cx.fillText("V1", W - 18, 528);
+  cv.toBlob(function (blob) {
+    if (!blob) { cb(null); return; }
+    blob.arrayBuffer().then(function (buf) {
+      var png = new Uint8Array(buf);
+      var payloadObj = { kind: "operator-badge", name: name || "Operator", v: 1 };
+      if (nodeName) payloadObj.node = String(nodeName).slice(0, 80);
+      var payload = JSON.stringify(payloadObj);
+      var textData = new TextEncoder().encode("navi-badge\0" + payload);
+      var chunk = _pngChunk("tEXt", textData);
+      var ihdrLen = (png[8] << 24) | (png[9] << 16) | (png[10] << 8) | png[11];
+      var cut = 8 + 12 + ihdrLen;
+      var out = new Uint8Array(png.length + chunk.length);
+      out.set(png.subarray(0, cut), 0);
+      out.set(chunk, cut);
+      out.set(png.subarray(cut), cut + chunk.length);
+      cb(_bytesToDataURL(out, "image/png"));
+    }).catch(function () { cb(null); });
+  }, "image/png");
+}
+
 
 var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
-// Apex | Systems group (Node / Mesh / DHD — Node and DHD both open
+// Apex | Systems group (Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
 // surfaces; and the Apex | Utilities drop-up at the foot. NAV keeps
 // every REACHABLE view key for the active-state sweep; NAV_GROUPS
 // drives what the menu renders, and the Memory view is retired —
 // its chats live on in the status pane's Chats tab (Build 6,
 // #108), its memory entries under Settings -> Operator (the
-// operator's file) and Settings -> Operator & Persona (hers).
+// operator's file) and Settings -> Persona (hers).
 // Build 6 (#106): the Updater leaves the flat block for
 // Utilities. The drop-up's children paint above its header in
 // DOM order (the container is a plain column), so the child
@@ -857,7 +1069,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater"
 // in the menu.) The Vault stays flat between the groups and
 // Utilities: the shared desk, belonging to neither family.
 var NAV_GROUPS = {
-  systems: { label: "Apex | Systems", children: [["Node", "DHD"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
+  systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"]] }
 };
@@ -908,15 +1120,11 @@ function dhdGlyphSvg() {
 function meshGlyphSvg() {
   return "<path d='M12 3l3.72 2.15v4.3L12 11.6l-3.72-2.15V5.15z'/><path d='M7.6 10.1l3.72 2.15v4.3L7.6 18.7l-3.72-2.15v-4.3z'/><path d='M16.4 10.1l3.72 2.15v4.3l-3.72 2.15-3.72-2.15v-4.3z'/><circle cx='12' cy='7.3' r='1.15' fill='currentColor' stroke='none'/><circle cx='7.6' cy='14.4' r='1.15' fill='currentColor' stroke='none'/><circle cx='16.4' cy='14.4' r='1.15' fill='currentColor' stroke='none'/>";
 }
-// Node's own glyph (Build 6, #111): one upright server unit —
-// a tower with a node dot and its rails — in the same Lucide
-// stroke family. Until this build the Node child wore DHD's
-// dial because the icon keyed off the target view; the icon
-// now keys off the child's own identity, and Node is a server,
-// not a dial. DHD keeps the dial; Mesh keeps its hex trio.
-function nodeGlyphSvg() {
-  return "<rect x='5' y='3.5' width='14' height='17' rx='2'/><circle cx='12' cy='8.6' r='1.7' fill='currentColor' stroke='none'/><path d='M8.6 13.6h6.8'/><path d='M8.6 16.8h4.6'/>";
-}
+// (Build 7, #126: the Node child's own glyph — Build 6's #111
+// server tower — retired with the rail child it was drawn for.
+// Apex Node keeps its DHD page and its Servers row; it simply
+// has no rail slot and therefore no rail glyph.)
+
 function chipdeckGlyphSvg() {
   return "<circle cx='6.2' cy='5.4' r='1.9'/><circle cx='6.2' cy='12' r='1.9'/><circle cx='6.2' cy='18.6' r='1.9'/><path d='M9.4 3.6h9.1a1.9 1.9 0 0 1 1.9 1.9v13a1.9 1.9 0 0 1-1.9 1.9H9.4'/><path d='M15.9 8.2l3.1 4.6h-6.2z'/>";
 }
@@ -925,7 +1133,6 @@ function navIcon(name) {
   if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
-  if (name === "Node") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-node'>" + nodeGlyphSvg() + "</svg>";
   if (name === "Apex | Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
@@ -1117,7 +1324,9 @@ function fetchHardware(thenRender) {
 var voiceWarmed = false;     // the bridge's engines were asked to warm this session
 var voiceFetching = false;
 var voiceMsg = "";
-var call = null;             // {startedAt, turns:[{who,text,exec}]} while a call runs
+var call = null;             // {startedAt, turns:[{who,text,exec,ts}]} while a call runs
+var badgeMsg = "";           // Operator Badge minting note (issue #116)
+var badgeFaceChoice = "photo"; // badge face: the picture, or generated art
 var callState = "idle";      // idle | listening | thinking | speaking
 var callTimer = null;
 var callSeconds = 0;
@@ -1326,6 +1535,7 @@ var githubIssuesError = "";
 var githubIssuesFetchedAt = null;
 // Settings' topic tabs: every setting lives under exactly one.
 var settingsTab = "operator";
+function settingsTabValid() { if (["operator", "persona", "appearance", "voice", "github", "system"].indexOf(settingsTab) < 0) settingsTab = "operator"; }
 var githubMsg = "";          // last action's outcome line, shown on the view
 var githubError = false;     // whether that line is an error
 var githubDevice = null;     // {userCode, verificationUri} while a device sign-in runs
@@ -1409,7 +1619,7 @@ function openGithubPageWindow(page) {
 function openGithubIssueWindow(number, url) {
   docsTauriInvoke("open_github_window", { page: "issue:" + number }).catch(function () { openExternal(url); });
 }
-function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1 }; }
+function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1, operatorPicture: CONFIG.operatorPicture || "", operatorBadge: CONFIG.operatorBadge || "" }; }
 function ghPost(path, body, done) {
   fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
     .then(function (r) { return r.json(); })
@@ -1596,6 +1806,8 @@ function ghImportApply() {
         if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(j.dashboard.theme) !== -1) CONFIG.theme = j.dashboard.theme;
         if (j.dashboard.motion === "potato" || j.dashboard.motion === "full") CONFIG.motion = j.dashboard.motion;
         if ([1, 1.1, 1.25, 1.5].indexOf(Number(j.dashboard.uiScale)) !== -1) CONFIG.uiScale = Number(j.dashboard.uiScale);
+        if (typeof j.dashboard.operatorPicture === "string" && /^data:image\//.test(j.dashboard.operatorPicture) && j.dashboard.operatorPicture.length <= 420000) CONFIG.operatorPicture = j.dashboard.operatorPicture;
+        if (typeof j.dashboard.operatorBadge === "string" && /^data:image\//.test(j.dashboard.operatorBadge) && j.dashboard.operatorBadge.length <= 420000) CONFIG.operatorBadge = j.dashboard.operatorBadge;
         saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
       }
       // Her persona may have been restored under us — re-read it.
@@ -1904,7 +2116,7 @@ try {
 // Memory entries (build .81, issue #72): an entry is an object
 // now — {t: the fact, o: how it got there: manual / trigger /
 // autonomous / correction} — so the two Settings files (Operator
-// for manual / trigger, Operator & Persona for the rest) can say where each
+// for manual / trigger, Persona for the rest) can say where each
 // entry came from and a chat receipt's Undo can find its entry.
 // Entries saved by earlier builds are plain strings; they
 // normalize to "manual" on load, which is exactly what they were.
@@ -2231,7 +2443,7 @@ function mockChat(text) {
   var chipHit = matchChipText(text, CHIP_DEFS);
   if (chipHit) return { text: "Slotted in " + chipHit.name + " and ran it — here's what it gave me:", exec: { command: "chip " + chipHit.id, output: chipHit.output } };
   if (/chip/i.test(text)) return { text: "Chips live in the Chips tab — each one a little chip with its code inside the picture. My shelf starts empty: forge one in Chip Studio (in live mode it writes a real chip) and it can run right here — type /chip followed by its name and its output lands in our conversation.", exec: null };
-  if (/remember|memory/i.test(text)) return { text: "Memory lives in two files now — yours under Settings → Operator, mine under Settings → Operator & Persona — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
+  if (/remember|memory/i.test(text)) return { text: "Memory lives in two files now — yours under Settings → Operator, mine under Settings → Persona — local-only, just between us. And I pull from chat now: tell me \"remember this\" (or tap Save to memory on a message) and I write it down and show you the receipt; when you say something durable, I save it on my own the same way. Corrections replace the old line — nothing piles up, and nothing lands silently. Secrets never get saved, on any path: ask me to remember one and I'll refuse and tell you why.", exec: null };
   return { text: "(Mock reply) I'm here — I heard you: \"" + text + "\" — in live mode the llamafile answers with the real me. Try: show me the contents of /home/name/ — or keep talking; I like that too.", exec: null };
 }
 // The dashboard's mock backend starts with an EMPTY chip shelf, like
@@ -2817,7 +3029,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
-  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. At the top of the Chat window sits her <b>presence header</b> — her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
+  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. At the top of the Chat window sits her <b>presence header</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's door is the frame's own now — the <b>Status</b> toggle in the menu chrome on a desktop, the panel button in the phone's top bar — one control per size, on every view, raising the rail in place wherever you are; the phone's top bar itself is pinned, so the door is there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode</h4>" +
   "<p>The status column's sudo switch makes Navi execute commands as root. Turning it on asks for your sudo password once; the bridge validates it by opening <b>one persistent root shell</b> that every sudo command runs inside, so a fingerprint-first PAM stack is consulted exactly once, at authentication. The password lives only in this page's memory — never saved, never logged — and turning sudo off closes the root shell on the spot.</p></div>" +
@@ -2956,7 +3168,7 @@ var DOC_PAGES = [
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
   "<li>The <b>same access code</b> as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
-  "<p>DHD has its own page, reached from the menu's <b>Apex | Systems</b> group (Node and DHD both open it — the Node controls live on it), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+  "<p>DHD has its own page, reached from the menu's <b>Apex | Systems</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
@@ -3037,11 +3249,11 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Memory from chat — she writes things down herself</h4>" +
   "<p>Navi pulls memories out of the conversation itself, two ways. <b>The trigger:</b> tell her <i>remember this</i>, <i>remember: …</i>, or <i>save this to your memory</i> — or tap <b>Save to memory</b> under any of your messages in Chat — and she writes the fact down. <b>On her own:</b> when you say something durable — a fact about you, a preference, a decision, a commitment, a correction — she saves it in the same reply she was already giving, with no extra round-trip. Small talk, command output, and questions are never saved.</p>" +
   "<p><b>Nothing is saved silently.</b> Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap <b>Undo</b>. A save that corrects an existing entry <b>replaces</b> it — the receipt shows the old line struck through, and Undo restores it. <b>Secrets are never saved</b>, on any path: ask her to remember a password, a key, or a card number and she refuses, says why, and the receipt shows no payload.</p>" +
-  "<p><b>Settings → Operator &amp; Persona</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Operator &amp; Persona — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). The entries live in two files, split by who authored them: <b>Settings → Operator</b> holds yours — added by hand, or saved because you asked — under <i>About you — memories for Navi</i>; <b>Operator &amp; Persona</b> holds hers, under <i>Her file — what she keeps</i>. Every entry says how it got there.</p></div>" +
+  "<p><b>Settings → Persona</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Persona — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). The entries live in two files, split by who authored them: <b>Settings → Operator</b> holds yours — added by hand, or saved because you asked — under <i>About you — memories for Navi</i>; <b>Persona</b> holds hers, under <i>Her file — what she keeps</i>. Every entry says how it got there.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the toggle at the top right of the Chat window is its door (the menu chrome carries a Status toggle too), and hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Operator &amp; Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
-  "<li><b>Operator</b> — what she calls you, and your file: the memories you handed her about you.</li>" +
-  "<li><b>Operator &amp; Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
+  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the toggle at the top right of the Chat window is its door (the menu chrome carries a Status toggle too), and hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<li><b>Operator</b> — what she calls you, your picture and your Operator Badge, and your file: the memories you handed her about you. Your picture rides beside your messages; upload one in the tab (it is trimmed to a square here, kept with your profile, and carried in the settings backup) or let the picture generated from your name stand in. The <b>Operator Badge</b> is your self-portrait in the cartridge format — a card with your chosen face and your name (and this node's name) carried inside the picture. It is not a credential: nothing reads a badge to prove identity, and a badge whose payload is damaged simply reads as no badge.</li>" +
+  "<li><b>Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
   "<li><b>Appearance</b> — the theme picker, Potato mode for low-power machines, and the UI scale.</li>" +
   "<li><b>Voice</b> — her voice settings.</li>" +
   "<li><b>GitHub &amp; Backup</b> — sign-in and the backup/import block.</li>" +
@@ -3824,7 +4036,7 @@ navMenu.appendChild(navUtil);
 var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", Vault: "nav-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-Vault", "nav-child-systems-Node", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
+  ["nav-Chat", "nav-Vault", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -3847,7 +4059,7 @@ function syncNav() {
 var dockBtn = document.createElement("button");
 dockBtn.id = "dock-toggle";
 dockBtn.type = "button";
-dockBtn.innerHTML = "<svg aria-hidden='true' focusable='false' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='5' width='7' height='14' rx='2'></rect><rect x='13' y='5' width='8' height='14' rx='2'></rect></svg>";
+dockBtn.innerHTML = statusPanelSvg();
 dockBtn.setAttribute("aria-label", "Open the status dock");
 dockBtn.setAttribute("aria-expanded", "false");
 dockBtn.onclick = function () {
@@ -3863,7 +4075,6 @@ mainEl.addEventListener("click", function (e) {
   // The chat header's own status toggle (issue #115) lives inside
   // main: its click OPENS the dock, so the dismiss gesture must
   // not treat it as a tap on the content.
-  if (e && e.target && e.target.closest && e.target.closest("#chat-status-toggle")) return;
   if (window.innerWidth <= 800 && (dockOpen || !navClosed)) {
     dockOpen = false;
     navClosed = true;
@@ -5095,8 +5306,8 @@ function startCall() {
     // She picks up: a greeting in her voice, recorded as the call's
     // first turn and filed into the conversation like the rest.
     var greeting = "Hey " + opName() + " — it's me, Navi. Good to hear you. What's on your mind?";
-    call.turns.push({ who: "NAVI", text: greeting, exec: null });
-    messages.push({ who: "NAVI", text: greeting, exec: null });
+    call.turns.push({ who: "NAVI", text: greeting, exec: null, ts: Date.now() });
+    messages.push({ who: "NAVI", text: greeting, exec: null, ts: Date.now() });
     recordCallTurn("navi", greeting, null);
     persist(); render();
     callState = "speaking"; render();
@@ -5124,14 +5335,14 @@ function startCall() {
 }
 function callNaviTurn(text) {
   if (!call) return;
-  call.turns.push({ who: "YOU", text: text, exec: null });
-  messages.push({ who: "YOU", text: text, exec: null });
+  call.turns.push({ who: "YOU", text: text, exec: null, ts: Date.now() });
+  messages.push({ who: "YOU", text: text, exec: null, ts: Date.now() });
   recordCallTurn("you", text, null);
   persist(); callState = "thinking"; render();
   var done = function (r) {
     if (!call) return;
-    call.turns.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null });
-    messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null });
+    call.turns.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, ts: Date.now() });
+    messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, ts: Date.now() });
     recordCallTurn("navi", r.text, r.exec);
     persist(); callState = "speaking"; render();
     // A CLI-routed turn carries no reply text — what she says on
@@ -5163,7 +5374,7 @@ function endCall() {
   try { if ("speechSynthesis" in window) speechSynthesis.cancel(); } catch (e) {}
   var finish = function () {
     var n = finished.turns.filter(function (t) { return t.who === "YOU"; }).length;
-    messages.push({ who: "NAVI", text: "— voice call ended · " + n + " exchange" + (n === 1 ? "" : "s") + " over " + fmtCallTime(secs) + " — the call is recorded in voice/calls.json and stays part of this conversation.", exec: null });
+    messages.push({ who: "NAVI", ts: Date.now(), text: "— voice call ended · " + n + " exchange" + (n === 1 ? "" : "s") + " over " + fmtCallTime(secs) + " — the call is recorded in voice/calls.json and stays part of this conversation.", exec: null });
     persist(); refreshVoiceCalls(); render();
   };
   if (CONFIG.backend === "live") {
@@ -6254,7 +6465,7 @@ function voiceHomeHtml() {
     } else {
       h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><span class='wave " + (callState === "speaking" ? "speaking" : callState === "listening" ? "" : "idle") + "' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><div><b class='mono' id='call-clock' style='font-size:18px'>" + fmtCallTime(callSeconds) + "</b><br><span style='color:var(--dim);font-size:12px'>" + (callState === "thinking" ? "Navi is thinking…" : callState === "speaking" ? "Navi is speaking…" : "Listening — push to talk, or type below") + "</span></div><button class='callbtn end' id='call-end' style='width:60px;height:60px;margin-left:auto' aria-label='End the call'>End</button></div>";
       h += "<div style='margin-top:10px;max-height:300px;overflow-y:auto' aria-label='Call transcript'>" + call.turns.map(function (t) {
-        return "<div class='msg'><div class='who'>" + t.who + " · SPOKEN</div>" + (t.text ? "<div>" + esc(t.who === "NAVI" ? stripCite(t.text) : t.text) + "</div>" : "") + (t.who === "NAVI" ? pillRow(null, t.sources) : "") + (t.exec ? execHtml(t.exec) : "") + "</div>";
+        return callTurnHtml(t);
       }).join("") + "</div>";
       h += "<div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center'><button class='ptt' id='call-ptt' data-ptt='call' aria-label='Push to talk: click to start talking, click again to send'>Push to talk</button><span style='color:var(--dim);font-size:12px'>or type what you'd say:</span></div>";
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='call-type' type='text' placeholder='Show me the contents of /home/name/' aria-label='Type what you would say on the call'><button class='act' id='call-say'>Speak</button></div>";
@@ -6370,6 +6581,7 @@ function deckHtml() {
   return h;
 }
 function render() {
+  settingsTabValid();
   // A popped docs window is docs-only: no nav, no status column,
   // no polling behind the wiki.
   if (DOCS_POP) { renderDocsPop(); return; }
@@ -6419,7 +6631,7 @@ function render() {
   var h = "";
   if (view === "Chat") {
     var pres = presenceState();
-    h += "<div class='chat-head'><div class='chat-presence'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div><button class='ghost' id='chat-status-toggle' aria-pressed='" + ((window.innerWidth <= 800 ? dockOpen : !statusHidden) ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button></div>";
+    h += "<div class='chat-head'><div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div></div>";
     var cliMode = llama.status !== "running";
     // No header bar over the thread (build .52, issue #15): the
     // strip that read "Chat · <session> · navi.llamafile
@@ -6437,7 +6649,7 @@ function render() {
     messages.forEach(function (m, idx) {
       var isCurrent = idx >= lastYouIdx;
       var foldKey = String(activeChatId) + ":" + idx;
-      h += "<div class='msg'><div class='who'>" + m.who + "</div>";
+      h += "<div class='msg'><div class='msg-row'>" + msgAvatarHtml(m) + "<div class='msg-body'><div class='who'>" + msgWhoHtml(m) + "</div>";
       if (m.who === "YOU" && m.text) {
         var nxt = messages[idx + 1];
         var isCliYou = routeOfLine(m.text).kind === "cli" || (nxt && nxt.exec && (nxt.exec.command === m.text || nxt.exec.command === String(m.text).replace(/^\$\s*/, "")));
@@ -6465,9 +6677,9 @@ function render() {
       if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
-      h += "</div>";
+      h += "</div></div></div>";
     });
-    if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='who'>NAVI</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div>";
+    if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
     h += "</div>";
     // No pill rows above the composer at all (0.1.9e, issue
     // #97): the quick-action suggestions went first, and now the
@@ -6768,7 +6980,7 @@ function render() {
     h += "<h3>Settings</h3>";
     // Topic tabs: every setting lives under exactly one.
     h += "<div role='tablist' aria-label='Settings topics' class='tabbar' style='margin-bottom:10px'>" +
-      [["operator", "Operator"], ["persona", "Operator & Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
+      [["operator", "Operator"], ["persona", "Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
         return "<button type='button' role='tab' aria-selected='" + (settingsTab === t[0]) + "' class='" + (settingsTab === t[0] ? "act" : "ghost") + "' data-settab='" + t[0] + "'>" + t[1] + "</button>";
       }).join("") + "</div>";
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
@@ -6822,21 +7034,36 @@ function render() {
       if (hardwareMsg) h += "<p style='font-size:12px'>" + esc(hardwareMsg) + "</p>";
       h += "</div>";
     })();
+    if (settingsTab === "operator") {
+      var opBadgePayload = CONFIG.operatorBadge ? badgeParse(CONFIG.operatorBadge) : null;
+      h += "<div class='card'><h3>Your picture &amp; badge</h3>"
+        + "<div style='display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap'>"
+        + "<img class='m-av' style='width:64px;height:64px' src='" + esc(operatorPictureSrc()) + "' alt='Your chat picture'>"
+        + "<div style='flex:1;min-width:220px'><p style='color:var(--dim);margin-top:0'>Your picture rides beside your messages in chat, the way hers rides beside hers. Upload one and it is kept with your profile on this machine and carried in the settings backup. Until you do, a picture generated from your name stands in.</p>"
+        + "<div class='row'><button class='ghost' id='op-pic-pick'>Upload a picture…</button><input id='op-pic-file' type='file' accept='image/*' style='display:none' aria-label='Choose your profile picture'>" + (CONFIG.operatorPicture ? " <button class='ghost' id='op-pic-clear'>Use the generated picture</button>" : "") + "</div>"
+        + "<p style='color:var(--dim);font-size:12px'>Uploads are trimmed to a 256&times;256 square on this machine before they are kept — the full original never lands in the profile.</p></div></div>"
+        + "<h4 style='margin:14px 0 6px'>Operator Badge</h4>"
+        + "<p style='color:var(--dim)'>A badge is your self-portrait in the cartridge format — your face in a card-grade frame, with your name (and this node's name) carried inside the picture itself. It is <b>not</b> a credential: nothing anywhere reads a badge to prove who you are, and a damaged payload simply reads as no badge at all. Pick the face — your uploaded picture, or art generated from your name — and mint it. With a badge minted and no picture uploaded, chat wears the badge's face for you.</p>"
+        + (CONFIG.operatorBadge ? "<div style='display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:132px;border-radius:8px'><div style='flex:1;min-width:200px'><p style='color:var(--dim);margin-top:0'>" + (opBadgePayload ? "This badge says: <b>" + esc(opBadgePayload.name || "") + "</b>" + (opBadgePayload.node ? " · node <b>" + esc(opBadgePayload.node) + "</b>" : "") + " — self-asserted, as every badge is." : "This badge's payload doesn't parse — it reads as no badge at all, and it harms nothing.") + "</p><div class='row'><button class='ghost' id='op-badge-export'>Export the badge picture</button> <button class='ghost' id='op-badge-clear'>Remove the badge</button></div></div></div>" : "<p style='color:var(--dim)'>No badge yet.</p>")
+        + "<div class='row' style='margin-top:8px'><span style='font-size:12px;color:var(--dim)'>Face:</span> <button class='ghost' id='op-badge-face-photo' aria-pressed='" + (badgeFaceChoice === "photo") + "'>My picture</button> <button class='ghost' id='op-badge-face-art' aria-pressed='" + (badgeFaceChoice === "art") + "'>Generated art</button> <button class='act' id='op-badge-mint'>Mint my badge</button></div>"
+        + (badgeMsg ? "<p style='font-size:12px'>" + esc(badgeMsg) + "</p>" : "")
+        + "</div>";
+    }
     if (settingsTab === "operator") h += "<div class='card'><h3>What Navi calls you</h3><p style='color:var(--dim)'>The name or form of address Navi uses whenever she talks to you — stored in the app config, used by her persona and her greetings every time she addresses you. Blank = Operator, the default on a fresh install.</p><div class='row'><input class='grow' id='op-name' type='text' value='" + esc(CONFIG.operatorName || "") + "' placeholder='e.g. Alex — blank means Operator' aria-label='Name Navi uses for the operator'><button class='act' id='op-save'>Save</button></div></div>";
     // About you — memories for Navi (Build 6, #110): the
     // operator's own file — the entries that exist because the
     // operator put them there (added by hand, or saved from
     // chat at the operator's ask). A view over the one memory
     // list, partitioned by the origin every entry already
-    // carries; her side of the partition lives under Operator
-    // & Persona as "Her file — what she keeps".
+    // carries; her side of the partition lives under Persona
+    // as "Her file — what she keeps".
     if (settingsTab === "operator") {
       var opMem = memory.map(function (m, i) { return { m: m, i: i }; }).filter(function (x) { return x.m.o === "manual" || x.m.o === "trigger"; });
-      h += "<div class='card'><h3>About you — memories for Navi</h3><p style='color:var(--dim)'>Facts you handed Navi about you — added by hand here, or saved from chat because you asked. Yours, in your words: true by your say-so, and forgetting one takes it out. What Navi keeps on her own judgment lives in her file, under Operator &amp; Persona — together the two files are everything she remembers from chat.</p><div id='memlist'>"
+      h += "<div class='card'><h3>About you — memories for Navi</h3><p style='color:var(--dim)'>Facts you handed Navi about you — added by hand here, or saved from chat because you asked. Yours, in your words: true by your say-so, and forgetting one takes it out. What Navi keeps on her own judgment lives in her file, under Persona — together the two files are everything she remembers from chat.</p><div id='memlist'>"
         + (opMem.length ? opMem.map(function (x) { return "<div class='card'>" + esc(x.m.t) + " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(MEMORY_ORIGIN_LABELS[x.m.o] || "Added by hand") + "</span> <button class='ghost' data-del='" + x.i + "'>Forget</button></div>"; }).join("") : "<p style='color:var(--dim);font-size:12px'>Nothing here yet — add the first fact below.</p>")
         + "</div><div class='row'><input class='grow' id='mem-in' type='text' placeholder='Something Navi should remember…' aria-label='New memory'><button class='act' id='mem-add'>Remember</button></div></div>";
     }
-    // Soul and Memory live on the Operator & Persona tab, and on
+    // Soul and Memory live on the Persona tab, and on
     // no other Settings tab — the editors have exactly one home.
     // (The operator's name moved to the Operator tab in Build 6,
     // #110, with the operator's own memory file.)
@@ -6937,7 +7164,7 @@ function sendChat(text) {
   if (text.charAt(0) === "$") chatMode = "cli";
   else if (text === ">" || text.indexOf("> ") === 0) chatMode = "navi";
   persistChatMode();
-  messages.push({ who: "YOU", text: text, exec: null });
+  messages.push({ who: "YOU", text: text, exec: null, ts: Date.now() });
   persist(); render();
   try {
     var _isChipLine = /^\s*\/(chip|rag)\b/i.test(text);
@@ -6951,8 +7178,8 @@ function sendChat(text) {
     // route to /api/chat even while the model is disconnected, so
     // command-line mode cannot swallow the request as a shell line.
     naviThinking = true; render();
-    liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null }); persist(); render(); })
-      .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that DHD operation.", exec: null }); persist(); render(); });
+    liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null, ts: Date.now() }); persist(); render(); })
+      .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that DHD operation.", exec: null, ts: Date.now() }); persist(); render(); });
     return;
   }
   if (llama.status !== "running") {
@@ -6961,20 +7188,20 @@ function sendChat(text) {
     // with or without the model.
     if (CONFIG.backend === "live" && (/^\s*\/chip\b/i.test(text) || /^\s*run\b/i.test(text))) {
       naviThinking = true; render();
-      liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec }); persist(); render(); })
-        .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that chip.", exec: null }); persist(); render(); });
+      liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec, ts: Date.now() }); persist(); render(); })
+        .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that chip.", exec: null, ts: Date.now() }); persist(); render(); });
       return;
     }
     var mockChip = CONFIG.backend === "mock" ? matchChipText(text, CHIP_DEFS) : null;
     if (mockChip) {
       naviThinking = true; render();
-      setTimeout(function () { naviThinking = false; messages.push({ who: "NAVI", text: "Slotted in " + mockChip.name + " and ran it — here's what it gave me:", exec: { command: "chip " + mockChip.id, output: mockChip.output, exit_code: 0 } }); persist(); render(); }, 350);
+      setTimeout(function () { naviThinking = false; messages.push({ who: "NAVI", text: "Slotted in " + mockChip.name + " and ran it — here's what it gave me:", exec: { command: "chip " + mockChip.id, output: mockChip.output, exit_code: 0 }, ts: Date.now() }); persist(); render(); }, 350);
       return;
     }
     var cmd = text.replace(/^\$\s*/, "");
     var eff = CONFIG.sudo && cmd.indexOf("sudo") !== 0 ? "sudo " + cmd : cmd;
-    if (CONFIG.backend === "live") liveShell(cmd).then(function (r) { messages.push({ who: "SHELL", text: "", exec: { command: r.command, output: r.output, exit_code: r.exit_code } }); persist(); render(); });
-    else setTimeout(function () { messages.push({ who: "SHELL", text: "", exec: { command: eff, output: mockShell(cmd), exit_code: 0 } }); persist(); render(); }, 100);
+    if (CONFIG.backend === "live") liveShell(cmd).then(function (r) { messages.push({ who: "SHELL", text: "", exec: { command: r.command, output: r.output, exit_code: r.exit_code }, ts: Date.now() }); persist(); render(); });
+    else setTimeout(function () { messages.push({ who: "SHELL", text: "", exec: { command: eff, output: mockShell(cmd), exit_code: 0 }, ts: Date.now() }); persist(); render(); }, 100);
     return;
   }
   naviThinking = true; render();
@@ -6982,7 +7209,7 @@ function sendChat(text) {
     naviThinking = false;
     // A CLI-routed line files as a bare terminal block — the raw
     // output, no model framing around it.
-    if (r.mode === "cli" || r.mode === "command-line") messages.push({ who: "SHELL", text: "", exec: r.exec });
+    if (r.mode === "cli" || r.mode === "command-line") messages.push({ who: "SHELL", text: "", exec: r.exec, ts: Date.now() });
     else {
       var nm = { who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null, mesh: r.mesh || null };
       // Navi Mesh (build .85): the first mesh-served reply of a
@@ -7024,10 +7251,10 @@ function wire() {
       var fact = jsNormalizeFact(String(mm.text).replace(/^>\s+/, ""));
       if (!fact) return;
       if (jsMemorySecret(fact)) {
-        messages.push({ who: "NAVI", text: "I didn't save that one — it looks like a secret, and secrets never go into my memory, whichever door they knock on.", exec: null, memoryReceipts: [{ kind: "refused", text: "", replacedText: null, origin: "trigger", undone: false, proposalId: null }] });
+        messages.push({ who: "NAVI", ts: Date.now(), text: "I didn't save that one — it looks like a secret, and secrets never go into my memory, whichever door they knock on.", exec: null, memoryReceipts: [{ kind: "refused", text: "", replacedText: null, origin: "trigger", undone: false, proposalId: null }] });
       } else {
         var rc2 = applyMemorySave({ text: fact, origin: "trigger" });
-        messages.push({ who: "NAVI", text: rc2.kind === "corrected" ? "Saved from your message — and it corrects what I had, so the old line was replaced, not duplicated. The receipt shows both." : rc2.kind === "already" ? "That one's already in my memory, word for word — the receipt below is the entry as it stands." : "Saved from your message — the receipt below is exactly what I wrote down.", exec: null, memoryReceipts: [rc2] });
+        messages.push({ who: "NAVI", ts: Date.now(), text: rc2.kind === "corrected" ? "Saved from your message — and it corrects what I had, so the old line was replaced, not duplicated. The receipt shows both." : rc2.kind === "already" ? "That one's already in my memory, word for word — the receipt below is the entry as it stands." : "Saved from your message — the receipt below is exactly what I wrote down.", exec: null, memoryReceipts: [rc2] });
       }
       persist(); render();
     }; });
@@ -7074,8 +7301,6 @@ function wire() {
     if (meshLocalBtnEl) meshLocalBtnEl.onclick = function () { meshLocal = !meshLocal; persistMeshLocal(); render(); };
     var micBtn = document.getElementById("chat-mic");
     if (micBtn) micBtn.onclick = function () { pttToggle("chat"); };
-    var cstBtn = document.getElementById("chat-status-toggle");
-    if (cstBtn) cstBtn.onclick = function () { toggleStatusColumn(); };
     var chatCallBtn = document.getElementById("chat-call");
     if (chatCallBtn) chatCallBtn.onclick = function () {
       var why = callBlockReason();
@@ -7933,7 +8158,7 @@ function wire() {
       // are Build 4's, unchanged — same storage): Forget lives on
       // both tabs (each entry carries its true index in the one
       // list), the add row only on Operator, the leash and the
-      // proposal queue only on Operator & Persona. Each handler
+      // proposal queue only on Persona. Each handler
       // binds only where its element rendered.
       mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
       var memAdd = document.getElementById("mem-add");
@@ -8013,6 +8238,63 @@ function wire() {
     mainEl.querySelectorAll("[data-uiscale]").forEach(function (b) { b.onclick = function () { CONFIG.uiScale = Number(b.getAttribute("data-uiscale")) || 1; saveCfg(); applyUiScale(); render(); }; });
     var opSave = document.getElementById("op-save");
     if (opSave) opSave.onclick = function () { var inp = document.getElementById("op-name"); CONFIG.operatorName = inp ? inp.value.trim() : ""; saveCfg(); refreshSeedGreeting(); render(); };
+    // Issue #116: the operator's picture and Operator Badge.
+    var opPicPick = document.getElementById("op-pic-pick");
+    var opPicFile = document.getElementById("op-pic-file");
+    if (opPicPick && opPicFile) opPicPick.onclick = function () { opPicFile.click(); };
+    if (opPicFile) opPicFile.onchange = function () {
+      var f = opPicFile.files && opPicFile.files[0];
+      if (!f) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var cv = document.createElement("canvas"); cv.width = 256; cv.height = 256;
+            var cx = cv.getContext("2d");
+            var s = Math.max(256 / img.width, 256 / img.height);
+            cx.drawImage(img, (256 - img.width * s) / 2, (256 - img.height * s) / 2, img.width * s, img.height * s);
+            CONFIG.operatorPicture = cv.toDataURL("image/jpeg", 0.85);
+          } catch (e) { CONFIG.operatorPicture = String(rd.result || ""); }
+          saveCfg(); render();
+        };
+        img.onerror = function () { badgeMsg = "That file would not open as a picture."; render(); };
+        img.src = String(rd.result || "");
+      };
+      rd.readAsDataURL(f);
+    };
+    var opPicClear = document.getElementById("op-pic-clear");
+    if (opPicClear) opPicClear.onclick = function () { CONFIG.operatorPicture = ""; saveCfg(); render(); };
+    var opFacePhoto = document.getElementById("op-badge-face-photo");
+    if (opFacePhoto) opFacePhoto.onclick = function () { badgeFaceChoice = "photo"; render(); };
+    var opFaceArt = document.getElementById("op-badge-face-art");
+    if (opFaceArt) opFaceArt.onclick = function () { badgeFaceChoice = "art"; render(); };
+    var opBadgeMint = document.getElementById("op-badge-mint");
+    if (opBadgeMint) opBadgeMint.onclick = function () {
+      refreshBadgeInfo();
+      badgeMsg = "Minting your badge…"; render();
+      var finishMint = function (faceImg) {
+        badgeForge(faceImg, opName(), badgeNodeName, function (url) {
+          if (url) { CONFIG.operatorBadge = url; badgeMsg = "Badge minted — it rides in your settings backup, and chat can wear its face."; }
+          else badgeMsg = "The badge could not be minted in this browser.";
+          saveCfg(); render();
+        });
+      };
+      if (badgeFaceChoice === "photo" && CONFIG.operatorPicture) {
+        var pim = new Image();
+        pim.onload = function () { finishMint(pim); };
+        pim.onerror = function () { finishMint(null); };
+        pim.src = CONFIG.operatorPicture;
+      } else finishMint(null);
+    };
+    var opBadgeExport = document.getElementById("op-badge-export");
+    if (opBadgeExport) opBadgeExport.onclick = function () {
+      if (!CONFIG.operatorBadge) return;
+      var a = document.createElement("a");
+      a.href = CONFIG.operatorBadge; a.download = "operator-badge.png"; a.click();
+    };
+    var opBadgeClear = document.getElementById("op-badge-clear");
+    if (opBadgeClear) opBadgeClear.onclick = function () { CONFIG.operatorBadge = ""; badgeMsg = ""; saveCfg(); render(); };
     // Hardware profile card: load the profile on first Settings open.
     if (!hardwareState) fetchHardware(true);
     // Prefill override inputs from the profile.
