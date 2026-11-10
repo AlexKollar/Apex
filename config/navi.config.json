@@ -133,7 +133,8 @@
       "chips",
       "rag",
       "workflows",
-      "vault"
+      "vault",
+      "mesh-cards"
     ],
     "backup_interval_days": 1,
     "last_backup_at": null,

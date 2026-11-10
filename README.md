@@ -222,7 +222,9 @@ fallback, served by the bridge at the same address.
       this machine in config/github-auth.json, owner-only, never
       backed up or logged), and backup/import of the ready-to-fly
       essentials — Soul, Memory, settings/config, installed chips,
-      RAG packs with their indexes and active states, workflows —
+      RAG packs with their indexes and active states, workflows,
+      Mesh pairing cards (the PNG pictures; the node keypair
+      never rides) —
       to a repo under your own account (default navi-backup,
       private by default), on your interval (every 1/3/5/7 days,
       checked on launch and while the bridge runs). Import previews

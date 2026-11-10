@@ -366,11 +366,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.88"
+BRIDGE_BUILD = "2026-11-09.89"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 8
+SHIPPED_BUILD_SEQ = 9
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2240,6 +2240,11 @@ MESH_PUB_PATH = os.path.join(MESH_DIR, "node_pub.pem")
 MESH_CERT_PATH = os.path.join(MESH_DIR, "cert.pem")
 MESH_CERT_KEY_PATH = os.path.join(MESH_DIR, "cert_key.pem")
 MESH_LEDGER_PATH = os.path.join(MESH_DIR, "ledger.jsonl")
+# Where restored pairing-card pictures land (Build 9, #89): the
+# GitHub backup's Mesh pairing cards restore into this folder —
+# the pictures stay importable files, and the peer pictures are
+# also re-paired through the normal card check on import.
+MESH_CARDS_DIR = os.path.join(MESH_DIR, "cards")
 
 MESH_LOCK = threading.Lock()
 MESH_STATE = {
@@ -2735,9 +2740,12 @@ def _interface_ipv4s():
 
 
 def mesh_card(cfg):
-    # This node's card: one copyable block the operator carries to
-    # their other machine by hand. Names and addresses come from
-    # config and this machine only (R2 — nothing baked in).
+    # This node's card data — the payload the PNG pairing picture
+    # is minted from (build_mesh_card_png). The operator carries
+    # the PICTURE to their other machine by hand; since Build 9
+    # (#90) the card never leaves as copyable text. Names and
+    # addresses come from config and this machine only (R2 —
+    # nothing baked in).
     ms = mesh_settings(cfg)
     addresses = []
     try:
@@ -2775,23 +2783,26 @@ def mesh_card(cfg):
 
 
 def mesh_parse_card(text):
-    # Validates a pasted peer card. Returns (peer, error) — errors
-    # in plain words, because the operator pastes by hand and a
-    # bare "invalid" helps nobody.
+    # Validates card data. Since Build 9 (#90) the only caller
+    # is the PNG picture path (parse_mesh_card_png), which reads
+    # the card out of the picture and passes it here — one
+    # validator for every pairing. Returns (peer, error) —
+    # errors in plain words, because a bare "invalid" helps
+    # nobody.
     try:
         card = json.loads(text or "")
     except Exception:
-        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Mesh page, exactly as shown."
+        return None, "That does not look like a Mesh card — the card data is not in the shape a pairing card carries. Download a fresh PNG card from the other machine's Mesh page and try that picture."
     if not isinstance(card, dict) or card.get("meshCard") != 1:
-        return None, "That does not look like a Mesh card — paste the whole card block from the other machine's Mesh page, exactly as shown."
+        return None, "That does not look like a Mesh card — the card data is not in the shape a pairing card carries. Download a fresh PNG card from the other machine's Mesh page and try that picture."
     fp = str(card.get("certFingerprint") or "").strip().lower()
     if len(fp) != 64 or any(c not in "0123456789abcdef" for c in fp):
-        return None, "The card's certificate fingerprint is not in the right shape — copy the card again, whole, and re-paste it."
+        return None, "The card's certificate fingerprint is not in the right shape — the picture's card data is damaged. Download a fresh PNG card from the other machine and try again."
     node_id = str(card.get("nodeId") or "").strip()
     if len(node_id) != 64:
-        return None, "The card's node id is not in the right shape — copy the card again, whole, and re-paste it."
+        return None, "The card's node id is not in the right shape — the picture's card data is damaged. Download a fresh PNG card from the other machine and try again."
     if not str(card.get("publicKeyPem") or "").strip():
-        return None, "The card is missing its public key — copy the card again, whole, and re-paste it."
+        return None, "The card is missing its public key — the picture's card data is damaged. Download a fresh PNG card from the other machine and try again."
     peer = _mesh_peer({
         "name": card.get("name"),
         "addresses": card.get("addresses"),
@@ -2803,14 +2814,15 @@ def mesh_parse_card(text):
         "capabilities": card.get("capabilities"),
     })
     if peer is None or not peer["addresses"]:
-        return None, "The card carries no address to reach the other machine at — copy the card again, whole, and re-paste it."
+        return None, "The card carries no address to reach the other machine at — download a fresh PNG card from the other machine and try again."
     return peer, ""
 
 
 def mesh_add_peer(cfg, peer):
     # Adds a validated peer record to this machine's pairings —
-    # the shared tail of every pairing path (pasted text card,
-    # PNG picture card): pairing is the consent act, a record
+    # the shared tail of the pairing path (the PNG picture card,
+    # the only path since Build 9): pairing is the consent act,
+    # a record
     # with the same nodeId is replaced rather than duplicated,
     # and the config is saved before the caller answers. Returns
     # an error string, or "" when the peer is in. The caller
@@ -2841,8 +2853,7 @@ def mesh_add_peer(cfg, peer):
 # picture format. The face is drawn from the very dict that
 # becomes the payload, so the picture can never advertise an
 # offer the payload does not make; and the payload is the card
-# itself, so a PNG pairing lands the identical peer record a
-# pasted text card lands.
+# itself, so a PNG pairing lands the peer record whole.
 
 _MESH_CARD_FONT = {
     "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
@@ -2972,7 +2983,34 @@ def build_mesh_card_png(cfg):
     # This node's pairing card as a picture. Face and payload
     # both come from mesh_card(cfg) — one source, so what the
     # picture says is what the picture carries.
-    card = mesh_card(cfg)
+    return _mesh_card_png_render(mesh_card(cfg))
+
+
+def build_mesh_peer_card_png(peer):
+    # A paired peer's card as a picture, re-drawn from the stored
+    # peer record (Build 9, #89). The record holds everything the
+    # card carried — mesh_parse_card built it from the card — so
+    # the re-drawn picture's payload is the same card, and it
+    # imports to the identical record on any machine. This is
+    # what the GitHub backup carries for peers: peers paired by a
+    # pasted text card never had a picture to retain, so the
+    # stored card is the one honest source for every peer alike.
+    card = {
+        "meshCard": 1,
+        "name": peer.get("name"),
+        "nodeId": peer.get("nodeId"),
+        "publicKeyPem": peer.get("publicKeyPem"),
+        "certFingerprint": peer.get("certFingerprint"),
+        "addresses": peer.get("addresses"),
+        "port": peer.get("port"),
+        "capabilities": peer.get("capabilities"),
+    }
+    return _mesh_card_png_render(card)
+
+
+def _mesh_card_png_render(card):
+    # Draws one pairing-card picture from a card dict: the face a
+    # person reads above, the whole card as the tEXt payload.
     caps = card.get("capabilities") if isinstance(card.get("capabilities"), dict) else {}
     cap_caps = caps.get("caps") if isinstance(caps.get("caps"), dict) else {}
     W, H = 720, 452
@@ -3076,10 +3114,10 @@ def build_mesh_card_png(cfg):
 # names what is wrong and what to do about it, because a picture
 # that pairs nothing must never fail silently (Build 7, spec
 # section 13, Alex's wording rule).
-MESH_CARD_PNG_NOT_PNG = "That file is not a PNG image — a Mesh card travels as a .png picture. Export it again from the other machine's Mesh page (Show my Mesh card, then Download PNG card) and send the file itself."
+MESH_CARD_PNG_NOT_PNG = "That file is not a PNG image — a Mesh card travels as a .png picture. Export it again from the other machine's Mesh page (Download PNG card) and send the file itself."
 MESH_CARD_PNG_NO_PAYLOAD = "This image has no readable Mesh card data — it may have been recompressed by a chat app, which strips the data out of the picture while leaving the picture itself looking fine. Send the original file inside a .zip instead."
 MESH_CARD_PNG_DAMAGED = "This picture started life as a Mesh card, but the card data inside it is damaged — it no longer reads whole, so nothing was paired. Ask the other machine to export a fresh PNG card, and send the original file inside a .zip so nothing re-encodes it on the way."
-MESH_CARD_PNG_IS_CHIP = "That picture is a Navi chip cartridge, not a Mesh pairing card — chips and cards are different pictures. Pairing cards come from the other machine's Mesh page: Show my Mesh card, then Download PNG card."
+MESH_CARD_PNG_IS_CHIP = "That picture is a Navi chip cartridge, not a Mesh pairing card — chips and cards are different pictures. Pairing cards come from the other machine's Mesh page: Download PNG card."
 MESH_CARD_PNG_NEWER = "This picture's Mesh card was made by a newer Apex than this one — update this machine, then import the card again."
 
 
@@ -6505,6 +6543,12 @@ def save_download_payload(data):
 #                       (documents, built index, metadata — the
 #                       installs record carries the active states)
 #   chips/workflows.json  her saved workflows
+#   mesh-cards/         own.png — this node's pairing-card picture,
+#                       minted fresh at backup time — plus one
+#                       peer-<node>.png per paired peer, re-drawn
+#                       from the stored card (the payload is the
+#                       card, so a restored picture imports whole).
+#                       The node keypair is never among them.
 # Never backed up: chat transcripts, call logs, caches and logs, the
 # hardware profile, and voice model files (they reinstall).
 # Uploads go through the Contents API; downloads for import go
@@ -6517,7 +6561,7 @@ def save_download_payload(data):
 GITHUB_TOKEN_PATH = os.path.join(ROOT, "config", "github-auth.json")
 GITHUB_REPO_URL = "https://github.com/AlexKollar/Apex"
 GITHUB_API_BASE = "https://api.github.com/repos/AlexKollar/Apex"
-GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault"]
+GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards"]
 # The always-ticked core (build .36): Soul, Memory, and Settings &
 # config ride in every backup automatically — they are what makes
 # an imported Navi *her*, so github_settings folds them into the
@@ -6920,6 +6964,32 @@ def github_collect_backup(cfg, dashboard=None):
     if mesh_settings(cfg)["ledgerInBackup"] and os.path.isfile(MESH_LEDGER_PATH):
         with open(MESH_LEDGER_PATH, "rb") as f:
             files["mesh/ledger.jsonl"] = f.read()
+    # Mesh pairing cards (Build 9, #89): the pictures themselves,
+    # on their own essential's tick. This node's own card is
+    # minted fresh from the live card; each paired peer's picture
+    # is re-drawn from its stored card (build_mesh_peer_card_png)
+    # — the payload is the card, so a restored picture imports
+    # whole. The node keypair is NOT a card and never rides: only
+    # the public card data crosses, exactly what a pairing hands
+    # to another machine in the open.
+    if "mesh-cards" in items:
+        if mesh_node_id() and mesh_cert_fingerprint():
+            try:
+                files["mesh-cards/own.png"] = build_mesh_card_png(cfg)
+            except Exception:
+                pass
+        mesh_block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+        borrow_block = mesh_block.get("borrow") if isinstance(mesh_block.get("borrow"), dict) else {}
+        for peer in borrow_block.get("peers") or []:
+            if not isinstance(peer, dict):
+                continue
+            node_id = str(peer.get("nodeId") or "")
+            if len(node_id) != 64:
+                continue
+            try:
+                files["mesh-cards/peer-" + node_id[:12] + ".png"] = build_mesh_peer_card_png(peer)
+            except Exception:
+                continue
     if "chips" in items:
         files["chips/installed.json"] = (read_file(CHIP_INSTALLS_PATH) or "[]").encode()
         for row in load_chip_installs():
@@ -6997,7 +7067,7 @@ def github_run_backup(cfg, dashboard=None):
         st, created = github_api("POST", "https://api.github.com/user/repos", token, {
             "name": repo,
             "private": s["backup_private"],
-            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault).",
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards).",
             "auto_init": True,
         })
         if st not in (200, 201):
@@ -7061,7 +7131,7 @@ def github_fetch_backup(cfg):
     }
     files = {}
     for path, sha in blobs.items():
-        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or (path.startswith("chips/") and path.endswith(".png")):
+        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or (path.startswith("chips/") and path.endswith(".png")):
             bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
             if bst == 200 and isinstance(blob, dict) and blob.get("content"):
                 try:
@@ -7088,6 +7158,7 @@ def github_import_changes(cfg, fetched, dashboard=None):
         "rag": "RAG packs",
         "workflows": "Workflows",
         "vault": "The Vault",
+        "mesh-cards": "Mesh pairing cards",
     }
     changes = []
     if "soul" in items:
@@ -7199,6 +7270,19 @@ def github_import_changes(cfg, fetched, dashboard=None):
             "detail": "Would restore " + str(len(backed_paths)) + " vault notes from the backup — the whole shared desk. This machine currently holds " + str(len(cur_paths)) + ".",
             "willChange": backed_paths != sorted(cur_paths),
         })
+    if "mesh-cards" in items:
+        backed_peers = sorted(p for p in files if p.startswith("mesh-cards/peer-") and p.endswith(".png"))
+        backed_ids = sorted(os.path.basename(p)[5:-4] for p in backed_peers)
+        mesh_block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+        borrow_block = mesh_block.get("borrow") if isinstance(mesh_block.get("borrow"), dict) else {}
+        cur_ids = sorted(str(p.get("nodeId") or "")[:12] for p in (borrow_block.get("peers") or []) if isinstance(p, dict))
+        own_backed = "mesh-cards/own.png" in files
+        own_here = os.path.isfile(os.path.join(MESH_CARDS_DIR, "own.png"))
+        changes.append({
+            "item": "mesh-cards", "label": labels["mesh-cards"],
+            "detail": "Would restore " + str(len(backed_peers)) + " peer pairing-card picture(s) to config/mesh/cards/ and re-pair those peers through the normal card check" + ("; the backup also holds this machine's own card picture, kept as a file — it never replaces the identity of the machine restoring" if own_backed else "") + ". This machine is currently paired with " + str(len(cur_ids)) + ".",
+            "willChange": backed_ids != cur_ids or (own_backed and not own_here),
+        })
     return changes, items
 
 
@@ -7295,6 +7379,33 @@ def github_apply_import(cfg, fetched):
                     wrote = True
         if wrote:
             applied.append("The Vault")
+    if "mesh-cards" in items:
+        wrote = False
+        fresh_cfg = load_config()
+        for path in sorted(files):
+            if not path.startswith("mesh-cards/") or not path.endswith(".png"):
+                continue
+            base = os.path.basename(path)
+            if not _github_safe_part(base):
+                continue
+            os.makedirs(MESH_CARDS_DIR, exist_ok=True)
+            with open(os.path.join(MESH_CARDS_DIR, base), "wb") as f:
+                f.write(files[path])
+            wrote = True
+            if base.startswith("peer-"):
+                # Peers come back through the SAME validation a
+                # hand import passes — picture parsed, card
+                # checked, record added by mesh_add_peer. A
+                # picture that fails the check stays a file in the
+                # cards folder and pairs nothing. This machine's
+                # own card picture (own.png) is never imported: it
+                # describes the machine the backup came FROM, and
+                # restoring must not overwrite a live identity.
+                peer, _perr = parse_mesh_card_png(files[path])
+                if peer is not None:
+                    mesh_add_peer(fresh_cfg, peer)
+        if wrote:
+            applied.append("Mesh pairing cards")
     dashboard_out = None
     if "dashboard.json" in files:
         try:
@@ -10709,31 +10820,18 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
             return
-        if _path in ("/mesh/card", "/api/mesh/card"):
-            # This node's peer card (spec section 3.1): a
-            # dashboard-surface read — it sits BEHIND the public
-            # gate above like every other dashboard API, and the
-            # DHD proxy never forwards /mesh/* here, so a DHD
-            # guest session cannot reach it.
-            _cfg = load_config()
-            if not mesh_settings(_cfg)["enabled"]:
-                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on from the Mesh page first."})
-                return
-            _ok, _err = mesh_ensure_identity(_cfg)
-            if not _ok:
-                self._send(200, {"ok": False, "error": _err})
-                return
-            _ok, _err = mesh_ensure_cert()
-            if not _ok:
-                self._send(200, {"ok": False, "error": _err})
-                return
-            self._send(200, {"ok": True, "card": mesh_card(load_config())})
-            return
+        # Build 9 (#90): GET /mesh/card and /api/mesh/card — the
+        # card as copyable text — are REMOVED. Pairing is the PNG
+        # picture only; those paths now fall through to this
+        # handler's not-found answer like any retired route. The
+        # card DATA still exists (mesh_card builds it), but it
+        # leaves this machine only inside the PNG below.
         if _path in ("/mesh/card.png", "/api/mesh/card.png"):
             # This node's pairing card as a picture (Build 7,
-            # spec section 13): the same dashboard-surface read
-            # as the text card above — same gate, same identity
-            # prerequisites — answering the PNG whose face is the
+            # spec section 13; the ONLY card surface since
+            # Build 9, #90): a dashboard-surface read behind the
+            # public gate above — the DHD proxy never forwards
+            # /mesh/* here — answering the PNG whose face is the
             # card and whose payload is the card.
             _cfg = load_config()
             if not mesh_settings(_cfg)["enabled"]:
@@ -11196,33 +11294,21 @@ class Handler(BaseHTTPRequestHandler):
                 mesh_stop_listener()
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config(), (self.headers.get("X-Apex-Via") or "") == "dhd")})
             return
-        if self.path == "/api/mesh/peers":
-            # Add a peer from a pasted card (spec section 3.1).
-            # Pairing is the consent act (R1): a card the operator
-            # pastes by hand is a trusted peer.
-            data = self._body()
-            peer, perr = mesh_parse_card(str(data.get("card") or ""))
-            if peer is None:
-                self._send(200, {"ok": False, "error": perr})
-                return
-            aerr = mesh_add_peer(cfg, peer)
-            if aerr:
-                self._send(200, {"ok": False, "error": aerr})
-                return
-            # Build 7 (#87): a freshly paired peer is probed at
-            # once — pairing is exactly when the operator is
-            # watching the roster for its first checked state.
-            mesh_probe_peers_soon()
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
+        # Build 9 (#90): POST /api/mesh/peers — the paste-a-text-
+        # card import — is REMOVED. Pairing is the PNG picture
+        # only (the /api/mesh/peers/png route below); a request
+        # to the retired path falls through to this handler's
+        # not-found answer. Peers paired earlier are stored
+        # records in config and are untouched by the removal.
         if self.path == "/api/mesh/peers/png":
             # Add a peer from a PNG picture card (Build 7, spec
             # section 13). The dashboard sends the picture's bytes
             # base64'd — from the file-upload control or a drag-
             # and-drop, both through the one client importer — and
             # the payload inside the picture goes through the same
-            # card validation and the same add as a pasted card:
-            # one parser, one pairing, the identical peer record.
+            # card validation and the same add every pairing
+            # passes: one parser, one pairing, the identical
+            # peer record.
             # A picture with no readable payload, or a damaged
             # one, is refused with its specific reason — never a
             # silent no-op.
@@ -11233,7 +11319,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 raw = None
             if not raw:
-                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again, or paste the text card instead."})
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
                 return
             if len(raw) > 8 * 1024 * 1024:
                 self._send(200, {"ok": False, "error": "That file is far larger than a Mesh card picture — the cards are small PNGs. Check you picked the card file, and try again."})
