@@ -286,8 +286,17 @@ quietly, an older build answering means claim the pid file
 watches the pid file and this file's mtime and exits with code 75
 when replaced, and the launchers relaunch on 75, so updates take
 over on their own; (3) the installers stop a bridge running from the
-install directory before replacing files, which is what retires a
-pre-watchdog zombie. The model string sent to the llamafile is read
+install directory before replacing files — and since build .91 that
+stop is a proof, not a gesture: the bridge is found by pid file, by
+the process holding this port, and by working directory, waited on
+until it is gone and the port is free, escalated to a forced end if
+it will not go politely, and the install aborts with the holder
+named (and the exact kill command printed) if the port cannot be
+cleared — because a fire-and-forget stop once stranded an update
+behind a frozen bridge that only a reboot could clear. When this
+bridge starts against an incumbent that answers nothing, it
+resolves the holder from the socket itself (port_holder_pid) and
+names that pid in its messages, pid file or no pid file. The model string sent to the llamafile is read
 from the server itself (GET /v1/models) rather than assumed, and a
 server rejection surfaces its own error text.
 
@@ -366,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.89"
+BRIDGE_BUILD = "2026-11-09.91"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
 # Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 9
+SHIPPED_BUILD_SEQ = 10
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -1262,7 +1271,12 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        # Exactly ONE no-store header (build .91): a forwarded
+        # response arrives with the bridge's own Cache-Control in
+        # extra, and sending this one too put the pair on the wire.
+        _extra_has_cc = bool(extra) and any(str(k).lower() == "cache-control" for k in extra)
+        if not _extra_has_cc:
+            self.send_header("Cache-Control", "no-store")
         if extra:
             for k, v in extra.items():
                 self.send_header(k, v)
@@ -5573,6 +5587,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -5779,6 +5794,182 @@ def read_installed_build_seq(root):
     return None
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _pid_gone(pid):
+    # Gone = no such process, or a zombie: a zombie holds no
+    # sockets (the kernel closed them at death) and its parent
+    # reaps it in its own time.
+    if not pid:
+        return True
+    if not _pid_alive(pid):
+        return True
+    try:
+        with open("/proc/" + str(pid) + "/stat", "rb") as f:
+            parts = f.read().rsplit(b")", 1)
+        state = parts[1].split()[0].decode("utf-8", "replace") if len(parts) > 1 else ""
+        return state == "Z"
+    except Exception:
+        return False
+
+
+def _pid_cmdline(pid):
+    try:
+        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
+            raw = f.read()
+        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
+    except Exception:
+        return ""
+
+
+def _pid_cwd(pid):
+    try:
+        return os.path.realpath(os.readlink("/proc/" + str(pid) + "/cwd"))
+    except Exception:
+        return ""
+
+
+def _port_holder_pid(port):
+    # The PID holding the LISTEN socket on the port, resolved from
+    # /proc alone — names a holder that answers nothing, where a
+    # status probe can only shrug.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                rows = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for row in rows:
+            parts = row.split()
+            if len(parts) > 9 and parts[3] == "0A":
+                try:
+                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
+                        inodes.add(parts[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    targets = set("socket:[" + ino + "]" for ino in inodes)
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            fds = os.listdir("/proc/" + name + "/fd")
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
+                    return int(name)
+            except Exception:
+                pass
+    return None
+
+
+def _port_answers_expected(port, tgt_seq):
+    # True when the bridge answering on the port already reports
+    # the target identity — the case where a relaunch spawn
+    # failure must NOT fail the apply: the installer's own
+    # relaunch (build .91) already brought the new bridge up.
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:" + str(port) + "/api/status",
+            headers={"User-Agent": "navi-update-helper"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            seen = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not isinstance(seen, dict) or seen.get("app") != "Navi: Apex":
+        return False
+    return tgt_seq is None or seen.get("buildSeq") == tgt_seq
+
+
+def _holder_remedy(port):
+    # The failure-text remedy for a held port (build .91): name
+    # the holder and its exact kill command when the socket can
+    # resolve it — never "launch the app again" against a wedged
+    # port, the advice that stranded the field update this build
+    # answers.
+    holder = _port_holder_pid(port)
+    if holder:
+        cmd = _pid_cmdline(holder)
+        return ("The port is held by process " + str(holder)
+                + (" (" + cmd + ")" if cmd else "")
+                + ": end it with kill -9 " + str(holder)
+                + ", then run the update again — launching the app "
+                "again cannot work while that process holds the port.")
+    return ("If a process is holding the port, find it with lsof -i :"
+            + str(port) + " and end it, then run the update again; "
+            "otherwise launch the app again from its menu entry.")
+
+
+def clear_wedged_bridge(root, port, tgt_seq):
+    # Build .91 (issue #91): before relaunching, prove the OLD
+    # bridge is actually gone — not merely that its pid file is.
+    # A bridge can still hold the port while answering nothing
+    # (frozen, stopped, stuck mid-work), and every relaunch
+    # against it is a no-op: the new bridge cannot bind, and the
+    # confirmation that follows can only report failure with a
+    # remedy that cannot work. If the target build already
+    # answers, there is nothing to clear; if the port is free,
+    # likewise. A holder is signalled ONLY when it is provably
+    # this install's bridge — bridge.py in its command line AND
+    # its working directory the install root; anything else is
+    # reported, never touched. Escalation mirrors the installer:
+    # SIGTERM, wait for death AND a free port, SIGKILL, wait
+    # again. Returns (ok, holder_pid, holder_desc).
+    if _port_answers_expected(port, tgt_seq):
+        return (True, None, "")
+    holder = _port_holder_pid(port)
+    if holder is None:
+        try:
+            sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+            sock.close()
+            return (False, None,
+                    "something is listening on the port but its process could not be identified")
+        except Exception:
+            return (True, None, "")
+    cmd = _pid_cmdline(holder)
+    desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
+    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
+    if not owned:
+        return (False, holder, desc + " — not this install's bridge, so it was not touched")
+    trace("wedge-clear",
+          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
+    try:
+        os.kill(holder, signal.SIGTERM)
+    except Exception:
+        pass
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    try:
+        os.kill(holder, signal.SIGKILL)
+    except Exception:
+        pass
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    return (False, holder, desc)
+
+
 def version_label(number, status):
     return "v" + number + (
         "e" if status in ("edge", "alpha") else
@@ -5902,22 +6093,62 @@ def main():
     time.sleep(1)
     STATE["step"] = "restarting"
     write_result({"state": "working", "step": "restarting"})
-    relaunch_err = relaunch()
-    if relaunch_err:
+    # Build .91 (issue #91): prove the old bridge is gone BEFORE
+    # relaunching. A wedged holder makes every relaunch a no-op —
+    # the new bridge cannot bind — and the old failure text's
+    # remedy ("launch the app again") cannot work while the port
+    # is held. Escalate here exactly as the installer does; if
+    # the port still cannot be cleared, fail naming the holder
+    # and the exact command that ends it.
+    wedge_ok, wedge_pid, wedge_desc = clear_wedged_bridge(
+        root, job["port"], job.get("targetBuildSeq"))
+    if not wedge_ok:
+        if wedge_pid:
+            wedge_remedy = (
+                "End it with: kill -9 " + str(wedge_pid)
+                + " — then run the update again, or the manual "
+                "fallback below. Launching the app again cannot "
+                "work while that process holds the port.")
+        else:
+            wedge_remedy = (
+                "Find what holds it with: lsof -i :" + str(job["port"])
+                + " — end that process, then run the update again, "
+                "or the manual fallback below. Launching the app "
+                "again cannot work while the port is held.")
         fail("restart",
-             "The update installed, but relaunching Apex through "
-             "start.sh could not even be started (" + relaunch_err
-             + "), so the update is not confirmed. Expected "
-             + job["targetLabel"]
-             + (" Build " + str(job["targetBuildSeq"])
-                if job.get("targetBuildSeq") is not None else "")
-             + " answering on http://localhost:" + str(job["port"])
-             + "; found: no relaunch was started. The staged "
-             "package is still in place — the manual fallback "
-             "below finishes the job by hand, or launch the app "
-             "again from its menu entry.")
+             "The update installed, but the old bridge could not "
+             "be cleared from http://localhost:" + str(job["port"])
+             + ": " + wedge_desc + ". The new bridge cannot start "
+             "while the port is held, so the update is not "
+             "confirmed. " + wedge_remedy
+             + " The staged package is still in place.")
         STATE["stop_beat"] = True
         return
+    relaunch_err = relaunch()
+    if relaunch_err:
+        if _port_answers_expected(job["port"], job.get("targetBuildSeq")):
+            # The spawn failed but the target build is already
+            # answering — the installer's own relaunch (build
+            # .91) brought her up. Not a failure: fall through to
+            # the confirmation loop, which will see her itself.
+            trace("relaunch-skipped",
+                  "spawn failed (" + relaunch_err + ") but the target build already answers")
+            relaunch_err = ""
+        else:
+            fail("restart",
+                 "The update installed, but relaunching Apex through "
+                 "start.sh could not even be started (" + relaunch_err
+                 + "), so the update is not confirmed. Expected "
+                 + job["targetLabel"]
+                 + (" Build " + str(job["targetBuildSeq"])
+                    if job.get("targetBuildSeq") is not None else "")
+                 + " answering on http://localhost:" + str(job["port"])
+                 + "; found: no relaunch was started. The staged "
+                 "package is still in place — the manual fallback "
+                 "below finishes the job by hand, or launch the app "
+                 "again from its menu entry.")
+            STATE["stop_beat"] = True
+            return
     target = tuple(job["targetTuple"])
     # Build 4: when the job names a target Build number, the
     # confirmation must observe that build answering — the
@@ -6001,10 +6232,10 @@ def main():
                  + last_seen + ")")
                 if last_seen else
                 "no answer at all in five minutes")
-             + ". The "
-             "staged package is still in place — the manual "
-             "fallback below re-runs its installer by hand, or "
-             "launch the app again from its menu entry.")
+             + ". "
+             + _holder_remedy(job["port"])
+             + " The staged package is still in place — the manual "
+             "fallback below re-runs its installer by hand.")
     elif (tgt_seq is not None and disk_seq is not None
             and disk_seq != tgt_seq):
         fail("restart",
@@ -6022,9 +6253,10 @@ def main():
              "answering reports Build "
              + str(answered.get("buildSeq"))
              + " instead of the expected Build " + str(tgt_seq)
-             + " — the update is not confirmed. The staged "
-             "package is still in place — the manual fallback "
-             "below finishes the job by hand.")
+             + " — the update is not confirmed. "
+             + _holder_remedy(job["port"])
+             + " The staged package is still in place — the manual "
+             "fallback below finishes the job by hand.")
     else:
         fail("restart",
              "Apex came back after the update, but its VERSION "
@@ -12994,6 +13226,64 @@ def pid_alive(pid):
         return False
 
 
+def pid_cmdline(pid):
+    # The process's command line as one line of text, read from
+    # /proc — used to NAME a port holder in startup messages
+    # (build .91), never to decide anything about it.
+    try:
+        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
+            raw = f.read()
+        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
+    except Exception:
+        return ""
+
+
+def port_holder_pid(port):
+    # The PID holding the LISTEN socket on the port, resolved from
+    # /proc alone (build .91, issue #91): names a holder that
+    # answers NOTHING — a bridge frozen or stuck so the status
+    # probe and the page-title probe both come back empty, the
+    # state a wedged update leaves behind once the pid file is
+    # gone. Returns None when the port is free or the holder
+    # cannot be resolved.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                rows = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for row in rows:
+            parts = row.split()
+            if len(parts) > 9 and parts[3] == "0A":
+                try:
+                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
+                        inodes.add(parts[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    targets = set("socket:[" + ino + "]" for ino in inodes)
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            fds = os.listdir("/proc/" + name + "/fd")
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
+                    return int(name)
+            except Exception:
+                pass
+    return None
+
+
 def claim_pid_file():
     try:
         with open(PID_PATH, "w") as f:
@@ -13096,6 +13386,21 @@ if __name__ == "__main__":
                   "Quit it (find it with: lsof -i :" + str(port)
                   + ") and launch Apex again.", flush=True)
             sys.exit(1)
+        if holder is None:
+            # Nothing answers on the port — but something may still
+            # HOLD it: a bridge frozen or stuck so it accepts no
+            # requests at all (build .91, the wedged-update state,
+            # its pid file long gone). Resolve the holder from the
+            # socket itself and name it, so the bind loop's wait —
+            # and its failure message, if it comes to that — is
+            # about a named process, not a shrug.
+            _hp = port_holder_pid(port)
+            if _hp:
+                print("Port " + str(port) + " is held by process "
+                      + str(_hp) + " ("
+                      + (pid_cmdline(_hp) or "unknown command")
+                      + "), which is not answering — waiting for it "
+                      "to step aside.", flush=True)
     claim_pid_file()
     atexit.register(drop_pid_file)
     # The sudo root shell (if the operator authenticated) is a child
@@ -13164,11 +13469,26 @@ if __name__ == "__main__":
                           "lsof -i :" + str(port) + ") and launch "
                           "Apex again.", flush=True)
                 else:
-                    print("Port " + str(port) + " is still held by the older "
-                          "bridge, and it did not step aside — it predates the "
-                          "self-update watchdog. Quit the running Navi bridge "
-                          "(close the app, or end the python bridge.py process) "
-                          "and launch again.", flush=True)
+                    # Name the holder by PID when the socket itself
+                    # can resolve it (build .91): "end the python
+                    # bridge.py process" sent the operator hunting
+                    # through a process list for a process nothing
+                    # would identify — the exact state a wedged
+                    # update leaves behind.
+                    _hp = port_holder_pid(port)
+                    if _hp:
+                        print("Port " + str(port) + " is still held by process "
+                              + str(_hp) + " ("
+                              + (pid_cmdline(_hp) or "unknown command")
+                              + "), and it did not step aside. End it with: "
+                              "kill -9 " + str(_hp)
+                              + " — then launch Apex again.", flush=True)
+                    else:
+                        print("Port " + str(port) + " is still held by the older "
+                              "bridge, and it did not step aside — it predates the "
+                              "self-update watchdog. Quit the running Navi bridge "
+                              "(close the app, or end the python bridge.py process) "
+                              "and launch again.", flush=True)
                 sys.exit(1)
             time.sleep(1)
     print("Navi bridge (build " + BRIDGE_BUILD + ") on http://localhost:" + str(port), flush=True)
