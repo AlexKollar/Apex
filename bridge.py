@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-10.93"
+BRIDGE_BUILD = "2026-11-10.94"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
-# Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 2
+# Build 3. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 3
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -7939,6 +7939,7 @@ def fetch_chip_payload(repo):
         "output": str(manifest.get("output") or ""),
         "requirements": requirements,
         "glyph": str(manifest.get("glyph") or ""),
+        "icon": _manifest_icon(manifest),
         # Issue #99: the manifest's version rides inside the
         # picture, the way its glyph already does.
         "version": str(manifest.get("version") or ""),
@@ -8096,230 +8097,370 @@ def _png_chunk(kind, data):
 # the legacy name-seeded pattern face, which remains only as that
 # fallback. Faces are minted at forge time — installed and published
 # pictures are never rewritten.
+#
+# Build 3 (issue #101): the glyphs are redrawn as SOLID silhouettes
+# on a 20x20 grid — the same grid as the QR-style tile field that now
+# textures the window behind them — drawn as objects, not outlines:
+# filled masses with a few negative-space cuts (a lock's keyhole, a
+# die's pips, a terminal's prompt notch). "#" is the accent fill;
+# "o" is the shade fill (a darker tone of the same accent), used as
+# the interior tone on the heaviest masses so they read as solid
+# without going flat. An author can also draw their own: a manifest
+# "icon" in this same 20x20, three-character language outranks the
+# built-in set (see valid_icon_art).
+
 GLYPH_PIXELS = {
     "key": [
-        ".####.......",
-        "#....#......",
-        "#....#......",
-        ".####.#####.",
-        "......#..#..",
-        "......#..##.",
-        "......#.....",
-        "......#.....",
-        "......#.....",
-        "............",
-        "............",
-        "............",
+        "....................",
+        "....######..........",
+        "..##########........",
+        ".############.......",
+        ".####....####.......",
+        "###........###......",
+        "###........###......",
+        "###........###......",
+        ".####....####.......",
+        ".############.......",
+        "..##########........",
+        "....#######.........",
+        ".......####.........",
+        ".......####.........",
+        ".......####..####...",
+        ".......####.........",
+        ".......####..####...",
+        ".......####.........",
+        ".......####.........",
+        "....................",
     ],
     "lock": [
-        "....####....",
-        "...#....#...",
-        "...#....#...",
-        "...#....#...",
-        "..########..",
-        "..########..",
-        "..###..###..",
-        "..###..###..",
-        "..########..",
-        "..########..",
-        "............",
-        "............",
+        "....................",
+        ".......######.......",
+        ".....##########.....",
+        "....###......###....",
+        "....##........##....",
+        "....##........##....",
+        "....##........##....",
+        "...##############...",
+        "..################..",
+        "..################..",
+        "..#######..#######..",
+        "..######....######..",
+        "..######....######..",
+        "..#######..#######..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "...##############...",
+        "....................",
+        "....................",
     ],
     "hash": [
-        "............",
-        "...#..#.....",
-        "...#..#.....",
-        ".#########..",
-        "...#..#.....",
-        "...#..#.....",
-        ".#########..",
-        "...#..#.....",
-        "...#..#.....",
-        "............",
-        "............",
-        "............",
+        "....................",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        ".##################.",
+        ".##################.",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        ".##################.",
+        ".##################.",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
     ],
     "text": [
-        ".##########.",
-        ".#........#.",
-        ".#.######.#.",
-        ".#........#.",
-        ".#.######.#.",
-        ".#........#.",
-        ".#.####...#.",
-        ".#........#.",
-        ".##########.",
-        "............",
-        "............",
-        "............",
+        "....................",
+        ".##################.",
+        ".##################.",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
     ],
     "swap": [
-        "............",
-        "....#####...",
-        "...#....##..",
-        "..#########.",
-        "...#....##..",
-        "....#####...",
-        "....#####...",
-        "...##....#..",
-        "..#########.",
-        "...##....#..",
-        "....#####...",
-        "............",
+        "....................",
+        "..........####......",
+        "..........#####.....",
+        "...################.",
+        ".##################.",
+        "###################.",
+        "...################.",
+        "..........#####.....",
+        "..........####......",
+        "....................",
+        "....................",
+        "......####..........",
+        ".....#####..........",
+        ".################...",
+        ".##################.",
+        ".##################.",
+        ".################...",
+        ".....#####..........",
+        "......####..........",
+        "....................",
     ],
     "gear": [
-        "............",
-        ".....##.....",
-        "..#..##..#..",
-        "..#.####.#..",
-        "....####....",
-        ".##########.",
-        ".##########.",
-        "....####....",
-        "..#.####.#..",
-        "..#..##..#..",
-        ".....##.....",
-        "............",
+        ".........##.........",
+        ".........##.........",
+        "....#....##....#....",
+        ".....#........#.....",
+        "......########......",
+        "...###oooooooo#####.",
+        "..#ooooo######ooooo#",
+        "..#oooo#......#oooo#",
+        "..#ooo#........#ooo#",
+        "..#ooo#........#ooo#",
+        "..#ooo#........#ooo#",
+        "..#oooo#......#oooo#",
+        "..#ooooo######ooooo#",
+        "...###oooooooo#####.",
+        "......########......",
+        ".....#........#.....",
+        "....#....##....#....",
+        ".........##.........",
+        ".........##.........",
+        "....................",
     ],
     "network": [
-        ".....##.....",
-        "....#..#....",
-        "....#..#....",
-        ".....##.....",
-        "....#..#....",
-        "...#....#...",
-        "..#......#..",
-        ".#........#.",
-        "#..#....#..#",
-        "#..#....#..#",
-        ".##......##.",
-        "............",
+        "....................",
+        ".........##.........",
+        ".........##.........",
+        "........#oo#........",
+        ".......#oooo#.......",
+        "........#oo#........",
+        ".........##.........",
+        ".........##.........",
+        "...##.....##.....##.",
+        "..#oo#....##....#oo#",
+        "..#ooo##..##..##ooo#",
+        "..#oooo#..##..#oooo#",
+        "...#oo#...##...#oo#.",
+        "....##....##....##..",
+        "....##..........##..",
+        "....##..........##..",
+        "....##..........##..",
+        "...####........####.",
+        "....................",
+        "....................",
     ],
     "image": [
-        ".##########.",
-        ".#........#.",
-        ".#..#.....#.",
-        ".#.###....#.",
-        ".#.#####..#.",
-        ".##########.",
-        ".#......###.",
-        ".#....#####.",
-        ".#..#######.",
-        ".##########.",
-        "............",
-        "............",
+        "....................",
+        ".##################.",
+        ".#o##############o#.",
+        ".##..............##.",
+        ".##...####.......##.",
+        ".##..#oooo#......##.",
+        ".##...####.......##.",
+        ".##..............##.",
+        ".##..........#####..",
+        ".##........##oooo#..",
+        ".##......##oooooo#..",
+        ".##....##oooooooo#..",
+        ".##..##oooooooooo#..",
+        ".#o##ooooooooooooo#.",
+        ".##################.",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
     ],
     "music": [
-        "........##..",
-        ".......#..#.",
-        ".......#...#",
-        ".......#....",
-        ".......#....",
-        "......##....",
-        ".....####...",
-        "....######..",
-        "....######..",
-        ".....####...",
-        "............",
-        "............",
+        "....................",
+        "..........########..",
+        "..........#########.",
+        "..........##.....##.",
+        "..........##......#.",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        ".....######.........",
+        "....########........",
+        "...##########.......",
+        "...##########.......",
+        "....########........",
+        ".....######.........",
+        "....................",
+        "....................",
+        "....................",
     ],
     "dice": [
-        "............",
-        ".##########.",
-        ".##########.",
-        ".##......##.",
-        ".##..##..##.",
-        ".##..##..##.",
-        ".##......##.",
-        ".##..##..##.",
-        ".##..##..##.",
-        ".##########.",
-        ".##########.",
-        "............",
+        "....................",
+        ".##################.",
+        "####################",
+        "####################",
+        "###..............###",
+        "###..###.....###.###",
+        "###..###.....###.###",
+        "###..###.....###.###",
+        "###..............###",
+        "########..##########",
+        "########..##########",
+        "###..............###",
+        "###..###..###....###",
+        "###..###..###....###",
+        "###..###..###....###",
+        "###..............###",
+        "####################",
+        "####################",
+        ".##################.",
+        "....................",
     ],
     "book": [
-        "............",
-        ".#........#.",
-        ".##......##.",
-        ".#.#....#.#.",
-        ".#..#..#..#.",
-        ".#..#..#..#.",
-        ".#...##...#.",
-        ".#........#.",
-        ".#........#.",
-        "..########..",
-        "............",
-        "............",
+        "....................",
+        ".####............###",
+        ".######........#####",
+        ".########....#######",
+        ".###################",
+        ".###################",
+        ".###################",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".###################",
+        ".###################",
+        "....................",
     ],
     "terminal": [
-        "............",
-        ".##########.",
-        ".#........#.",
-        ".#.##.....#.",
-        ".#..##....#.",
-        ".#.##.....#.",
-        ".#......###.",
-        ".#........#.",
-        ".##########.",
-        "............",
-        "............",
-        "............",
+        "....................",
+        ".##################.",
+        ".##################.",
+        ".##..............##.",
+        ".##..##..........##.",
+        ".##...##.........##.",
+        ".##....##........##.",
+        ".##...##.........##.",
+        ".##..##..........##.",
+        ".##..............##.",
+        ".##....#######...##.",
+        ".##..............##.",
+        ".##..............##.",
+        ".##################.",
+        ".##################.",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
     ],
     "shield": [
-        "............",
-        "..########..",
-        "..########..",
-        "..##....##..",
-        "..##....##..",
-        "...#....#...",
-        "...#.##.#...",
-        "....####....",
-        ".....##.....",
-        ".....##.....",
-        "......#.....",
-        "............",
+        "....................",
+        "...##############...",
+        "..################..",
+        ".##################.",
+        ".##################.",
+        ".##################.",
+        ".####..######..####.",
+        "..####..####..####..",
+        "...#############....",
+        "....############....",
+        ".....##########.....",
+        "......########......",
+        ".......######.......",
+        "........####........",
+        ".........##.........",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
     ],
     "clock": [
-        "............",
-        "....####....",
-        "..##....##..",
-        "..#......#..",
-        "..#..#...#..",
-        "..#..##..#..",
-        "..#......#..",
-        "..#......#..",
-        "..##....##..",
-        "....####....",
-        "............",
-        "............",
+        "....................",
+        "......########......",
+        "....############....",
+        "...##############...",
+        "..################..",
+        "..################..",
+        "..######..########..",
+        "..######...#######..",
+        "..######....######..",
+        "..######.....#####..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "...##############...",
+        "....############....",
+        "......########......",
+        "....................",
+        "....................",
+        "....................",
     ],
     "chart": [
-        "............",
-        "............",
-        ".......#....",
-        ".......#....",
-        "...#...#....",
-        "...#...#.#..",
-        "...#...###..",
-        ".#.#...###..",
-        ".###...###..",
-        ".#########..",
-        ".#########..",
-        "............",
+        "....................",
+        "....................",
+        "....................",
+        "...##...............",
+        "...##.....##........",
+        "...##.....##........",
+        "...##.....##..##....",
+        "...##.....##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "..#oo##oo#oo##oo##..",
+        "..################..",
+        "....................",
+        "....................",
+        "....................",
     ],
     "star": [
-        "............",
-        ".....#......",
-        ".....#......",
-        "....###.....",
-        ".#########..",
-        "..#######...",
-        "...#####....",
-        "....###.....",
-        "...##.##....",
-        "...#...#....",
-        "..#.....#...",
-        "............",
+        ".........##.........",
+        ".........##.........",
+        "........####........",
+        "........####........",
+        ".......######.......",
+        ".##################.",
+        "..################..",
+        "...##############...",
+        "....############....",
+        ".....##########.....",
+        ".....##########.....",
+        "....############....",
+        "....###..##..###....",
+        "...###....##...###..",
+        "...##......##...##..",
+        "..##........##...##.",
+        "..#..........#....#.",
+        "....................",
+        "....................",
+        "....................",
     ],
 }
 
@@ -8343,6 +8484,155 @@ _GLYPH_KEYWORDS = [
 ]
 
 
+def valid_icon_art(raw):
+    # Author-supplied face art (Build 3, issue #101): a manifest's
+    # "icon" — exactly 20 strings of exactly 20 characters over
+    # {'.', '#', 'o'} ('#' accent fill, 'o' shade fill, '.' empty),
+    # the same pixel language as GLYPH_PIXELS. Returns the rows
+    # normalized (a fresh list of plain strings) or None when the
+    # art is absent or malformed in any way. Callers decide what
+    # None means: a forge refuses in plain words; a picture parse
+    # treats bad art as no art, so a damaged icon never bricks a
+    # cartridge — it falls back to the glyph.
+    if not isinstance(raw, list) or len(raw) != 20:
+        return None
+    rows = []
+    for row in raw:
+        if not isinstance(row, str) or len(row) != 20:
+            return None
+        if any(c not in ".#o" for c in row):
+            return None
+        rows.append(row)
+    return rows
+
+
+ICON_ART_REFUSAL = (
+    "The icon art is not in the shape a cartridge face draws: "
+    "20 rows of 20 characters each, using only . (empty), "
+    "# (accent) and o (shade). Fix the icon in the manifest, "
+    "or take it out and let the chip wear its glyph."
+)
+
+
+def _icon_art_of(payload):
+    # The payload's own declared art, validated — None when the
+    # payload carries none or carries a damaged one.
+    if not isinstance(payload, dict):
+        return None
+    return valid_icon_art(payload.get("icon"))
+
+
+def _manifest_icon(manifest):
+    # A repo manifest's declared icon, for the install fetch: a
+    # manifest that declares art in the wrong shape refuses the
+    # install in plain words (the same refusal a forge gives) —
+    # silently dropping the author's art would forge a face they
+    # never approved. No icon declared is simply no icon.
+    raw = (manifest or {}).get("icon")
+    if not raw:
+        return []
+    rows = valid_icon_art(raw)
+    if rows is None:
+        raise ValueError(ICON_ART_REFUSAL)
+    return rows
+
+
+def _payload_icon(data):
+    # An endpoint body's declared icon: (rows, error) — rows is []
+    # when no art was sent; error is the plain-words refusal when
+    # art was sent in the wrong shape.
+    raw = (data or {}).get("icon")
+    if not raw:
+        return [], ""
+    rows = valid_icon_art(raw)
+    if rows is None:
+        return [], ICON_ART_REFUSAL
+    return rows, ""
+
+
+def _tile_field_seed(name):
+    # The legacy pattern's seed discipline: 7 folded with the
+    # name's characters — the window's field and the seeded
+    # fallback share one seed so a cartridge's texture is stable
+    # across forges of the same name.
+    seed = 7
+    for ch in str(name or ""):
+        seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
+    return seed
+
+
+def _draw_tile_field(rect, wx, wy, win, name, rgb, window_rgb, skip=None):
+    # The window's background texture (Build 3, issue #101): a
+    # QR-style tile field on the window's own 20x20 grid — tiles
+    # seeded from the cartridge's name with the legacy pattern's
+    # LCG, and QR finder squares in three corners (a 7x7 finder:
+    # filled border, one-cell gap, filled 3x3 core). Drawn in the
+    # face accent dimmed to a texture, behind the glyph. Cells the
+    # silhouette will stamp (skip) take the field UNDER the art
+    # instead of the finder squares: the glyph always covers the
+    # finders, so letting them draw there only punched two big
+    # holes through every solid mass the field was meant to sit
+    # behind.
+    cell = win // 20
+    seed = _tile_field_seed(name)
+    skip = skip or set()
+
+    def finder(fx, fy):
+        rect(wx + fx * cell, wy + fy * cell,
+             wx + (fx + 7) * cell, wy + (fy + 7) * cell, rgb)
+        rect(wx + (fx + 1) * cell, wy + (fy + 1) * cell,
+             wx + (fx + 6) * cell, wy + (fy + 6) * cell, window_rgb)
+        rect(wx + (fx + 2) * cell, wy + (fy + 2) * cell,
+             wx + (fx + 5) * cell, wy + (fy + 5) * cell, rgb)
+
+    def in_finder(cx, cy):
+        return ((cx < 8 and cy < 8) or (cx > 11 and cy < 8)
+                or (cx < 8 and cy > 11))
+
+    for cy in range(20):
+        for cx in range(20):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            if (cx, cy) in skip or in_finder(cx, cy):
+                continue
+            if seed / 0x7FFFFFFF > 0.52:
+                rect(wx + cx * cell, wy + cy * cell,
+                     wx + (cx + 1) * cell, wy + (cy + 1) * cell, rgb)
+    finder(0, 0)
+    finder(13, 0)
+    finder(0, 13)
+
+
+def _draw_silhouette(rect, wx, wy, win, grid, accent, shade):
+    # A 20x20 silhouette over the window's field, drawn like the
+    # Mesh renderer's own stamp: the art's cells stamp at full
+    # window size and the field shows only OUTSIDE the art — the
+    # stamp overwrites whole cells, finders included, and the
+    # field is never allowed to punch holes through a solid mass.
+    # '#' cells in the full accent, 'o' cells in the shade tone,
+    # and a shade offset copy beneath for depth. (An earlier
+    # version redrew the field INSIDE the art and the two read as
+    # one texture — the object dissolved; the stamp is what keeps
+    # it an object.)
+    cell = win // 20
+    off = (win - cell * 20) // 2
+    lift = max(3, cell // 3)
+    for passes in ((1, shade), (0, None)):
+        for cy in range(20):
+            for cx in range(20):
+                ch = grid[cy][cx]
+                if ch == ".":
+                    continue
+                if passes[0]:
+                    rgb = shade
+                    dx = dy = lift
+                else:
+                    rgb = accent if ch == "#" else shade
+                    dx = dy = 0
+                rect(wx + off + cx * cell + dx, wy + off + cy * cell + dy,
+                     wx + off + (cx + 1) * cell + dx,
+                     wy + off + (cy + 1) * cell + dy, rgb)
+
+
 def pick_chip_glyph(payload):
     # The face a payload earns: its own declared glyph first, then
     # the keyword heuristic over name + description, else None —
@@ -8362,18 +8652,22 @@ def pick_chip_glyph(payload):
 
 
 def _cartridge_face_png(payload, keyword):
-    # The card-grade family face (0.1.9e Build 2): the cartridge
-    # drawn with the Mesh pairing cards' machinery — the same
-    # block font, pixel buffer, and PNG assembly — at card
-    # resolution in the classic portrait stance, 528x616 (the old
-    # 96x112 face at 5.5x, same proportions). Family DNA intact:
-    # black shell, rim, coral notched bands top and bottom as the
-    # cartridge's contacts (notches on the bands' inner edges),
-    # one drawn glyph large in its window, then the thing's name,
-    # its use line, and honest small print. A chip no glyph claims
-    # keeps the legacy name-seeded pattern, drawn in the window at
-    # the same grade. Faces are minted at forge time — installed
-    # and published pictures are never rewritten.
+    # The card-grade family face (0.1.9e Build 2; window reworked
+    # in Build 3, issue #101): the cartridge drawn with the Mesh
+    # pairing cards' machinery — the same block font, pixel buffer,
+    # and PNG assembly — at card resolution in the classic portrait
+    # stance, 528x616 (the old 96x112 face at 5.5x, same proportions).
+    # Family DNA intact: black shell, rim, coral notched bands top
+    # and bottom as the cartridge's contacts (notches on the bands'
+    # inner edges), the thing's art large in its window, then its
+    # name, its use line, and honest small print. Build 3's window:
+    # a dim QR-style tile field textures the window, and the glyph
+    # — or the author's own declared "icon" art, which outranks it —
+    # renders over it as a solid silhouette with a shade offset. A
+    # chip no art claims keeps the legacy name-seeded pattern,
+    # drawn plain in the window as before. Faces are minted at
+    # forge time — installed and published pictures are never
+    # rewritten.
     W, H = 528, 616
     BG = (10, 14, 18)
     SHELL = (8, 9, 11)
@@ -8433,26 +8727,51 @@ def _cartridge_face_png(payload, keyword):
     )
     y += 21 + 22
 
-    # The glyph window: rim-framed, dark inside, one drawn glyph
-    # large — or the legacy seeded pattern for a chip (never a
-    # knowledge cartridge) that no glyph claims.
+    # The glyph window: rim-framed, dark inside. Build 3's
+    # treatment: a dim QR-style tile field as the window's texture,
+    # and the art as a solid silhouette over it — the author's own
+    # declared icon first, then the built-in glyph (picked by name
+    # or keyword for a chip, always the book for a knowledge
+    # cartridge). The shade tone is the accent darkened; author
+    # art's 'o' cells draw in it. A chip no art claims (never a
+    # knowledge cartridge) keeps the legacy seeded pattern, plain.
     WIN = 300
     wx = (W - WIN) // 2
     wy = y
     rect(wx - 6, wy - 6, wx + WIN + 6, wy + WIN + 6, RIM)
     rect(wx, wy, wx + WIN, wy + WIN, WINDOW)
-    glyph = pick_chip_glyph(payload) if keyword != "navi-rag" else "book"
-    if glyph is not None and glyph in GLYPH_PIXELS:
-        grid = GLYPH_PIXELS[glyph]
-        cell = WIN // 12
-        for cy in range(12):
-            for cx in range(12):
-                if grid[cy][cx] == "#":
-                    rect(
-                        wx + cx * cell, wy + cy * cell,
-                        wx + (cx + 1) * cell, wy + (cy + 1) * cell,
-                        CORAL,
-                    )
+    art = _icon_art_of(payload)
+    glyph = None
+    if art is None:
+        glyph = pick_chip_glyph(payload) if keyword != "navi-rag" else "book"
+        if glyph is not None and glyph in GLYPH_PIXELS:
+            art = GLYPH_PIXELS[glyph]
+    if art is not None:
+        shade = tuple(int(c * 0.45) for c in CORAL)
+        field = tuple(int(c * 0.30) for c in CORAL)
+        # The art's own halo: the silhouette dilated by one cell in
+        # the window color, drawn FIRST — it clears the field out
+        # of the object's neighborhood so the eye meets a dark halo,
+        # then the silhouette, never field-against-accent noise.
+        # Behind it, the whole window sits on the shade's backplate
+        # so the texture reads as one woven field, the way the
+        # Mesh renderer's cards carry their accent field.
+        _cell = WIN // 20
+        _filled = {(cx, cy) for cy in range(20) for cx in range(20)
+                   if art[cy][cx] != "."}
+        _halo = set()
+        for (cx, cy) in _filled:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if 0 <= cx + dx < 20 and 0 <= cy + dy < 20:
+                        _halo.add((cx + dx, cy + dy))
+        rect(wx, wy, wx + WIN, wy + WIN, shade)
+        for (cx, cy) in sorted(_halo):
+            rect(wx + cx * _cell, wy + cy * _cell,
+                 wx + (cx + 1) * _cell, wy + (cy + 1) * _cell, WINDOW)
+        _draw_tile_field(rect, wx, wy, WIN, payload.get("name"), field, WINDOW,
+                         skip=_filled)
+        _draw_silhouette(rect, wx, wy, WIN, art, CORAL, shade)
     else:
         palette = [
             (34, 211, 238), (245, 181, 68), (52, 211, 153),
@@ -8623,6 +8942,12 @@ def parse_cartridge_png(data):
                         "output": str(payload.get("output") or ""),
                         "files": _valid_chip_files(payload.get("files"), code),
                         "glyph": str(payload.get("glyph") or ""),
+                        # Build 3 (#101): the author's declared
+                        # icon art rides the same way. A damaged
+                        # icon parses as NO icon — the face falls
+                        # back to the glyph, and a bad picture of
+                        # art never bricks the cartridge.
+                        "icon": _icon_art_of(payload) or [],
                         # Issue #99: the version the picture itself
                         # carries (Build 2 and later forges); older
                         # pictures simply have none — "" here, and
@@ -9548,7 +9873,7 @@ def build_rag_index(documents):
     return {"documents": docs, "chunkCount": total}
 
 
-def write_rag_pack(slug, name, description, documents):
+def write_rag_pack(slug, name, description, documents, icon=None):
     # The pack on disk: its documents as files plus index.json —
     # the built index and the pack metadata — beside them. A
     # rewrite (update, re-forge) replaces the documents wholesale.
@@ -9583,12 +9908,20 @@ def write_rag_pack(slug, name, description, documents):
     index = build_rag_index(documents)
     index["name"] = name
     index["description"] = description
+    # Build 3 (#101): the pack's declared icon art lives on its
+    # index record, the pack folder's metadata home — validated
+    # here so a bad shape never reaches a face; the face falls
+    # back to the book. Callers who mean to REFUSE bad art (the
+    # Studio, the exports) validate before they get here.
+    icon_rows = valid_icon_art(icon)
+    if icon_rows:
+        index["icon"] = icon_rows
     with open(os.path.join(pdir, "index.json"), "w") as f:
         json.dump(index, f)
     return index
 
 
-def build_rag_repo_files(name, description, documents, version, index_text=""):
+def build_rag_repo_files(name, description, documents, version, index_text="", icon=None):
     # The GitHub-ready repo layout for a pack — the format the
     # installer already reads, made explicit. documents is
     # [{title, body}] with title a bare file name (the pack folder
@@ -9608,6 +9941,14 @@ def build_rag_repo_files(name, description, documents, version, index_text=""):
         "index": "index.json",
         "generatedBy": "Apex — RAG Studio pack export",
     }
+    # Build 3 (#101): the pack's declared icon art ships in its
+    # manifest, the way a chip's does — malformed art refuses the
+    # export in plain words rather than shipping a manifest whose
+    # face silently drops it.
+    if icon:
+        if valid_icon_art(icon) is None:
+            raise ValueError(ICON_ART_REFUSAL)
+        manifest["icon"] = valid_icon_art(icon)
     lines = [
         "# " + name,
         "",
@@ -9706,7 +10047,7 @@ def rag_repo_files(slug, version):
         index_text = ""
     files = build_rag_repo_files(
         index.get("name") or slug, index.get("description") or "",
-        documents, version, index_text,
+        documents, version, index_text, icon=index.get("icon"),
     )
     override = rag_readme_override(slug)
     if override is not None:
@@ -9741,6 +10082,14 @@ def build_chip_repo_files(chip, version):
     # it travels — the export's manifest and its picture agree.
     chip = dict(chip)
     chip["version"] = version
+    # Build 3 (#101): the chip's declared icon art rides into the
+    # forged picture and the export manifest alike; malformed art
+    # refuses the export in plain words rather than shipping a
+    # picture whose face silently drops it.
+    if chip.get("icon"):
+        if valid_icon_art(chip.get("icon")) is None:
+            raise ValueError(ICON_ART_REFUSAL)
+        chip["icon"] = valid_icon_art(chip.get("icon"))
     manifest = {
         "format": "navi-chip/1",
         "name": chip["name"],
@@ -9750,6 +10099,7 @@ def build_chip_repo_files(chip, version):
         "files": [f["path"] for f in chip_files],
         "output": chip.get("output") or "",
         "glyph": pick_chip_glyph(chip) or "",
+        "icon": valid_icon_art(chip.get("icon")) or [],
         "generatedBy": "Apex — Chip Studio chip export",
     }
     lines = [
@@ -10035,6 +10385,14 @@ def build_rag_cartridge_png(payload):
     # Build 2: the knowledge cartridge wears the same card-grade
     # face as a chip — the face builder reads the pack's own name,
     # description, version, and document count off the payload.
+    # Build 3 (#101): a payload whose declared icon is damaged
+    # refuses here, in plain words — forging a pack cartridge is a
+    # forge path, and the face never silently drops the art. (The
+    # PARSE side stays lenient: a damaged picture installs and
+    # falls back.)
+    if payload.get("icon"):
+        if valid_icon_art(payload.get("icon")) is None:
+            raise ValueError(ICON_ART_REFUSAL)
     face = _cartridge_face_png(payload, "navi-rag")
     blob = base64.b64encode(
         zlib.compress(json.dumps(payload).encode("utf-8"), 9)
@@ -10102,6 +10460,9 @@ def rag_cartridge_payload(slug):
         "documents": src["documents"],
         "generatedBy": "Apex — RAG Studio cartridge export",
         "chunkCountAtExport": index.get("chunkCount") or 0,
+        # Build 3 (#101): the pack's declared art rides inside the
+        # cartridge and draws its face, like a chip's icon.
+        "icon": valid_icon_art(index.get("icon")) or [],
     }
 
 
@@ -10137,7 +10498,8 @@ def install_rag_cartridge(payload):
     } if os.path.isdir(RAG_PACKS_DIR) else set()
     if slug in taken or any(r.get("full_name") == "local/" + slug for r in rows):
         return None, "A pack named " + name + " is already on this machine — remove it first, or rename the cartridge's pack."
-    write_rag_pack(slug, name, description, documents)
+    write_rag_pack(slug, name, description, documents,
+                   icon=valid_icon_art(payload.get("icon")))
     rows.append({
         "full_name": "local/" + slug,
         "name": name,
@@ -12129,7 +12491,7 @@ class Handler(BaseHTTPRequestHandler):
             slug = os.path.basename((qs.get("slug") or [""])[0])
             pack = rag_pack_documents(slug) if slug else None
             if pack:
-                self._send(200, {"ok": True, "slug": slug, "name": pack["name"], "description": pack["description"], "documents": pack["documents"]})
+                self._send(200, {"ok": True, "slug": slug, "name": pack["name"], "description": pack["description"], "documents": pack["documents"], "icon": valid_icon_art((_rag_pack_index(slug) or {}).get("icon")) or []})
             else:
                 self._send(200, {"ok": False, "error": "That pack is not in the folder."})
         elif self.path.split("?")[0] == "/api/rag/export-file":
@@ -13420,6 +13782,10 @@ class Handler(BaseHTTPRequestHandler):
             if not fname.endswith(".png") or not name or not code.strip():
                 self._send(200, {"ok": False, "error": "A chip save needs a chip file, a name, and code."})
             else:
+                icon_rows, icon_err = _payload_icon(data)
+                if icon_err:
+                    self._send(200, {"ok": False, "error": icon_err})
+                    return
                 payload = {
                     "name": name,
                     "description": str(data.get("description") or "")[:500],
@@ -13428,6 +13794,7 @@ class Handler(BaseHTTPRequestHandler):
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
                     "glyph": str(data.get("glyph") or "")[:40],
                     "version": str(data.get("version") or "")[:40],
+                    "icon": icon_rows,
                 }
                 os.makedirs(CHIPS_DIR, exist_ok=True)
                 with open(os.path.join(CHIPS_DIR, fname), "wb") as f:
@@ -13673,7 +14040,10 @@ class Handler(BaseHTTPRequestHandler):
                         "body": str(raw.get("body"))[:RAG_MAX_DOC_CHARS],
                     })
             documents = documents[:RAG_MAX_DOCS]
-            if not name:
+            icon_rows, icon_err = _payload_icon(data)
+            if icon_err:
+                self._send(200, {"ok": False, "error": icon_err})
+            elif not name:
                 self._send(200, {"ok": False, "error": "A pack needs a name."})
             elif not documents:
                 self._send(200, {"ok": False, "error": "A pack needs at least one document — pick files in the Studio or name a folder on disk."})
@@ -13689,7 +14059,8 @@ class Handler(BaseHTTPRequestHandler):
                 while slug in taken:
                     slug = base + "-" + str(n)
                     n += 1
-                write_rag_pack(slug, name, description, documents)
+                write_rag_pack(slug, name, description, documents,
+                               icon=icon_rows or None)
                 rows = [r for r in rows if r.get("full_name") != "local/" + slug]
                 rows.append({
                     "full_name": "local/" + slug,
@@ -13737,6 +14108,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif str(raw.get("body") or "").strip():
                     documents.append({"title": title, "body": str(raw.get("body"))[:RAG_MAX_DOC_CHARS]})
             documents = documents[:RAG_MAX_DOCS]
+            icon_rows, icon_err = _payload_icon(data)
+            if icon_err:
+                self._send(200, {"ok": False, "error": icon_err})
+                return
             if not slug or _rag_pack_index(slug) is None:
                 self._send(200, {"ok": False, "error": "That pack is not in the folder."})
             elif not name:
@@ -13744,7 +14119,8 @@ class Handler(BaseHTTPRequestHandler):
             elif not documents:
                 self._send(200, {"ok": False, "error": "A pack needs at least one document — add one in the Studio before saving."})
             else:
-                write_rag_pack(slug, name, description, documents)
+                write_rag_pack(slug, name, description, documents,
+                               icon=icon_rows or None)
                 rows = load_rag_installs()
                 for r in rows:
                     if r.get("local_dir") == slug:
@@ -14173,6 +14549,10 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not code.strip():
                 self._send(200, {"ok": False, "error": "A chip needs a name and code.", "filename": None})
             else:
+                icon_rows, icon_err = _payload_icon(data)
+                if icon_err:
+                    self._send(200, {"ok": False, "error": icon_err, "filename": None})
+                    return
                 payload = {
                     "name": name,
                     "description": str(data.get("description") or "")[:500],
@@ -14181,6 +14561,7 @@ class Handler(BaseHTTPRequestHandler):
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
                     "glyph": str(data.get("glyph") or "")[:40],
                     "version": str(data.get("version") or "")[:40],
+                    "icon": icon_rows,
                 }
                 slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "chip"
                 filename = slug + ".png"
