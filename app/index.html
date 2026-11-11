@@ -708,6 +708,30 @@
        base rule above) on phones too. */
     #view-root.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
     #view-root.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    /* Chat's frame, height-bound (Build 10, issue #131): the
+       height above reckons the chat view as the viewport minus
+       the 60px top bar alone — but the view does not start
+       under the bar; it starts under the presence bar too, and
+       the frame carries main's own padding above and below.
+       Those heights were never in the sum, so the frame stood
+       taller than the screen by exactly them (78px at the
+       field's geometry: 12 + 44 + 10 + 12), the composer's
+       foot sat that far BELOW the screen's edge, and the page
+       scroll — the phone model's own — was what carried it in
+       and out of view. While Chat is up (render() marks the
+       frame .in-chat), the frame takes the viewport's height
+       exactly and the centre column and the view flex inside
+       it: main is height-bound with the presence bar as its
+       fixed head, the chat view flexes in what remains, and
+       #msgs — already flex:1 with its own overflow — is the
+       only scroll region. The composer's bottom is then the
+       frame's rendered bottom by construction, whatever rides
+       above it (the bar, a warning card), and the page has
+       nothing left to scroll. Other views keep the page-flow
+       model above; the composer's width is untouched. */
+    #app.in-chat { height:calc(100dvh / var(--uiscale, 1)); }
+    #app.in-chat main { flex:1 1 0; min-height:0; overflow:hidden; }
+    #app.in-chat #view-root.chat-view { flex:1 1 auto; height:auto; min-height:0; }
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     .status-tabs { top:-12px; margin-top:-12px; }
@@ -6657,6 +6681,11 @@ function render() {
   appEl.classList.toggle("closed", navClosed);
   appEl.classList.toggle("no-status", statusHidden);
   appEl.classList.toggle("dock-open", dockOpen);
+  // Build 10 (#131): while Chat is up, the frame carries the
+  // in-chat class — at phone widths that is what height-bounds
+  // the frame (see the small-screen block), so the composer's
+  // foot is the frame's rendered bottom, not a page position.
+  appEl.classList.toggle("in-chat", view === "Chat");
   var smallScreen = window.innerWidth <= 800;
   toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
