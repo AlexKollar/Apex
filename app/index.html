@@ -255,12 +255,14 @@
      her portrait, dot, name and living line, with the status
      column's pane button hugging the right edge. One persistent
      element, mounted outside the per-view render. The pane
-     button's own rules are its pre-#123 ones (Build 6), restored
+     button's sizing rule is its pre-#123 one (Build 6), restored
      with the button: a 44px target whose pressed state wears
-     the accent. */
+     the accent — keyed to the frame's own state classes since
+     Build 9 (#130), the classes that show the column/dock. */
   #presence-bar { display:flex; align-items:center; gap:10px; flex:0 0 auto; margin-bottom:10px; }
-  #chat-status-toggle { flex:0 0 auto; width:44px; height:44px; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; }
-  #chat-status-toggle[aria-pressed="true"] { color:var(--cy); border-color:var(--cy); }
+  #chat-status-toggle { flex:0 0 auto; width:44px; height:44px; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; transition:background var(--motion-fast) ease, filter var(--motion-fast) ease, transform var(--motion-press) ease; }
+  @media (max-width:800px) { #app.dock-open #chat-status-toggle { color:var(--cy); border-color:var(--cy); } }
+  @media (min-width:801px) { #app:not(.no-status) #chat-status-toggle { color:var(--cy); border-color:var(--cy); } }
   #presence-bar .chat-presence { display:flex; align-items:center; gap:9px; flex:1 1 auto; min-width:0; }
   .chat-presence .dot { flex:0 0 auto; }
   .chat-presence-name { font-weight:700; line-height:1.25; }
@@ -554,7 +556,16 @@
   nav button, button.act, button.ghost, a.act, a.ghost, .chipbtn, .card, .switch .knob { transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease, filter var(--motion-fast) ease, transform var(--motion-press) ease, left var(--motion-fast) ease; }
   nav button:hover { background:rgba(34,211,238,.12); color:var(--text); }
   nav button.on:hover { background:var(--cy); color:#000; }
-  button.ghost:hover, a.ghost:hover, .chipbtn:hover { border-color:var(--cy); color:var(--cy); }
+  button.ghost:not(#chat-status-toggle):hover, a.ghost:hover, .chipbtn:hover { border-color:var(--cy); color:var(--cy); }
+  /* The pane button's hover is a background tint only (Build 9,
+     #130): the state accent above is the one thing its face may
+     ever say, and :hover must not be able to say it — on a phone
+     the tap that opens the dock lands on this button, and a
+     hover accent left behind would paint it "open" over a
+     closed dock after any dismiss. Its color and border-color
+     also leave the transition list (its own rule above), so
+     the face changes with the state, never after it. */
+  #chat-status-toggle:hover { background:rgba(34,211,238,.12); }
   button.act:hover, a.act:hover { filter:brightness(1.12); }
   button.act:active, button.ghost:active, a.act:active, a.ghost:active, .chipbtn:active, nav button:active { transform:scale(.97); }
   .card:hover { border-color:#2e4356; }
@@ -4173,8 +4184,17 @@ var chatStatusToggleBtn = null;
 function renderPresenceBar() {
   if (!presenceBarEl) return;
   var pres = presenceState();
+  // The button's pressed state is READ OFF THE FRAME (Build 9,
+  // #130): render() has just set #app's classes from the state
+  // flags, and those classes are what actually show or hide the
+  // column (desktop) and the dock (phone) — so the button
+  // transcribes the rendered fact instead of re-deriving it
+  // from a parallel flag expression, and its accent in CSS is
+  // keyed to the same classes. One fact, one place: the button
+  // cannot tell a different story from the screen.
+  var framePressed = window.innerWidth <= 800 ? appEl.classList.contains("dock-open") : !appEl.classList.contains("no-status");
   presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div>"
-    + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + ((window.innerWidth <= 800 ? dockOpen : !statusHidden) ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
+    + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
   chatStatusToggleBtn = document.getElementById("chat-status-toggle");
   if (chatStatusToggleBtn) chatStatusToggleBtn.onclick = function () { toggleStatusColumn(); };
 }
