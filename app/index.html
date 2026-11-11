@@ -267,6 +267,13 @@
   .chat-presence .dot { flex:0 0 auto; }
   .chat-presence-name { font-weight:700; line-height:1.25; }
   .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* The status pane's phone identity (0.1.9e Build 11, issue
+     #140): a portrait and name that head the pane's presence
+     row on a phone, where the presence bar itself is retired
+     (see the small-screen block). Hidden at desktop widths —
+     there the bar carries her face, and the pane row stays
+     exactly as it has always been. */
+  .pane-presence-id { display:none; }
   .status-tabs { position:sticky; top:-14px; z-index:5; display:flex; gap:6px; padding:12px 0 8px; margin:-14px 0 0; background:var(--panel2); border-bottom:1px solid var(--line); }
   .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
@@ -302,6 +309,26 @@
      never sliced mid-text by a flex parent again. */
   main .card { flex:0 0 auto; }
   #view-root.chat-view { display:flex; flex-direction:column; overflow:hidden; }
+  /* The frame reaches the window's foot (0.1.9e Build 11,
+     issue #133): the composer carries a negative bottom
+     margin — it bleeds over main's bottom padding so its
+     panel meets the window's edge — but this frame's
+     overflow:hidden clipped the composer at the frame's own
+     bottom edge, which sits one padding (16px) above the
+     window's: the hint row's bottom band — the mode pill's
+     and the chat-only button's lower borders — was sliced
+     at rest, empty thread or full. The frame now takes a
+     negative bottom margin of the same measure, so its
+     bottom edge IS the window's bottom edge and the
+     composer's bleed lands inside the frame; the composer
+     additionally gives up its own negative bottom margin
+     inside the frame, so its margin box is its true height
+     and the thread yields exactly that. Every painted box
+     keeps the place it had — the band that was clipped is
+     simply painted now. The phone block below restates the
+     margin at the phone padding (12px). */
+  #view-root.chat-view { margin-bottom:-16px; }
+  #view-root.chat-view > .composer { margin-bottom:0; }
   /* The Docs view's own layout frame (issue #119): the view is
      a fixed frame — header still, and below it two panes that
      scroll independently, the topic menu and the article, each
@@ -323,17 +350,67 @@
   .stat:last-child { border-bottom:none; padding-bottom:0; margin-bottom:2px; }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:12px; margin-bottom:12px; }
-  /* The Vault pair (build .80, issue #68): an explicit two-column
-     grid spanning the full width of the view — the editor assigned
-     to column 1, the files panel to column 2 — replacing the
-     reversed flex row (.73) whose rendered placement diverged
-     between the shell webview and browsers at wide widths. Grid
-     column assignment renders identically in every engine, and
+  /* The Vault pair (build .80, issue #68; placement reversed
+     in 0.1.9e Build 11, issue #134, superseding #68): an
+     explicit two-column grid spanning the full width of the
+     view — the files panel assigned to column 1, the editor
+     to column 2 — replacing the reversed flex row (.73) whose
+     rendered placement diverged between the shell webview
+     and browsers at wide widths. (#68's grid put the files
+     panel on the RIGHT; the operator's 2026-11-11 direction
+     reverses it — the tree leads, the editor follows, the
+     way the app's own rail leads its views.) Grid column
+     assignment renders identically in every engine, and
      width:100% anchors the pair to the view's edges, never
      mid-page. The phone block below restacks it. */
-  .vault-pair { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:10px; width:100%; align-items:start; margin-top:10px; }
-  .vault-pair .vault-editor { grid-column:1; min-width:0; }
-  .vault-pair .vault-files { grid-column:2; min-width:0; }
+  .vault-pair { display:grid; grid-template-columns:280px minmax(0,1fr); grid-template-rows:minmax(0,1fr); gap:10px; width:100%; align-items:stretch; margin-top:10px; }
+  .vault-pair .vault-files { grid-column:1; grid-row:1; min-width:0; }
+  .vault-pair .vault-editor { grid-column:2; grid-row:1; min-width:0; }
+  /* The Vault's own frame (0.1.9e Build 11, issue #134): the
+     view is height-bound the way Docs is (#119) — the head
+     rows (title, intro, search, recent) are fixed flex heads
+     and the pair flexes into ALL the height that remains, so
+     the workspace reaches the bottom of the window instead
+     of ending where its content did. The files panel scrolls
+     its own tree (the aside/.docs-wiki-nav pattern); the
+     editor is a flex column — the textarea, or the preview,
+     takes the height, and the links strip rides the column's
+     foot. */
+  #view-root.vault-view { display:flex; flex-direction:column; overflow:hidden; }
+  #view-root.vault-view > * { flex:0 0 auto; }
+  #view-root.vault-view > .vault-pair { flex:1 1 auto; min-height:0; }
+  #view-root.vault-view .vault-pair > .card { margin-bottom:0; }
+  .vault-files { overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; min-height:0; }
+  .vault-editor { display:flex; flex-direction:column; min-height:0; }
+  .vault-editor > * { flex:0 0 auto; }
+  #vault-ed { flex:1 1 auto; min-height:0; resize:none; }
+  .vault-editor .vault-preview { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+  /* The preview card is the editor card drawn again (a .card
+     inside the .card): outside Preview's own mode the editor
+     column reads it as the note's rendered half and gives it
+     no flex share — in Edit the textarea takes the column's
+     whole free height, in Split the two split it, and the
+     strip rides the foot either way (Build 11 bake find:
+     the blanket flex above handed the preview a half share
+     in Edit too, and the textarea stopped mid-column). */
+  .vault-editor[data-vault-curmode='edit'] .vault-preview { flex:0 0 auto; }
+  /* Vault focus mode (0.1.9e Build 11, issue #135): the
+     editor alone in the window — the app rail, the status
+     column, the presence bar and the Vault's own head rows
+     yield, and the pair collapses to the editor. The state
+     lives in vaultFocus and nowhere else; the class on #app
+     is render()'s reflection of it — the discipline of the
+     pane button's face (#130): one state, read from the one
+     place it is rendered. */
+  #app.vault-focus, #app.vault-focus.closed, #app.vault-focus.no-status, #app.vault-focus.no-status.closed { grid-template-columns:minmax(0,1fr); }
+  #app.vault-focus nav, #app.vault-focus aside { display:none; }
+  #app.vault-focus main { grid-column:1 / -1; }
+  #app.vault-focus #presence-bar { display:none; }
+  #app.vault-focus .vault-head { display:none; }
+  #app.vault-focus .vault-pair { grid-template-columns:minmax(0,1fr); margin-top:0; }
+  #app.vault-focus .vault-pair .vault-files { display:none; }
+  #app.vault-focus .vault-pair .vault-editor { grid-column:1; }
+  #vault-focus-btn { min-width:40px; min-height:40px; }
   .msg { margin-bottom:10px; } .msg .who { font-size:11px; color:var(--dim); letter-spacing:.1em; }
   /* Issue #116: chat faces — the gutter avatar rides a flex row;
      the presence header wears her bundled portrait. */
@@ -732,6 +809,35 @@
     #app.in-chat { height:calc(100dvh / var(--uiscale, 1)); }
     #app.in-chat main { flex:1 1 0; min-height:0; overflow:hidden; }
     #app.in-chat #view-root.chat-view { flex:1 1 auto; height:auto; min-height:0; }
+    /* The frame's reach at the phone padding (issue #133,
+       the base rule above restated): main pads 12px here. */
+    #view-root.chat-view { margin-bottom:-12px; }
+    /* The Vault's frame at phone widths takes the same height
+       the Docs and Chat frames take in this model (issue
+       #134): the viewport under the 60px top bar, so the view
+       ends at the viewport's foot instead of standing one
+       padding taller than the visible screen on the page's
+       scroll. (Its base height is the flex share on desktop;
+       this restates it for the page-flow phone model.) */
+    #view-root.vault-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; }
+    /* Her presence on a phone (0.1.9e Build 11, issue #140):
+       the bar retires — the status pane's own head row has
+       always carried the same line from the same painter, so
+       the phone showed her twice. The pane row becomes her
+       phone home: portrait and name beside the line, shown
+       only in this block. The bar's pane button retires with
+       the bar — the top bar's dock toggle is the phone's one
+       door (the desktop keeps both of its doors, and #130's
+       accent keying is untouched). The reclaimed height goes
+       back to the content by the frame's own flex geometry:
+       the in-chat bound never reckoned the bar as a term, so
+       no sum anywhere changes. The bar element stays in the
+       DOM and its painter keeps painting it — invisible, and
+       the pane's line updates from the same source either
+       way. */
+    #presence-bar { display:none; }
+    .presence-stat { display:flex; align-items:center; gap:10px; }
+    .pane-presence-id { display:inline-flex; align-items:center; gap:8px; flex:0 0 auto; }
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     .status-tabs { top:-12px; margin-top:-12px; }
@@ -743,6 +849,24 @@
     .vault-pair { grid-template-columns:minmax(0,1fr); }
     .vault-pair .vault-files { grid-column:1; grid-row:1; }
     .vault-pair .vault-editor { grid-column:1; grid-row:2; }
+    /* The Vault's frame at phone widths (0.1.9e Build 11,
+       issue #134): the view takes the same height Docs and
+       Chat take in this model — the viewport under the 60px
+       top bar — and the stacked pair fills it: the tree in a
+       capped band with its own scroll, the editor flexing
+       below it, so neither is trapped in a sliver and the
+       page itself has nothing to scroll. Moving a note by
+       touch goes through the tree's Move picker, as shipped;
+       the drag is not the touch path. Focus mode (#135) on a
+       phone puts the fixed top bar away too, collapses the
+       pair's rows to the editor alone, and its exit button
+       meets the 44px floor. */
+    #view-root.vault-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; }
+    .vault-pair { grid-template-rows:minmax(120px, 38%) minmax(0, 1fr); }
+    #app.vault-focus { padding-top:0; }
+    #app.vault-focus .vault-pair { grid-template-rows:minmax(0, 1fr); }
+    #app.vault-focus .vault-pair .vault-editor { grid-row:1; }
+    #vault-focus-btn { min-width:44px; min-height:44px; }
     .vault-files button, .vault-files select, .vault-files input { min-height:44px; }
     .tabbar { flex-wrap:wrap; }
     .tabbar > * { flex:1 1 30%; min-height:40px; }
@@ -1396,8 +1520,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-10.95";
-var SHIPPED_BUILD_SEQ = 4;
+var BRIDGE_BUILD = "2026-11-11.911";
+var SHIPPED_BUILD_SEQ = 11;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2657,6 +2781,7 @@ var vaultSel = null;
 var vaultDraft = null;
 var vaultDraftPath = null;
 var vaultMode = "split";
+var vaultFocus = false;
 var vaultMsg = "";
 var vaultLoading = false;
 var vaultSaveTimer = null;
@@ -2843,36 +2968,56 @@ function vaultFolderHtml(folder, depth) {
   }
   return h;
 }
+function vaultFocusGlyph() {
+  // The focus door's two faces (0.1.9e Build 11, issue #135),
+  // drawn in the app's icon hand — the 24-grid stroke style
+  // of the presence bar's panel glyph: corners out to expand,
+  // corners in to exit.
+  var box = "<svg aria-hidden='true' focusable='false' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>";
+  return box + (vaultFocus
+    ? "<path d='M8 3v3a2 2 0 0 1-2 2H3'/><path d='M21 8h-3a2 2 0 0 1-2-2V3'/><path d='M3 16h3a2 2 0 0 1 2 2v3'/><path d='M16 21v-3a2 2 0 0 1 2-2h3'/></svg>"
+    : "<path d='M8 3H5a2 2 0 0 0-2 2v3'/><path d='M21 8V5a2 2 0 0 0-2-2h-3'/><path d='M3 16v3a2 2 0 0 0 2 2h3'/><path d='M16 21h3a2 2 0 0 0 2-2v-3'/></svg>");
+}
 function vaultHtml() {
   // Fresh on entry (build .73): the tree refetches when the view is
   // shown with a stale (or never-loaded) listing, so a note Navi
   // filed from chat is simply there — no manual app refresh.
   if (!vaultLoading && Date.now() - vaultLoadedAt > 4000) vaultLoad();
-  var h = "<h3>Vault · the shared desk</h3>";
-  h += "<p style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
-  h += "<div class='row'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button></div>";
-  h += "<div id='vault-search-results'></div>";
-  if (vaultMsg) h += "<p role='status'>" + esc(vaultMsg) + "</p>";
+  var h = "<h3 class='vault-head'>Vault · the shared desk</h3>";
+  h += "<p class='vault-head' style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
+  h += "<div class='row vault-head'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button></div>";
+  h += "<div id='vault-search-results' class='vault-head'></div>";
+  if (vaultMsg) h += "<p role='status' class='vault-head'>" + esc(vaultMsg) + "</p>";
   if (vaultMissing) {
-    h += "<div class='card'>No note called <b>" + esc(vaultMissing) + "</b> yet. <button class='ghost' data-vault-createmissing='1'>Create it</button> <button class='ghost' data-vault-dismissmissing='1'>Dismiss</button></div>";
+    h += "<div class='card vault-head'>No note called <b>" + esc(vaultMissing) + "</b> yet. <button class='ghost' data-vault-createmissing='1'>Create it</button> <button class='ghost' data-vault-dismissmissing='1'>Dismiss</button></div>";
   }
   if (!vaultState) return h + "<p style='color:var(--dim)'>Opening the vault…</p>";
   var templates = vaultState.notes.filter(function (n) { return n.path.indexOf("Templates/") === 0; });
   var recent = vaultState.notes.slice().sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); }).slice(0, 5);
   if (recent.length) {
-    h += "<div class='row' style='margin-top:8px'><span class='mono' style='font-size:10px;color:var(--dim)'>RECENT</span>" + recent.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.title) + "</button>"; }).join("") + "</div>";
+    h += "<div class='row vault-head' style='margin-top:8px'><span class='mono' style='font-size:10px;color:var(--dim)'>RECENT</span>" + recent.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.title) + "</button>"; }).join("") + "</div>";
   }
-  // Obsidian-style layout (build .73; rebuilt in build .80, issue
-  // #68): the pair is a .vault-pair grid — the editor assigned to
-  // column 1, the files panel to column 2 — so the panel sits on
-  // the RIGHT by explicit placement, identically in the shell
-  // webview and in a browser, at any desktop width. (The .73
-  // reversed flex row claimed the same layout, but its rendered
-  // placement diverged in the operator's live reads.) The files
-  // card is built into its own string here and joins the pair
-  // after the editor below; the grid assignments, not the source
-  // order, decide the sides. On narrow screens the pair stacks
-  // with the tree first (see the phone CSS block).
+  // Obsidian-style layout (build .73; rebuilt in build .80,
+  // issue #68; placement reversed in 0.1.9e Build 11, issue
+  // #134, superseding #68): the pair is a .vault-pair grid —
+  // the files panel assigned to column 1, the editor to
+  // column 2, BOTH pinned to row 1 — so the panel sits on
+  // the LEFT by explicit placement, identically in the shell
+  // webview and in a browser, at any desktop width. (#68 put
+  // it on the right; the operator's 2026-11-11 direction
+  // reverses it.) The row pin is load-bearing, not ceremony
+  // (Build 11 bake find): with the row left to auto-placement
+  // the editor — whose column's contents overflow it while
+  // the frame settles — was auto-placed into an implicit
+  // second row sized to a sliver of its content, and the
+  // declared stretching row went to the tree alone; the
+  // editor card sat at the pair's head at content height
+  // with the textarea one line tall. The files card is
+  // built into its own string here and joins the pair after
+  // the editor below; the grid assignments, not the source
+  // order, decide the sides. On narrow screens the pair
+  // stacks with the tree first (see the phone CSS block,
+  // which restates the same pins for the stacked rows).
   var filesHtml = "<div class='card vault-files'><div class='row' style='flex-wrap:wrap'><input class='grow' id='vault-new-name' type='text' style='flex:1 1 55%;min-width:0' placeholder='New note name…' aria-label='New note name'>" +
     "<select id='vault-new-folder' aria-label='New note folder' title='Folder for the new note' style='flex:1 1 45%;min-width:0'><option value=''>Vault root</option>" + vaultState.folders.map(function (f) { return "<option value='" + esc(f) + "'>" + esc(f) + "</option>"; }).join("") + "</select>" +
     (templates.length ? "<select id='vault-new-template' aria-label='Start from a template' title='Start from a template' style='flex:1 1 45%;min-width:0'><option value=''>No template</option>" + templates.map(function (t) { return "<option value='" + vaultEnc(t.path) + "'>" + "Template: " + esc(t.title) + "</option>"; }).join("") + "</select>" : "") +
@@ -2885,16 +3030,17 @@ function vaultHtml() {
   if (cur) {
     if (vaultDraftPath !== cur.path) { vaultDraft = cur.content; vaultDraftPath = cur.path; }
     var split = vaultSplitFm(vaultDraft != null ? vaultDraft : cur.content);
-    h += "<div class='vault-pair'><div class='card vault-editor'><div class='row'><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
-      ["edit", "split", "preview"].map(function (m) { return "<button class='" + (vaultMode === m ? "act" : "ghost") + "' data-vault-mode='" + m + "'>" + (m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview") + "</button>"; }).join("") + "</div>" +
+    h += "<div class='vault-pair'><div class='card vault-editor' data-vault-curmode='" + vaultMode + "'><div class='row'><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
+      ["edit", "split", "preview"].map(function (m) { return "<button class='" + (vaultMode === m ? "act" : "ghost") + "' data-vault-mode='" + m + "'>" + (m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview") + "</button>"; }).join("") +
+      "<button class='ghost' id='vault-focus-btn' data-vault-focus='1' aria-pressed='" + (vaultFocus ? "true" : "false") + "' aria-label='" + (vaultFocus ? "Exit focus — restore the full Vault view" : "Expand the editor to fill the window") + "' title='" + (vaultFocus ? "Exit focus (Esc)" : "Focus — the editor fills the window") + "'>" + vaultFocusGlyph() + "</button></div>" +
       "<p class='mono' id='vault-saved' style='font-size:11px;color:var(--dim)'>Saved · " + vaultWordCount(vaultDraft || "") + " words" + (split.fm ? " · frontmatter kept raw, exactly as written" : "") + "</p>";
     if (vaultMode !== "preview") {
-      h += "<textarea id='vault-ed' class='mono' rows='16' spellcheck='false' style='width:100%;box-sizing:border-box' aria-label='Note editor — markdown'>" + esc(vaultDraft || "") + "</textarea>";
+      h += "<textarea id='vault-ed' class='mono' spellcheck='false' style='width:100%;box-sizing:border-box' aria-label='Note editor — markdown'>" + esc(vaultDraft || "") + "</textarea>";
     }
     if (vaultMode !== "edit") {
-      h += "<div class='card' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body) + "</div></div>";
+      h += "<div class='card vault-preview' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body) + "</div></div>";
     }
-    h += "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px'>" +
+    h += "<div class='vault-links' style='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px'>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>BACKLINKS</p>" + (cur.backlinks.length ? cur.backlinks.map(function (b) { return "<button class='ghost' data-vault-open='" + vaultEnc(b) + "'>" + esc(b) + "</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>Nothing links here yet.</p>") + "</div>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>OUTGOING LINKS</p>" + (cur.outgoing.length ? cur.outgoing.map(function (t) { return "<button class='ghost' data-vault-wiki='" + vaultEnc(t) + "'>[[" + esc(t) + "]]</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>No wikilinks in this note.</p>") + "</div>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>TAGS</p>" + (cur.tags.length ? cur.tags.map(function (t) { return "<span class='mono' style='font-size:11px;color:var(--am)'>#" + esc(t) + "</span>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>No #tags in this note.</p>") + "</div>" +
@@ -2955,6 +3101,17 @@ function vaultImportFiles(files, folder) {
     reader.readAsText(f);
   });
 }
+
+// Focus mode's keyboard door (0.1.9e Build 11, issue #135):
+// Escape leaves focus — only while focus is on and the Vault
+// is the view. It is registered ahead of the phone chrome's
+// own Escape handler and consumes the key, so one press does
+// one thing. Entering and leaving touch nothing but the
+// vaultFocus flag and the render: the draft, the selected
+// note and the mode survive the round trip exactly.
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && vaultFocus && view === "Vault") { e.preventDefault(); e.stopImmediatePropagation(); vaultFocus = false; render(); }
+});
 
 function stripLeadH1(md, rel) {
   // The Updater panel's header already names the release, so a
@@ -3095,7 +3252,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The shell remembers — recall, search, completion, and shortcuts</h4>" +
   "<p>Your command history is kept in one place, like a shell's history file: it survives switching chats, clearing a chat, and closing the page, and it holds up to 200 commands. With the suggestion list closed, press the <b>Up arrow</b> to walk back through commands you have run and the <b>Down arrow</b> to walk forward again — going past the newest brings back what you had typed. Press <b>Ctrl+R</b> to search the history: type some letters and the newest matching command shows; press Ctrl+R or the arrow keys to step through matches, <b>Enter</b> or <b>Tab</b> to put the match in the bar (it does not run yet), and <b>Escape</b> to cancel and get your typed line back. As you type a command, the list now completes more than the first word: file and folder paths complete from the real filesystem (a folder completes with a slash and opens its contents), known flags and subcommands for common commands like <span class='mono'>git</span> and <span class='mono'>ls</span> are offered, and arguments you have used with that command before are offered too, marked as used before. The editing shortcuts from the shell work as well: <b>Ctrl+A</b> and <b>Ctrl+E</b> jump to the start and end of the line, <b>Ctrl+U</b> cuts everything before the cursor, <b>Ctrl+K</b> cuts everything after it, <b>Ctrl+W</b> cuts the word before the cursor, and <b>Ctrl+Y</b> pastes back what a cut took. History shortcuts like <span class='mono'>!!</span> (the last command), <span class='mono'>!$</span> (its last argument), and <span class='mono'>!3</span> (the third command in the history) never run silently: the first Enter rewrites the bar with the expanded command and asks you to check it — press Enter again to run exactly what you see.</p></div>" +
     "<div class='doc-sec'><h4>Raw terminal work — Chat's CLI mode</h4>" +
-  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and the same sudo switch in the status column covers the commands you run this way.</p></div>" },
+  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and the same sudo switch in the status column covers the commands you run this way. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" },
   { id: "chips-guide", title: "Chips development guide", related: ["navi-functions", "chips-publishing"], html:
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
@@ -3200,9 +3357,9 @@ var DOC_PAGES = [
   "<li><span class='mono'>[[wikilinks]]</span> and <span class='mono'>#tags</span> are first-class text: clicking a wikilink in Preview jumps to that note, or offers to create it.</li></ul></div>" +
     "<div class='doc-sec'><h4>Working in it, and how Navi uses it</h4>" +
   "<p><b>In the Vault view:</b></p><ol>" +
-  "<li>The file tree sits in its own column on the right of the editor, Obsidian-style — the pair spans the full width of the view — and carries New note, New folder, Rename, Delete (with a confirm), and Move. Drag a note onto a folder header — targets light up while you drag, and a drop anywhere else changes nothing — or open the note's ⋯ menu, pick Move, and choose the folder, which is how it works by touch. Every note and folder carries that one ⋯ menu — Move, Rename, and Delete (with a confirm) for notes, New note and Delete for folders — so the names get the tree's width to themselves. Drop markdown files from your computer onto the vault to import them — other file types are refused in plain words.</li>" +
-  "<li>The editor autosaves as you type and says when it saved; Edit, Split, and Preview modes sit on one toggle, rendered by the same markdown renderer as chat and these Docs.</li>" +
-  "<li>The side panel shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
+  "<li>The file tree sits in its own column on the left of the editor, Obsidian-style — the pair spans the full width of the view and fills its height, the tree scrolling its own length while the editor reaches the bottom of the window — and carries New note, New folder, Rename, Delete (with a confirm), and Move. Drag a note onto a folder header — targets light up while you drag, and a drop anywhere else changes nothing — or open the note's ⋯ menu, pick Move, and choose the folder, which is how it works by touch. Every note and folder carries that one ⋯ menu — Move, Rename, and Delete (with a confirm) for notes, New note and Delete for folders — so the names get the tree's width to themselves. Drop markdown files from your computer onto the vault to import them — other file types are refused in plain words.</li>" +
+  "<li>The editor autosaves as you type and says when it saved; Edit, Split, and Preview modes sit on one toggle, rendered by the same markdown renderer as chat and these Docs. The expand button in the editor's header opens <b>focus mode</b> — the editor alone filling the whole window, the menu, her presence bar, and the tree all put away — and the same button, or Escape, brings the Vault back exactly as it was.</li>" +
+  "<li>A strip at the foot of the editor shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
   "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
@@ -5959,7 +6116,7 @@ function renderStatus(live) {
   }
   var statusBody =
     "<h3>Status</h3>" +
-    "<div class='stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='dot pdot' style='background:#34d399'></span><span id='presence-line'>" + esc(presenceText) + "</span></div>" +
+    "<div class='stat presence-stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='pane-presence-id'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='chat-presence-name'>Navi</span></span><span class='dot pdot' style='background:#34d399'></span><span id='presence-line'>" + esc(presenceText) + "</span></div>" +
     (bridgeStale && CONFIG.backend === "live"
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +
@@ -6686,6 +6843,12 @@ function render() {
   // the frame (see the small-screen block), so the composer's
   // foot is the frame's rendered bottom, not a page position.
   appEl.classList.toggle("in-chat", view === "Chat");
+  // Build 11 (#135): focus mode's class is render()'s
+  // reflection of the one vaultFocus flag — cleared by any
+  // view switch, so the frame can never stay collapsed
+  // around another view.
+  if (view !== "Vault") vaultFocus = false;
+  appEl.classList.toggle("vault-focus", vaultFocus);
   var smallScreen = window.innerWidth <= 800;
   toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
@@ -6783,11 +6946,14 @@ function render() {
       h += "<div class='card' style='margin-top:8px;border-color:#f5b544;color:#f5b544'>Calling Navi — warming her voice…</div>";
     }
     if (pendingUpload) h += "<div style='margin-top:6px'><span class='srcpill'>Attached: " + esc(pendingUpload.name) + (pendingUpload.kind === "text" ? " — its contents ride with your next message" : " — image, stored for reference by name") + "</span> <button class='ghost' id='chat-upload-clear' aria-label='Remove the pending attachment' style='padding:1px 8px'>Remove</button></div>";
-    // Clear chat rides the hint row under the chat bar (build
-    // .52, issue #13): right-aligned in the composer block, in
-    // every composer state, instead of floating at the thread's
-    // foot. Same button, same id, same wiring — new seat.
-    var clearChatBtn = (messages.length ? "<button class='ghost' id='chat-clear' aria-label='Clear this chat and start fresh' style='margin-left:auto'>Clear chat</button>" : "") + "<span id='hist-note'></span>";
+    // Clearing the chat is a command now (0.1.9e Build 11,
+    // issue #133): the Clear chat button that rode this row
+    // since build .52 (issue #13) is retired — /cls, typed in
+    // the composer and intercepted in sendChat(), does its
+    // work identically, and the row keeps the same members in
+    // an empty thread as in a full one. What remains of the
+    // old construction is the history note the row carries.
+    var clearChatBtn = "<span id='hist-note'></span>";
     // Navi Mesh (build .85): the per-chat local-only escape rides
     // the hint row beside the mode latch — a pressed state, kept
     // per chat session like the latch itself.
@@ -7203,6 +7369,7 @@ function render() {
   // main becomes a flex frame and #msgs is its scrolling region.
   mainEl.classList.toggle("chat-view", view === "Chat");
   mainEl.classList.toggle("docs-view", view === "Docs");
+  mainEl.classList.toggle("vault-view", view === "Vault");
   wire();
   if (view === "Docs") docsRestoreNav();
   if (view === "Chat") {
@@ -7238,6 +7405,22 @@ function sendChat(text) {
   // Firing a line hands the composer its focus back (see render()):
   // the operator keeps typing without clicking into the bar again.
   chatFocusWanted = true;
+  // /cls (0.1.9e Build 11, issue #133): clearing the chat is a
+  // composer command now — the retired Clear chat button's work,
+  // done identically: the thread empties, this chat's fold state
+  // goes with it, the store persists, the view re-renders. It is
+  // intercepted here, before the latch flips and before the line
+  // is pushed, so a /cls never lands in the thread it clears,
+  // never reaches the model or the shell, and never enters the
+  // command history — and it works in either latch, model
+  // running or not. The whole line must be the command: a longer
+  // line that merely starts with it routes as it always has.
+  if (/^\s*\/cls\s*$/i.test(text)) {
+    messages.length = 0;
+    Object.keys(chatFoldState).forEach(function (k) { if (k.indexOf(String(activeChatId) + ":") === 0) delete chatFoldState[k]; });
+    persist(); render();
+    return;
+  }
   // A $ / > prefix flips the latch to match, so the quick way to
   // switch and the toggles never disagree afterwards.
   if (text.charAt(0) === "$") chatMode = "cli";
@@ -7374,8 +7557,6 @@ function wire() {
       fetch("/api/workflows").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chat") render(); }).catch(function () {});
     }
     mainEl.querySelectorAll("details[data-fold]").forEach(function (d) { d.addEventListener("toggle", function () { chatFoldState[d.getAttribute("data-fold")] = d.open; }); });
-    var clearBtn = document.getElementById("chat-clear");
-    if (clearBtn) clearBtn.onclick = function () { messages.length = 0; Object.keys(chatFoldState).forEach(function (k) { if (k.indexOf(String(activeChatId) + ":") === 0) delete chatFoldState[k]; }); persist(); render(); };
     var meshLocalBtnEl = document.getElementById("chat-mesh-local");
     if (meshLocalBtnEl) meshLocalBtnEl.onclick = function () { meshLocal = !meshLocal; persistMeshLocal(); render(); };
     var micBtn = document.getElementById("chat-mic");
@@ -7974,7 +8155,8 @@ function wire() {
     vqa("[data-vault-foldelok]").forEach(function (b) { b.onclick = function () { var f = decodeURIComponent(b.getAttribute("data-vault-foldelok")); vaultConfirmFolder = null; vaultApply("delfolder", { path: f }); }; });
     vqa("[data-vault-foldelcancel]").forEach(function (b) { b.onclick = function () { vaultConfirmFolder = null; render(); }; });
     vqa("[data-vault-newin]").forEach(function (b) { b.onclick = function () { vaultFolderMenuPath = null; var sel = document.getElementById("vault-new-folder"); if (sel) sel.value = decodeURIComponent(b.getAttribute("data-vault-newin")); var nm = document.getElementById("vault-new-name"); if (nm) nm.focus(); }; });
-    vqa("[data-vault-mode]").forEach(function (b) { b.onclick = function () { vaultMode = b.getAttribute("data-vault-mode"); render(); }; });
+    vqa("button[data-vault-mode]").forEach(function (b) { b.onclick = function () { vaultMode = b.getAttribute("data-vault-mode"); render(); }; });
+    vqa("[data-vault-focus]").forEach(function (b) { b.onclick = function () { vaultFocus = !vaultFocus; render(); }; });
     vqa("[data-vault-createmissing]").forEach(function (b) { b.onclick = function () { var t = vaultMissing; vaultMissing = null; if (t) { vaultSel = t + ".md"; vaultApply("save", { path: t + ".md", content: "# " + t + "\n\n" }); } }; });
     vqa("[data-vault-dismissmissing]").forEach(function (b) { b.onclick = function () { vaultMissing = null; render(); }; });
     // Drag and drop (build .73 hardening): the drag source is tracked
