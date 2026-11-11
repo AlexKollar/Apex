@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-11.911"
+BRIDGE_BUILD = "2026-11-11.912"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 11
+SHIPPED_BUILD_SEQ = 12
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -6831,8 +6831,14 @@ def save_download_payload(data):
 #                       from the stored card (the payload is the
 #                       card, so a restored picture imports whole).
 #                       The node keypair is never among them.
-# Never backed up: chat transcripts, call logs, caches and logs, the
-# hardware profile, and voice model files (they reinstall).
+#   chats/              chats.json + uploads.json — the server-side
+#                       chat store (Build 12, #139): the threads
+#                       themselves and the uploads index. A restore
+#                       CONVERGES them (newest-wins per thread, and
+#                       diverged threads survive as dated siblings)
+#                       rather than overwriting the store.
+# Never backed up: call logs, caches and logs, the hardware
+# profile, and voice model files (they reinstall).
 # Uploads go through the Contents API; downloads for import go
 # through git trees/blobs so a large chip restores whole.
 # Scheduling is honest: a thread checks on launch and while the
@@ -6843,7 +6849,7 @@ def save_download_payload(data):
 GITHUB_TOKEN_PATH = os.path.join(ROOT, "config", "github-auth.json")
 GITHUB_REPO_URL = "https://github.com/AlexKollar/Apex"
 GITHUB_API_BASE = "https://api.github.com/repos/AlexKollar/Apex"
-GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards"]
+GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards", "chats"]
 # The always-ticked core (build .36): Soul, Memory, and Settings &
 # config ride in every backup automatically — they are what makes
 # an imported Navi *her*, so github_settings folds them into the
@@ -7347,6 +7353,10 @@ def github_collect_backup(cfg, dashboard=None):
                     rel = os.path.relpath(fpath, VAULT_DIR).replace(os.sep, "/")
                     with open(fpath, "rb") as f:
                         files["vault/" + rel] = f.read()
+    if "chats" in items:
+        _chat_payload = chats_payload()
+        files["chats/chats.json"] = json.dumps({"chats": _chat_payload["chats"], "exportedAt": _now_iso()}, indent=2).encode()
+        files["chats/uploads.json"] = json.dumps(_chat_payload["uploads"], indent=2).encode()
     # The manifest's app name is the product name, "Apex" — it is
     # written into navi-backup.json in the operator's backup repo,
     # where it is read as identity, never matched as a token. (The
@@ -7392,7 +7402,7 @@ def github_run_backup(cfg, dashboard=None):
         st, created = github_api("POST", "https://api.github.com/user/repos", token, {
             "name": repo,
             "private": s["backup_private"],
-            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards).",
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards, chats).",
             "auto_init": True,
         })
         if st not in (200, 201):
@@ -7452,11 +7462,11 @@ def github_fetch_backup(cfg):
     fixed = {
         "navi-backup.json", "soul.md", "memory.md", "settings.json", "voice.json",
         "dashboard.json", "chips/installed.json", "chips/workflows.json",
-        "rag-packs/installed.json",
+        "rag-packs/installed.json", "chats/chats.json", "chats/uploads.json",
     }
     files = {}
     for path, sha in blobs.items():
-        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or (path.startswith("chips/") and path.endswith(".png")):
+        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or path.startswith("chats/") or (path.startswith("chips/") and path.endswith(".png")):
             bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
             if bst == 200 and isinstance(blob, dict) and blob.get("content"):
                 try:
@@ -7484,6 +7494,7 @@ def github_import_changes(cfg, fetched, dashboard=None):
         "workflows": "Workflows",
         "vault": "The Vault",
         "mesh-cards": "Mesh pairing cards",
+        "chats": "Chats",
     }
     changes = []
     if "soul" in items:
@@ -7612,6 +7623,37 @@ def github_import_changes(cfg, fetched, dashboard=None):
             "detail": "Would restore " + str(len(backed_peers)) + " peer pairing-card picture(s) to config/mesh/cards/ and re-pair those peers through the normal card check" + ("; the backup also holds this machine's own card picture, kept as a file — it never replaces the identity of the machine restoring" if own_backed else "") + ". This machine is currently paired with " + str(len(cur_ids)) + ".",
             "willChange": backed_ids != cur_ids or (own_backed and not own_here),
         })
+    if "chats" in items:
+        backed_chats = []
+        backed_uploads = []
+        try:
+            _parsed_chats = json.loads(files.get("chats/chats.json", b"{}").decode("utf-8", "replace"))
+            if isinstance(_parsed_chats, dict) and isinstance(_parsed_chats.get("chats"), list):
+                backed_chats = _parsed_chats["chats"]
+        except Exception:
+            backed_chats = []
+        try:
+            _parsed_up = json.loads(files.get("chats/uploads.json", b"[]").decode("utf-8", "replace"))
+            if isinstance(_parsed_up, list):
+                backed_uploads = _parsed_up
+        except Exception:
+            backed_uploads = []
+        _prev = chats_converge_preview(backed_chats)
+        _moving = _prev["added"] + _prev["replaced"] + _prev["siblings"]
+        if not _moving and not backed_uploads:
+            _detail = "Already matches the backup — nothing to change."
+        elif not _moving:
+            _detail = "The threads already match the backup — nothing to change."
+        else:
+            _detail = ("Would converge " + str(len(backed_chats)) + " backed-up thread(s) into this machine's chat store: "
+                       + str(_prev["added"]) + " new, " + str(_prev["replaced"]) + " updated (newest wins), "
+                       + str(_prev["siblings"]) + " diverged — kept whole as dated sibling threads, never merged away. "
+                       "This machine currently holds " + str(len(chats_all())) + ".")
+        changes.append({
+            "item": "chats", "label": labels["chats"],
+            "detail": _detail,
+            "willChange": bool(_moving),
+        })
     if "dashboard.json" in files:
         try:
             _backed_dash = json.loads(files["dashboard.json"].decode("utf-8", "replace"))
@@ -7724,6 +7766,24 @@ def github_apply_import(cfg, fetched):
                     wrote = True
         if wrote:
             applied.append("The Vault")
+    if "chats" in items and "chats/chats.json" in files:
+        try:
+            _parsed_chats = json.loads(files["chats/chats.json"].decode("utf-8", "replace"))
+            _backed_chats = _parsed_chats.get("chats") if isinstance(_parsed_chats, dict) else []
+        except Exception:
+            _backed_chats = []
+        _backed_uploads = None
+        if "chats/uploads.json" in files:
+            try:
+                _parsed_up = json.loads(files["chats/uploads.json"].decode("utf-8", "replace"))
+                if isinstance(_parsed_up, list):
+                    _backed_uploads = _parsed_up
+            except Exception:
+                _backed_uploads = None
+        if isinstance(_backed_chats, list) and _backed_chats:
+            _conv = chats_converge(_backed_chats, _backed_uploads)
+            if _conv.get("changed"):
+                applied.append("Chats")
     if "mesh-cards" in items:
         wrote = False
         fresh_cfg = load_config()
@@ -12318,6 +12378,759 @@ def llamafile_chat(messages, endpoint, model):
     return content
 
 
+# --- Server-side chats (0.1.9e Build 12, issue #139) -----------------
+# Chats lived only in browser localStorage (navi.chats) until this
+# build: every install — and every browser origin — held its own
+# set, and DHD into the server was continuous with the server only
+# through the server's own browser. The store of record now lives
+# HERE, in plain files under config/chats/ — one JSON file per chat
+# (the Vault's plain-files rule), written atomically — so any door
+# (the desktop window, a DHD session, a second browser) hydrates
+# the same threads from the same install. localStorage is demoted
+# to a cache and an offline fallback: the window writes through on
+# every persist and hydrates back on load. Uploads follow chats:
+# their index rides in config/chats/uploads.json beside the threads
+# it belongs to (file bytes were always handed to the bridge
+# inline; the index is the record).
+# Convergence for foreign copies (a backup restore, #136's badge
+# sync) is chats_converge: per chat, newest-wins by timestamp when
+# one thread is the other's continuation — and when two copies of
+# a thread have genuinely diverged, BOTH survive: the incoming one
+# lands as a dated sibling thread, never a silent merge.
+
+CHATS_DIR = os.path.join(ROOT, "config", "chats")
+CHATS_UPLOADS_PATH = os.path.join(CHATS_DIR, "uploads.json")
+
+
+def _chat_clean_id(value):
+    s = str(value if value is not None else "").strip()
+    if not s or len(s) > 80:
+        return None
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", s):
+        return None
+    if s in (".", "..", "uploads"):
+        return None
+    return s
+
+
+def _chat_normalize(rec):
+    if not isinstance(rec, dict):
+        return None
+    cid = _chat_clean_id(rec.get("id"))
+    if cid is None:
+        return None
+    msgs = rec.get("messages")
+    clean_msgs = [m for m in msgs if isinstance(m, dict)] if isinstance(msgs, list) else []
+    return {
+        "id": cid,
+        "title": str(rec.get("title") or "Chat")[:200],
+        "messages": clean_msgs,
+        "createdAt": rec.get("createdAt") if isinstance(rec.get("createdAt"), (int, float)) else 0,
+        "updatedAt": rec.get("updatedAt") if isinstance(rec.get("updatedAt"), (int, float)) else 0,
+    }
+
+
+def _chat_path(cid):
+    return os.path.join(CHATS_DIR, cid + ".json")
+
+
+def chat_write(rec):
+    rec = _chat_normalize(rec)
+    if rec is None:
+        return None
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    full = _chat_path(rec["id"])
+    tmp = full + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rec, f)
+    os.replace(tmp, full)
+    return rec
+
+
+def chats_all():
+    out = []
+    if os.path.isdir(CHATS_DIR):
+        for name in sorted(os.listdir(CHATS_DIR)):
+            if not name.endswith(".json") or name == "uploads.json":
+                continue
+            try:
+                with open(os.path.join(CHATS_DIR, name), encoding="utf-8") as f:
+                    rec = json.load(f)
+            except Exception:
+                continue
+            rec = _chat_normalize(rec)
+            if rec is not None:
+                out.append(rec)
+    out.sort(key=lambda r: (r.get("updatedAt") or 0, str(r.get("id"))))
+    return out
+
+
+def chat_delete(cid):
+    cid = _chat_clean_id(cid)
+    if cid is None:
+        return False
+    try:
+        os.remove(_chat_path(cid))
+        return True
+    except Exception:
+        return False
+
+
+def chats_uploads():
+    try:
+        with open(CHATS_UPLOADS_PATH, encoding="utf-8") as f:
+            rows = json.load(f)
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def chats_save_uploads(rows):
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    tmp = CHATS_UPLOADS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump([r for r in (rows or []) if isinstance(r, dict)], f)
+    os.replace(tmp, CHATS_UPLOADS_PATH)
+
+
+def chats_payload():
+    return {"chats": chats_all(), "uploads": chats_uploads()}
+
+
+def chats_replace_all(records, uploads):
+    # The write-through path: the window that is actively writing
+    # owns the store, and its word is authoritative — the whole set
+    # lands as given, and threads it no longer holds are gone here
+    # too (a chat deleted at one door stays deleted at every door).
+    keep = set()
+    written = 0
+    for rec in (records or []):
+        saved = chat_write(rec)
+        if saved is not None:
+            keep.add(saved["id"])
+            written += 1
+    if os.path.isdir(CHATS_DIR):
+        for name in sorted(os.listdir(CHATS_DIR)):
+            if name.endswith(".json") and name != "uploads.json" and name[:-5] not in keep:
+                try:
+                    os.remove(os.path.join(CHATS_DIR, name))
+                except Exception:
+                    pass
+    if uploads is not None:
+        chats_save_uploads(uploads)
+    return {"ok": True, "chats": written}
+
+
+def _chat_msgs_key(rec):
+    return json.dumps(rec.get("messages") or [], sort_keys=True)
+
+
+def _chat_msgs_prefix(shorter, longer):
+    a = shorter.get("messages") or []
+    b = longer.get("messages") or []
+    if len(a) > len(b):
+        return False
+    return json.dumps(a, sort_keys=True) == json.dumps(b[:len(a)], sort_keys=True)
+
+
+def _chat_merge_verdict(cur, rec):
+    # What merging `rec` into a store holding `cur` (same id) does:
+    # "kept" (nothing to do), "replaced" (the incoming thread is
+    # this thread continued, and newer — newest-wins), or "sibling"
+    # (the two copies genuinely diverged — both survive).
+    if _chat_msgs_key(cur) == _chat_msgs_key(rec):
+        return "replaced" if (rec.get("updatedAt") or 0) > (cur.get("updatedAt") or 0) else "kept"
+    if _chat_msgs_prefix(cur, rec) and (rec.get("updatedAt") or 0) >= (cur.get("updatedAt") or 0):
+        return "replaced"
+    if _chat_msgs_prefix(rec, cur):
+        return "kept"
+    return "sibling"
+
+
+def chats_converge_preview(incoming):
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0}
+    rows = chats_all()
+    local = {str(r["id"]): r for r in rows}
+    held_keys = {_chat_msgs_key(r) for r in rows}
+    for raw in (incoming or []):
+        rec = _chat_normalize(raw)
+        if rec is None:
+            continue
+        cur = local.get(str(rec["id"]))
+        if cur is None:
+            summary["added"] += 1
+        else:
+            v = _chat_merge_verdict(cur, rec)
+            if v == "sibling" and _chat_msgs_key(rec) in held_keys:
+                v = "kept"
+            summary["replaced" if v == "replaced" else "siblings" if v == "sibling" else "kept"] += 1
+    return summary
+
+
+def chats_converge(incoming, incoming_uploads=None):
+    # Merging a FOREIGN copy (backup restore / badge sync) into
+    # this store — see the section header for the rules. Returns a
+    # summary the caller can speak out loud.
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "uploads": 0}
+    rows = chats_all()
+    local = {str(r["id"]): r for r in rows}
+    held_keys = {_chat_msgs_key(r) for r in rows}
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    for raw in (incoming or []):
+        rec = _chat_normalize(raw)
+        if rec is None:
+            continue
+        cur = local.get(str(rec["id"]))
+        if cur is None:
+            chat_write(rec)
+            summary["added"] += 1
+            continue
+        verdict = _chat_merge_verdict(cur, rec)
+        if verdict == "sibling" and _chat_msgs_key(rec) in held_keys:
+            # The same diverged copy was already converged once and
+            # its sibling is on file — a repeated sync of the same
+            # backup must not mint a fresh sibling every time.
+            verdict = "kept"
+        if verdict == "replaced":
+            chat_write(rec)
+            summary["replaced"] += 1
+        elif verdict == "kept":
+            summary["kept"] += 1
+        else:
+            sib = dict(rec)
+            base = str(rec["id"]) + "-sync-" + stamp
+            nid = base
+            n = 2
+            while os.path.exists(_chat_path(nid)):
+                nid = base + "-" + str(n)
+                n += 1
+            sib["id"] = nid
+            sib["title"] = (str(rec.get("title") or "Chat") + " (from sync " + day + ")")[:200]
+            chat_write(sib)
+            summary["siblings"] += 1
+    if incoming_uploads is not None:
+        def _up_key(r):
+            return str(r.get("id") or (str(r.get("name") or "") + "|" + str(r.get("at") or "")))
+        merged = {_up_key(r): r for r in chats_uploads()}
+        for r in incoming_uploads:
+            if not isinstance(r, dict):
+                continue
+            k = _up_key(r)
+            if k not in merged:
+                merged[k] = r
+                summary["uploads"] += 1
+        if summary["uploads"]:
+            chats_save_uploads(list(merged.values()))
+    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"]
+    return summary
+
+
+# --- Boot mode (0.1.9e Build 12, issue #142) -------------------------
+# Whether this install is armed to come up headless at boot is read
+# from the system every time it is shown — the systemd user units'
+# enabled state and the user's linger state — never assumed from
+# what an installer once did. Cached briefly: /api/status is polled
+# and systemctl is not free.
+_BOOT_CACHE = {"at": 0, "payload": None}
+
+
+def _systemd_user_state(unit):
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-enabled", unit],
+                           capture_output=True, text=True, timeout=3)
+        out = (r.stdout or "").strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _linger_state():
+    user = os.environ.get("USER") or ""
+    if not user:
+        try:
+            import pwd
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = ""
+    if user:
+        try:
+            r = subprocess.run(["loginctl", "show-user", user, "--property=Linger", "--value"],
+                               capture_output=True, text=True, timeout=3)
+            out = (r.stdout or "").strip().lower()
+            if out in ("yes", "no"):
+                return out == "yes"
+        except Exception:
+            pass
+        try:
+            if os.path.exists("/var/lib/systemd/linger/" + user):
+                return True
+        except Exception:
+            pass
+    return None
+
+
+def boot_mode_payload():
+    now = time.time()
+    if _BOOT_CACHE["payload"] is not None and now - _BOOT_CACHE["at"] < 30:
+        return _BOOT_CACHE["payload"]
+    bridge_unit = _systemd_user_state("navi-bridge.service")
+    llama_unit = _systemd_user_state("navi-llamafile.service")
+    linger = _linger_state()
+    payload = {
+        "bridgeUnit": bridge_unit,
+        "llamafileUnit": llama_unit,
+        "linger": linger,
+        "armed": bridge_unit == "enabled" and llama_unit == "enabled" and linger is True,
+    }
+    _BOOT_CACHE["at"] = now
+    _BOOT_CACHE["payload"] = payload
+    return payload
+
+
+# --- Case Files (0.1.9e Build 12, issues #137/#138) ------------------
+# The first Apex | App. A case is a folder of plain markdown in the
+# Vault — cases/<slug>/ — so cases ride the Vault's backups and
+# sync like every other note on the desk, and open in Obsidian as
+# they lie. case.md carries the manifest as frontmatter; findings
+# are notes in findings/ with their own frontmatter (severity,
+# internal); evidence is whatever lands in evidence/; the timeline
+# is one newest-first markdown file. The report (#138) is composed
+# from those same files — internal findings are withheld AND
+# counted, never silently omitted.
+
+CASE_SEVERITIES = ["critical", "high", "medium", "low", "info"]
+
+
+def _fm_parse(text):
+    meta = {}
+    body = text or ""
+    if body.startswith("---\n"):
+        end = body.find("\n---\n", 3)
+        if end != -1:
+            head = body[4:end]
+            body = body[end + 5:]
+            for ln in head.split("\n"):
+                if ":" in ln:
+                    k, v = ln.split(":", 1)
+                    meta[k.strip().lower()] = v.strip()
+    return meta, body
+
+
+def _fm_render(meta_pairs, body):
+    lines = ["---"]
+    for k, v in meta_pairs:
+        lines.append(k + ": " + str(v))
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines) + body
+
+
+def _case_slug(name):
+    s = re.sub(r"[^A-Za-z0-9]+", "-", str(name or "")).strip("-").lower()
+    return s or "case"
+
+
+def _case_dir(slug):
+    if not re.match(r"^[a-z0-9][a-z0-9-]*$", str(slug or "")):
+        return None
+    rel = vault_join("cases/" + slug)
+    if rel is None:
+        return None
+    return vault_fs_path(rel)
+
+
+def _case_manifest(slug):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None
+    try:
+        with open(os.path.join(d, "case.md"), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return None
+    meta, _body = _fm_parse(text)
+    return meta
+
+
+def _case_findings(slug):
+    d = _case_dir(slug)
+    out = []
+    fdir = os.path.join(d, "findings") if d else ""
+    if fdir and os.path.isdir(fdir):
+        for name in sorted(os.listdir(fdir)):
+            if not name.lower().endswith(".md"):
+                continue
+            try:
+                with open(os.path.join(fdir, name), encoding="utf-8") as f:
+                    text = f.read()
+            except Exception:
+                continue
+            meta, body = _fm_parse(text)
+            sev = str(meta.get("severity") or "info").lower()
+            if sev not in CASE_SEVERITIES:
+                sev = "info"
+            out.append({
+                "file": name,
+                "title": str(meta.get("title") or name[:-3]),
+                "severity": sev,
+                "internal": str(meta.get("internal") or "").lower() in ("yes", "true", "1"),
+                "filed": str(meta.get("filed") or ""),
+                "body": body.strip(),
+            })
+    out.sort(key=lambda f: (CASE_SEVERITIES.index(f["severity"]), f["file"]))
+    return out
+
+
+def _case_evidence(slug):
+    d = _case_dir(slug)
+    out = []
+    edir = os.path.join(d, "evidence") if d else ""
+    if edir and os.path.isdir(edir):
+        for name in sorted(os.listdir(edir)):
+            full = os.path.join(edir, name)
+            if os.path.isfile(full):
+                out.append({"name": name, "size": os.path.getsize(full)})
+    return out
+
+
+def _case_timeline(slug):
+    d = _case_dir(slug)
+    out = []
+    if not d:
+        return out
+    try:
+        with open(os.path.join(d, "timeline.md"), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return out
+    cur = None
+    for ln in text.split("\n"):
+        if ln.startswith("## "):
+            head = ln[3:].strip()
+            date, sep, title = head.partition(" — ")
+            cur = {"date": date.strip(), "title": (title if sep else head).strip(), "body": ""}
+            out.append(cur)
+        elif cur is not None:
+            cur["body"] += ln + "\n"
+    for e in out:
+        e["body"] = e["body"].strip()
+    return out
+
+
+def _case_head(slug, meta):
+    return {
+        "slug": slug,
+        "name": str(meta.get("title") or slug),
+        "client": str(meta.get("client") or ""),
+        "scope": str(meta.get("scope") or ""),
+        "status": str(meta.get("status") or "open"),
+        "opened": str(meta.get("opened") or ""),
+    }
+
+
+def cases_list_payload():
+    root = os.path.join(VAULT_DIR, "cases")
+    cases = []
+    if os.path.isdir(root):
+        for slug in sorted(os.listdir(root)):
+            if not os.path.isdir(os.path.join(root, slug)):
+                continue
+            meta = _case_manifest(slug)
+            if meta is None:
+                continue
+            head = _case_head(slug, meta)
+            head["findings"] = len(_case_findings(slug))
+            head["evidence"] = len(_case_evidence(slug))
+            head["timeline"] = len(_case_timeline(slug))
+            cases.append(head)
+    cases.sort(key=lambda c: c["slug"])
+    return {"cases": cases}
+
+
+def case_detail_payload(slug):
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None
+    detail = _case_head(slug, meta)
+    detail["findings"] = _case_findings(slug)
+    detail["evidence"] = _case_evidence(slug)
+    detail["timeline"] = _case_timeline(slug)
+    return detail
+
+
+def case_create(name, client, scope):
+    name = str(name or "").strip()
+    if not name:
+        return None, "A case needs a name."
+    base = _case_slug(name)
+    slug = base
+    n = 2
+    while True:
+        d = _case_dir(slug)
+        if not d or not os.path.isdir(d):
+            break
+        slug = base + "-" + str(n)
+        n += 1
+    d = _case_dir(slug)
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    os.makedirs(os.path.join(d, "findings"), exist_ok=True)
+    os.makedirs(os.path.join(d, "evidence"), exist_ok=True)
+    vault_write("cases/" + slug + "/case.md", _fm_render([
+        ("title", name), ("client", str(client or "")), ("scope", str(scope or "")),
+        ("status", "open"), ("opened", today),
+    ], "# " + name + "\n\nThe case manifest. Findings live in `findings/`, evidence in `evidence/`, the story in `timeline.md`.\n"))
+    vault_write("cases/" + slug + "/timeline.md",
+               "# Timeline — " + name + "\n\n## " + today + " — Case opened\n\nThe case was opened" + ((" for " + str(client) + ".") if client else ".") + "\n")
+    return case_detail_payload(slug), None
+
+
+def case_file_entry(slug, kind, title, body, severity="info", internal=False):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    title = " ".join(str(title or "").split()).strip() or "Untitled"
+    body = str(body or "")
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    if kind == "timeline":
+        tpath = os.path.join(d, "timeline.md")
+        try:
+            with open(tpath, encoding="utf-8") as f:
+                text = f.read()
+        except Exception:
+            text = "# Timeline\n"
+        entry = "## " + now + " — " + title + "\n\n" + body.strip() + "\n\n"
+        idx = text.find("\n## ")
+        if idx == -1:
+            text = text.rstrip("\n") + "\n\n" + entry
+        else:
+            text = text[:idx + 1] + entry + text[idx + 1:]
+        with open(tpath, "w", encoding="utf-8") as f:
+            f.write(text)
+        return {"path": "cases/" + slug + "/timeline.md"}, None
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    if kind == "evidence-note":
+        sub = "evidence"
+        fname = stamp + "-" + _case_slug(title) + ".md"
+        content = "# " + title + "\n\n" + body.strip() + "\n"
+    else:
+        sub = "findings"
+        sev = str(severity or "info").lower()
+        if sev not in CASE_SEVERITIES:
+            sev = "info"
+        fname = stamp + "-" + _case_slug(title) + ".md"
+        content = _fm_render([
+            ("title", title), ("severity", sev),
+            ("internal", "yes" if internal else "no"), ("filed", now),
+        ], "# " + title + "\n\n" + body.strip() + "\n")
+    target_dir = os.path.join(d, sub)
+    os.makedirs(target_dir, exist_ok=True)
+    full = os.path.join(target_dir, fname)
+    n = 2
+    while os.path.exists(full):
+        fname = stamp + "-" + _case_slug(title) + "-" + str(n) + ".md"
+        full = os.path.join(target_dir, fname)
+        n += 1
+    with open(full, "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"path": "cases/" + slug + "/" + sub + "/" + fname}, None
+
+
+def case_add_evidence(slug, filename, data):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    base = os.path.basename(str(filename or "")).strip()
+    if not base or base in (".", ".."):
+        return None, "The evidence needs a file name."
+    edir = os.path.join(d, "evidence")
+    os.makedirs(edir, exist_ok=True)
+    full = os.path.join(edir, base)
+    n = 2
+    stem, dot, ext = base.rpartition(".")
+    while os.path.exists(full):
+        base2 = (stem + "-" + str(n) + dot + ext) if dot else (base + "-" + str(n))
+        full = os.path.join(edir, base2)
+        n += 1
+    with open(full, "wb") as f:
+        f.write(data or b"")
+    return {"name": os.path.basename(full), "size": len(data or b"")}, None
+
+
+def case_report(slug):
+    # #138: one markdown document per case — head, findings by
+    # severity in full, timeline appendix, evidence listed. Internal
+    # findings are withheld AND counted in the document itself: an
+    # export that silently drops material is a lie by omission.
+    # Case files hold no node names or Mesh detail by construction,
+    # and none is added here. The report lands in the case folder
+    # as report.md and is returned for the matching download.
+    detail = case_detail_payload(slug)
+    if detail is None:
+        return None, 0, "No such case."
+    withheld = sum(1 for f in detail["findings"] if f["internal"])
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    lines = [
+        "# Case report — " + detail["name"], "",
+        "- **Client:** " + (detail["client"] or "—"),
+        "- **Scope:** " + (detail["scope"] or "—"),
+        "- **Opened:** " + (detail["opened"] or "—"),
+        "- **Status:** " + detail["status"],
+        "- **Exported:** " + today, "",
+    ]
+    if withheld:
+        lines += ["> " + str(withheld) + " internal note" + ("s" if withheld != 1 else "")
+                  + " withheld from this export — counted here, never silently omitted.", ""]
+    lines += ["## Findings", ""]
+    shown = [f for f in detail["findings"] if not f["internal"]]
+    if not shown:
+        lines += ["No findings on file" + (" outside the internal set." if withheld else ".") + "", ""]
+    cur_sev = None
+    for f in shown:
+        if f["severity"] != cur_sev:
+            cur_sev = f["severity"]
+            lines += ["### " + cur_sev.capitalize(), ""]
+        lines += ["#### " + f["title"], "", f["body"] or "_(no detail recorded)_", ""]
+    lines += ["## Timeline", ""]
+    for e in detail["timeline"]:
+        lines += ["### " + e["date"] + " — " + e["title"], "", e["body"] or "", ""]
+    lines += ["## Evidence on file", ""]
+    if detail["evidence"]:
+        for ev in detail["evidence"]:
+            lines.append("- " + ev["name"] + " (" + str(ev["size"]) + " bytes)")
+    else:
+        lines.append("No evidence files on file.")
+    lines.append("")
+    text = "\n".join(lines)
+    d = _case_dir(slug)
+    with open(os.path.join(d, "report.md"), "w", encoding="utf-8") as f:
+        f.write(text)
+    return text, withheld, None
+
+
+def case_open_slug(cfg):
+    block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
+    slug = str(block.get("open") or "")
+    return slug if _case_manifest(slug) is not None else ""
+
+
+def case_file_from_chat(text, history, cfg):
+    # Navi files to the OPEN case from chat — out loud, in #54's
+    # Vault-filing pattern: the reply names the case and the
+    # finding, or says plainly that no case is open. The note is
+    # about the thing just discussed, so the recent exchange rides
+    # along as the finding's context.
+    slug = case_open_slug(cfg)
+    if not slug:
+        return None, "No case is open — open one in Case Files (Apex | Apps) and I'll file straight into it."
+    raw = (text or "").strip()
+    ctx = []
+    for item in reversed(history or []):
+        if not isinstance(item, dict):
+            continue
+        c = str(item.get("content") or "").strip()
+        if not c or c == raw:
+            continue
+        ctx.append(c)
+        if len(ctx) >= 2:
+            break
+    subject = raw.split(":", 1)[1].strip() if ":" in raw else ""
+    if len(subject.split()) < 2:
+        subject = ""
+    title = subject or (ctx[-1][:70] if ctx else "Filed from chat")
+    title = " ".join(str(title).replace("#", "").split()).strip(" .:") or "Filed from chat"
+    body_lines = ["Filed from chat — in the operator's words: “" + raw + "”", ""]
+    if ctx:
+        body_lines += ["## Context", ""]
+        for c in reversed(ctx):
+            body_lines += [c, ""]
+    filed, err = case_file_entry(slug, "finding", title, "\n".join(body_lines), "info", False)
+    if err:
+        return None, err
+    meta = _case_manifest(slug)
+    return {"case": str((meta or {}).get("title") or slug), "path": filed["path"]}, None
+
+
+# --- Account sync via the Operator Badge (Build 12, issue #136) ------
+# The Badge (#116) is an identity pointer and a trigger — never an
+# authenticator; the GitHub sign-in remains the only key. Slotting
+# the badge starts this flow: check the sign-in, pull the latest
+# backup, build the same per-item preview the GitHub view's import
+# builds, and hold it against the operation while the card waits in
+# chat for the operator's confirmation. Nothing is applied before
+# that confirmation; a signed-out start fails its first step
+# politely and NO fetch is attempted. The node keypair and the Mesh
+# cert never ride a backup (the collect step has never gathered
+# them — see the backup section header), so they cannot ride a
+# sync either.
+BADGE_SYNC_PENDING = {}
+
+
+def badge_sync_start(cfg, dashboard=None):
+    op_id = op_new("badge-sync", "Account sync — Operator Badge", [
+        ("signin", "GitHub sign-in"),
+        ("fetch", "Pull the latest backup"),
+        ("preview", "Build the change preview"),
+        ("confirm", "Your confirmation"),
+    ], source="badge")
+    auth = github_auth()
+    if not auth:
+        op_set(op_id, "signin", "failed", "Not signed in to GitHub — the badge points, but the sign-in is the key. Sign in from the GitHub page, then slot the badge again.")
+        op_finish(op_id, "failed", "Account sync needs the GitHub sign-in first — no fetch was attempted.")
+        return {"ok": False, "operationId": op_id, "operation": op_snapshot(op_id),
+                "error": "Not signed in to GitHub — sign in from the GitHub page first. No fetch was attempted."}
+    op_set(op_id, "signin", "done", "Signed in as @" + str(auth.get("login") or "") + " — the badge pointed; the sign-in unlocked.")
+    op_set(op_id, "fetch", "running")
+    fetched, err = github_fetch_backup(cfg)
+    if err:
+        op_set(op_id, "fetch", "failed", err)
+        op_finish(op_id, "failed", err)
+        return {"ok": False, "operationId": op_id, "operation": op_snapshot(op_id), "error": err}
+    op_set(op_id, "fetch", "done", "The backup from " + str(fetched["manifest"].get("backedUpAt") or "an unknown date") + " is down.")
+    op_set(op_id, "preview", "running")
+    changes, _items = github_import_changes(cfg, fetched, dashboard)
+    BADGE_SYNC_PENDING[op_id] = fetched
+    moving = sum(1 for c in changes if c.get("willChange"))
+    lines = []
+    for c in changes:
+        lines.append(str(c.get("label") or c.get("key") or "Item") + " — " + str(c.get("detail") or c.get("kind") or ""))
+    detail = str(moving) + " essential(s) would change. " + " · ".join(lines)
+    if len(detail) > 1200:
+        detail = detail[:1180] + "… (the full preview is in Settings → GitHub & Backup)"
+    op_set(op_id, "preview", "done", detail)
+    op_set(op_id, "confirm", "waiting", "Nothing has been applied. Confirm on the card to land exactly this preview.", op_state="waiting")
+    return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id), "changes": changes,
+            "backedUpAt": fetched["manifest"].get("backedUpAt")}
+
+
+def badge_sync_apply(cfg, op_id):
+    fetched = BADGE_SYNC_PENDING.pop(str(op_id or ""), None)
+    if fetched is None or op_snapshot(op_id) is None:
+        return {"ok": False, "error": "That sync preview is no longer held — slot the badge again to build a fresh one."}
+    op_set(op_id, "confirm", "running", "Applying the preview you confirmed.")
+    result = github_apply_import(cfg, fetched)
+    if result.get("ok"):
+        op_set(op_id, "confirm", "done", result.get("result") or "Applied.")
+        op_finish(op_id, "done", result.get("result") or "Account sync applied.")
+    else:
+        op_set(op_id, "confirm", "failed", result.get("error") or "The apply failed.")
+        op_finish(op_id, "failed", result.get("error") or "The apply failed.")
+    out = dict(result)
+    out["operationId"] = op_id
+    out["operation"] = op_snapshot(op_id)
+    return out
+
+
+def badge_sync_dismiss(op_id):
+    BADGE_SYNC_PENDING.pop(str(op_id or ""), None)
+    op_set(op_id, "confirm", "done", "Left as it was — nothing applied.")
+    op_finish(op_id, "done", "Account sync set aside — nothing was applied.")
+    return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id)}
+
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload, ctype="application/json"):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
@@ -12488,6 +13301,7 @@ class Handler(BaseHTTPRequestHandler):
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
                 "mesh": mesh_status_payload(cfg, (self.headers.get("X-Apex-Via") or "") == "dhd"),
+                "boot": boot_mode_payload(),
             })
         elif self.path.startswith("/api/operations/"):
             _op_id = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
@@ -12647,6 +13461,19 @@ class Handler(BaseHTTPRequestHandler):
                             full = os.path.join(base, name)
                             z.write(full, os.path.relpath(full, VAULT_DIR).replace(os.sep, "/"))
             self._send(200, buf.getvalue(), "application/zip")
+        elif self.path == "/api/chats":
+            # Server-side chats (#139): the whole store — threads
+            # and the uploads index — for the window to hydrate.
+            self._send(200, chats_payload())
+        elif self.path == "/api/cases":
+            self._send(200, cases_list_payload())
+        elif self.path.split("?")[0] == "/api/cases/detail":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _detail = case_detail_payload((qs.get("case") or [""])[0])
+            if _detail is None:
+                self._send(404, {"ok": False, "error": "No such case."})
+            else:
+                self._send(200, {"ok": True, "case": _detail})
         elif self.path.split("?")[0] == "/api/rag/cartridge.png":
             # The pack as a picture, built on demand from the pack
             # folder (issue #93): the sleeve image the RAG tab and
@@ -13748,6 +14575,28 @@ class Handler(BaseHTTPRequestHandler):
                         payload["spoken"] = speak_reply(payload["reply"], cfg)
                     self._send(200, payload)
                     return
+            # Case filing from chat (Build 12, #137): "file that as
+            # a finding" / "file this to the case" lands in the OPEN
+            # case, out loud — the deterministic sibling of Vault
+            # filing, decided in the same place for the same reason:
+            # it works with or without the model connected.
+            _cfiling = re.search(r"\bfile\s+(?:this|that|it)\s+(?:as\s+(?:a\s+)?(?:finding|evidence)|to\s+the\s+case)\b", (last or ""), re.I) or re.search(r"\badd\s+(?:this|that|it)\s+to\s+the\s+case\b", (last or ""), re.I)
+            if _cfiling:
+                _cfiled, _cerr = case_file_from_chat(last or "", messages, cfg)
+                if _cfiled:
+                    _creply = "Filed it to the case **" + _cfiled["case"] + "** — a new finding at `" + _cfiled["path"] + "`, where it stays in plain markdown on the desk. Nothing filed silently, ever: that's the whole entry, and it's yours to edit in Case Files."
+                else:
+                    _creply = _cerr
+                payload = {
+                    "reply": _creply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_creply, cfg)
+                self._send(200, payload)
+                return
             if not llamafile_alive(endpoint):
                 # Command-line mode: no model is connected, so the
                 # message itself is the command. A leading "$" is
@@ -14805,6 +15654,83 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/chats/sync":
+            # Write-through (#139): the writing window's whole set,
+            # authoritative for the store it owns.
+            data = self._body()
+            rows = data.get("chats") if isinstance(data.get("chats"), list) else []
+            ups = data.get("uploads") if isinstance(data.get("uploads"), list) else None
+            self._send(200, chats_replace_all(rows, ups))
+        elif self.path == "/api/chats/put":
+            data = self._body()
+            saved = chat_write(data.get("chat") if isinstance(data.get("chat"), dict) else None)
+            if saved is None:
+                self._send(400, {"ok": False, "error": "That chat record was refused — it needs a usable id and a messages list."})
+            else:
+                self._send(200, {"ok": True, "chat": saved})
+        elif self.path == "/api/chats/delete":
+            data = self._body()
+            self._send(200, {"ok": chat_delete(data.get("id"))})
+        elif self.path == "/api/cases/create":
+            data = self._body()
+            detail, err = case_create(data.get("name"), data.get("client"), data.get("scope"))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "case": detail})
+        elif self.path == "/api/cases/file":
+            data = self._body()
+            filed, err = case_file_entry(str(data.get("case") or ""), str(data.get("kind") or "finding"),
+                                         data.get("title"), data.get("body"),
+                                         str(data.get("severity") or "info"), data.get("internal") is True)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "filed": filed})
+        elif self.path == "/api/cases/evidence":
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("dataBase64") or ""))
+            except Exception:
+                raw = b""
+            saved, err = case_add_evidence(str(data.get("case") or ""), data.get("name"), raw)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "evidence": saved})
+        elif self.path == "/api/cases/report":
+            data = self._body()
+            text, withheld, err = case_report(str(data.get("case") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "report": text, "withheld": withheld})
+        elif self.path == "/api/cases/open":
+            data = self._body()
+            slug = str(data.get("case") or "")
+            cfg2 = load_config()
+            block = cfg2.get("casefiles") if isinstance(cfg2.get("casefiles"), dict) else {}
+            if slug and _case_manifest(slug) is not None:
+                block["open"] = slug
+            else:
+                block.pop("open", None)
+                slug = ""
+            cfg2["casefiles"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "open": slug})
+        elif self.path == "/api/github/badge-sync/start":
+            # #136: slotting the Operator Badge pulls the latest
+            # backup into a preview on a live operation card. The
+            # badge authenticates nothing; the sign-in is the key.
+            data = self._body()
+            dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None
+            self._send(200, badge_sync_start(load_config(), dash))
+        elif self.path == "/api/github/badge-sync/apply":
+            data = self._body()
+            self._send(200, badge_sync_apply(load_config(), str(data.get("operationId") or "")))
+        elif self.path == "/api/github/badge-sync/dismiss":
+            data = self._body()
+            self._send(200, badge_sync_dismiss(str(data.get("operationId") or "")))
         elif self.path == "/api/github/backup":
             data = self._body()
             dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None

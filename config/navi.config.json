@@ -134,7 +134,8 @@
       "rag",
       "workflows",
       "vault",
-      "mesh-cards"
+      "mesh-cards",
+      "chats"
     ],
     "backup_interval_days": 1,
     "last_backup_at": null,

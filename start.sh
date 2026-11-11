@@ -41,6 +41,19 @@ LOG_FILE="start.log"
 log_line() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null || true; }
 log_line "launch: Apex starting (llamafile port $PORT, bridge port 8675)"
 
+# Headless server mode (Build 12, issue #142): --headless starts
+# the services only — llamafile (check-first, as below) and the
+# supervised bridge — and opens no window. It is the mode the
+# navi-bridge.service user unit runs, and the mode an operator
+# brings Apex back with over SSH after a reboot.
+HEADLESS=""
+for _arg in "$@"; do
+  if [ "$_arg" = "--headless" ]; then HEADLESS=1; fi
+done
+if [ -n "$HEADLESS" ]; then
+  log_line "launch mode: headless — services only, no window"
+fi
+
 if curl -s --max-time 2 "http://localhost:$PORT/" >/dev/null 2>&1; then
   # Check first, always: a llamafile server is already answering —
   # started at boot, by an earlier launch, or by hand — so leave it
@@ -93,8 +106,46 @@ supervise_bridge() {
 }
 
 BRIDGE_PORT="8675"
-echo "Starting bridge on http://localhost:$BRIDGE_PORT …"
-supervise_bridge &
+# Adoption (Build 12, issue #142): a Navi bridge already answering
+# on the port — started at boot by navi-bridge.service, by an
+# earlier headless start, or by hand — is ADOPTED, never doubled:
+# a second bridge could only fight the first for the port. The
+# desktop launch follows the same rule, so opening the app on a
+# machine whose services are up uses them exactly as they are.
+BRIDGE_ADOPTED=""
+if curl -s --max-time 2 "http://localhost:$BRIDGE_PORT/api/status" 2>/dev/null | grep -q '"app": "Navi: Apex"'; then
+  BRIDGE_ADOPTED=1
+  echo "A Navi bridge is already answering on port $BRIDGE_PORT — adopting it, not starting a second one."
+  log_line "bridge: already answering on port $BRIDGE_PORT — adopted, not doubled"
+else
+  echo "Starting bridge on http://localhost:$BRIDGE_PORT …"
+  log_line "bridge: starting the supervised bridge on port $BRIDGE_PORT"
+  supervise_bridge &
+fi
+
+if [ -n "$HEADLESS" ]; then
+  # Verify the bridge is the thing answering before saying so —
+  # the same discipline the window path below applies, kept in
+  # the same log.
+  for i in $(seq 1 40); do
+    if curl -s --max-time 2 "http://localhost:$BRIDGE_PORT/api/status" 2>/dev/null | grep -q '"app": "Navi: Apex"'; then
+      log_line "headless: bridge verified answering on port $BRIDGE_PORT — services up, no window"
+      echo "Apex headless: services are up (llamafile port $PORT, bridge port $BRIDGE_PORT) — no window opened."
+      break
+    fi
+    sleep 1
+  done
+  if [ -n "$BRIDGE_ADOPTED" ]; then
+    # The adopted bridge is not our child, so `wait` has nothing
+    # to hold: hold the foreground like a supervisor and step
+    # aside when it stops answering.
+    while curl -s --max-time 3 "http://localhost:$BRIDGE_PORT/api/status" 2>/dev/null | grep -q '"app": "Navi: Apex"'; do sleep 5; done
+    log_line "headless: the adopted bridge stopped answering — exiting"
+    exit 1
+  fi
+  wait
+  exit 0
+fi
 
 # Her own window — the standalone Tauri shell — is the front door.
 # It is single-instance (a second launch focuses the window that is

@@ -1,0 +1,12 @@
+[Unit]
+Description=Apex bridge — headless server mode (Powered by Navi)
+After=network.target navi-llamafile.service
+Wants=navi-llamafile.service
+
+[Service]
+ExecStart=__INSTALL_DIR__/start.sh --headless
+Restart=on-failure
+WorkingDirectory=__INSTALL_DIR__
+
+[Install]
+WantedBy=default.target

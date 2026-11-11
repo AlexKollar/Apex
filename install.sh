@@ -618,7 +618,7 @@ pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
 
 if [ -n "$FRESH" ]; then
   echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
-  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, and your Soul/Memory documents are kept)"
+  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, your chats, and your Soul/Memory documents are kept)"
   # Stash the operator's own state before the wipe: the installed
   # chips (chips, installs, workflows) and the Soul/Memory
   # documents. A first install has none of these — the stash stays
@@ -649,6 +649,12 @@ if [ -n "$FRESH" ]; then
   # holds. The ledger rides with it; it is metadata, not content.
   if [ -d "$INSTALL_DIR/config/mesh" ]; then
     $SUDO cp -r "$INSTALL_DIR/config/mesh" "$STASH_DIR/mesh" 2>/dev/null || true
+  fi
+  # The server-side chat store (config/chats/, Build 12, #139)
+  # rides the same keep-list: the threads are the operator's
+  # history with her, kept the way the Mesh identity is kept.
+  if [ -d "$INSTALL_DIR/config/chats" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/chats" "$STASH_DIR/chats" 2>/dev/null || true
   fi
   # Her downloaded speech models and her call log are hers too —
   # they ride the same keep-list. The voice venv rides along as
@@ -696,6 +702,11 @@ if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/config"
     $SUDO cp -r "$STASH_DIR/mesh" "$INSTALL_DIR/config/mesh"
     echo "    the Mesh identity home (config/mesh/) restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/chats" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/chats" "$INSTALL_DIR/config/chats"
+    echo "    the chat store (config/chats/) restored across the fresh install"
   fi
   if [ -d "$STASH_DIR/voice-models" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/voice"
@@ -1090,13 +1101,27 @@ else
 fi
 
 if [ "$STARTUP" = "boot" ]; then
-  echo "==> Registering the llamafile server as a systemd user service"
+  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
   sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-bridge.service > "$UNIT_DIR/navi-bridge.service"
   systemctl --user daemon-reload
   systemctl --user enable --now navi-llamafile.service
-  echo "    service enabled: navi-llamafile.service"
+  systemctl --user enable --now navi-bridge.service
+  echo "    services enabled: navi-llamafile.service, navi-bridge.service"
+  # User services start at LOGIN, not boot, unless lingering is
+  # on for the user. Try to enable it; when this session cannot,
+  # print the exact command instead of leaving the operator to
+  # believe boot-start works when it does not (Build 12, #142).
+  if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
+    echo "    linger: already on — the services start at boot"
+  elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
+    echo "    linger: enabled — the services start at boot, before any login"
+  else
+    echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
+    echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
+  fi
 else
   echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
 fi

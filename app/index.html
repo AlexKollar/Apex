@@ -139,7 +139,7 @@
     #app.no-status.closed { grid-template-columns:54px minmax(0,1fr) 0px; }
     #app.no-status aside { display:none; }
   }
-  nav { border-right:1px solid var(--line); background:var(--panel2); padding:14px 10px; height:100%; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+  nav { border-right:1px solid var(--line); background:var(--panel2); padding:14px 10px; height:100%; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; }
   /* Her version at the foot of the menu, under a divider bar: the
      number is read from the VERSION file at the install root (the
      bridge reports it on /api/status and CONFIG.version follows
@@ -1240,14 +1240,18 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater"
 // and tools — Chips, ChipDeck, RAG. (Voice was drafted into
 // this group for one amendment and retired as a view by the
 // next; it lives in Settings → Voice now, and appears nowhere
-// in the menu.) The Vault stays flat between the groups and
-// Utilities: the shared desk, belonging to neither family.
+// in the menu.) Build 12 (#137): the Vault leaves the flat row
+// for the new Apex | Apps group, seated directly under Case
+// Files — the first app — because the desk and the casework
+// are one work surface now. Nav placement only: the Vault's
+// view, route and behavior are exactly as #134/#135 left them.
 var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
+  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"]] }
 };
-var NAV_FLAT = ["Chat", "Vault"];
+var NAV_FLAT = ["Chat"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
 // the view keys stay what they have always been; the labels wear
 // the product line — Apex | DHD, Apex | Mesh.
@@ -1263,6 +1267,7 @@ var NAV_ICON_PATHS = {
   Memory: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
   RAG: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
   Vault: '<path d="M4 4a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2z"/><path d="M8 2v20"/><path d="M12 7h5"/><path d="M12 11h5"/>',
+  CaseFiles: '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7h16"/>',
   Updater: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   GitHub: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
   Settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -1308,6 +1313,7 @@ function navIcon(name) {
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
   if (name === "Apex | Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
+  if (name === "Apex | Apps") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='8' height='8' rx='1.5'/><rect x='13' y='3' width='8' height='8' rx='1.5'/><rect x='3' y='13' width='8' height='8' rx='1.5'/><rect x='13' y='13' width='8' height='8' rx='1.5'/></svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
@@ -1323,7 +1329,7 @@ var navClosed = false;
 // own open/collapsed state is NOT part of this ruling: it
 // keeps its remembered behavior — see the navClosed read
 // below. The correction is recorded in the build report.)
-var navGroupsOpen = { systems: false, navi: false, utilities: false };
+var navGroupsOpen = { systems: false, navi: false, apps: false, utilities: false };
 try { localStorage.removeItem("navi.navGroups"); } catch (e) {}
 // The tabbed status pane (0.1.9e Build 6, issues #107/#108):
 // Status is the default pane — the first render and every
@@ -1520,8 +1526,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-11.911";
-var SHIPPED_BUILD_SEQ = 11;
+var BRIDGE_BUILD = "2026-11-11.912";
+var SHIPPED_BUILD_SEQ = 12;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -1543,7 +1549,7 @@ var memory = [];
 var pendingUpload = null;
 var uploads = [];
 try { uploads = JSON.parse(localStorage.getItem("navi.uploads") || "[]"); } catch (e) { uploads = []; }
-function persistUploads() { try { localStorage.setItem("navi.uploads", JSON.stringify(uploads)); } catch (e) {} }
+function persistUploads() { try { localStorage.setItem("navi.uploads", JSON.stringify(uploads)); } catch (e) {} chatsWriteThrough(); }
 var docs = [];
 // Updater state (build .47; end-to-end apply in build .56): the
 // real check's last answer plus the apply's live record, kept in
@@ -1669,7 +1675,8 @@ var GH_ITEMS = [
   { id: "rag", label: "RAG packs", blurb: "Their documents, built indexes, and which packs are active." },
   { id: "workflows", label: "Workflows", blurb: "Her saved chains of chips." },
   { id: "vault", label: "The Vault", blurb: "The shared desk of notes — hers and yours, as plain markdown files." },
-  { id: "mesh-cards", label: "Mesh pairing cards", blurb: "The pairing-card pictures — hers, minted fresh, and one for every paired machine. Her node keypair never rides." }
+  { id: "mesh-cards", label: "Mesh pairing cards", blurb: "The pairing-card pictures — hers, minted fresh, and one for every paired machine. Her node keypair never rides." },
+  { id: "chats", label: "Chats", blurb: "Your conversations with her — they live on the server now, and ride along so another machine picks up mid-thread. A restore converges them: newest wins per thread, and a diverged thread is kept whole, never merged away." }
 ];
 // Soul, Memory, and Settings & config are ticked automatically
 // (build .36): every backup carries them, so any item list —
@@ -2033,8 +2040,8 @@ var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
-  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "github", "installing"] },
+  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "github", "installing", "server-mode"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -2333,12 +2340,304 @@ refreshSeedGreeting();
 })();
 function activeChat() { return chats.filter(function (c) { return c.id === activeChatId; })[0] || chats[0]; }
 function persist() {
+  stampChatActivity();
   try {
     localStorage.setItem("navi.memory", JSON.stringify(memory));
     localStorage.setItem("navi.docs", JSON.stringify(docs));
     localStorage.setItem("navi.chats", JSON.stringify(chats));
     localStorage.setItem("navi.activeChat", String(activeChatId));
   } catch (e) {}
+  // Build 12 (#139): the localStorage copy is a cache now — the
+  // store of record is the bridge's, and every persist writes
+  // through to it (debounced; a no-op until the store answers).
+  chatsWriteThrough();
+}
+
+/* ---------------- Server-side chats (Build 12, #139) ---------------- */
+// The store of record for chats now lives on the bridge, in plain
+// files under config/chats/ — the window hydrates from it on load,
+// writes through on every persist, and keeps localStorage as a
+// cache and an offline fallback only. Any door into the same
+// install (this window, a DHD session, another browser) therefore
+// opens the same threads. Uploads follow chats: their index rides
+// in the same sync payload.
+var chatsServerReady = false;  // the store has answered once
+var chatsSyncTimer = null;
+var chatStampSeen = {};        // chat id -> last seen message count
+function stampChatActivity() {
+  chats.forEach(function (c) {
+    var n = (c.messages || []).length;
+    if (chatStampSeen[c.id] !== undefined && chatStampSeen[c.id] !== n) c.updatedAt = Date.now();
+    chatStampSeen[c.id] = n;
+    if (!c.createdAt) c.createdAt = c.updatedAt || Date.now();
+    if (!c.updatedAt) c.updatedAt = c.createdAt;
+  });
+}
+function chatsSyncPayload() {
+  return { chats: chats, uploads: uploads };
+}
+function chatsWriteThroughNow() {
+  if (CONFIG.backend !== "live" || !chatsServerReady) return;
+  fetch("/api/chats/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(chatsSyncPayload()) }).catch(function () {});
+}
+function chatsWriteThrough() {
+  if (CONFIG.backend !== "live" || !chatsServerReady) return;
+  if (chatsSyncTimer) clearTimeout(chatsSyncTimer);
+  chatsSyncTimer = setTimeout(function () { chatsSyncTimer = null; chatsWriteThroughNow(); }, 350);
+}
+function hydrateChatsFromServer() {
+  if (CONFIG.backend !== "live") return;
+  fetch("/api/chats").then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !Array.isArray(j.chats)) return;
+    chatsServerReady = true;
+    if (j.chats.length) {
+      chats = j.chats.map(function (c) {
+        var n = Number(c.id);
+        if (!isNaN(n) && String(n) === String(c.id)) c.id = n;
+        return c;
+      });
+      if (Array.isArray(j.uploads)) uploads = j.uploads;
+      var act = chats.filter(function (c) { return c.id === activeChatId; })[0] || chats[0];
+      activeChatId = act.id; messages = act.messages;
+      stampChatActivity();
+      persist();
+      if (view === "Chat") render();
+    } else {
+      // An empty store: whatever this browser already holds (the
+      // one-time migration from the localStorage years) becomes
+      // the store's seed — imported, never discarded.
+      chatsWriteThroughNow();
+    }
+  }).catch(function () {});
+}
+
+/* ------------- Account sync via the Operator Badge (#136) ------------- */
+// The Badge is a pointer and a trigger, never an authenticator:
+// slotting it asks the bridge to pull the latest GitHub backup and
+// lay the per-item preview on a live operation card in Chat. The
+// GitHub sign-in is the only key; signed out, the flow stops at
+// its first step and fetches nothing. Nothing is applied until
+// the operator confirms on the card.
+function adoptDashboardSlice(d) {
+  if (!d) return;
+  if (typeof d.operatorName === "string") CONFIG.operatorName = d.operatorName;
+  if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(d.theme) !== -1) CONFIG.theme = d.theme;
+  if (d.motion === "potato" || d.motion === "full") CONFIG.motion = d.motion;
+  if ([1, 1.1, 1.25, 1.5].indexOf(Number(d.uiScale)) !== -1) CONFIG.uiScale = Number(d.uiScale);
+  if (typeof d.operatorPicture === "string" && /^data:image\//.test(d.operatorPicture) && d.operatorPicture.length <= 420000) CONFIG.operatorPicture = d.operatorPicture;
+  if (typeof d.operatorBadge === "string" && /^data:image\//.test(d.operatorBadge) && d.operatorBadge.length <= 420000) CONFIG.operatorBadge = d.operatorBadge;
+  saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
+}
+function ghBadgeSync() {
+  if (CONFIG.backend !== "live") { ghSetMsg("Account sync runs against the live bridge — mock mode simulates backups themselves, not the pull.", false); render(); return; }
+  if (!githubState || !githubState.signedIn) { ghSetMsg("Sign in first — the badge points, but the GitHub sign-in is the only key. Nothing was fetched.", true); render(); return; }
+  ghSetMsg("Slotting your badge…", false); render();
+  fetch("/api/github/badge-sync/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dashboard: ghDashboardSlice() }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var intro = j && j.ok
+        ? "Your badge pointed the way and the sign-in did the unlocking — the latest backup's preview is on the card below. Nothing lands until you confirm it there; a thread both machines moved on will arrive whole, as a dated sibling, never merged away."
+        : "The badge sync stopped at its first step — the card below has the reason, in plain words.";
+      messages.push({ who: "NAVI", text: intro, exec: null, operation: (j && j.operation) || null });
+      persist();
+      goView("Chat");
+      if (j && j.operationId) watchOperation(j.operationId);
+    })
+    .catch(function () { ghSetMsg("The bridge didn't answer — the sync never started.", true); render(); });
+}
+
+/* ------------------- Boot mode, read live (#142) ------------------- */
+function renderBootStatus(boot) {
+  if (CONFIG.backend !== "live" || !boot) return "";
+  var unit = function (s) { return s === "enabled" ? "enabled" : s === "disabled" ? "not enabled" : "unknown"; };
+  var line = boot.armed ? "Armed — Apex comes up headless at boot" : "Not armed — Apex starts when you open it";
+  var dot = boot.armed ? "#34d399" : "#9fb3c8";
+  return "<div class='stat'><span class='dot' style='background:" + dot + "'></span><span style='color:var(--dim)'>BOOT</span><br>" +
+    "<span class='v mono' style='font-weight:700'>" + esc(line) + "</span>" +
+    "<div style='color:var(--dim);font-size:12px;margin-top:2px'>Bridge service " + unit(boot.bridgeUnit) + " · llamafile service " + unit(boot.llamafileUnit) + " · linger " + (boot.linger === true ? "on" : boot.linger === false ? "off" : "unknown") + " — read from this system, never assumed. <b>Server mode</b> in Docs tells the whole story.</div></div>";
+}
+
+/* ----------------------- Case Files (#137/#138) ----------------------- */
+// The first Apex | App. A case is a folder of plain markdown in
+// the Vault (cases/<slug>/) — manifest in case.md's frontmatter,
+// findings as notes, evidence as files, the timeline one
+// newest-first file — so cases ride the Vault's backups and open
+// in Obsidian as they lie. The OPEN case is the one Navi files to
+// from chat, out loud; the report export (#138) composes from the
+// same files and counts what it withholds.
+var casesState = null, casesFetching = false;
+var caseDetailState = null, caseDetailFetching = false;
+var caseMsg = "", caseReportState = null, caseDragOver = false;
+var caseOpenSlug = "";
+try { caseOpenSlug = localStorage.getItem("navi.openCase") || ""; } catch (e) {}
+var lastChatExec = null;   // newest terminal/chip output from chat, for filing
+function refreshCases() {
+  if (CONFIG.backend !== "live" || casesFetching) return;
+  casesFetching = true;
+  fetch("/api/cases").then(function (r) { return r.json(); }).then(function (j) { casesState = (j && j.cases) || []; casesFetching = false; if (view === "CaseFiles") render(); }).catch(function () { casesFetching = false; });
+}
+function refreshCaseDetail(slug) {
+  if (CONFIG.backend !== "live" || caseDetailFetching) return;
+  caseDetailFetching = true;
+  fetch("/api/cases/detail?case=" + encodeURIComponent(slug)).then(function (r) { return r.json(); }).then(function (j) { caseDetailFetching = false; if (j && j.ok) { caseDetailState = j.case; if (view === "CaseFiles") render(); } }).catch(function () { caseDetailFetching = false; });
+}
+function caseSevColor(sev) { return { critical: "#f87171", high: "#f5b544", medium: "var(--cy)", low: "#9fb3c8", info: "var(--dim)" }[sev] || "var(--dim)"; }
+function caseFilesHtml() {
+  var h = "<h3>Case Files</h3>";
+  h += "<p style='color:var(--dim)'>The engagement workspace. A case is a folder of plain markdown on the shared desk — <span class='mono'>cases/</span> in the Vault — so it rides the Vault's backups, opens in Obsidian as it lies, and outlives any one screen. One case at a time is <b>open</b>: the open case is where Navi files findings from chat, out loud, and where chip runs can be filed.</p>";
+  if (caseMsg) h += "<p style='font-size:13px'>" + esc(caseMsg) + "</p>";
+  if (CONFIG.backend !== "live") { h += "<div class='card'>Case Files work through the live bridge — the cases live in this install's Vault folder. Switch the backend to Live in Settings and they will be here.</div>"; return h; }
+  if (caseDetailState) {
+    var d = caseDetailState;
+    var isOpen = caseOpenSlug === d.slug;
+    h += "<div class='card'><button class='ghost' id='cf-back' style='min-height:44px'>← All cases</button>";
+    h += "<h3 style='margin:10px 0 4px'>" + esc(d.name) + "</h3>";
+    h += "<p class='mono' style='color:var(--dim);font-size:12px;margin:2px 0'>" + esc(d.slug) + " · status " + esc(d.status) + " · opened " + esc(d.opened) + "</p>";
+    if (d.client) h += "<p style='color:var(--dim);margin:2px 0'><b>Client:</b> " + esc(d.client) + "</p>";
+    if (d.scope) h += "<p style='color:var(--dim);margin:2px 0'><b>Scope:</b> " + esc(d.scope) + "</p>";
+    h += "<div class='row' style='margin-top:8px'><button class='ghost' id='cf-setopen' style='min-height:44px'>" + (isOpen ? "This is the open case — close it" : "Make this the open case") + "</button> <button class='act' id='cf-report' style='min-height:44px'>Export the report</button></div>";
+    h += "<p style='color:var(--dim);font-size:12px'>" + (isOpen ? "Navi files to this case from chat — say <i>“file that as a finding.”</i>" : "Only the open case receives filings from chat.") + "</p>";
+    if (caseReportState && caseReportState.slug === d.slug) {
+      h += "<div class='card' style='border-color:var(--cy)'><b>Report exported</b> — saved as <span class='mono'>report.md</span> in the case folder" + (caseReportState.withheld ? ", with <b>" + caseReportState.withheld + " internal note" + (caseReportState.withheld === 1 ? "" : "s") + " withheld and counted</b> in the document itself" : "") + ". <button class='ghost' id='cf-report-dl' style='min-height:44px'>Download report.md</button><details style='margin-top:6px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Read the report</summary><pre class='exec mono' style='margin-top:6px;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>" + esc(caseReportState.text) + "</pre></details></div>";
+    }
+    h += "</div>";
+    // Findings
+    h += "<div class='card'><h3>Findings</h3>";
+    h += "<div class='row'><input class='grow' id='cf-f-title' type='text' placeholder='Finding title — e.g. Expired TLS certificate on the portal' aria-label='Finding title'></div>";
+    h += "<div class='row' style='margin-top:6px'><select id='cf-f-sev' aria-label='Finding severity'><option value='critical'>Critical</option><option value='high'>High</option><option value='medium' selected>Medium</option><option value='low'>Low</option><option value='info'>Info</option></select><label style='color:var(--dim);font-size:13px'><input type='checkbox' id='cf-f-internal'> Internal — withheld from report exports (and counted there)</label></div>";
+    h += "<textarea id='cf-f-body' rows='4' placeholder='What you found, how you proved it, what it means.' aria-label='Finding detail' style='margin-top:6px'></textarea>";
+    h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-f-add' style='min-height:44px'>File the finding</button>" + (lastChatExec ? " <button class='ghost' id='cf-file-exec' style='min-height:44px'>File the latest chat output as a finding</button>" : "") + "</div>";
+    if (!d.findings.length) h += "<p style='color:var(--dim)'>No findings yet.</p>";
+    d.findings.forEach(function (f) {
+      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div></div>";
+    });
+    h += "</div>";
+    // Evidence
+    h += "<div class='card'><h3>Evidence</h3>";
+    h += "<div id='cf-drop' tabindex='0' role='button' aria-label='Drop evidence files here or activate to upload' style='border:1px dashed " + (caseDragOver ? "var(--accent)" : "var(--line)") + ";border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer'><b>" + (caseDragOver ? "Drop the evidence to file it" : "Drag files here") + "</b><br><span style='color:var(--dim);font-size:12px'>anything the case needs to keep — or click to upload</span><input id='cf-files' type='file' multiple style='display:none' aria-label='Upload evidence files'></div>";
+    if (!d.evidence.length) h += "<p style='color:var(--dim)'>No evidence files yet.</p>";
+    d.evidence.forEach(function (ev) { h += "<div class='row' style='margin-top:6px'><span class='mono grow' style='font-size:12px'>" + esc(ev.name) + "</span><span style='color:var(--dim);font-size:12px'>" + ev.size + " bytes</span></div>"; });
+    h += "</div>";
+    // Timeline
+    h += "<div class='card'><h3>Timeline</h3>";
+    h += "<div class='row'><input class='grow' id='cf-t-title' type='text' placeholder='Entry title — e.g. Kickoff call with the client' aria-label='Timeline entry title'></div>";
+    h += "<textarea id='cf-t-body' rows='3' placeholder='What happened.' aria-label='Timeline entry detail' style='margin-top:6px'></textarea>";
+    h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-t-add' style='min-height:44px'>Add the entry</button></div>";
+    if (!d.timeline.length) h += "<p style='color:var(--dim)'>No entries yet.</p>";
+    d.timeline.forEach(function (e) { h += "<div style='margin-top:10px'><b>" + esc(e.title) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(e.date) + "</span><div style='color:var(--dim);white-space:pre-wrap'>" + esc(e.body) + "</div></div>"; });
+    h += "</div>";
+    return h;
+  }
+  // The list (cold start lands here, always — #114's rule).
+  if (!casesState && !casesFetching) refreshCases();
+  h += "<div class='card'><h3>Open a case</h3><div class='row'><input class='grow' id='cf-name' type='text' placeholder='Case name — e.g. Q3 external assessment' aria-label='Case name'></div><div class='row' style='margin-top:6px'><input class='grow' id='cf-client' type='text' placeholder='Client' aria-label='Case client'><input class='grow' id='cf-scope' type='text' placeholder='Scope — e.g. external, one host' aria-label='Case scope'></div><div class='row' style='margin-top:6px'><button class='act' id='cf-create' style='min-height:44px'>Create the case</button></div></div>";
+  if (casesFetching && !casesState) h += "<p style='color:var(--dim)'>Reading the cases from the desk…</p>";
+  (casesState || []).forEach(function (c) {
+    h += "<div class='card' style='margin-top:8px'><b>" + esc(c.name) + "</b>" + (caseOpenSlug === c.slug ? " <span class='mono' style='font-size:11px;color:#34d399'>OPEN</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(c.client || "—") + " · " + esc(c.status) + " · opened " + esc(c.opened) + "</span><br><span style='color:var(--dim);font-size:12px'>" + c.findings + " finding" + (c.findings === 1 ? "" : "s") + " · " + c.evidence + " evidence · " + c.timeline + " timeline</span><div class='row' style='margin-top:6px'><button class='act' data-case-open='" + esc(c.slug) + "' style='min-height:44px'>Open the case</button></div></div>";
+  });
+  if (casesState && !casesState.length) h += "<p style='color:var(--dim)'>No cases yet — the desk is clear. Open the first one above.</p>";
+  return h;
+}
+function casePost(path, body, done) {
+  fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { done(j || {}); })
+    .catch(function () { caseMsg = "The bridge didn't answer — nothing was filed."; render(); });
+}
+function wireCaseFiles() {
+  var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
+  bind("cf-create", function () {
+    var name = (document.getElementById("cf-name") || {}).value || "";
+    var client = (document.getElementById("cf-client") || {}).value || "";
+    var scope = (document.getElementById("cf-scope") || {}).value || "";
+    casePost("/api/cases/create", { name: name, client: client, scope: scope }, function (j) {
+      if (j.ok) { caseMsg = "Case opened — it lives at cases/" + j.case.slug + "/ on the desk."; casesState = null; caseDetailState = j.case; }
+      else caseMsg = j.error || "The case could not be opened.";
+      render();
+    });
+  });
+  bind("cf-back", function () { caseDetailState = null; casesState = null; caseReportState = null; render(); });
+  mainEl.querySelectorAll("[data-case-open]").forEach(function (b) { b.onclick = function () { caseReportState = null; refreshCaseDetail(b.getAttribute("data-case-open")); }; });
+  bind("cf-setopen", function () {
+    if (!caseDetailState) return;
+    var slug = caseOpenSlug === caseDetailState.slug ? "" : caseDetailState.slug;
+    caseOpenSlug = slug;
+    try { localStorage.setItem("navi.openCase", slug); } catch (e) {}
+    casePost("/api/cases/open", { case: slug }, function () { caseMsg = slug ? "The open case is now " + caseDetailState.name + " — Navi files to it from chat." : "No case is open now — chat filings will say so."; render(); });
+  });
+  bind("cf-f-add", function () {
+    if (!caseDetailState) return;
+    var title = (document.getElementById("cf-f-title") || {}).value || "";
+    var body = (document.getElementById("cf-f-body") || {}).value || "";
+    var sev = (document.getElementById("cf-f-sev") || {}).value || "info";
+    var internal = !!((document.getElementById("cf-f-internal") || {}).checked);
+    casePost("/api/cases/file", { case: caseDetailState.slug, kind: "finding", title: title, body: body, severity: sev, internal: internal }, function (j) {
+      caseMsg = j.ok ? "Finding filed at " + j.filed.path + "." : (j.error || "The finding could not be filed.");
+      refreshCaseDetail(caseDetailState.slug); render();
+    });
+  });
+  bind("cf-file-exec", function () {
+    if (!caseDetailState || !lastChatExec) return;
+    var title = "Chat output — " + String(lastChatExec.command || "chip run").slice(0, 60);
+    var body = "```\n$ " + (lastChatExec.command || "") + "\n" + (lastChatExec.output || "") + "\n```";
+    casePost("/api/cases/file", { case: caseDetailState.slug, kind: "finding", title: title, body: body, severity: "info", internal: false }, function (j) {
+      caseMsg = j.ok ? "The chat output is filed as a finding at " + j.filed.path + "." : (j.error || "It could not be filed.");
+      refreshCaseDetail(caseDetailState.slug); render();
+    });
+  });
+  bind("cf-t-add", function () {
+    if (!caseDetailState) return;
+    var title = (document.getElementById("cf-t-title") || {}).value || "";
+    var body = (document.getElementById("cf-t-body") || {}).value || "";
+    casePost("/api/cases/file", { case: caseDetailState.slug, kind: "timeline", title: title, body: body }, function (j) {
+      caseMsg = j.ok ? "Timeline entry added." : (j.error || "The entry could not be added.");
+      refreshCaseDetail(caseDetailState.slug); render();
+    });
+  });
+  bind("cf-report", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/report", { case: slug }, function (j) {
+      if (j.ok) { caseReportState = { slug: slug, text: j.report, withheld: j.withheld || 0 }; caseMsg = ""; }
+      else caseMsg = j.error || "The report could not be composed.";
+      render();
+    });
+  });
+  bind("cf-report-dl", function () {
+    if (!caseReportState) return;
+    var blob = new Blob([caseReportState.text], { type: "text/markdown" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "report.md"; a.click();
+    setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) {} }, 4000);
+  });
+  var drop = document.getElementById("cf-drop");
+  var fileInput = document.getElementById("cf-files");
+  if (drop && fileInput) {
+    drop.onclick = function () { fileInput.click(); };
+    drop.ondragover = function (ev) { ev.preventDefault(); if (!caseDragOver) { caseDragOver = true; render(); } };
+    drop.ondragleave = function () { caseDragOver = false; render(); };
+    drop.ondrop = function (ev) { ev.preventDefault(); caseDragOver = false; caseEvidenceFiles(ev.dataTransfer ? ev.dataTransfer.files : null); };
+    fileInput.onchange = function () { caseEvidenceFiles(fileInput.files); };
+  }
+}
+function caseEvidenceFiles(files) {
+  if (!caseDetailState || !files || !files.length) { render(); return; }
+  var slug = caseDetailState.slug;
+  var list = Array.prototype.slice.call(files);
+  var done = 0;
+  list.forEach(function (f) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var url = String(reader.result || "");
+      var b64 = url.indexOf(",") !== -1 ? url.slice(url.indexOf(",") + 1) : "";
+      casePost("/api/cases/evidence", { case: slug, name: f.name, dataBase64: b64 }, function (j) {
+        done++;
+        if (done === list.length) { caseMsg = "Evidence filed: " + list.map(function (x) { return x.name; }).join(", ") + "."; refreshCaseDetail(slug); render(); }
+      });
+    };
+    reader.onerror = function () { done++; if (done === list.length) render(); };
+    reader.readAsDataURL(f);
+  });
 }
 
 /* --------------------------- command lists ----------------------------- */
@@ -3252,7 +3551,9 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The shell remembers — recall, search, completion, and shortcuts</h4>" +
   "<p>Your command history is kept in one place, like a shell's history file: it survives switching chats, clearing a chat, and closing the page, and it holds up to 200 commands. With the suggestion list closed, press the <b>Up arrow</b> to walk back through commands you have run and the <b>Down arrow</b> to walk forward again — going past the newest brings back what you had typed. Press <b>Ctrl+R</b> to search the history: type some letters and the newest matching command shows; press Ctrl+R or the arrow keys to step through matches, <b>Enter</b> or <b>Tab</b> to put the match in the bar (it does not run yet), and <b>Escape</b> to cancel and get your typed line back. As you type a command, the list now completes more than the first word: file and folder paths complete from the real filesystem (a folder completes with a slash and opens its contents), known flags and subcommands for common commands like <span class='mono'>git</span> and <span class='mono'>ls</span> are offered, and arguments you have used with that command before are offered too, marked as used before. The editing shortcuts from the shell work as well: <b>Ctrl+A</b> and <b>Ctrl+E</b> jump to the start and end of the line, <b>Ctrl+U</b> cuts everything before the cursor, <b>Ctrl+K</b> cuts everything after it, <b>Ctrl+W</b> cuts the word before the cursor, and <b>Ctrl+Y</b> pastes back what a cut took. History shortcuts like <span class='mono'>!!</span> (the last command), <span class='mono'>!$</span> (its last argument), and <span class='mono'>!3</span> (the third command in the history) never run silently: the first Enter rewrites the bar with the expanded command and asks you to check it — press Enter again to run exactly what you see.</p></div>" +
     "<div class='doc-sec'><h4>Raw terminal work — Chat's CLI mode</h4>" +
-  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and the same sudo switch in the status column covers the commands you run this way. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" },
+  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and the same sudo switch in the status column covers the commands you run this way. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" +
+    "<div class='doc-sec'><h4>Chats live on the server now</h4>" +
+  "<p>Your chats are kept by the <b>bridge</b>, not by this browser window: plain files in <span class='mono'>config/chats/</span> on the machine Apex runs on, one per thread. Open Apex from the desktop, through DHD, or from a second browser on the same install and you are looking at the <b>same conversations</b> — sign in on your server from work and the thread you left on the laptop is simply there. The browser keeps a local copy as a cache and an offline fallback, and the first time a browser with older chats meets an empty server store, its chats are imported as the seed — never discarded. Your uploads index rides with the chats. Chats are also the ninth backup essential: tick <b>Chats</b> in Settings → GitHub &amp; Backup and the threads ride the ready-to-fly backup; a restore <b>converges</b> them — newest wins per thread, and where both machines moved the same thread on, both versions survive, the incoming one as a dated sibling. Nothing is ever merged away silently.</p></div>" },
   { id: "chips-guide", title: "Chips development guide", related: ["navi-functions", "chips-publishing"], html:
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
@@ -3362,6 +3663,12 @@ var DOC_PAGES = [
   "<li>A strip at the foot of the editor shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
   "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" },
+  { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide"], html:
+    "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
+  "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
+  "<p>The view cold-starts on the <b>case list</b>, always. Open a case for its findings (structured cards, by severity), its evidence (drop files straight onto the case), and its timeline. Mark <b>one case open</b> and it becomes the case Navi works: ask her in chat to <i>“file that as a finding”</i> and she files the exchange into the open case and tells you she did — out loud, naming the case and the file, never silently. The latest terminal or chip output from chat can be filed as a finding from the case page, too.</p></div>" +
+    "<div class='doc-sec'><h4>The report export</h4>" +
+  "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence listed — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -3516,12 +3823,22 @@ var DOC_PAGES = [
   "<li>Her <b>installed chips</b> — the whole chips, so they come back working, not just named.</li>" +
   "<li>Her <b>RAG packs</b> — their documents, their built indexes, and which ones are switched on.</li>" +
   "<li>Her <b>workflows</b> — the saved chains of chips.</li>" +
+  "<li>Your <b>chats</b> — the threads themselves, which live on the server now. A restore <i>converges</i> them rather than overwriting: newest wins per thread, and a thread both machines moved on survives whole, as a dated sibling.</li>" +
+  "<li>The <b>Vault</b> — the shared desk of notes, cases included.</li>" +
   "<li>Her <b>Mesh pairing cards</b> — the pictures themselves: her own card, minted fresh as the backup runs, and a re-drawn picture for every machine she is paired with, so a restored Navi can re-pair without meeting everyone from nothing. Her node keypair is never among them — a restored machine still mints its own identity.</li></ul>" +
-  "<p>Some things are <b>never</b> backed up, on purpose: your chat transcripts and call logs (those are history, not identity), caches and log files, her <b>hardware profile</b> (a new machine gets profiled fresh at its own install — an old machine's numbers must never be forced onto it), and her voice model files (big downloads that reinstall themselves; her voice <i>settings</i> are backed up).</p>" +
+  "<p>Some things are <b>never</b> backed up, on purpose: your call logs (those are history, not identity), caches and log files, her <b>hardware profile</b> (a new machine gets profiled fresh at its own install — an old machine's numbers must never be forced onto it), and her voice model files (big downloads that reinstall themselves; her voice <i>settings</i> are backed up).</p>" +
   "<p>The essentials checklist in Settings → GitHub &amp; Backup starts with every essential ticked. <b>Soul, Memory, and Settings &amp; config are ticked automatically and stay ticked</b> — they are what makes an imported Navi her, so every backup carries them. Installed chips, RAG packs, workflows, the Vault, and Mesh pairing cards are yours to choose; untick one of those and it tells you what it means: an import from that backup will no longer be fully ready-to-fly, because the unticked part stays behind.</p></div>" +
     "<div class='doc-sec'><h4>When backups happen, and bringing her back</h4>" +
   "<p>You pick how often: <b>every day, every 3 days, every 5 days, or every 7 days</b>. Navi checks the clock herself — when she starts, and while she is running — and when a backup is due and she is signed in, she runs it. That is the honest limit: <b>backups happen while Navi is running.</b> If the machine is off when one comes due, it simply runs at her next start. Settings → GitHub &amp; Backup shows the last backup's time and what it wrote, and the same for the last import — and the status column carries a <b>Backup</b> section with the last backup's time and result at a glance (or says plainly that no backup has run yet).</p>" +
-  "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — transcripts, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" },
+  "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — call logs, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" +
+    "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
+  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync.</p></div>" },
+  { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
+    "<div class='doc-sec'><h4>Apex without the window</h4>" +
+  "<p>A server does not need a window. <span class='mono'>./start.sh --headless</span> starts exactly the services — the llamafile (check-first, as always: an answering server is left alone) and the bridge, supervised — and opens <b>no window</b>. It is safe over SSH, safe to run twice (a service already answering is adopted, never doubled), and it writes the same <span class='mono'>start.log</span> the desktop launch writes, so a headless start explains itself after the fact the same way. Run it after a reboot and Apex — with DHD, if DHD was left on — is simply back.</p>" +
+  "<p>The desktop launch adopts, too: open the app on a machine whose services are already running (from boot, or from a headless start) and it uses them as they are instead of starting second copies.</p></div>" +
+    "<div class='doc-sec'><h4>At boot, honestly</h4>" +
+  "<p>Choose <b>At system boot</b> in the installer and it registers <b>two</b> systemd user services — <span class='mono'>navi-llamafile.service</span> and <span class='mono'>navi-bridge.service</span> (the bridge unit runs <span class='mono'>start.sh --headless</span>) — and tries to enable <b>lingering</b> for your user, which is what lets user services start at boot rather than at login. If the installer cannot enable lingering itself, it prints the exact command — <span class='mono'>sudo loginctl enable-linger $USER</span> — rather than assuming: a boot-armed Apex you only <i>believe</i> in is worse than one that tells you the step it could not take. The status column's <b>Servers</b> group carries a <b>Boot</b> row that reads the armed state from the system every time — both units and the linger state — so what it shows is what the machine says, never what an installer once hoped.</p></div>" },
   { id: "installing", title: "Installing & updating", related: ["getting-started", "troubleshooting"], html:
     "<div class='doc-sec'><h4>Installing Navi, and keeping her up to date</h4>" +
   "<p>Navi lives on your own computer — the app, her model, her memory, and her voice are all on your machine.</p>" +
@@ -3841,7 +4158,7 @@ function liveChat(text, speak) {
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null }; });
+    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null }; });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -4222,7 +4539,11 @@ navNavi.appendChild(navGroupHeader("navi"));
 navNavi.appendChild(navGroupWrap("navi"));
 var navBrk3 = document.createElement("div"); navBrk3.className = "nav-break"; navBrk3.setAttribute("aria-hidden", "true"); navNavi.appendChild(navBrk3);
 navMenu.appendChild(navNavi);
-navMenu.appendChild(navBtn("nav-Vault", navLabel("Vault"), "Vault", "Vault"));
+var navApps = document.createElement("div"); navApps.className = "nav-group-sec"; navApps.id = "nav-sec-apps";
+navApps.appendChild(navGroupHeader("apps"));
+navApps.appendChild(navGroupWrap("apps"));
+var navBrk4 = document.createElement("div"); navBrk4.className = "nav-break"; navBrk4.setAttribute("aria-hidden", "true"); navApps.appendChild(navBrk4);
+navMenu.appendChild(navApps);
 var navUtil = document.createElement("div"); navUtil.className = "nav-util"; navUtil.id = "nav-util";
 navUtil.appendChild(navGroupWrap("utilities"));
 navUtil.appendChild(navGroupHeader("utilities"));
@@ -4234,15 +4555,15 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", Vault: "nav-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-Vault", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
+  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
   });
-  ["systems", "navi", "utilities"].forEach(function (gid) {
+  ["systems", "navi", "apps", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
     if (wrap) {
       var closed = !navGroupsOpen[gid];
@@ -4494,10 +4815,42 @@ function operationCardHtml(op) {
     if (s.id === "prerequisites" && s.state === "waiting") h += "<button type='button' class='act' data-op-install='" + esc(op.id) + "' aria-label='Install the missing DHD prerequisites' style='min-height:44px;margin-top:8px'>Install missing prerequisites</button>";
     h += "</div></div>";
   });
+  if (op.kind === "badge-sync" && op.state === "waiting") h += "<div class='row' style='margin-top:10px'><button type='button' class='act' data-badge-apply='" + esc(op.id) + "' style='min-height:44px'>Confirm — land this sync</button> <button type='button' class='ghost' data-badge-dismiss='" + esc(op.id) + "' style='min-height:44px'>Not now</button></div>";
   return h + "</section>";
 }
 function wireOperationCards(root) {
   wireCommandBlocks(root);
+  var bscope = root || document;
+  if (bscope.querySelectorAll) {
+    bscope.querySelectorAll("[data-badge-apply]").forEach(function (b) {
+      if (b.dataset.wired) return;
+      b.dataset.wired = "1";
+      b.onclick = function () {
+        var opId = b.getAttribute("data-badge-apply");
+        b.disabled = true; b.textContent = "Landing it…";
+        fetch("/api/github/badge-sync/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operationId: opId }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (j && j.dashboard) adoptDashboardSlice(j.dashboard);
+            fetch("/api/persona").then(function (r) { return r.json(); }).then(function (p) { if (p.soul) CONFIG.soul = p.soul; if (p.memory) CONFIG.memory = p.memory; }).catch(function () {});
+            hydrateChatsFromServer();
+            refreshOperation(opId);
+          })
+          .catch(function () { refreshOperation(opId); });
+      };
+    });
+    bscope.querySelectorAll("[data-badge-dismiss]").forEach(function (b) {
+      if (b.dataset.wired) return;
+      b.dataset.wired = "1";
+      b.onclick = function () {
+        var opId = b.getAttribute("data-badge-dismiss");
+        b.disabled = true;
+        fetch("/api/github/badge-sync/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operationId: opId }) })
+          .then(function () { refreshOperation(opId); })
+          .catch(function () { refreshOperation(opId); });
+      };
+    });
+  }
   var scope = root || document;
   if (!scope.querySelectorAll) return;
   scope.querySelectorAll("[data-op-install]").forEach(function (b) {
@@ -6136,6 +6489,7 @@ function renderStatus(live) {
     renderLocalNetwork() +
     renderMeshStatus() +
     renderDhdStatus() +
+    renderBootStatus(live && live.boot) +
     "</details></div>" +
     renderSudo() +
     renderVoiceStatus() +
@@ -6627,7 +6981,7 @@ function githubSettingsHtml() {
   h += "</div>";
   // Backup card.
   var unticked = GH_ITEMS.filter(function (it) { return gh.backupItems.indexOf(it.id) === -1; });
-  h += "<div class='card'><h3>Backup — the ready-to-fly essentials</h3><p style='color:var(--dim)'>A backup carries <b>only what a fresh Navi needs to be fully herself</b>: fresh install + import = ready to fly. Deliberately never backed up: chat transcripts, call logs, caches and logs, the hardware profile (a new machine gets profiled fresh at its own install), and her voice model files (they reinstall — her voice <i>settings</i> are in the backup). Backups run while Navi is running: the bridge checks on launch and while she's up whether one is due, on your interval, and runs it when she's signed in. Nothing backs up while the machine is off.</p>";
+  h += "<div class='card'><h3>Backup — the ready-to-fly essentials</h3><p style='color:var(--dim)'>A backup carries <b>only what a fresh Navi needs to be fully herself</b>: fresh install + import = ready to fly. Chats ride on their own tick now — they live on the server (Build 12), and a restore <i>converges</i> them instead of overwriting: newest wins per thread, and a thread both machines moved on is kept whole as a dated sibling. Deliberately never backed up: call logs, caches and logs, the hardware profile (a new machine gets profiled fresh at its own install), and her voice model files (they reinstall — her voice <i>settings</i> are in the backup). Backups run while Navi is running: the bridge checks on launch and while she's up whether one is due, on your interval, and runs it when she's signed in. Nothing backs up while the machine is off.</p>";
   h += "<label>Backup repository (under your account)<br><input class='mono' id='gh-repo' type='text' value='" + esc(gh.backupRepo) + "' aria-label='Backup repository name'></label>";
   h += "<label>Visibility<br><select id='gh-vis' aria-label='Backup repository visibility'><option value='private'" + (gh.backupPrivate ? " selected" : "") + ">Private — only you can see it (recommended)</option><option value='public'" + (!gh.backupPrivate ? " selected" : "") + ">Public — anyone can read it</option></select></label>";
   h += "<div id='gh-pubwarn'></div>";
@@ -6646,7 +7000,7 @@ function githubSettingsHtml() {
   if (!gh.signedIn) h += "<p style='color:var(--dim);font-size:12px'>Back up now needs a sign-in — writing to GitHub is one of the actions that does.</p>";
   h += "<p class='mono' style='color:var(--dim);font-size:11px;margin-top:8px'>LAST BACKUP · " + (gh.lastBackupAt ? ghWhen(gh.lastBackupAt) + " — " + esc(gh.lastBackupResult || "") : "never yet") + "</p></div>";
   // Import card.
-  h += "<div class='card'><h3>Import — bring a Navi back</h3><p style='color:var(--dim)'>Import pulls the backup down and shows you, essential by essential, what would change — <b>nothing is overwritten until you confirm</b>. Restored packs come back with their indexes and active states; restored chips come back whole and runnable. What's not in the backup (transcripts, the old machine's hardware profile, voice models) simply starts fresh, the way a new install should.</p>";
+  h += "<div class='card'><h3>Import — bring a Navi back</h3><p style='color:var(--dim)'>Import pulls the backup down and shows you, essential by essential, what would change — <b>nothing is overwritten until you confirm</b>. Restored packs come back with their indexes and active states; restored chips come back whole and runnable. What's not in the backup (call logs, the old machine's hardware profile, voice models) simply starts fresh, the way a new install should.</p>";
   h += "<button class='ghost' id='gh-preview'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Preview what would change</button>";
   if (githubPreview && githubPreview.ok && !githubApplied) h += " <button class='act' id='gh-apply'>Confirm import — overwrite as shown</button>";
   if (githubPreview && !githubPreview.ok && githubPreview.error) h += "<p style='color:#f87171'>" + esc(githubPreview.error) + "</p>";
@@ -6658,6 +7012,18 @@ function githubSettingsHtml() {
   }
   if (githubApplied && githubApplied.ok) h += "<p style='color:var(--green)'>" + esc(githubApplied.result || "Import complete.") + "</p>";
   h += "<p class='mono' style='color:var(--dim);font-size:11px;margin-top:8px'>LAST IMPORT · " + (gh.lastImportAt ? ghWhen(gh.lastImportAt) + " — " + esc(gh.lastImportResult || "") : "never yet") + "</p></div>";
+  // Account sync card (Build 12, #136): the Operator Badge's
+  // functional home is here, with the account machinery — slotting
+  // it pulls the latest backup into a preview on a live operation
+  // card in Chat, and nothing lands until the operator confirms
+  // there. The badge authenticates nothing; the sign-in is the key.
+  h += "<div class='card'><h3>Account sync — slot your Operator Badge</h3><p style='color:var(--dim)'>Your <b>Operator Badge</b> is a pointer, never a key: slotting it tells Navi <i>whose</i> backup to pull, and the GitHub sign-in above remains the only thing that can unlock it. Slotting the badge pulls the latest backup and lays its per-item preview on a <b>live operation card in Chat</b> — Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing lands until you confirm on the card</b>. Chats converge rather than overwrite, and her node keypair and Mesh certificate never ride a backup, so they can never ride a sync.</p>";
+  if (CONFIG.operatorBadge) {
+    h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:88px;border-radius:8px'><div><button class='act' id='gh-badge-sync' style='min-height:44px'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Slot the badge — pull the latest backup</button>" + (gh.signedIn ? "" : "<p style='color:var(--dim);font-size:12px'>Signed out, slotting the badge stops at the sign-in step and fetches nothing — sign in above first.</p>") + "</div></div>";
+  } else {
+    h += "<p style='color:var(--dim)'>No badge yet — mint one in <b>Settings → Operator</b>, then slot it here. The sync needs only the sign-in; the badge is how you point it.</p><button class='act' id='gh-badge-sync' style='min-height:44px'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Pull the latest backup</button>";
+  }
+  h += "</div>";
   if (githubMsg) h += "<p style='font-size:13px;color:" + (githubError ? "#f87171" : "var(--green)") + "'>" + esc(githubMsg) + "</p>";
   return h;
 }
@@ -7095,6 +7461,8 @@ function render() {
     }
   } else if (view === "Vault") {
     h += vaultHtml();
+  } else if (view === "CaseFiles") {
+    h += caseFilesHtml();
   } else if (view === "DHD") {
     h += dhdHtml();
   } else if (view === "Mesh") {
@@ -8122,6 +8490,8 @@ function wire() {
         }
       }; });
     }
+  } else if (view === "CaseFiles") {
+    wireCaseFiles();
   } else if (view === "DHD") {
     wireDhd();
   } else if (view === "Mesh") {
@@ -8486,6 +8856,7 @@ function wire() {
     bind("gh-backup", ghBackupNow);
     bind("gh-preview", ghImportPreview);
     bind("gh-apply", ghImportApply);
+    bind("gh-badge-sync", ghBadgeSync);
     var visSel = document.getElementById("gh-vis");
     var paintPubWarn = function () {
       var w = document.getElementById("gh-pubwarn");
@@ -8752,6 +9123,7 @@ document.addEventListener("click", function (e) {
 // the time the Chips screen is opened.
 if (CONFIG.backend === "live") {
   loadChipCatalog();
+  hydrateChatsFromServer();
   // One real update check per session, shortly after load, so the
   // status column's UPDATER element can light up on its own when a
   // newer release exists — the operator never has to go looking.
