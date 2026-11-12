@@ -381,21 +381,41 @@ class Intel:
                 return {"ok": True, "skipped": "disabled"}
             if self.mode() == "receiver":
                 digest = None
+                fetch_err = ""
                 fetch = self._cb.get("fetch_digest")
                 if fetch:
                     try:
-                        digest = fetch(s["collectorPeer"])
+                        got = fetch(s["collectorPeer"])
+                        # 0.2.0e Build 1 (#143): the fetch
+                        # answers (digest, "") or (None, reason)
+                        # — a refusal names the check that
+                        # refused it. A bare digest (an older
+                        # callback shape) still reads as success.
+                        if isinstance(got, tuple):
+                            digest, fetch_err = got
+                        else:
+                            digest = got
                     except Exception:
                         digest = None
                 if digest:
-                    self.import_digest(digest)
-                    results["mesh"] = "digest imported"
+                    imp = self.import_digest(digest)
+                    if imp.get("ok"):
+                        results["mesh"] = "digest imported"
+                    else:
+                        # A refused digest says WHICH check
+                        # refused it, on the Mesh source line —
+                        # never a cheerful "imported" over a
+                        # refusal (the silence #143 names).
+                        why = imp.get("error") or "the digest did not validate"
+                        self._state_save("mesh", last_attempt=time.time(),
+                                         last_error="The collector's digest was refused: " + why)
+                        results["mesh"] = "digest refused: " + why
                 elif s.get("fallbackLocal"):
-                    results["mesh"] = "collector unreachable — local fallback (enabled)"
+                    results["mesh"] = "collector unreachable" + ((" — " + fetch_err) if fetch_err else "") + " — local fallback (enabled)"
                     self._collect_local(s, force, results)
                 else:
                     self._state_save("mesh", last_attempt=time.time(),
-                                     last_error="Collector unreachable; local fallback is off.")
+                                     last_error="Collector unreachable" + ((" — " + fetch_err) if fetch_err else "") + "; local fallback is off.")
                     results["mesh"] = "collector unreachable"
                 return {"ok": True, "results": results}
             self._collect_local(s, force, results)

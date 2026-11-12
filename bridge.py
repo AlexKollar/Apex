@@ -382,16 +382,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.9"
-SHIPPED_VERSION_STATUS = "stable"
+SHIPPED_VERSION = "0.2.0"
+SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-12.915"
+BRIDGE_BUILD = "2026-11-12.01"
 # Edge build sequence (build .86): this package is its Edge
-# version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
-# Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 15
+# version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
+# Build 1. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 1
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2433,7 +2433,7 @@ def mesh_capabilities(cfg):
         "ramGB": ram,
         "model": "navi",
         "speedClass": speed,
-        # Build 7 (Fix F2): the idle posture rides the same 
+        # Build 7 (Fix F2): the idle posture rides the same
         # self-report as the caps, so a peer's card and roster
         # line state it truthfully — "lends when idle" vs "lends
         # even while busy" — from this machine's own setting.
@@ -2736,6 +2736,11 @@ def _intel_case_terms_all():
 
 
 def _intel_fetch_digest(peer_id):
+    # 0.2.0e Build 1 (#143): returns (digest, "") on success or
+    # (None, reason-in-words) \u2014 a refused or failed fetch names
+    # the check that refused it, and the Center records the
+    # reason on its Mesh source line instead of a bare
+    # "collector unreachable".
     cfg = load_config()
     peer = None
     for p in mesh_settings(cfg)["borrow"]["peers"]:
@@ -2743,18 +2748,30 @@ def _intel_fetch_digest(peer_id):
             peer = p
             break
     if not peer:
-        return None
+        return None, "the named collector is not a paired peer on this machine"
     try:
         code, raw = _mesh_request(peer, "GET", "/mesh/intel-digest", b"", "", 60)
+    except _MeshFpError:
+        return None, "the collector's certificate does not match its pairing card \u2014 its Mesh identity has changed; re-pair from a fresh card"
+    except _MeshTlsError:
+        return None, "the secure (TLS) handshake with the collector failed"
+    except _MeshTimeout:
+        return None, "the collector did not answer in time"
+    except _MeshUnreachable:
+        return None, "the collector could not be reached"
     except Exception:
-        return None
+        return None, "the collector could not be reached"
+    if code in (401, 403):
+        return None, "the collector refused this machine's signature \u2014 check the two machines' clocks (a Mesh signature lives for 120 seconds); if they agree, re-pair from fresh cards"
     if code != 200:
-        return None
+        return None, "the collector answered with HTTP " + str(code)
     try:
         parsed = json.loads(raw.decode("utf-8", "replace"))
     except Exception:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        return None, "the collector's answer was not a readable digest"
+    if not isinstance(parsed, dict):
+        return None, "the collector's answer was not a readable digest"
+    return parsed, ""
 
 
 if intel_mod is not None:
@@ -3486,7 +3503,11 @@ def parse_mesh_card_png(data):
         return None, MESH_CARD_PNG_DAMAGED
     peer, _perr = mesh_parse_card(text)
     if peer is None:
-        return None, MESH_CARD_PNG_DAMAGED
+        # 0.2.0e Build 1 (#143): name the actual defect \u2014 a
+        # malformed fingerprint, a missing key \u2014 instead of
+        # the generic damage refusal; the validator already
+        # speaks in specifics.
+        return None, _perr or MESH_CARD_PNG_DAMAGED
     return peer, ""
 
 
@@ -3821,6 +3842,20 @@ class _MeshUnreachable(Exception):
     pass
 
 
+class _MeshTlsError(Exception):
+    # 0.2.0e Build 1 (#143): an address answered, but the TLS
+    # handshake itself failed — whatever is listening there is
+    # not speaking the Mesh door's TLS. Its own kind so a failure
+    # can name its stage instead of collapsing into "unreachable".
+    pass
+
+
+class _MeshTimeout(Exception):
+    # 0.2.0e Build 1 (#143): no address answered inside the
+    # timeout — its own kind, for the same reason as above.
+    pass
+
+
 # Build .87 (gate 4, borrower half): the generous cap on a borrow
 # read, in seconds. Connection TERMINATION is the drop signal — a
 # lender that stops mid-generation hard-closes its socket and this
@@ -3838,10 +3873,16 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
     # order. Returns (status, raw-body). Raises _MeshFpError when
     # an address answered but none presented the pinned
     # fingerprint, _MeshDropped when a connected request died
-    # mid-flight, _MeshUnreachable when no address could be
-    # connected at all.
+    # mid-flight, _MeshTlsError when an address answered but the
+    # TLS handshake failed, _MeshTimeout when nothing answered in
+    # time, _MeshUnreachable when no address could be connected
+    # at all. (0.2.0e Build 1, #143: the failure kinds name their
+    # stage — the classification is reporting only; which error
+    # a caller acts on, and how, is unchanged.)
     last_err = None
     fp_err = None
+    tls_err = None
+    timeout_err = None
     for address in peer["addresses"]:
         host = str(address).split("://")[-1].split("/")[0]
         conn = None
@@ -3902,6 +3943,10 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
                 pass
             if sent:
                 raise _MeshDropped(str(e))
+            if isinstance(e, ssl.SSLError):
+                tls_err = str(e)
+            elif isinstance(e, (socket.timeout, TimeoutError)):
+                timeout_err = str(e)
             last_err = e
             continue
     # Build 7 (#87): something DID answer at one of the addresses
@@ -3909,6 +3954,10 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
     # diagnosable failure, and it outranks a plain unreachable.
     if fp_err is not None:
         raise _MeshFpError(fp_err)
+    if tls_err is not None:
+        raise _MeshTlsError(tls_err)
+    if timeout_err is not None:
+        raise _MeshTimeout(timeout_err)
     raise _MeshUnreachable(str(last_err))
 
 
@@ -3934,6 +3983,10 @@ def mesh_probe_peer(peer, force=False):
             err = "unauthorized"
     except _MeshFpError:
         err = "fingerprint"
+    except _MeshTlsError:
+        err = "tls"
+    except _MeshTimeout:
+        err = "timeout"
     except Exception:
         err = "unreachable"
     # Build 7 gate repair: the cache carries a fourth element —
@@ -4061,6 +4114,10 @@ def _mesh_borrow_once(peer, messages):
         code, raw = _mesh_request(peer, "POST", "/mesh/borrow", body, request_id, CHAT_TIMEOUT)
     except _MeshFpError:
         return ("error", "fingerprint")
+    except _MeshTlsError:
+        return ("error", "tls")
+    except _MeshTimeout:
+        return ("error", "timeout")
     except _MeshDropped:
         # Build .87: remember the drop for the status payload —
         # the Servers row's Mesh warning ("<name> dropped") reads
@@ -4267,6 +4324,22 @@ def mesh_try_borrow(messages, cfg, ms):
             MESH_STATE["borrow_peer"] = ""
 
 
+def mesh_probe_reason(kind):
+    # 0.2.0e Build 1 (#143): a probe/borrow failure kind in full
+    # words — what happened, and the cure where the product knows
+    # it. One source of truth: the Mesh page's peer rows render
+    # this under the short state word, and the health check
+    # speaks the same sentences. Short surfaces (the Servers
+    # row's warning) keep the bare kind by design.
+    return {
+        "fingerprint": "The machine answered, but the certificate it presented is not the one its pairing card pinned \u2014 its Mesh identity has changed since the card was made. The cure is a fresh card: import that machine's new PNG card on the Mesh page and the pin is replaced in place \u2014 the pair's history is kept.",
+        "unauthorized": "The machine answered and its certificate matches its card, but it refused this machine's signature. First suspect: the two machines' clocks disagree \u2014 a Mesh signature lives for 120 seconds, so a clock more than two minutes out reads as a forgery. Check the clock on both machines; if they agree, re-pair from fresh cards.",
+        "tls": "Something answered at the address, but the secure (TLS) handshake failed \u2014 whatever is listening there is not speaking the Mesh door's TLS, or the connection was cut mid-handshake.",
+        "timeout": "The machine did not answer in time \u2014 it may be asleep, off, or on another network.",
+        "unreachable": "Nothing answered at any address on its card \u2014 the machine is off, asleep, on another network, or its Mesh door is not listening.",
+    }.get(kind, "")
+
+
 def mesh_status_payload(cfg, via_dhd=False):
     # The /api/status mesh section and the Settings card's state:
     # metadata only — state, peers, balances. No content, ever.
@@ -4354,6 +4427,10 @@ def mesh_status_payload(cfg, via_dhd=False):
             "reachable": reachable,
             "status": peer_status,
             "lastProbeError": probe_err if reachable is False else "",
+            # 0.2.0e Build 1 (#143): the same failure in full
+            # words, for the Mesh page's peer rows (see
+            # mesh_probe_reason).
+            "lastProbeReason": mesh_probe_reason(probe_err) if reachable is False else "",
             # Build 7 (#87): seconds since the peer was last
             # successfully checked — or since its first check
             # when it has never been reached — or null when it
@@ -4411,6 +4488,276 @@ def mesh_status_payload(cfg, via_dhd=False):
         "capabilities": mesh_capabilities(cfg),
         "peers": peers,
     }
+
+
+# -- Mesh health check (0.2.0e Build 1, #143) -----------------------
+# The field diagnosis of #143 prescribed two decisive reads, and
+# they were never run: both needed a terminal on two machines at
+# once. (1) Compare the fingerprint this node HOLDS for a peer
+# against the fingerprint that peer actually PRESENTS. (2) On a
+# node whose door answers as a stranger, find out WHAT is
+# serving the door. This check runs both, from inside the
+# product, on the operator's word from the Mesh page.
+# Diagnostics only: it pairs nothing, pins nothing, routes
+# nothing \u2014 it reads, compares, and reports in plain words,
+# with the actual fingerprints shown side by side.
+
+def _mesh_tls_presented(host, port, timeout):
+    # One TLS handshake with verification off (the pin is the
+    # authentication, and the CALLER compares it). Returns
+    # (stage, fingerprint): "ok" with the presented certificate's
+    # SHA-256, or the stage that failed \u2014 "connect", "tls",
+    # "timeout".
+    ctx = ssl._create_unverified_context()
+    try:
+        raw = socket.create_connection((host, int(port)), timeout=timeout)
+    except (socket.timeout, TimeoutError):
+        return "timeout", ""
+    except OSError:
+        return "connect", ""
+    try:
+        raw.settimeout(timeout)
+        tls = ctx.wrap_socket(raw, server_hostname=host)
+    except (socket.timeout, TimeoutError):
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return "timeout", ""
+    except Exception:
+        # ssl.SSLError, or the connection cut mid-handshake: the
+        # failure IS the handshake.
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return "tls", ""
+    try:
+        der = tls.getpeercert(binary_form=True) or b""
+    except Exception:
+        der = b""
+    try:
+        tls.close()
+    except Exception:
+        pass
+    if not der:
+        return "tls", ""
+    return "ok", hashlib.sha256(der).hexdigest()
+
+
+def _mesh_bridge_processes():
+    # Every process on this machine whose command line runs a
+    # bridge.py \u2014 pid, and whether it is THIS process. Linux
+    # /proc only; anything unreadable contributes nothing.
+    out = []
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return out
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/" + name + "/cmdline", "rb") as f:
+                raw = f.read()
+        except Exception:
+            continue
+        parts = [q.decode("utf-8", "replace") for q in raw.split(b"\x00") if q]
+        if any(q.endswith("bridge.py") for q in parts):
+            out.append({"pid": int(name), "self": int(name) == os.getpid()})
+    out.sort(key=lambda b: b["pid"])
+    return out
+
+
+def _mesh_listener_owner(port):
+    # The pid owning the LISTEN socket on the Mesh port, from
+    # /proc/net/tcp* socket inodes matched against /proc/*/fd.
+    # None when no listener is found, or /proc will not say.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                lines = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for ln in lines:
+            f = ln.split()
+            if len(f) > 9 and f[3] == "0A":
+                try:
+                    if int(f[1].rsplit(":", 1)[1], 16) == int(port):
+                        inodes.add(f[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        fd_dir = "/proc/" + name + "/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fd_dir, fd))
+            except Exception:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                return int(name)
+    return None
+
+
+def _mesh_fp_short(fp):
+    return (fp[:12] + "\u2026") if fp else ""
+
+
+def mesh_health_check(cfg):
+    # The check itself. Shape: {ranAt, port, enabled, self,
+    # processes, peers, summary} \u2014 the Mesh page renders it
+    # nearly verbatim; every verdict carries its sentence, and a
+    # peer's addresses never enter the payload (stages only),
+    # exactly as they never render anywhere.
+    ms = mesh_settings(cfg)
+    port = ms["port"]
+    out = {"ranAt": int(time.time()), "port": port, "enabled": ms["enabled"],
+           "self": {}, "processes": {}, "peers": [], "summary": ""}
+    if not ms["enabled"]:
+        out["self"] = {"verdict": "off", "stage": "",
+                       "diskFingerprint": "", "presentedFingerprint": "",
+                       "verdictText": "Mesh is off on this machine \u2014 its door is closed by choice, so there is nothing to check. Turn Mesh on and run the check again."}
+        out["processes"] = {"bridges": [], "count": 0, "listenerOwnerPid": None,
+                            "listenerIsThisBridge": None, "verdictText": ""}
+        out["summary"] = "Mesh is off \u2014 the check has nothing to read."
+        return out
+    # This machine: the disk certificate vs the one the door
+    # actually presents. A difference here is the duplicate-
+    # bridge signature: something else is serving the door.
+    disk_fp = mesh_cert_fingerprint()
+    stage, presented_fp = _mesh_tls_presented("127.0.0.1", port, 3)
+    self_sec = {"diskFingerprint": disk_fp, "presentedFingerprint": presented_fp,
+                "stage": stage}
+    if stage != "ok":
+        self_sec["verdict"] = "not-listening"
+        self_sec["verdictText"] = ("This machine's Mesh door did not answer at 127.0.0.1:" + str(port)
+            + " (the attempt failed at the " + stage + " stage). The bridge answering this dashboard "
+            + "is not serving the door \u2014 if another bridge owns it, the processes check below names the owner.")
+    elif presented_fp == disk_fp and disk_fp:
+        self_sec["verdict"] = "match"
+        self_sec["verdictText"] = ("The certificate this machine's Mesh door presents is the one on its disk "
+            + "\u2014 this machine is exactly who its pairing cards say it is.")
+    else:
+        self_sec["verdict"] = "mismatch"
+        self_sec["verdictText"] = ("The door answered with a DIFFERENT certificate than the one on this machine's disk "
+            + "(" + _mesh_fp_short(disk_fp) + " on disk, " + _mesh_fp_short(presented_fp) + " presented). Something else is "
+            + "serving this machine's Mesh door \u2014 most likely a second bridge running with a different identity. "
+            + "Every peer that paired this machine will refuse the door until the presenting certificate is the card's. "
+            + "The processes check below is the suspect list.")
+    out["self"] = self_sec
+    # Processes: how many bridges, and whose door it is.
+    bridges = _mesh_bridge_processes()
+    owner = _mesh_listener_owner(port)
+    proc_sec = {"bridges": bridges, "count": len(bridges),
+                "listenerOwnerPid": owner,
+                "listenerIsThisBridge": (owner == os.getpid()) if owner is not None else None}
+    bits = []
+    if len(bridges) == 0:
+        bits.append("No process running a bridge.py was found on this machine \u2014 the dashboard's bridge may be running inside another program, or /proc would not say.")
+    elif len(bridges) == 1:
+        bits.append("One bridge process is running on this machine (pid " + str(bridges[0]["pid"]) + ").")
+    else:
+        bits.append(str(len(bridges)) + " bridge processes are running on this machine (pids "
+                    + ", ".join(str(b["pid"]) for b in bridges) + "). Two bridges cannot share the Mesh door: "
+                    + "the second one's door never opens, and if the one that grabbed the door presents a different "
+                    + "certificate than this machine's card, every peer sees a stranger. This is the prime suspect "
+                    + "when both machines swear their certificates match.")
+    if owner is None:
+        bits.append("No listener was found on port " + str(port) + ".")
+    elif owner == os.getpid():
+        bits.append("The Mesh door's listener (port " + str(port) + ") belongs to this bridge (pid " + str(owner) + ").")
+    else:
+        bits.append("The Mesh door's listener (port " + str(port) + ") belongs to pid " + str(owner) + " \u2014 not this bridge (pid " + str(os.getpid()) + ").")
+    proc_sec["verdictText"] = " ".join(bits)
+    out["processes"] = proc_sec
+    # Peers: the pin this machine HOLDS vs the certificate the
+    # peer actually PRESENTS \u2014 then, when the identity matches,
+    # the signature stage.
+    for peer in ms["borrow"]["peers"]:
+        ent = {"name": peer["name"], "nodeId": peer["nodeId"], "short": peer["nodeId"][:12],
+               "pinnedFingerprint": peer["certFingerprint"], "presentedFingerprint": "",
+               "stage": "", "verdict": "", "authOk": None, "verdictText": ""}
+        presented_other = ""
+        matched = False
+        stages = []
+        for address in peer["addresses"]:
+            host = str(address).split("://")[-1].split("/")[0]
+            st, fp = _mesh_tls_presented(host, peer["port"], 3)
+            stages.append(st)
+            if st == "ok":
+                if fp == peer["certFingerprint"]:
+                    matched = True
+                    ent["presentedFingerprint"] = fp
+                elif not presented_other:
+                    presented_other = fp
+        if matched:
+            status, err = mesh_probe_peer(peer, force=True)
+            if status is not None:
+                ent["stage"] = "ok"
+                ent["verdict"] = "match"
+                ent["authOk"] = True
+                ent["verdictText"] = (peer["name"] + " answers, the certificate it presents matches its card, "
+                    + "and it accepts this machine's signature. This pair is healthy.")
+            elif err == "unauthorized":
+                ent["stage"] = "auth"
+                ent["verdict"] = "unauthorized"
+                ent["authOk"] = False
+                ent["verdictText"] = mesh_probe_reason("unauthorized")
+            else:
+                ent["stage"] = err or "unreachable"
+                ent["verdict"] = err or "unreachable"
+                ent["verdictText"] = ("Its certificate matches its card, but the signed check failed: "
+                    + mesh_probe_reason(err or "unreachable"))
+        elif presented_other:
+            ent["presentedFingerprint"] = presented_other
+            ent["stage"] = "fingerprint"
+            ent["verdict"] = "mismatch"
+            ent["verdictText"] = (peer["name"] + " answered, but the certificate it presented ("
+                + _mesh_fp_short(presented_other) + ") is not the one its card pinned ("
+                + _mesh_fp_short(peer["certFingerprint"]) + ") \u2014 its Mesh identity has changed since the card "
+                + "was made. The cure is a fresh card: import " + peer["name"] + "'s new PNG card on this page "
+                + "and the pin is replaced in place \u2014 the pair's history is kept. (And if " + peer["name"]
+                + " swears its certificate never changed, run this check there: a second bridge may be serving its door.)")
+        else:
+            if "tls" in stages:
+                worst = "tls"
+            elif stages and all(x == "timeout" for x in stages):
+                worst = "timeout"
+            else:
+                worst = "connect"
+            ent["stage"] = worst
+            ent["verdict"] = "unreachable"
+            ent["verdictText"] = mesh_probe_reason("tls" if worst == "tls" else "timeout" if worst == "timeout" else "unreachable")
+        out["peers"].append(ent)
+    # The summary: the first problem, or the all-clear.
+    problems = []
+    if self_sec["verdict"] == "mismatch":
+        problems.append("this machine's door is presenting the wrong certificate")
+    elif self_sec["verdict"] == "not-listening":
+        problems.append("this machine's Mesh door is not answering")
+    for ent in out["peers"]:
+        if ent["verdict"] != "match":
+            problems.append(ent["name"] + ": " + ent["verdict"])
+    if problems:
+        out["summary"] = "Found " + ("a problem" if len(problems) == 1 else str(len(problems)) + " problems") + " \u2014 " + "; ".join(problems) + "."
+    elif out["peers"]:
+        out["summary"] = "Everything the check can see is consistent: this machine presents the certificate its cards advertise, and every paired machine matches its card and accepts this machine's signature."
+    else:
+        out["summary"] = "This machine's own door is consistent \u2014 it presents the certificate on its disk. No machines are paired yet, so there are no peer checks to run."
+    return out
 
 
 # -- The dedicated Mesh door -----------------------------------------
@@ -6095,200 +6442,6 @@ def read_installed_version(root):
             token = token[: -(len(word) + 1)]
             break
     return token, status
-
-
-def read_installed_build_seq(root):
-    # The Edge build sequence baked into the bridge.py at the
-    # install root (Build 4): the on-disk half of the identity a
-    # same-version refresh has to prove, beside the VERSION
-    # file's number — which a refresh deliberately does not
-    # change. None when the file or the sequence cannot be read
-    # (a bridge from before build sequences existed).
-    try:
-        with open(os.path.join(root, "bridge.py"), "rb") as f:
-            m = re.search(
-                rb"SHIPPED_BUILD_SEQ\\s*=\\s*([0-9]+)", f.read())
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return None
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
-
-
-def _pid_gone(pid):
-    # Gone = no such process, or a zombie: a zombie holds no
-    # sockets (the kernel closed them at death) and its parent
-    # reaps it in its own time.
-    if not pid:
-        return True
-    if not _pid_alive(pid):
-        return True
-    try:
-        with open("/proc/" + str(pid) + "/stat", "rb") as f:
-            parts = f.read().rsplit(b")", 1)
-        state = parts[1].split()[0].decode("utf-8", "replace") if len(parts) > 1 else ""
-        return state == "Z"
-    except Exception:
-        return False
-
-
-def _pid_cmdline(pid):
-    try:
-        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
-            raw = f.read()
-        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
-    except Exception:
-        return ""
-
-
-def _pid_cwd(pid):
-    try:
-        return os.path.realpath(os.readlink("/proc/" + str(pid) + "/cwd"))
-    except Exception:
-        return ""
-
-
-def _port_holder_pid(port):
-    # The PID holding the LISTEN socket on the port, resolved from
-    # /proc alone — names a holder that answers nothing, where a
-    # status probe can only shrug.
-    inodes = set()
-    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
-        try:
-            with open(path) as f:
-                rows = f.read().splitlines()[1:]
-        except Exception:
-            continue
-        for row in rows:
-            parts = row.split()
-            if len(parts) > 9 and parts[3] == "0A":
-                try:
-                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
-                        inodes.add(parts[9])
-                except Exception:
-                    pass
-    if not inodes:
-        return None
-    targets = set("socket:[" + ino + "]" for ino in inodes)
-    try:
-        names = os.listdir("/proc")
-    except Exception:
-        return None
-    for name in names:
-        if not name.isdigit():
-            continue
-        try:
-            fds = os.listdir("/proc/" + name + "/fd")
-        except Exception:
-            continue
-        for fd in fds:
-            try:
-                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
-                    return int(name)
-            except Exception:
-                pass
-    return None
-
-
-def _port_answers_expected(port, tgt_seq):
-    # True when the bridge answering on the port already reports
-    # the target identity — the case where a relaunch spawn
-    # failure must NOT fail the apply: the installer's own
-    # relaunch (build .91) already brought the new bridge up.
-    try:
-        req = urllib.request.Request(
-            "http://127.0.0.1:" + str(port) + "/api/status",
-            headers={"User-Agent": "navi-update-helper"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            seen = json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception:
-        return False
-    if not isinstance(seen, dict) or seen.get("app") != "Navi: Apex":
-        return False
-    return tgt_seq is None or seen.get("buildSeq") == tgt_seq
-
-
-def _holder_remedy(port):
-    # The failure-text remedy for a held port (build .91): name
-    # the holder and its exact kill command when the socket can
-    # resolve it — never "launch the app again" against a wedged
-    # port, the advice that stranded the field update this build
-    # answers.
-    holder = _port_holder_pid(port)
-    if holder:
-        cmd = _pid_cmdline(holder)
-        return ("The port is held by process " + str(holder)
-                + (" (" + cmd + ")" if cmd else "")
-                + ": end it with kill -9 " + str(holder)
-                + ", then run the update again — launching the app "
-                "again cannot work while that process holds the port.")
-    return ("If a process is holding the port, find it with lsof -i :"
-            + str(port) + " and end it, then run the update again; "
-            "otherwise launch the app again from its menu entry.")
-
-
-def clear_wedged_bridge(root, port, tgt_seq):
-    # Build .91 (issue #91): before relaunching, prove the OLD
-    # bridge is actually gone — not merely that its pid file is.
-    # A bridge can still hold the port while answering nothing
-    # (frozen, stopped, stuck mid-work), and every relaunch
-    # against it is a no-op: the new bridge cannot bind, and the
-    # confirmation that follows can only report failure with a
-    # remedy that cannot work. If the target build already
-    # answers, there is nothing to clear; if the port is free,
-    # likewise. A holder is signalled ONLY when it is provably
-    # this install's bridge — bridge.py in its command line AND
-    # its working directory the install root; anything else is
-    # reported, never touched. Escalation mirrors the installer:
-    # SIGTERM, wait for death AND a free port, SIGKILL, wait
-    # again. Returns (ok, holder_pid, holder_desc).
-    if _port_answers_expected(port, tgt_seq):
-        return (True, None, "")
-    holder = _port_holder_pid(port)
-    if holder is None:
-        try:
-            sock = socket.create_connection(("127.0.0.1", port), timeout=2)
-            sock.close()
-            return (False, None,
-                    "something is listening on the port but its process could not be identified")
-        except Exception:
-            return (True, None, "")
-    cmd = _pid_cmdline(holder)
-    desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
-    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
-    if not owned:
-        return (False, holder, desc + " — not this install's bridge, so it was not touched")
-    trace("wedge-clear",
-          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
-    try:
-        os.kill(holder, signal.SIGTERM)
-    except Exception:
-        pass
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    try:
-        os.kill(holder, signal.SIGKILL)
-    except Exception:
-        pass
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    return (False, holder, desc)
 
 
 def read_installed_build_seq(root):
@@ -15011,6 +15164,15 @@ class Handler(BaseHTTPRequestHandler):
         # to the retired path falls through to this handler's
         # not-found answer. Peers paired earlier are stored
         # records in config and are untouched by the removal.
+        if self.path == "/api/mesh/health":
+            # 0.2.0e Build 1 (#143): the operator-triggered Mesh
+            # health check \u2014 the two decisive reads of the
+            # field diagnosis, run by the product itself. It
+            # changes no pairing, pin, or routing state; it only
+            # reports. The probes inside it are the short-timeout
+            # kind, so the answer lands in seconds.
+            self._send(200, {"ok": True, "health": mesh_health_check(cfg)})
+            return
         if self.path == "/api/mesh/peers/png":
             # Add a peer from a PNG picture card (Build 7, spec
             # section 13). The dashboard sends the picture's bytes

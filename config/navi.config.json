@@ -143,8 +143,8 @@
     "last_import_at": null,
     "last_import_result": ""
   },
-  "version": "0.1.9",
-  "version_status": "stable",
+  "version": "0.2.0",
+  "version_status": "edge",
   "updater": {
     "channel": "stable"
   }
