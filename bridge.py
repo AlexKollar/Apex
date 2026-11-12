@@ -348,6 +348,18 @@ import zipfile
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Guardian (Build 14, #156): the system-monitor engine lives in
+# its own stdlib module beside this bridge (it never imports the
+# bridge; the bridge imports it). The try/except is for benches
+# and partial copies that carry bridge.py alone — a real install
+# always ships guardian.py next to bridge.py (the packager and
+# the installer both carry it), and GUARDIAN below falls back to
+# an inert stub only when the module truly is not there.
+try:
+    import guardian as guardian_mod
+except Exception:
+    guardian_mod = None
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config", "navi.config.json")
 SOUL_PATH = os.path.join(ROOT, "config", "soul.md")
@@ -375,11 +387,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-11.913"
+BRIDGE_BUILD = "2026-11-12.914"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 13
+SHIPPED_BUILD_SEQ = 14
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2433,6 +2445,37 @@ def mesh_capabilities(cfg):
     }
 
 
+def guardian_settings(cfg):
+    # Guardian (Build 14, #156): absent-block-safe, like
+    # mesh_settings / dhd_settings — an install whose config
+    # predates the guardian block reads as the shipped defaults:
+    # ON, a 1024 MB reserve, a 2-second sample, kills allowed for
+    # operator-named expendable processes (none named by default,
+    # so nothing can be killed until the operator says what may).
+    g = cfg.get("guardian") if isinstance(cfg, dict) else None
+    if not isinstance(g, dict):
+        g = {}
+    expendable = g.get("expendable")
+    if not isinstance(expendable, list):
+        expendable = []
+    expendable = [str(x).strip() for x in expendable if str(x).strip()]
+    try:
+        sample_seconds = float(g.get("sampleSeconds"))
+    except Exception:
+        sample_seconds = 2.0
+    return {
+        "enabled": g.get("enabled") is not False,
+        "reserveMb": _mesh_int(g.get("reserveMb"), 1024),
+        "sampleSeconds": sample_seconds,
+        "slowGenSeconds": _mesh_int(g.get("slowGenSeconds"), 20),
+        "cpuCapPercent": _mesh_int(g.get("cpuCapPercent"), 50),
+        "killEnabled": g.get("killEnabled") is not False,
+        "expendable": expendable,
+        "warnAfterSeconds": _mesh_int(g.get("warnAfterSeconds"), 6),
+        "killGraceSeconds": _mesh_int(g.get("killGraceSeconds"), 15),
+    }
+
+
 def mesh_settings(cfg):
     # Absent-block-safe, like dhd_settings: an install whose config
     # predates the mesh block (or a field of it) reads as the
@@ -2475,6 +2518,89 @@ def mesh_settings(cfg):
         "ledger": m.get("ledger") is not False,
         "ledgerInBackup": m.get("ledgerInBackup") is True,
     }
+
+
+# -- Guardian service global (Build 14, #156) -------------------------
+# The engine runs whenever the bridge runs (the sampler is started
+# in __main__ beside the other background services, and re-checks
+# the enabled setting every tick), including headless: protecting
+# Navi's headroom matters most when nobody is watching the
+# dashboard. Generation activity is a module-level counter the
+# llamafile_chat wrapper below maintains, so Guardian can judge
+# pressure one level stricter exactly while she is generating.
+_GENERATION_LOCK = threading.Lock()
+_GENERATION_ACTIVE = {"count": 0}
+
+
+def _generation_is_active():
+    with _GENERATION_LOCK:
+        return _GENERATION_ACTIVE["count"] > 0
+
+
+def _guardian_llamafile_pids():
+    # The bridge's own handle on the llamafile process, when this
+    # bridge started her; when she was started by a launcher the
+    # handle is empty and Guardian's own /proc scan (for
+    # "navi.llamafile" in the cmdline) is the fallback.
+    proc = globals().get("_llamafile_proc")
+    try:
+        if proc is not None and proc.poll() is None:
+            return [proc.pid]
+    except Exception:
+        pass
+    return []
+
+
+def _guardian_mesh():
+    # The Mesh facts Guardian's state carries: (enabled, peers).
+    try:
+        _ms = mesh_settings(load_config())
+        return (bool(_ms["enabled"]), len(_ms["borrow"]["peers"]))
+    except Exception:
+        return (False, 0)
+
+
+class _GuardianUnavailable:
+    # The inert stand-in used only when guardian.py is missing
+    # from the tree (see the import note at the top): state reads
+    # as a disabled Guardian with an empty world rather than
+    # crashing a route, and every action is a no-op.
+    def start(self):
+        return False
+
+    def stop(self):
+        pass
+
+    def note_generation(self, duration_s):
+        pass
+
+    def context_block(self):
+        return "Guardian: not installed in this tree."
+
+    def state(self):
+        _s = guardian_settings(load_config())
+        return {
+            "enabled": False, "pressure": "ok", "freeMb": 0,
+            "reserveMb": _s["reserveMb"], "llamafileRssMb": 0,
+            "generating": False, "mesh": {"enabled": False, "peers": 0},
+            "top": [], "offenders": [], "expendable": list(_s["expendable"]),
+            "settings": _s, "log": [],
+        }
+
+
+if guardian_mod is not None:
+    GUARDIAN = guardian_mod.Guardian(
+        ROOT,
+        settings_getter=lambda: guardian_settings(load_config()),
+        callbacks={
+            "own_pid": os.getpid(),
+            "llamafile_pids": _guardian_llamafile_pids,
+            "is_generating": _generation_is_active,
+        },
+        mesh_getter=_guardian_mesh,
+    )
+else:
+    GUARDIAN = _GuardianUnavailable()
 
 
 # -- Node identity (spec section 4.2) -------------------------------
@@ -12034,6 +12160,54 @@ def wait_for_llamafile(endpoint, proc, log_path=None):
                    "its output is in navi.llamafile.log beside the app.")
 
 
+def hardware_tier_name(detected):
+    # The plain tier names (Build 14, #157): "potato" / "standard"
+    # / "beast", derived from the detected hardware alone. These
+    # sit alongside the derivation table's own tier words (fluid /
+    # balanced / performance / workstation / constrained, kept in
+    # the stored profile and its tierLabel) — this class is the
+    # one the warm-up default and the profile view speak in.
+    # Beast is judged first: a small-core-count machine with a
+    # real GPU or workstation RAM is not a potato.
+    d = detected if isinstance(detected, dict) else {}
+    try:
+        ram = float(d.get("totalRamGB") or 0)
+    except Exception:
+        ram = 0.0
+    try:
+        cores = int(d.get("cpuCores") or 0)
+    except Exception:
+        cores = 0
+    try:
+        vram = float(d.get("gpuVramGB") or 0)
+    except Exception:
+        vram = 0.0
+    discrete = d.get("gpuKind") == "discrete"
+    if (discrete and vram >= 8) or ram >= 32:
+        return "beast"
+    if (ram <= 12 and not discrete) or (cores and cores <= 4):
+        return "potato"
+    return "standard"
+
+
+def _warm_at_value(raw):
+    # runtime.warm_at, validated: a "HH:MM" 24h string, else None
+    # (absent / null / malformed all read as off) (Build 14, #157).
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hh = int(parts[0]); mm = int(parts[1])
+    except Exception:
+        return None
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    return "%02d:%02d" % (hh, mm)
+
+
 def runtime_settings(cfg):
     # Her llamafile runtime settings, from the hardware profile the
     # installer wrote into the config (hardware_profile + runtime).
@@ -12048,11 +12222,25 @@ def runtime_settings(cfg):
             return int(v)
         except Exception:
             return fallback
+    # Warm-up (Build 14, #157): runtime.warmup always wins when
+    # the operator set it; unset, warm-up is on for the potato and
+    # standard tiers and off for beast (a beast loads fast enough
+    # that the dead air is not the problem). No profile at all —
+    # the fluid floor, a modest machine by definition — reads as
+    # on. runtime.warm_at is the scheduled warm ("HH:MM" or off).
+    if rt.get("warmup") is not None:
+        warmup = bool(rt.get("warmup"))
+    else:
+        detected = (cfg.get("hardware_profile") or {}).get("detected")
+        warmup = (not isinstance(detected, dict)
+                  or hardware_tier_name(detected) in ("potato", "standard"))
     return {
         "threads": pick("threads", "threads", 4),
         "ctx_size": pick("ctx_size", "ctxSize", 4096),
         "batch_size": pick("batch_size", "batchSize", 512),
         "gpu_layers": pick("gpu_layers", "gpuLayers", 0),
+        "warmup": warmup,
+        "warm_at": _warm_at_value(rt.get("warm_at")),
     }
 
 
@@ -12205,6 +12393,25 @@ def derive_hardware_settings(d):
     return {"threads": threads, "ctxSize": ctx, "batchSize": batch, "gpuLayers": gpu_layers}, tier, tier_label, reasoning
 
 
+def _profile_source(hp):
+    # Who wrote this hardware profile (Build 14, #157), as best
+    # the config itself can say: the startup auto-profile pass
+    # marks its block with auto=True and only that block reads as
+    # "auto"; a Settings override is the operator's; anything else
+    # with a profile is the installer's — pre-Build-14 profiles
+    # wrote source "auto" for both the installer and a Settings
+    # re-detect, and those two cannot be told apart after the
+    # fact, so they read as "installer", their original writer.
+    if hp.get("auto") is True:
+        return "auto"
+    src = str(hp.get("source") or "")
+    if src == "manual":
+        return "operator"
+    if src in ("auto", "installer"):
+        return "installer"
+    return None
+
+
 def hardware_profile_view(cfg):
     hp = cfg.get("hardware_profile")
     if isinstance(hp, dict) and hp.get("detected") and hp.get("settings"):
@@ -12212,17 +12419,109 @@ def hardware_profile_view(cfg):
         s = runtime_settings(cfg)
         view["settings"] = {"threads": s["threads"], "ctxSize": s["ctx_size"], "batchSize": s["batch_size"], "gpuLayers": s["gpu_layers"]}
         view["flags"] = " ".join(llamafile_args(cfg)[2:])
+        # Tier naming (Build 14, #157): the view's "tier" is the
+        # plain potato / standard / beast class derived from the
+        # detected hardware; the derivation table's own tier word
+        # stays readable alongside it as "derivedTier" (and in
+        # tierLabel, which the dashboard already shows).
+        view["derivedTier"] = hp.get("tier")
+        view["tier"] = hardware_tier_name(hp.get("detected") or {})
+        view["profileSource"] = _profile_source(hp)
         return view
     return {"detected": None, "settings": runtime_settings(cfg), "source": "auto",
+            "tier": None, "profileSource": None,
             "note": "No hardware profile in this config (it predates build .34) — the fluid floor is in use. Re-detect to profile this machine."}
+
+
+def auto_profile_on_startup(cfg):
+    # Automatic profiling (Build 14, #157): a config with NO
+    # hardware profile used to run the fluid floor (4096/4/512)
+    # forever — the machine never profiled itself. On bridge
+    # startup, profile it once: detect + derive, persist the
+    # profile, and fill derived runtime defaults ONLY where the
+    # runtime keys are absent — operator-set runtime values are
+    # never overridden. Any failure leaves the floor behavior
+    # exactly as it was before this pass existed.
+    try:
+        hp = cfg.get("hardware_profile") if isinstance(cfg, dict) else None
+        if isinstance(hp, dict) and hp.get("detected") and hp.get("settings"):
+            return cfg
+        detected = detect_hardware()
+        settings, tier, tier_label, reasoning = derive_hardware_settings(detected)
+        tier_name = hardware_tier_name(detected)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        profile = {"detected": detected, "settings": settings, "autoSettings": settings,
+                   "source": "auto", "auto": True, "tier": tier, "tierLabel": tier_label,
+                   "reasoning": reasoning, "detectedAt": now,
+                   "installLog": [f"[hardware] {now} — automatic profiling on bridge startup (Build 14, #157): this config carried no hardware profile",
+                                  f"[hardware] CPU: {detected['cpuModel']} — {detected['cpuCores']} logical cores",
+                                  f"[hardware] RAM: {detected['totalRamGB']} GiB",
+                                  f"[hardware] GPU: {detected['gpuName'] or 'none'} ({detected['gpuKind']})",
+                                  f"[hardware] Tier class: {tier_name}"] + [f"[hardware] → {r}" for r in reasoning]}
+        fresh = load_config()
+        hp2 = fresh.get("hardware_profile") if isinstance(fresh, dict) else None
+        if isinstance(hp2, dict) and hp2.get("detected") and hp2.get("settings"):
+            return fresh
+        fresh["hardware_profile"] = profile
+        rt = fresh.get("runtime") if isinstance(fresh.get("runtime"), dict) else {}
+        rt = dict(rt)
+        defaults = {"threads": settings["threads"], "ctx_size": settings["ctxSize"],
+                    "batch_size": settings["batchSize"], "gpu_layers": settings["gpuLayers"]}
+        filled = []
+        for key, val in defaults.items():
+            if rt.get(key) is None:
+                rt[key] = val
+                filled.append(key)
+        if rt.get("flags") is None and len(filled) == len(defaults):
+            rt["flags"] = (f"--ctx-size {settings['ctxSize']} --threads {settings['threads']} "
+                           f"--batch-size {settings['batchSize']}"
+                           + (f" --n-gpu-layers {settings['gpuLayers']}" if settings["gpuLayers"] > 0 else ""))
+        fresh["runtime"] = rt
+        if not save_config(fresh):
+            print("Hardware profile: this config had none saved and the automatic "
+                  "profile could not be written to the config file — the fluid "
+                  "floor settings stay in use for this run.", flush=True)
+            return cfg
+        try:
+            with open(os.path.join(ROOT, "hardware-profile.log"), "a") as f:
+                for line in profile.get("installLog") or []:
+                    f.write(line + "\n")
+        except Exception:
+            pass
+        gpu_words = (("discrete GPU " + str(detected.get("gpuName") or "")) if detected.get("gpuKind") == "discrete"
+                     else ("integrated graphics" if detected.get("gpuKind") == "integrated" else "no discrete GPU"))
+        print("Hardware profile: this config had none saved, so Apex profiled this "
+              "machine on startup and saved the profile — " + tier_name + " tier: "
+              + str(detected.get("totalRamGB")) + " GiB RAM, "
+              + str(detected.get("cpuCores")) + " CPU cores, " + gpu_words + ". "
+              "Navi will run with context " + str(settings["ctxSize"])
+              + ", threads " + str(settings["threads"])
+              + ", batch " + str(settings["batchSize"])
+              + ". Any runtime settings you set yourself were left untouched.",
+              flush=True)
+        return fresh
+    except Exception as e:
+        print("Hardware profile: automatic profiling on startup did not run ("
+              + str(e) + ") — the fluid floor settings stay in use, exactly as before.",
+              flush=True)
+        return cfg
 
 
 def save_hardware_profile(profile):
     cfg = load_config()
+    # Warm-up keys round-trip (Build 14, #157): a re-detect or an
+    # override rewrites the runtime block from the profile below,
+    # but runtime.warmup / runtime.warm_at are operator choices
+    # that live only in that block — capture them before the
+    # rewrite and carry them over, never drop them.
+    _prev_rt = cfg.get("runtime") if isinstance(cfg.get("runtime"), dict) else {}
     cfg["hardware_profile"] = profile
     s = profile["settings"]
     cfg["runtime"] = {"threads": s["threads"], "ctx_size": s["ctxSize"], "batch_size": s["batchSize"], "gpu_layers": s["gpuLayers"],
                       "flags": f"--ctx-size {s['ctxSize']} --threads {s['threads']} --batch-size {s['batchSize']}" + (f" --n-gpu-layers {s['gpuLayers']}" if s["gpuLayers"] > 0 else "")}
+    for _k in ("warmup", "warm_at"):
+        if _k in _prev_rt:
+            cfg["runtime"][_k] = _prev_rt[_k]
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
     try:
@@ -12232,6 +12531,101 @@ def save_hardware_profile(profile):
     except Exception:
         pass
     return cfg
+
+
+def _warmup_completion(endpoint, cfg):
+    # One throwaway completion (Build 14, #157): the same chat
+    # completions shape llamafile_chat builds, capped at a single
+    # token, with a one-word prompt that is never shown anywhere.
+    # Its only job is to make the model do its first real work —
+    # page in, caches hot — before the operator's first ask, so
+    # the first-ask dead air happens here instead. A failure is a
+    # log line, never an error: warm-up is a courtesy, not a gate.
+    try:
+        name = served_model(endpoint) or (cfg.get("live") or {}).get("model_name") or "navi"
+        body = json.dumps({
+            "model": name,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": False,
+            "max_tokens": 1,
+        }).encode()
+        req = urllib.request.Request(
+            endpoint.rstrip("/") + "/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            resp.read()
+        print("Warm-up: navi.llamafile answered a one-token warm-up "
+              "completion — the model is warm for the first ask.", flush=True)
+        return True
+    except Exception as e:
+        print("Warm-up: the warm-up completion did not finish (" + str(e)
+              + ") — Navi will simply warm up on the first ask instead.",
+              flush=True)
+        return False
+
+
+def _maybe_warmup_llamafile(cfg, endpoint):
+    # Fire the warm-up on its own daemon thread (Build 14, #157):
+    # the start that triggered it has already reported healthy and
+    # must not wait on a generation, however small. Whether it
+    # fires at all is runtime_settings' call (explicit
+    # runtime.warmup wins; the tier decides when it is unset).
+    try:
+        if not runtime_settings(cfg)["warmup"]:
+            return False
+    except Exception:
+        return False
+    threading.Thread(target=_warmup_completion, args=(endpoint, cfg),
+                     daemon=True).start()
+    return True
+
+
+def _warm_at_loop():
+    # Scheduled warm (Build 14, #157): a lightweight timer that
+    # checks once a minute for runtime.warm_at ("HH:MM", 24h;
+    # absent/null = off). At the configured minute, a llamafile
+    # that is not answering is started through the same start
+    # path the dashboard's Connect uses — and that fresh start
+    # warms it via the warm-on-start hook above. One fire per
+    # configured minute per day. (Looked for an existing minute-
+    # cadence thread to ride first: the backup loop sleeps 30
+    # minutes and the update loop 3 hours, so this is its own.)
+    fired_for = ""
+    while True:
+        time.sleep(60)
+        try:
+            cfg = load_config()
+            warm_at = runtime_settings(cfg)["warm_at"]
+            if not warm_at:
+                continue
+            now = time.localtime()
+            if time.strftime("%H:%M", now) != warm_at:
+                continue
+            stamp = time.strftime("%Y-%m-%d", now) + " " + warm_at
+            if fired_for == stamp:
+                continue
+            fired_for = stamp
+            endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
+            if llamafile_alive(endpoint):
+                continue
+            if cfg.get("startup", "on-ui-launch") == "on-boot":
+                # Boot mode owns the server (same rule as Connect):
+                # the bridge never spawns a second copy behind the
+                # service's back, scheduled or not.
+                print("Scheduled warm (" + warm_at + "): navi.llamafile is not "
+                      "answering, but this install starts it at system boot — "
+                      "leaving it to the boot service.", flush=True)
+                continue
+            print("Scheduled warm (" + warm_at + "): navi.llamafile is not "
+                  "answering — starting and warming it now.", flush=True)
+            ok, error = start_llamafile(cfg, endpoint)
+            if not ok:
+                print("Scheduled warm (" + warm_at + "): the start did not "
+                      "come up: " + str(error), flush=True)
+        except Exception:
+            pass
 
 
 def start_llamafile(cfg, endpoint):
@@ -12264,7 +12658,16 @@ def start_llamafile(cfg, endpoint):
         )
     except Exception as e:
         return False, "Could not start navi.llamafile: " + str(e)
-    return wait_for_llamafile(endpoint, _llamafile_proc, log_path)
+    ok, error = wait_for_llamafile(endpoint, _llamafile_proc, log_path)
+    if ok:
+        # Warm-on-start (Build 14, #157): this bridge just started
+        # the server and it reports healthy — fire ONE warm-up
+        # completion on a daemon thread so the model-load dead air
+        # is spent now, not on the operator's first ask. Only the
+        # fresh-start path warms: the already-running return at the
+        # top of this function is a probe, not a start.
+        _maybe_warmup_llamafile(cfg, endpoint)
+    return ok, error
 
 
 _served_model_cache = {}
@@ -12309,6 +12712,28 @@ CHAT_TIMEOUT = 600
 
 
 def llamafile_chat(messages, endpoint, model):
+    # Guardian (Build 14, #156): every local generation is timed
+    # and counted. The counter is what Guardian's is_generating
+    # callback reads (pressure judges stricter mid-generation),
+    # and the duration is what note_generation() learns slow-
+    # generation collisions from. The return contract — the
+    # reply text, or the same RuntimeErrors — is unchanged: this
+    # wrapper only observes the call it wraps.
+    _gen_t0 = time.time()
+    with _GENERATION_LOCK:
+        _GENERATION_ACTIVE["count"] += 1
+    try:
+        return _llamafile_chat_impl(messages, endpoint, model)
+    finally:
+        with _GENERATION_LOCK:
+            _GENERATION_ACTIVE["count"] = max(0, _GENERATION_ACTIVE["count"] - 1)
+        try:
+            GUARDIAN.note_generation(time.time() - _gen_t0)
+        except Exception:
+            pass
+
+
+def _llamafile_chat_impl(messages, endpoint, model):
     # The llamafile server rejects a chat request whose JSON has no
     # "model" string (400 "JSON missing model string"), so a model
     # name rides along on every request — the id the server reports
@@ -12688,6 +13113,116 @@ def boot_mode_payload():
     _BOOT_CACHE["at"] = now
     _BOOT_CACHE["payload"] = payload
     return payload
+
+
+# --- Arm / disarm at boot from inside the app (Build 14, #159) -----
+# The Boot row read the state live from Build 12 on; this is the
+# hand that goes with the eyes. Arming does exactly what the
+# installer's "At system boot" choice does — install both unit
+# files from the templates this package ships (with this install
+# folder substituted), daemon-reload, enable --now both units —
+# and then tries linger the one way the app honestly can: a plain
+# loginctl call, no sudo (the bridge has no sudo channel and does
+# not borrow the parked sudo toggle). When linger cannot be
+# enabled from here, the result carries the exact command for a
+# terminal, the way the installer prints it. Disarming disables
+# both units (never --now: what is running keeps running — it
+# simply will not come up at boot) and deliberately leaves linger
+# alone. Both directions are idempotent, and the verdict is never
+# the steps' word: the state is re-read from the system at the
+# end and reported as found — partial shows as partial.
+
+_BOOT_UNITS = ("navi-llamafile.service", "navi-bridge.service")
+
+
+def _boot_user():
+    user = os.environ.get("USER") or ""
+    if not user:
+        try:
+            import pwd
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = ""
+    return user
+
+
+def _boot_run(argv, timeout=25):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+    except Exception as e:
+        return None, str(e)
+
+
+def boot_set_armed(want_armed):
+    steps = []
+    user = _boot_user()
+    linger_cmd = ("sudo loginctl enable-linger " + user) if user else None
+    unit_dir = os.path.join(os.path.expanduser("~"), ".config", "systemd", "user")
+    if want_armed:
+        for unit in _BOOT_UNITS:
+            try:
+                with open(os.path.join(ROOT, "systemd", unit)) as f:
+                    text = f.read().replace("__INSTALL_DIR__", ROOT)
+                os.makedirs(unit_dir, exist_ok=True)
+                with open(os.path.join(unit_dir, unit), "w") as f:
+                    f.write(text)
+                steps.append({"step": "install " + unit, "ok": True})
+            except Exception as e:
+                steps.append({"step": "install " + unit, "ok": False, "detail": str(e)})
+        rc, out = _boot_run(["systemctl", "--user", "daemon-reload"])
+        steps.append({"step": "daemon-reload", "ok": rc == 0, "detail": out if rc != 0 else ""})
+        for unit in _BOOT_UNITS:
+            rc, out = _boot_run(["systemctl", "--user", "enable", "--now", unit])
+            steps.append({"step": "enable " + unit, "ok": rc == 0, "detail": out if rc != 0 else ""})
+        if _linger_state() is True:
+            steps.append({"step": "linger", "ok": True, "detail": "already on"})
+        elif user:
+            rc, out = _boot_run(["loginctl", "enable-linger", user])
+            steps.append({"step": "linger", "ok": rc == 0, "detail": out if rc != 0 else ""})
+        else:
+            steps.append({"step": "linger", "ok": False, "detail": "no user name to enable linger for"})
+        try:
+            cfg = load_config()
+            cfg["startup"] = "on-boot"
+            save_config(cfg)
+        except Exception:
+            pass
+    else:
+        for unit in reversed(_BOOT_UNITS):
+            rc, out = _boot_run(["systemctl", "--user", "disable", unit])
+            steps.append({"step": "disable " + unit, "ok": rc == 0, "detail": out if rc != 0 else ""})
+        _boot_run(["systemctl", "--user", "daemon-reload"])
+        try:
+            cfg = load_config()
+            cfg["startup"] = "on-ui-launch"
+            save_config(cfg)
+        except Exception:
+            pass
+    _BOOT_CACHE["at"] = 0
+    _BOOT_CACHE["payload"] = None
+    boot = boot_mode_payload()
+    if want_armed:
+        units_on = boot["bridgeUnit"] == "enabled" and boot["llamafileUnit"] == "enabled"
+        if boot["armed"]:
+            return {"ok": True, "partial": False, "armed": True, "boot": boot,
+                    "steps": steps, "lingerCommand": None,
+                    "message": "Armed — the system confirms both services are enabled and linger is on. Apex will come up headless at boot."}
+        if units_on:
+            return {"ok": False, "partial": True, "armed": False, "boot": boot,
+                    "steps": steps, "lingerCommand": linger_cmd,
+                    "message": "Half-armed: both services are enabled, but linger is still off, so for now they start at login, not at boot. One command in a terminal finishes it:"}
+        return {"ok": False, "partial": False, "armed": False, "boot": boot,
+                "steps": steps, "lingerCommand": None,
+                "message": "Arming did not take — the system does not report the services enabled. The steps above say where it stopped; the installer remains the fallback."}
+    still_on = boot["bridgeUnit"] == "enabled" or boot["llamafileUnit"] == "enabled"
+    if not still_on:
+        return {"ok": True, "partial": False, "armed": False, "boot": boot,
+                "steps": steps, "lingerCommand": None,
+                "message": "Disarmed — Apex will not come up at boot. What is running now keeps running; linger was left as it is, on purpose."}
+    return {"ok": False, "partial": True, "armed": bool(boot["armed"]), "boot": boot,
+            "steps": steps, "lingerCommand": None,
+            "message": "Disarming only half-took — the system still reports a service enabled. The steps above say which."}
 
 
 # --- Case Files (0.1.9e Build 12, issues #137/#138) ------------------
@@ -13336,6 +13871,19 @@ class Handler(BaseHTTPRequestHandler):
                 "soul": read_file(SOUL_PATH),
                 "memory": read_file(MEMORY_PATH),
             })
+        elif self.path == "/api/guardian/state":
+            # Guardian (Build 14, #156): the Utilities face's one
+            # read — pressure, headroom, her llamafile's RSS, the
+            # top processes, learned offenders, settings, and the
+            # recent action log, straight from the engine.
+            try:
+                self._send(200, GUARDIAN.state())
+            except Exception as e:
+                self._send(200, {"enabled": False, "pressure": "ok", "freeMb": 0,
+                                 "reserveMb": 1024, "llamafileRssMb": 0, "generating": False,
+                                 "mesh": {"enabled": False, "peers": 0}, "top": [], "offenders": [],
+                                 "expendable": [], "settings": {}, "log": [],
+                                 "error": "Guardian state failed: " + str(e)})
         elif self.path == "/api/voice":
             # The Voice tab's state: her settings, whether each
             # speech engine is actually installed (never assumed),
@@ -13679,6 +14227,50 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
                 return
             self._send(200, {"ok": True, "mesh": mesh_stop_lending((self.headers.get("X-Apex-Via") or "") == "dhd")})
+            return
+        if self.path == "/api/guardian/settings":
+            # Guardian (Build 14, #156): the Utilities face's save.
+            # Whitelisted keys only, merged into the config's
+            # guardian block (the dhd_save / mesh-settings idiom);
+            # the engine reads settings fresh every tick, so the
+            # save is live on the next sample. The answer is the
+            # new state, so the face renders what is actually true.
+            data = self._body()
+            block = cfg.get("guardian") if isinstance(cfg.get("guardian"), dict) else {}
+            block = dict(block)
+            if isinstance(data.get("enabled"), bool):
+                block["enabled"] = data["enabled"]
+            if isinstance(data.get("killEnabled"), bool):
+                block["killEnabled"] = data["killEnabled"]
+            for _gk in ("reserveMb", "slowGenSeconds", "cpuCapPercent", "warnAfterSeconds", "killGraceSeconds"):
+                try:
+                    block[_gk] = int(data[_gk])
+                except Exception:
+                    pass
+            try:
+                block["sampleSeconds"] = float(data["sampleSeconds"])
+            except Exception:
+                pass
+            if isinstance(data.get("expendable"), list):
+                block["expendable"] = [str(x).strip() for x in data["expendable"] if str(x).strip()]
+            cfg["guardian"] = block
+            save_config(cfg)
+            if block.get("enabled") is not False:
+                try:
+                    GUARDIAN.start()
+                except Exception:
+                    pass
+            self._send(200, {"ok": True, "state": GUARDIAN.state()})
+            return
+        if self.path in ("/api/boot/arm", "/api/boot/disarm"):
+            # Arm at boot (Build 14, #159): a LOCAL dashboard
+            # action only — it rewrites this machine's boot
+            # behavior, so it is never served through the DHD
+            # door, the same refusal as Stop-lending above.
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(403, {"ok": False, "error": "Arming at boot is a local action — it is not available through the DHD door."})
+                return
+            self._send(200, boot_set_armed(self.path == "/api/boot/arm"))
             return
         if self.path == "/api/mesh/settings":
             # The Settings → System Mesh card's save. Persists the
@@ -14678,9 +15270,22 @@ class Handler(BaseHTTPRequestHandler):
                 }]
             # Navi's persona (Soul + Memory, from the config files)
             # rides along as the system prompt on every chat.
+            _system_prompt = persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode)
+            # Guardian (Build 14, #156): she answers questions
+            # about this machine from what is true of it NOW, so
+            # the Guardian brief — pressure, headroom, current
+            # offenders, the latest actions — rides the system
+            # prompt actually sent, exactly as assembled here
+            # (the Mesh borrow path below carries these same
+            # assembled messages, unchanged, as it always has).
+            try:
+                if guardian_settings(cfg)["enabled"]:
+                    _system_prompt += "\n\n[Guardian — this machine right now]\n" + GUARDIAN.context_block()
+            except Exception:
+                pass
             messages = [{
                 "role": "system",
-                "content": persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode),
+                "content": _system_prompt,
             }] + messages
             try:
                 model = cfg.get("live", {}).get("model_name") or "navi"
@@ -15938,6 +16543,11 @@ def watchdog(started_mtime):
 
 if __name__ == "__main__":
     cfg = load_config()
+    # Automatic profiling (Build 14, #157): a config with no
+    # hardware profile profiles this machine once, here, before
+    # anything reads the runtime settings — guarded inside, so a
+    # failure leaves the fluid-floor behavior exactly as before.
+    cfg = auto_profile_on_startup(cfg)
     # The port is this build's own constant (BRIDGE_PORT), never the
     # config's: a navi.config.json carried across from an older
     # package build records that build's port, and honoring it once
@@ -16024,6 +16634,23 @@ if __name__ == "__main__":
     # runs whether a backup is due on the operator's chosen interval,
     # and runs it when signed in. Daemon thread; dies with the bridge.
     threading.Thread(target=github_auto_backup_loop, daemon=True).start()
+    # Scheduled warm (Build 14, #157): checks runtime.warm_at once
+    # a minute and, at the configured minute, starts + warms a
+    # llamafile that is not answering. Daemon thread; dies with
+    # the bridge; inert while warm_at is unset.
+    threading.Thread(target=_warm_at_loop, daemon=True).start()
+    # Guardian (Build 14, #156): the headroom sampler starts with
+    # the bridge's other background services whenever its saved
+    # setting is on (headless included — this block runs before
+    # the bind either way). The engine re-checks enabled on every
+    # tick regardless, so a settings save can quiet it live.
+    try:
+        if guardian_settings(cfg)["enabled"]:
+            GUARDIAN.start()
+            print("Guardian is ON: watching headroom (reserve "
+                  + str(guardian_settings(cfg)["reserveMb"]) + " MB).", flush=True)
+    except Exception:
+        pass
     # Local server (build .59): the saved choice picks the bind
     # for THIS process, once, here. ON binds every interface so
     # the LAN can reach the port; OFF keeps the loopback-only

@@ -547,6 +547,35 @@
     #st-forge { display:none; }
     .studio-root .ed-scroll { height:300px; }
   }
+  /* Guardian (0.1.9e Build 14, issue #156): the system
+     monitor's face — desktop-first cards and tables; the
+     dedicated phone interface for this view lives in the
+     small-screen block below, stated with Guardian classes. */
+  .guardian-stats { display:flex; flex-wrap:wrap; gap:10px 26px; margin-top:8px; }
+  .guardian-stat { min-width:160px; }
+  .guardian-stat .guardian-k { display:block; color:var(--dim); font-size:11px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:2px; }
+  .guardian-chip { display:inline-block; padding:2px 10px; border-radius:999px; border:1px solid var(--line); font-size:12px; font-weight:700; color:var(--dim); }
+  .guardian-chip-ok { color:var(--green); border-color:var(--green); }
+  .guardian-chip-tight { color:var(--am); border-color:var(--am); }
+  .guardian-chip-critical { color:var(--red); border-color:var(--red); }
+  .guardian-table-wrap { overflow-x:auto; max-width:100%; }
+  .guardian-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .guardian-table th { text-align:left; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; padding:6px 8px; border-bottom:1px solid var(--line); }
+  .guardian-table td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .guardian-table tbody tr:last-child td { border-bottom:none; }
+  .guardian-row.guardian-foreign td { color:var(--dim); }
+  .guardian-badge { display:inline-block; padding:1px 8px; border-radius:999px; border:1px solid var(--am); color:var(--am); font-size:11px; font-weight:700; white-space:nowrap; }
+  .guardian-badge-ours { border-color:var(--cy); color:var(--cy); }
+  .guardian-fields { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:6px; }
+  .guardian-fields label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
+  .guardian-settings .guardian-check { display:flex; align-items:center; gap:8px; font-size:13px; margin-top:10px; cursor:pointer; }
+  .guardian-settings .guardian-check input { width:18px; height:18px; flex:0 0 auto; }
+  .guardian-expendable { width:100%; box-sizing:border-box; margin-top:4px; }
+  .guardian-log { list-style:none; margin:0; padding:0; }
+  .guardian-log li { padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .guardian-log li:last-child { border-bottom:none; }
+  .boot-msg { font-size:12px; margin-top:6px; }
+  .boot-linger-cmd { font-size:12px; margin-top:6px; overflow-wrap:anywhere; }
   .chips-label { color:var(--dim); font-size:11px; letter-spacing:.14em; flex:0 0 auto; }
   .chipbtn.chippill { height:32px; min-height:32px; margin:0; padding:0 12px; font-size:12px; display:inline-flex; align-items:center; flex:0 0 auto; }
   .composer #chat-in { height:44px; border-radius:6px; }
@@ -952,6 +981,33 @@
     .docs-picker { display:block; width:100%; min-height:44px; margin:0 0 12px; font-size:14px; }
     .docs-wiki-nav { display:none; }
     .docs-wiki-body { min-width:0; }
+    /* Guardian's dedicated phone interface (0.1.9e Build 14,
+       issue #156): its own interface, not the desktop squeezed —
+       cards stack full-width, the watch table drops the PID
+       column and breathes at the 44px row floor, and the
+       settings controls meet the touch floor stated WITH the
+       Guardian class named, so the shared phone button floor
+       (button.act / button.ghost at 40px) cannot override them
+       at equal specificity (the Build 13 lesson). Nothing in
+       the view can scroll sideways at 360–430px: the table
+       wrapper clips instead of scrolling, and long process
+       names wrap inside their cell. */
+    .guardian-view .guardian-card { width:100%; box-sizing:border-box; }
+    .guardian-view .guardian-stats { flex-direction:column; gap:8px; }
+    .guardian-view .guardian-stat { min-width:0; }
+    .guardian-view .guardian-table-wrap { overflow-x:hidden; }
+    .guardian-view .guardian-table .guardian-pid-col { display:none; }
+    .guardian-view .guardian-table tbody tr { height:44px; }
+    .guardian-view .guardian-table td { overflow-wrap:anywhere; padding:10px 6px; }
+    .guardian-view .guardian-table th { padding:6px; }
+    .guardian-view .guardian-fields { flex-direction:column; gap:10px; }
+    .guardian-view .guardian-settings input.guardian-in { min-height:44px; box-sizing:border-box; width:100%; }
+    .guardian-view .guardian-settings .guardian-check { min-height:44px; }
+    .guardian-view .guardian-settings textarea.guardian-expendable { width:100%; box-sizing:border-box; min-height:96px; }
+    .guardian-view .guardian-settings button.guardian-save { min-height:44px; width:100%; }
+    .guardian-view .guardian-log li { padding:10px 0; }
+    .boot-action-btn { width:100%; }
+    .boot-linger-cmd .mono { word-break:break-all; }
   }
   @media (max-width:800px) and (prefers-reduced-motion: reduce) { #nav-menu, aside { transition:none; } }
   /* Potato mode (0.1.9e Build 6, issue #109): the Appearance
@@ -1281,7 +1337,7 @@ function badgeForgeFinish(cv, cx, name, nodeName, cb) {
 }
 
 
-var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings"];
+var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings", "Guardian"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
 // Apex | Systems group (Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
@@ -1310,7 +1366,7 @@ var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Vault", "Vault"]] },
-  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"]] }
+  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"]] }
 };
 var NAV_FLAT = ["Chat"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
@@ -1332,7 +1388,8 @@ var NAV_ICON_PATHS = {
   Updater: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   GitHub: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
   Settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
-  Docs: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>'
+  Docs: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  Guardian: '<path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="M5.5 12h3.7l1.6-3.2 2.9 6.4 1.6-3.2h3.2"/>'
 };
 // The DHD glyph (build .74): the same dial the bench draws - an
 // outer ring, twelve plain wedge buttons, one large center circle.
@@ -1587,8 +1644,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-11.913";
-var SHIPPED_BUILD_SEQ = 13;
+var BRIDGE_BUILD = "2026-11-12.914";
+var SHIPPED_BUILD_SEQ = 14;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2103,7 +2160,7 @@ var DOC_GROUPS = [
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "github", "installing", "server-mode"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -2569,15 +2626,59 @@ function ghBadgeSync() {
     });
 }
 
+/* ------------------- Boot arm/disarm (#159) ------------------- */
+// One handler, one state cache, two surfaces: the status
+// column's Servers -> Boot row (the home) and Settings ->
+// System's Startup card both render from bootStateCache and
+// both call bootAction(). After any action the bridge's answer
+// carries its fresh re-read, and render() re-fetches /api/status
+// on top of that \u2014 the state shown is the system's, never the
+// button's hope.
+var bootBusy = false, bootMsg = "", bootLingerCmd = "", bootStateCache = null;
+var bootFetching = false;
+function bootUnitWord(s) { return s === "enabled" ? "enabled" : s === "disabled" ? "not enabled" : "unknown"; }
+function bootButtonHtml(id) {
+  var armed = !!(bootStateCache && bootStateCache.armed);
+  var label = bootBusy ? "Working\u2026" : armed ? "Disarm \u2014 don't start at boot" : "Arm at boot";
+  return "<button type='button' id='" + id + "' class='ghost boot-action-btn' data-action='" + (armed ? "disarm" : "arm") + "' style='min-height:44px;margin-top:8px'" + (bootBusy ? " disabled" : "") + ">" + esc(label) + "</button>";
+}
+function bootMsgHtml() {
+  var out = "";
+  if (bootMsg) out += "<div class='boot-msg'>" + esc(bootMsg) + "</div>";
+  if (bootLingerCmd) out += "<div class='boot-linger-cmd'>Linger still needs one command from a terminal: <span class='mono'>" + esc(bootLingerCmd) + "</span></div>";
+  return out;
+}
+function bootAction() {
+  if (bootBusy) return;
+  var armed = !!(bootStateCache && bootStateCache.armed);
+  bootBusy = true;
+  render();
+  fetch(armed ? "/api/boot/disarm" : "/api/boot/arm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      bootStateCache = (j && j.boot) || bootStateCache;
+      bootMsg = (j && j.message) || (j && j.ok ? "Done \u2014 the state above is what the system reports now." : "The system did not take it \u2014 the state above is what it reports now.");
+      bootLingerCmd = (j && j.lingerCommand) || "";
+      bootBusy = false;
+      render();
+    })
+    .catch(function () {
+      bootMsg = "The bridge didn't answer \u2014 nothing was changed.";
+      bootBusy = false;
+      render();
+    });
+}
+
 /* ------------------- Boot mode, read live (#142) ------------------- */
 function renderBootStatus(boot) {
+  if (boot) bootStateCache = boot;
   if (CONFIG.backend !== "live" || !boot) return "";
   var unit = function (s) { return s === "enabled" ? "enabled" : s === "disabled" ? "not enabled" : "unknown"; };
   var line = boot.armed ? "Armed — Apex comes up headless at boot" : "Not armed — Apex starts when you open it";
   var dot = boot.armed ? "#34d399" : "#9fb3c8";
   return "<div class='stat'><span class='dot' style='background:" + dot + "'></span><span style='color:var(--dim)'>BOOT</span><br>" +
     "<span class='v mono' style='font-weight:700'>" + esc(line) + "</span>" +
-    "<div style='color:var(--dim);font-size:12px;margin-top:2px'>Bridge service " + unit(boot.bridgeUnit) + " · llamafile service " + unit(boot.llamafileUnit) + " · linger " + (boot.linger === true ? "on" : boot.linger === false ? "off" : "unknown") + " — read from this system, never assumed. <b>Server mode</b> in Docs tells the whole story.</div></div>";
+    "<div style='color:var(--dim);font-size:12px;margin-top:2px'>Bridge service " + unit(boot.bridgeUnit) + " · llamafile service " + unit(boot.llamafileUnit) + " · linger " + (boot.linger === true ? "on" : boot.linger === false ? "off" : "unknown") + " — read from this system, never assumed. <b>Server mode</b> in Docs tells the whole story.</div>" + bootButtonHtml("boot-action") + bootMsgHtml() + "</div>";
 }
 
 /* ----------------------- Case Files (#137/#138) ----------------------- */
@@ -3892,6 +3993,27 @@ var DOC_PAGES = [
   "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
   "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
   "<li><b>“This image has no readable Mesh card data.”</b> The PNG card arrived without its payload — almost always because a chat app recompressed it on the way. Resend the original card file inside a .zip, or by any channel that moves files untouched, and import that.</li></ul></div>" },
+  { id: "guardian", title: "Guardian — protecting Navi's headroom", related: ["mesh", "settings", "troubleshooting"], html:
+    "<div class='doc-sec'><h4>What the Guardian is</h4>" +
+  "<p>The <b>Guardian</b> is Apex's system monitor: a quiet engine in the bridge that watches this machine's memory and Navi's own footprint, and protects the headroom she needs to answer well. A machine can have free RAM on paper and still starve her — another program balloons, a browser eats the reserve, a generation slows to a crawl — and the Guardian is the part of Apex that notices, keeps score, and acts before her replies pay for someone else's appetite.</p>" +
+  "<p>It lives <b>with the bridge</b>: always on while the bridge runs, <b>even headless</b> — a server install with no dashboard open is still guarded. Its face is the <b>Guardian page in Apex | Utilities</b>: the summary (pressure, free RAM against the reserve, Navi's footprint, whether she is generating now), the live watch of the machine's heaviest processes, what it has learned, its settings, and its action log. The page polls the bridge every few seconds while it is open and stops the moment you leave it.</p></div>" +
+    "<div class='doc-sec'><h4>The ladder — watch, warn, throttle, kill</h4>" +
+  "<p>The Guardian escalates one rung at a time, and only while the crowding lasts:</p><ol>" +
+  "<li><b>Watch.</b> It samples the machine — free memory against the reserve you set, Navi's footprint, how long her generations are taking, and the heaviest processes — and keeps the watch table current. Watching costs nothing and accuses no one.</li>" +
+  "<li><b>Warn.</b> When a foreign process keeps crowding Navi past the warn delay, the Guardian says so — in its log, with the process named. A warning is a receipt, not a punishment.</li>" +
+  "<li><b>Throttle.</b> If the crowding continues, the offending process is capped to the CPU ceiling you set, so Navi gets her cores back while the offender keeps running, slower. Throttling is reversible and is lifted when the pressure passes.</li>" +
+  "<li><b>Kill.</b> The last rung, and the narrowest: only with killing enabled, only after the grace period following a final warning, and only ever a process on the expendable list — see below.</li></ol>" +
+  "<p>Pressure is reported in plain words on the Guardian page — <b>OK</b>, <b>Tight</b>, <b>Critical</b> — with the free RAM and the reserve beside it, so you can see the same arithmetic the Guardian is acting on.</p></div>" +
+    "<div class='doc-sec'><h4>The expendable list — killing is impossible until you name a name</h4>" +
+  "<p>The expendable list is the Guardian's entire kill authority, and it <b>ships empty on purpose</b>. Until you type a process name into it on the Guardian page, the Guardian <b>cannot kill anything at all</b> — the top rung of the ladder simply does not exist. Even with the list filled, killing needs its own switch (<b>Killing enabled</b>) on top of the Guardian's main switch, and a named process still gets its warning and its grace period first.</p>" +
+  "<p>Killing never happens to anything not on that list: not Navi, not Apex, not a system process, not a stranger the Guardian merely dislikes. If a process is worth protecting absolutely, the protection is structural — keep it off the list. Names are process names, one per line, exactly as the watch table shows them.</p></div>" +
+    "<div class='doc-sec'><h4>What it learns — collisions, counted</h4>" +
+  "<p>The Guardian learns this machine by <b>counting collisions</b>, not by modeling anything: every time a process crowds Navi — while she is generating, while memory is tight — that process's score grows: how often it has been seen, how many collisions, how many warnings it earned, how many times it was throttled, and whether it was ever killed. The <b>Learned offenders</b> card on the Guardian page is that scoreboard. A process that collides once and never again fades into trivia; a repeat offender is met higher on the ladder, sooner, because it has a record. There is no model, no cloud, and no profile leaving the machine — just arithmetic over what actually happened here.</p></div>" +
+    "<div class='doc-sec'><h4>The log is the receipts</h4>" +
+  "<p>Everything the Guardian does lands in its <b>action log</b>: warnings, throttles, kills, and the pressure changes that caused them, newest first on the Guardian page, each with its time, its kind, and the process it concerned. The Guardian never acts silently — if it touched a process on your machine, the receipt is there to read, and the offenders' scoreboard agrees with it. If you ever wonder why a program was slowed or closed, the log is the first and only place to look.</p></div>" +
+    "<div class='doc-sec'><h4>Its own footprint, and the Mesh note</h4>" +
+  "<p>A monitor that eats the headroom it guards would be a poor joke: the Guardian samples on a timer with the standard library, keeps only its counters and a short log in memory, and its own cost is <b>measured and small</b> — Navi's footprint on the summary card is the llamafile's real resident memory, read from the same process table the watch uses, so the numbers it judges by are the numbers you see.</p>" +
+  "<p><b>Mesh-aware, like everything else in Apex now:</b> when <b>Apex | Mesh</b> is on, the summary says borrowing is available and from how many paired machines — a Guardian that can lean on the Mesh leans there before it ever leans on a local process. When Mesh is off, the Guardian says so plainly and works <b>locally only</b>, with this machine's own memory. Either way it degrades gracefully: no Mesh is a posture, not an error.</p></div>" },
   { id: "settings", title: "Settings & persona", related: ["installing", "voice", "github"], html:
     "<div class='doc-sec'><h4>Her persona — Soul and Memory</h4>" +
   "<p>Navi's personality is two documents in <span class='mono'>config/</span>: <span class='mono'>soul.md</span> (who she is) and <span class='mono'>memory.md</span> (what she carries). The bridge builds her system prompt from them on every chat. Both are editable in Settings, along with what she calls you. Nothing overwrites them once they exist: updates, reinstalls, and even a --fresh install stash and restore them, along with her installed chips and the llamafile. Only a first install creates them fresh.</p></div>" +
@@ -3970,7 +4092,64 @@ var DOC_PAGES = [
   "<p>A server does not need a window. <span class='mono'>./start.sh --headless</span> starts exactly the services — the llamafile (check-first, as always: an answering server is left alone) and the bridge, supervised — and opens <b>no window</b>. It is safe over SSH, safe to run twice (a service already answering is adopted, never doubled), and it writes the same <span class='mono'>start.log</span> the desktop launch writes, so a headless start explains itself after the fact the same way. Run it after a reboot and Apex — with DHD, if DHD was left on — is simply back.</p>" +
   "<p>The desktop launch adopts, too: open the app on a machine whose services are already running (from boot, or from a headless start) and it uses them as they are instead of starting second copies.</p></div>" +
     "<div class='doc-sec'><h4>At boot, honestly</h4>" +
-  "<p>Choose <b>At system boot</b> in the installer and it registers <b>two</b> systemd user services — <span class='mono'>navi-llamafile.service</span> and <span class='mono'>navi-bridge.service</span> (the bridge unit runs <span class='mono'>start.sh --headless</span>) — and tries to enable <b>lingering</b> for your user, which is what lets user services start at boot rather than at login. If the installer cannot enable lingering itself, it prints the exact command — <span class='mono'>sudo loginctl enable-linger $USER</span> — rather than assuming: a boot-armed Apex you only <i>believe</i> in is worse than one that tells you the step it could not take. The status column's <b>Servers</b> group carries a <b>Boot</b> row that reads the armed state from the system every time — both units and the linger state — so what it shows is what the machine says, never what an installer once hoped.</p></div>" },
+  "<p>Choose <b>At system boot</b> in the installer and it registers <b>two</b> systemd user services — <span class='mono'>navi-llamafile.service</span> and <span class='mono'>navi-bridge.service</span> (the bridge unit runs <span class='mono'>start.sh --headless</span>) — and tries to enable <b>lingering</b> for your user, which is what lets user services start at boot rather than at login. If the installer cannot enable lingering itself, it prints the exact command — <span class='mono'>sudo loginctl enable-linger $USER</span> — rather than assuming: a boot-armed Apex you only <i>believe</i> in is worse than one that tells you the step it could not take. The status column's <b>Servers</b> group carries a <b>Boot</b> row that reads the armed state from the system every time — both units and the linger state — so what it shows is what the machine says, never what an installer once hoped.</p><p>The app can now change it. <b>Arm at boot</b> and <b>Disarm</b> in the status column's Servers \u2192 Boot row \u2014 and the same control in Settings \u2192 System \u2014 register and enable both units from the templates the package ships, and try to enable linger. If linger cannot be enabled from the app, the row shows the exact command \u2014 <span class='mono'>sudo loginctl enable-linger $USER</span> \u2014 instead of pretending. After any action the row re-reads the system, and a half-done arm shows as half-done. Disarm disables the units \u2014 what is running keeps running; it just won't come up at boot \u2014 and leaves linger as it is. Arming is a local action \u2014 it is not offered through the DHD door.</p></div>" },
+  { id: "headless-autostart", title: "Headless auto-start — setup, the Wi-Fi secret fix, and the boot test", related: ["server-mode", "dhd", "troubleshooting"], html:
+    "<div class='doc-sec'><h4>Headless auto-start</h4>" +
+    "<p>Apex's headless mode starts the bridge on boot, with no app window and nobody logged in — so a machine can power on and simply <i>be on duty</i>: answering locally, over DHD, and lending to the Mesh. This page covers the one-time setup, the one environment trap that can silently defeat it (a Wi-Fi profile with no stored secret), and the boot test that proves the whole chain. Everything below is a one-liner where a command is needed.</p></div>" +
+    "<div class='doc-sec'><h4>1. One-time setup</h4>" +
+    "<p>Boot-arming lives <b>in the app</b>. In the status column's <b>Servers</b> group, the <b>Boot</b> row carries an <b>Arm at boot</b> button \u2014 the same control sits in <b>Settings \u2192 System</b>, on the <b>Startup \u2014 at boot</b> card. Press it and the app:</p><ul>" +
+    "<li>registers and enables two systemd user services \u2014 <span class='mono'>navi-llamafile.service</span> and <span class='mono'>navi-bridge.service</span> (the bridge unit runs <span class='mono'>start.sh --headless</span>) \u2014 from the templates the package ships, and</li>" +
+    "<li>tries to enable <b>lingering</b> for your user, which is what lets user services start at boot rather than at login. If linger cannot be enabled from the app, the row shows the exact command instead of pretending:</li></ul>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>sudo loginctl enable-linger $USER</pre>" +
+    "<p>After any action the row re-reads the system, so what it shows is what the machine reports now \u2014 and a half-done arm shows as half-done. <b>Disarm \u2014 don't start at boot</b> disables the units (what is running keeps running; it just won't come up at boot) and leaves linger as it is. Arming is a local action \u2014 it is not offered through the DHD door. The installer remains the alternative path: run it and choose <b>At system boot</b>, and it registers the same units and tries linger the same way, as the initial state.</p>" +
+    "<p>You can also start the services headlessly at any time by hand — safe over SSH, and safe to run twice (a service already answering is adopted, never doubled):</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>./start.sh --headless</pre>" +
+    "<p><b>Check the armed state in the app, no terminal needed:</b> the status column's <b>Servers</b> group carries a <b>Boot</b> row that reads the state from the system every time it shows — <i>Armed — Apex comes up headless at boot</i>, or <i>Not armed — Apex starts when you open it</i> — with a detail line naming both units and the linger state (on/off), read live, never assumed.</p>" +
+    "<p><b>Reaching the machine from your own network:</b> if you want other devices (a phone, a second laptop) to reach this machine without DHD, turn the <b>Local server</b> toggle on in <b>Settings → System</b>. Off (the default), the bridge listens only on the machine itself (<span class='mono'>127.0.0.1:8675</span>); on, it answers on the LAN on port <b>8675</b>, and anything that isn't the machine itself must present your Apex access code first.</p>" +
+    "<p>Verify the boot machinery from a terminal:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>systemctl --user is-enabled navi-bridge.service navi-llamafile.service\nloginctl show-user \"$(id -un)\" --property=Linger --value</pre>" +
+    "<p>You want <span class='mono'>enabled</span> twice and <span class='mono'>yes</span>. If the linger query gives you trouble, the ground truth is the directory — your username listed means linger is on:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>ls /var/lib/systemd/linger/</pre>" +
+    "<p>If the Boot row says <b>Not armed</b>, press <b>Arm at boot</b> on the row (or in Settings \u2192 System) \u2014 re-running the installer and choosing <b>At system boot</b> is the fallback if the units cannot be registered from the app. If it is armed but linger is off, run the <span class='mono'>enable-linger</span> command the row shows, once.</p></div>" +
+    "<div class='doc-sec'><h4>2. The trap: a Wi-Fi profile with no stored secret</h4>" +
+    "<p>Headless Apex can only answer on a network that exists. On Pop!_OS / Ubuntu (the netplan-backed NetworkManager stack), a Wi-Fi connection created without a system-stored password keeps its secret in the <i>desktop session</i>. At boot, NetworkManager asks for the secret, no session agent exists yet, and activation fails with:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>&lt;warn&gt;  no secrets: No agents were available for this request\n&lt;info&gt;  Activation: failed for connection '&lt;SSID&gt;'</pre>" +
+    "<p>NetworkManager then backs off and retries much later — so after a reboot the machine is dark to SSH, DHD, and the Mesh until a human logs into the desktop, at which point everything \"mysteriously\" comes back at once. This is an environment defect, not an Apex defect: the bridge started fine; the network underneath it never arrived.</p>" +
+    "<p><b>Check whether your profile stores its secret:</b></p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>sudo grep -c password /etc/netplan/90-NM-*.yaml</pre>" +
+    "<ul><li><span class='mono'>1</span> or more — the password is stored in the system profile. You're clean.</li>" +
+    "<li><span class='mono'>0</span> — the profile is secretless. Apply the fix below.</li></ul>" +
+    "<p>(The netplan source file is named <span class='mono'>90-NM-&lt;connection-uuid&gt;.yaml</span>. Wired connections don't have this problem; it is Wi-Fi-specific.)</p>" +
+    "<p><b>The fix.</b> Type this yourself, at the machine, with your real Wi-Fi password — never send the password through a chat, a ticket, or a screenshot:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>sudo nmcli connection modify \"&lt;SSID&gt;\" wifi-sec.psk \"&lt;your-wifi-password&gt;\"</pre>" +
+    "<p>On the netplan-backed stack this writes through to the netplan source file, so the generated boot profile carries the secret and NetworkManager can activate Wi-Fi with nobody logged in. Expect the connection to bounce once when you apply it (an SSH session may drop; reconnect).</p>" +
+    "<p>Verify the write landed — again without printing the secret: run the <span class='mono'>grep -c</span> check above again. You want <span class='mono'>1</span> or more now.</p></div>" +
+    "<div class='doc-sec'><h4>3. The verdict test (local — no DHD required)</h4>" +
+    "<p>This proves auto-start on one machine using only a phone:</p><ol>" +
+    "<li>Reboot the machine.</li>" +
+    "<li><b>Do not log in.</b> Leave the login screen completely untouched — hands off is the whole test. If you log in, you've proven nothing.</li>" +
+    "<li>Wait about two minutes.</li>" +
+    "<li>On your phone, on the <i>same Wi-Fi</i>, open <span class='mono'>http://&lt;machine-LAN-IP&gt;:8675</span> and enter your Apex access code. (Requires the <b>Local server</b> toggle from §1.)</li>" +
+    "<li><b>Pass:</b> Navi answers while the login screen still sits untouched. The node auto-fired: service up, network up, no human involved.</li></ol>" +
+    "<p>Wrinkle: some networks (many workplace and guest Wi-Fi setups) isolate clients from each other, so the phone can't see the machine. Then put the machine on your phone's hotspot instead and browse to it there — same test, your own network.</p>" +
+    "<p><b>The remote variant.</b> Once the local test passes, the same proof works from anywhere, through whichever doors you've set up — from another machine, try your SSH door and/or your DHD address after a no-login reboot:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>ssh -p &lt;your-ssh-port&gt; &lt;user&gt;@&lt;your-host&gt;</pre>" +
+    "<p>If either answers with the login screen untouched, headless auto-start is proven end to end on that machine.</p></div>" +
+    "<div class='doc-sec'><h4>4. If it fails</h4>" +
+    "<p>Log into the desktop — everything recovers; that recovery is itself a clue (it means the services were waiting on something the login provided). Then read the boot record before changing anything:</p>" +
+    "<pre class='exec mono' style='margin:6px 0;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>journalctl -b -u NetworkManager --no-pager | grep -i -E \"no secrets|activation.*fail\"\nsystemctl --user status navi-bridge --no-pager</pre>" +
+    "<ul><li>The <span class='mono'>no secrets</span> line is present → §2's trap; apply the fix and retest.</li>" +
+    "<li>The bridge unit is failed or missing → the problem is in the Apex layer; the unit's own journal lines say why.</li>" +
+    "<li>Neither → note the exact boot time and what <i>did</i> answer, and file it with those two outputs attached. Guessing wastes more time than the journal takes to read.</li></ul></div>" +
+    "<div class='doc-sec'><h4>5. One-liner summary</h4>" +
+    "<ul><li>Boot units armed? — <span class='mono'>systemctl --user is-enabled navi-bridge.service navi-llamafile.service</span></li>" +
+    "<li>Linger on? — <span class='mono'>loginctl show-user \"$(id -un)\" --property=Linger --value</span> (fallback: <span class='mono'>ls /var/lib/systemd/linger/</span>)</li>" +
+    "<li>Turn linger on — <span class='mono'>sudo loginctl enable-linger $USER</span></li>" +
+    "<li>Wi-Fi secret stored? — <span class='mono'>sudo grep -c password /etc/netplan/90-NM-*.yaml</span></li>" +
+    "<li>Store the Wi-Fi secret — <span class='mono'>sudo nmcli connection modify \"&lt;SSID&gt;\" wifi-sec.psk \"&lt;your-wifi-password&gt;\"</span></li>" +
+    "<li>Bridge alive right now? — <span class='mono'>systemctl --user status navi-bridge --no-pager</span></li>" +
+    "<li>Boot-time network failures — <span class='mono'>journalctl -b -u NetworkManager --no-pager | grep -i -E \"no secrets|activation.*fail\"</span></li></ul></div>"
+  },
   { id: "installing", title: "Installing & updating", related: ["getting-started", "troubleshooting"], html:
     "<div class='doc-sec'><h4>Installing Navi, and keeping her up to date</h4>" +
   "<p>Navi lives on your own computer — the app, her model, her memory, and her voice are all on your machine.</p>" +
@@ -4654,22 +4833,25 @@ function navGroupWrap(gid) {
   wrap.appendChild(inner);
   return wrap;
 }
-// The menu (0.1.9e Build 4; Build 6, #106): Chat pinned; a
-// break; the Apex | Systems section — header, children, and
-// its OWN break as the section's last element, so the divider
-// travels with the group and sits directly beneath its last
-// visible row in every state (a standalone sibling used to be
-// stranded a full group-height below a collapsed header,
-// because the collapsed children stayed in the flow); the flat
-// work surfaces; and at the foot, the Apex | Utilities drop-up
-// over the version line.
+// The menu (0.1.9e Build 4; Build 6, #106; Build 14, #160):
+// Chat pinned; a break; then the groups in the settled order —
+// Apex | Navi, Apex | Apps, Apex | Systems — each a section of
+// header, children, and its OWN break as the section's last
+// element, so the divider travels with the group and sits
+// directly beneath its last visible row in every state (a
+// standalone sibling used to be stranded a full group-height
+// below a collapsed header, because the collapsed children
+// stayed in the flow); and at the foot, low by the version
+// line, the Apex | Utilities drop-up over the version line —
+// the group seated low opens UPWARD, its children stacked
+// above its header (#160 settles both the order and that
+// direction; group contents are unchanged).
 navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
 var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
 var navSys = document.createElement("div"); navSys.className = "nav-group-sec"; navSys.id = "nav-sec-systems";
 navSys.appendChild(navGroupHeader("systems"));
 navSys.appendChild(navGroupWrap("systems"));
 var navBrk2 = document.createElement("div"); navBrk2.className = "nav-break"; navBrk2.setAttribute("aria-hidden", "true"); navSys.appendChild(navBrk2);
-navMenu.appendChild(navSys);
 var navNavi = document.createElement("div"); navNavi.className = "nav-group-sec"; navNavi.id = "nav-sec-navi";
 navNavi.appendChild(navGroupHeader("navi"));
 navNavi.appendChild(navGroupWrap("navi"));
@@ -4680,6 +4862,7 @@ navApps.appendChild(navGroupHeader("apps"));
 navApps.appendChild(navGroupWrap("apps"));
 var navBrk4 = document.createElement("div"); navBrk4.className = "nav-break"; navBrk4.setAttribute("aria-hidden", "true"); navApps.appendChild(navBrk4);
 navMenu.appendChild(navApps);
+navMenu.appendChild(navSys);
 var navUtil = document.createElement("div"); navUtil.className = "nav-util"; navUtil.id = "nav-util";
 navUtil.appendChild(navGroupWrap("utilities"));
 navUtil.appendChild(navGroupHeader("utilities"));
@@ -4691,10 +4874,10 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs"].forEach(function (id) {
+  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -6659,6 +6842,8 @@ function renderStatus(live) {
   wireChatsPanel(statusEl);
   var psr = document.getElementById("page-stale-reload");
   if (psr) psr.onclick = function () { location.reload(); };
+  var bab = document.getElementById("boot-action");
+  if (bab) bab.onclick = function () { bootAction(); };
   if (CONFIG.backend === "live" && !voiceState && !voiceFetching && !naviThinking) refreshVoice(false);
   if (CONFIG.backend === "live" && !ragPacksState && !ragPacksFetching && !naviThinking) refreshRagPacks(false);
   if (!githubState && !githubFetching) fetchGithub(false);
@@ -7321,8 +7506,183 @@ function deckHtml() {
   h += deckData.ragPacks.length ? "<div class='deck-grid'>" + deckData.ragPacks.map(deckSleeveRag).join("") + "</div>" : "<p style='color:var(--dim)'>No knowledge packs yet — forge or install one on the RAG tab and its cartridge picture shows here.</p>";
   return h;
 }
+// Guardian (0.1.9e Build 14, issue #156): the face of the
+// bridge's system monitor — the engine that protects Navi's
+// headroom lives bridge-side and is always on with the bridge
+// (headless included); this view is its window. State arrives
+// from GET /api/guardian/state, polled every 3 seconds while
+// the view is open (the app's live-refresh idiom: a timer that
+// exists only while its view does, like the Updater's result
+// poll), and the poll stops the moment the view changes —
+// render() itself enforces that below. A refused fetch fails
+// soft into the "Guardian unreachable" note over the view's
+// static skeleton, never a throw: the skeleton (header, cards,
+// settings form) renders from guardianState === null exactly
+// as it renders from a live state.
+var guardianState = null;    // live: last /api/guardian/state answer
+var guardianError = false;   // the last poll was refused / unanswered
+var guardianMsg = "";        // the settings save's verdict line
+var guardianTimer = null;    // the 3s poll, only while the view is open
+var guardianFetching = false;
+function guardianStopPolling() { if (guardianTimer) { clearInterval(guardianTimer); guardianTimer = null; } }
+function guardianFormFocused() { var ae = document.activeElement; return !!(ae && ae.id && String(ae.id).indexOf("guardian-") === 0); }
+function guardianStartPolling() {
+  if (guardianTimer) return;
+  fetchGuardianState();
+  guardianTimer = setInterval(function () {
+    if (view !== "Guardian") { guardianStopPolling(); return; }
+    fetchGuardianState();
+  }, 3000);
+}
+function fetchGuardianState() {
+  if (guardianFetching) return;
+  guardianFetching = true;
+  fetch("/api/guardian/state").then(function (r) { return r.json(); }).then(function (j) {
+    guardianFetching = false;
+    if (j && typeof j === "object") { guardianState = j; guardianError = false; }
+    // A re-render mid-edit would strand the operator's typing
+    // in the settings form — the fresh state waits for the
+    // next natural render while any Guardian field holds focus.
+    if (view === "Guardian" && !guardianFormFocused()) render();
+  }).catch(function () {
+    guardianFetching = false;
+    guardianError = true;
+    if (view === "Guardian" && !guardianFormFocused()) render();
+  });
+}
+function guardianSaveSettings() {
+  var cur = (guardianState && guardianState.settings) || {};
+  var num = function (id, fallback) { var el = document.getElementById(id); var v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? (typeof fallback === "number" ? fallback : 0) : v; };
+  var chk = function (id, fallback) { var el = document.getElementById(id); return el ? !!el.checked : !!fallback; };
+  var ta = document.getElementById("guardian-expendable");
+  var names = ta ? ta.value.split("\n").map(function (s) { return s.trim(); }).filter(function (s) { return !!s; }) : [];
+  // The full settings object: every key the bridge holds rides
+  // back, with the form's edits laid over it.
+  var settings = {};
+  Object.keys(cur).forEach(function (k) { settings[k] = cur[k]; });
+  settings.enabled = chk("guardian-enabled", cur.enabled);
+  settings.reserveMb = num("guardian-reserve", cur.reserveMb);
+  settings.sampleSeconds = num("guardian-sample", cur.sampleSeconds);
+  settings.slowGenSeconds = num("guardian-slowgen", cur.slowGenSeconds);
+  settings.cpuCapPercent = num("guardian-cpu-cap", cur.cpuCapPercent);
+  settings.killEnabled = chk("guardian-kill-enabled", cur.killEnabled);
+  settings.expendable = names;
+  settings.warnAfterSeconds = num("guardian-warn-after", cur.warnAfterSeconds);
+  settings.killGraceSeconds = num("guardian-kill-grace", cur.killGraceSeconds);
+  fetch("/api/guardian/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && typeof j === "object") { guardianState = (j.state && typeof j.state === "object") ? j.state : j; guardianError = false; }
+    guardianMsg = "Guardian settings saved — the Guardian is working to them now.";
+    if (view === "Guardian") render();
+  }).catch(function () {
+    guardianMsg = "The settings could not be saved — the bridge didn't answer, so nothing was changed.";
+    if (view === "Guardian") render();
+  });
+}
+function guardianNum(v) { return v == null || v === "" || isNaN(Number(v)) ? "—" : String(Math.round(Number(v))); }
+function guardianTs(ts) {
+  if (ts == null || ts === "") return "";
+  if (typeof ts === "number") {
+    var d = new Date(ts > 1e12 ? ts : ts * 1000);
+    return isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  }
+  return String(ts);
+}
+function guardianPressureInfo(p) {
+  if (p === "ok") return { cls: "guardian-chip-ok", label: "OK", words: "Comfortable — Navi has room to think." };
+  if (p === "tight") return { cls: "guardian-chip-tight", label: "Tight", words: "Memory is tight — getting close to the reserve Navi needs." };
+  if (p === "critical") return { cls: "guardian-chip-critical", label: "Critical", words: "Critical — the Guardian is acting to protect Navi's headroom." };
+  return { cls: "", label: "Unknown", words: "No report yet — the Guardian has not answered." };
+}
+function guardianHtml() {
+  var st = guardianState;
+  var set = (st && st.settings) || {};
+  var pi = guardianPressureInfo(st ? st.pressure : null);
+  var reserve = st && st.reserveMb != null ? st.reserveMb : set.reserveMb;
+  var expendable = Array.isArray(set.expendable) ? set.expendable : (st && Array.isArray(st.expendable) ? st.expendable : []);
+  var mesh = (st && st.mesh) || {};
+  var meshPeers = typeof mesh.peers === "number" ? mesh.peers : (Array.isArray(mesh.peers) ? mesh.peers.length : 0);
+  var h = "<div class='guardian-view'>";
+  h += "<h3>Guardian</h3>";
+  h += "<p style='color:var(--dim)'>The system monitor that protects Navi's headroom: it watches this machine's memory and Navi's own footprint, and when other work crowds her out it climbs a ladder — watch, warn, throttle, and only ever as a last resort, kill — and only a process you have named expendable below. The Guardian itself runs with the bridge, even headless; this page is its face.</p>";
+  if (guardianError) h += "<div class='card guardian-unreachable' style='border-color:#f5b544;color:#f5b544'>Guardian unreachable — the bridge did not answer /api/guardian/state. The cards below show the Guardian's shape; its live numbers land here when the bridge answers.</div>";
+  if (guardianMsg) h += "<p>" + esc(guardianMsg) + "</p>";
+  // Summary
+  h += "<div class='card guardian-card guardian-summary'><h3>Guardian — summary</h3>";
+  h += "<div><span class='guardian-chip " + pi.cls + "'>" + esc(pi.label) + "</span> <span>" + esc(pi.words) + "</span></div>";
+  h += "<div class='guardian-stats'>";
+  h += "<div class='guardian-stat'><span class='guardian-k'>Free RAM</span><b>" + guardianNum(st ? st.freeMb : null) + " MB</b> <span style='color:var(--dim)'>free · reserve is " + guardianNum(reserve) + " MB</span></div>";
+  h += "<div class='guardian-stat'><span class='guardian-k'>Navi's footprint</span><b>" + guardianNum(st ? st.llamafileRssMb : null) + " MB</b> <span style='color:var(--dim)'>held by navi.llamafile</span></div>";
+  h += "<div class='guardian-stat'><span class='guardian-k'>Generating</span>" + (st && st.generating ? "<b style='color:var(--cy)'>Generating now</b> <span style='color:var(--dim)'>— Navi is writing a reply</span>" : "<span>Not generating right now</span>") + "</div>";
+  h += "<div class='guardian-stat'><span class='guardian-k'>Guardian</span>" + (st && st.enabled === false ? "<span>The Guardian is <b>off</b> — turn it on in the settings below.</span>" : "<span>On watch over this machine.</span>") + "</div>";
+  h += "</div>";
+  h += mesh.enabled
+    ? "<p style='margin-top:10px'><b>Apex | Mesh</b> <span style='color:var(--dim)'>is on — borrowing is available from " + meshPeers + " paired machine" + (meshPeers === 1 ? "" : "s") + " if this machine runs short; the Guardian can lean on the Mesh before it ever leans on a local process.</span></p>"
+    : "<p style='margin-top:10px'><b>Apex | Mesh</b> <span style='color:var(--dim)'>is off — the Guardian is working locally only, with this machine's own memory.</span></p>";
+  h += "</div>";
+  // Live watch
+  var top = st && Array.isArray(st.top) ? st.top : [];
+  h += "<div class='card guardian-card guardian-watch'><h3>Live watch</h3>";
+  h += "<p style='color:var(--dim)'>The heaviest processes on this machine right now, sampled by the Guardian. Navi's own house is marked; everything else is a guest — dimmed, watched, and never actionable from here.</p>";
+  h += "<div class='guardian-table-wrap'><table class='guardian-table'><thead><tr><th>Process</th><th class='guardian-pid-col'>PID</th><th>CPU %</th><th>Memory (MB)</th><th>State</th></tr></thead><tbody>";
+  if (top.length) {
+    h += top.map(function (p) {
+      return "<tr class='guardian-row" + (p.ours ? "" : " guardian-foreign") + "'><td><b>" + esc(p.name || "—") + "</b>" + (p.ours ? " <span class='guardian-badge guardian-badge-ours'>Navi / Apex</span>" : "") + "</td><td class='guardian-pid-col mono'>" + esc(p.pid == null ? "—" : String(p.pid)) + "</td><td class='mono'>" + guardianNum(p.cpu) + "</td><td class='mono'>" + guardianNum(p.rssMb) + "</td><td>" + (p.throttled ? "<span class='guardian-badge'>Throttled</span>" : "<span style='color:var(--dim)'>—</span>") + "</td></tr>";
+    }).join("");
+  } else {
+    h += "<tr class='guardian-row'><td colspan='5' style='color:var(--dim)'>No processes reported yet — the Guardian's first sample lands here.</td></tr>";
+  }
+  h += "</tbody></table></div></div>";
+  // Learned offenders
+  var offenders = st && Array.isArray(st.offenders) ? st.offenders : [];
+  h += "<div class='card guardian-card guardian-offenders'><h3>Learned offenders</h3>";
+  if (offenders.length) {
+    h += "<p style='color:var(--dim)'>Processes that have collided with Navi before — counted, not modeled. The Guardian learns this machine by keeping score.</p>";
+    h += "<div class='guardian-table-wrap'><table class='guardian-table'><thead><tr><th>Process</th><th>Seen</th><th>Collisions</th><th>Warns</th><th>Throttles</th><th>Kills</th></tr></thead><tbody>";
+    h += offenders.map(function (o) {
+      return "<tr class='guardian-row'><td><b>" + esc(o.name || "—") + "</b>" + (o.lastSeen ? "<br><span style='color:var(--dim);font-size:11px'>last seen " + esc(guardianTs(o.lastSeen)) + "</span>" : "") + "</td><td class='mono'>" + guardianNum(o.seen) + "</td><td class='mono'>" + guardianNum(o.collisions) + "</td><td class='mono'>" + guardianNum(o.warns) + "</td><td class='mono'>" + guardianNum(o.throttles) + "</td><td class='mono'>" + guardianNum(o.kills) + "</td></tr>";
+    }).join("");
+    h += "</tbody></table></div>";
+  } else {
+    h += "<p style='color:var(--dim)'>Nothing has collided with Navi yet — the Guardian is still learning this machine.</p>";
+  }
+  h += "</div>";
+  // Settings
+  var sv = function (v) { return v == null ? "" : esc(String(v)); };
+  h += "<div class='card guardian-card guardian-settings'><h3>Guardian settings</h3>";
+  h += "<label class='guardian-check'><input type='checkbox' id='guardian-enabled'" + (set.enabled !== false ? " checked" : "") + "> <span><b>Guardian enabled</b> — watch this machine and protect Navi's headroom</span></label>";
+  h += "<div class='guardian-fields'>";
+  h += "<label for='guardian-reserve'>Reserve (MB) — free RAM kept for Navi<input class='guardian-in' id='guardian-reserve' type='number' min='0' step='1' value='" + sv(set.reserveMb) + "'></label>";
+  h += "<label for='guardian-sample'>Sample every (seconds)<input class='guardian-in' id='guardian-sample' type='number' min='1' step='1' value='" + sv(set.sampleSeconds) + "'></label>";
+  h += "<label for='guardian-slowgen'>Slow generation (seconds) — a reply slower than this counts against the machine<input class='guardian-in' id='guardian-slowgen' type='number' min='0' step='1' value='" + sv(set.slowGenSeconds) + "'></label>";
+  h += "<label for='guardian-cpu-cap'>CPU cap (%) — the ceiling the Guardian throttles offenders to<input class='guardian-in' id='guardian-cpu-cap' type='number' min='1' max='100' step='1' value='" + sv(set.cpuCapPercent) + "'></label>";
+  h += "<label for='guardian-warn-after'>Warn after (seconds) of crowding<input class='guardian-in' id='guardian-warn-after' type='number' min='0' step='1' value='" + sv(set.warnAfterSeconds) + "'></label>";
+  h += "<label for='guardian-kill-grace'>Kill grace (seconds) after a final warning<input class='guardian-in' id='guardian-kill-grace' type='number' min='0' step='1' value='" + sv(set.killGraceSeconds) + "'></label>";
+  h += "</div>";
+  h += "<label class='guardian-check'><input type='checkbox' id='guardian-kill-enabled'" + (set.killEnabled ? " checked" : "") + "> <span><b>Killing enabled</b> — as a last resort, the Guardian may kill a process named expendable below</span></label>";
+  h += "<label for='guardian-expendable' style='display:block;font-size:12px;color:var(--dim);margin-top:10px'>Expendable processes — the ONLY names the Guardian may ever kill; ships empty on purpose<textarea class='guardian-expendable' id='guardian-expendable' rows='5' placeholder='One process name per line — leave this empty and the Guardian can never kill anything'>" + esc(expendable.join("\n")) + "</textarea></label>";
+  h += "<p style='color:var(--dim);font-size:12px'>Killing never happens to anything not on that list — not Navi, not Apex, not a stranger the Guardian merely dislikes. With the list empty, the Guardian can watch, warn, and throttle, but it can never kill.</p>";
+  h += "<button type='button' class='act guardian-save' id='guardian-save'>Save Guardian settings</button>";
+  h += "</div>";
+  // Action log
+  var log = st && Array.isArray(st.log) ? st.log.slice().reverse() : [];
+  h += "<div class='card guardian-card guardian-log-card'><h3>Action log</h3>";
+  if (log.length) {
+    h += "<ul class='guardian-log'>" + log.map(function (e) {
+      return "<li><span class='mono' style='color:var(--dim);font-size:11px'>" + esc(guardianTs(e.ts)) + "</span> <b>" + esc(e.kind || "") + "</b> " + esc(e.text || "") + (e.name ? " <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(e.name) + (e.pid != null ? " · pid " + esc(String(e.pid)) : "") + "</span>" : "") + "</li>";
+    }).join("") + "</ul>";
+  } else {
+    h += "<p style='color:var(--dim)'>No Guardian actions yet — when the Guardian warns, throttles, or kills, the receipt lands here.</p>";
+  }
+  h += "</div>";
+  h += "</div>";
+  return h;
+}
 function render() {
   settingsTabValid();
+  // The Guardian's poll lives only while its view does (Build
+  // 14, #156): leaving the view stops the timer here, in the
+  // one place every view change passes through.
+  if (view !== "Guardian") guardianStopPolling();
   // A popped docs window is docs-only: no nav, no status column,
   // no polling behind the wiki.
   if (DOCS_POP) { renderDocsPop(); return; }
@@ -7747,6 +8107,8 @@ function render() {
     // failure with a staged package, the manual fallback.
     if (updater.state === "updated") h += updaterUpdatedHtml();
     if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
+  } else if (view === "Guardian") {
+    h += guardianHtml();
   } else if (view === "GitHub") {
     h += githubViewHtml();
   } else if (view === "Docs") {
@@ -7762,7 +8124,20 @@ function render() {
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface motion</h3><div style='display:flex;align-items:center;gap:8px'><button class='switch' id='motion-potato' role='switch' aria-checked='" + (CONFIG.motion === "potato" ? "true" : "false") + "' aria-label='Potato mode'><span class='knob'></span></button><span><b>Potato mode</b></span></div><p style='color:var(--dim)'>For low-power machines — turns off decorative animation across Apex. Menus, panes and views change instantly instead of traveling, and the Dark Liquid Glass theme's backdrop blur is suspended too (its colors stay). Off by default: the full motion language. The choice persists in your config like the theme, and rides the settings backup beside it." + ((window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ? " Your system asks for reduced motion — Apex honors that over this switch, either way." : "") + "</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface size</h3><p style='color:var(--dim)'>One scale for the whole interface — words and layout together, the way an operating system's display scale works, so nothing outgrows its row or its rail. (A separate text-size knob would multiply against this one and squeeze fixed rows at the big end; there is deliberately just the one.) Applies the moment you pick it, persists in your config beside the theme, and rides the settings backup with it.</p><div class='row' role='group' aria-label='UI scale'>" + [[1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]].map(function (o) { return "<button class='" + (Number(CONFIG.uiScale) === o[0] ? "act" : "ghost") + "' data-uiscale='" + o[0] + "' aria-pressed='" + (Number(CONFIG.uiScale) === o[0] ? "true" : "false") + "'>" + o[1] + "</button>"; }).join("") + "</div></div>";
-    if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup mode is chosen during install — the installer asks whether the llamafile server loads on app launch or at system boot, and records it in config/navi.config.json.</p></div>";
+    if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup can be changed in the app — from the status column's Servers → Boot row, or the Startup — at boot card below — and the choice the installer asked about (whether the llamafile server loads on app launch or at system boot) is the initial state, recorded in config/navi.config.json.</p></div>";
+    if (settingsTab === "system") (function () {
+      var b = bootStateCache;
+      h += "<div class='card'><h3>Startup \u2014 at boot</h3>";
+      if (!b) {
+        h += "<p style='color:var(--dim)'>Reading the boot state from the system\u2026</p>";
+      } else {
+        var line = b.armed ? "Armed \u2014 Apex comes up headless at boot" : "Not armed \u2014 Apex starts when you open it";
+        h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + esc(line) + "</b><br>Bridge service " + bootUnitWord(b.bridgeUnit) + " \u00b7 llamafile service " + bootUnitWord(b.llamafileUnit) + " \u00b7 linger " + (b.linger === true ? "on" : b.linger === false ? "off" : "unknown") + " \u2014 read from this system, never assumed.</p>";
+        h += bootButtonHtml("boot-action-settings");
+        h += bootMsgHtml();
+      }
+      h += "</div>";
+    })();
     // Apex | Node (build .59 as the Local server; renamed and
     // relocated in the DHD round): the controls themselves live
     // on the DHD page now (apexNodeCardHtml) — Settings → System
@@ -9204,6 +9579,12 @@ function wire() {
     };
     wireApexNode();
     wireMeshCard();
+    var bootSettingsBtn = document.getElementById("boot-action-settings");
+    if (bootSettingsBtn) bootSettingsBtn.onclick = function () { bootAction(); };
+    if (settingsTab === "system" && !bootStateCache && !bootFetching && CONFIG.backend === "live") {
+      bootFetching = true;
+      fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bootFetching = false; if (j && j.boot) { bootStateCache = j.boot; if (view === "Settings" && settingsTab === "system") render(); } }).catch(function () { bootFetching = false; });
+    }
     var pubPointer = document.getElementById("pub-pointer");
     if (pubPointer) pubPointer.onclick = function () { view = "DHD"; dockOpen = false; render(); };
     var meshPointer = document.getElementById("mesh-pointer");
@@ -9217,6 +9598,15 @@ function wire() {
     mainEl.querySelectorAll("[data-uninst]").forEach(function (b) { b.onclick = function () { var n = b.getAttribute("data-uninst"); CONFIG.installed = (CONFIG.installed || []).filter(function (x) { return x !== n; }); saveCfg(); render(); }; });
     var cmdAdd = document.getElementById("cmd-add");
     if (cmdAdd) cmdAdd.onclick = function () { var inp = document.getElementById("cmd-custom"); var n = inp ? inp.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, "") : ""; if (n && (CONFIG.installed || []).indexOf(n) < 0) { CONFIG.installed = (CONFIG.installed || []).concat([n]); saveCfg(); } render(); };
+  } else if (view === "Guardian") {
+    // Guardian wiring (Build 14, #156): the Save button posts
+    // the full settings object and the view re-renders from
+    // the state the bridge returns; the poll starts here, in
+    // the view's own wiring, and render() stops it the moment
+    // the view changes.
+    var guardianSaveBtn = document.getElementById("guardian-save");
+    if (guardianSaveBtn) guardianSaveBtn.onclick = function () { guardianSaveSettings(); };
+    guardianStartPolling();
   } else if (view === "GitHub") {
     var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
     bind("gh-tab-overview", function () { githubTab = "overview"; if (!githubPulse && !githubPulseFetching) fetchGithubPulse(false); render(); });

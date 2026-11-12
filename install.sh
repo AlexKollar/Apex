@@ -778,6 +778,21 @@ $SUDO cp -r app/* "$INSTALL_DIR/app/"
 # an install that honestly reports its old version, and Check
 # for updates re-offers the update instead of crying current.
 $SUDO cp bridge.py "$INSTALL_DIR/bridge.py.pending"
+# Guardian (Build 14, #156): the bridge imports guardian.py from
+# beside itself, so the engine lands in the install root next to
+# bridge.py. It is a plain source file like the assets above —
+# a copy of the sources missing it (a partial tree, say) must not
+# abort the install: say so in plain words and carry on; the
+# bridge runs with its inert Guardian fallback until Apex is
+# installed from a tree that carries the engine.
+if [ -f guardian.py ]; then
+  $SUDO cp guardian.py "$INSTALL_DIR/guardian.py"
+else
+  echo "    note: the Guardian engine file (guardian.py) is missing from this copy of the"
+  echo "          sources. The install continues without it — the bridge will run, but"
+  echo "          Guardian's headroom protection stays off until Apex is installed from"
+  echo "          a copy of the sources that carries guardian.py (the release zip does)."
+fi
 # The VERSION file is the app's single source of truth for its own
 # version — the bridge reads it on every /api/status and the Updater
 # compares it against the latest release. It is app code, not
