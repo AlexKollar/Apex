@@ -144,7 +144,7 @@
     "last_import_result": ""
   },
   "version": "0.1.9",
-  "version_status": "edge",
+  "version_status": "stable",
   "updater": {
     "channel": "stable"
   }

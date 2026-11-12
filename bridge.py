@@ -383,7 +383,7 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
 SHIPPED_VERSION = "0.1.9"
-SHIPPED_VERSION_STATUS = "edge"
+SHIPPED_VERSION_STATUS = "stable"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.

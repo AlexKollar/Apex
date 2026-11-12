@@ -1,3 +1,4 @@
+# Apex — Powered by [Navi](https://github.com/SaintsSec/Navi)
 # Apex — local app package
 
 Project home: https://github.com/AlexKollar/Apex — the fresh repo for this rebuild. (Navi was born at SaintsSec/Navi; that repo stays as the legacy archive of the original.)
@@ -6,13 +7,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.8e (Edge) — tag v0.1.8e
+## Latest release — 0.1.9 — tag v0.1.9
 
-- Navi Mesh, Ring 1 (#78) is here: your machines can pool inference — a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. This Edge build exists to field-test it on a real pair of machines; it follows the Edge channel in the Updater.
-- Pairing is a card you carry by hand: show your machine's Mesh card on the new Mesh page, paste the other machine's card into yours (and yours into its), and the pair is made. The card also carries the machine's capabilities, and the Mesh page's roster shows every paired machine's capability line, live status, and balance — never its addresses. Pairing is the consent act — a paired machine is a trusted machine, and nothing is tied to any specific operator, machine, or domain.
-- Borrowing is automatic for paired machines, with off switches at three levels — the borrowing switch, the Mesh master switch, and a per-chat "keep it on this machine" toggle. A busy lender gets a short grace, then your machine answers locally; a lender that drops mid-answer raises a notice and your machine writes a fresh local reply — never spliced prose.
-- Lending is automatic when the lender is idle, inside caps you set (25% of the hour, 20 generations an hour, 10 per machine by default). Your own work always wins the next slot, "Stop lending now" aborts even a borrowed generation mid-flight, and lending can only be turned on from the lending machine's own dashboard, in person.
-- Signed, pinned, and on its own door: every Mesh request carries the borrowing machine's Ed25519 signature, the connection's certificate is pinned to the fingerprint on the paired card, and Mesh always travels through its own dedicated TLS port — never the DHD door. What travels is the assembled prompt — Soul and Memory text included, stated plainly on the Mesh page before your first borrow. The lender keeps none of the content; its ledger holds only who, which direction, and how long. This publication is Build 1 of v0.1.8e; the Updater also re-checks in the background, and chip installs now verify themselves and run legacy package chips.
+- **Apex 0.1.9 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.9 — and takes Latest. It graduates the 0.1.9e Edge line (Builds 1–15): the Edge line's final build with its identity flipped from Edge to stable, plus the Threat Intelligence Center's radar mark (#168) — the one gap the field caught after the final Edge build shipped.
+- **Case Files is where investigations live (#137, #161, #162, #163).** Every case gets its own chat on the server-side store; Navi files findings into the open case in her own name; exports embed image evidence as images; and a case can be deleted completely — case, Vault files, and its tied chat — behind one confirmation that names everything it removes.
+- **The Threat Intelligence Center, v1 (#165).** A local intel store fed by keyless public sources — NVD, CISA KEV, EPSS, advisories — with staleness labeled everywhere; Navi carries a bounded standing brief of it in chat, matches it locally against your watchlist, Mesh roster, and open cases, and the digest rides the Mesh so one node collects for the rest.
+- **The Guardian, and a machine that starts itself (#156, #157, #159, #142).** The Guardian watches processes against Navi's headroom on a watch → warn → throttle → kill ladder that may only touch your approved list; an automatic hardware profile and warm-up keep modest machines fluid; Arm at boot registers the services from inside the app; and headless mode brings the bridge and the DHD door up from a cold boot, no login required.
+- **Chats live server-side; the badge syncs them (#139, #136, #150).** Chats are stored by the bridge and follow your Operator Badge between machines through the GitHub backup — the badge now has a true slot in Settings → Operator and on the sync card, and sync reports its verdict in Chat instead of spinning.
 
 [Read the changelog](CHANGELOG.md)
 
