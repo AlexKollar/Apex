@@ -7,13 +7,13 @@ Apex: a local UI for the Navi system, running on a single
 .llamafile. No Ollama, no cloud account, nothing leaves this machine
 unless you point it somewhere else.
 
-## Latest release — 0.1.8 — tag v0.1.8
+## Latest release — 0.1.9 — tag v0.1.9
 
-- **Apex 0.1.8 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.8 — and takes Latest. It graduates the 0.1.8e Edge line (Builds 1–10) with its content unchanged: same build stamp, same code — only the version's identity flipped from Edge to stable.
-- **Navi Mesh, Ring 1 (#78).** Your machines pool inference: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is by PNG card, carried by hand; borrowing is automatic for paired machines; lending is idle-only, inside caps you set, and armed only in person on the lender. Field-proven on a real two-machine pair.
-- **The pairing cards fly with the backup (#89); the text card is retired (#90).** Mesh pairing cards join the GitHub backup essentials — your own card minted fresh, a picture per paired peer — so a lost machine re-pairs from its pictures instead of starting cold. Pairing is the picture only now; a text card saved from an earlier build can no longer be pasted.
-- **Updates never need a reboot (#91).** The installer proves the old bridge stopped before replacing a single file — or aborts, naming the process that holds the port and the command that ends it. A manual install relaunches Apex and verifies the new build is answering; a dashboard left open across an update offers a one-click reload onto the new build's page.
-- **Lending, kept honest (#87, #88).** Paired peers are health-checked in the background and the roster says what it found; lend caps and the idle-only override are settings on the lending machine; a borrowed reply's pills share one row — Mesh first — at every width.
+- **Apex 0.1.9 is a full release.** It carries the bare number everywhere — VERSION, tag v0.1.9 — and takes Latest. It graduates the 0.1.9e Edge line (Builds 1–15): the Edge line's final build with its identity flipped from Edge to stable, plus the Threat Intelligence Center's radar mark (#168) — the one gap the field caught after the final Edge build shipped.
+- **Case Files is where investigations live (#137, #161, #162, #163).** Every case gets its own chat on the server-side store; Navi files findings into the open case in her own name; exports embed image evidence as images; and a case can be deleted completely — case, Vault files, and its tied chat — behind one confirmation that names everything it removes.
+- **The Threat Intelligence Center, v1 (#165).** A local intel store fed by keyless public sources — NVD, CISA KEV, EPSS, advisories — with staleness labeled everywhere; Navi carries a bounded standing brief of it in chat, matches it locally against your watchlist, Mesh roster, and open cases, and the digest rides the Mesh so one node collects for the rest.
+- **The Guardian, and a machine that starts itself (#156, #157, #159, #142).** The Guardian watches processes against Navi's headroom on a watch → warn → throttle → kill ladder that may only touch your approved list; an automatic hardware profile and warm-up keep modest machines fluid; Arm at boot registers the services from inside the app; and headless mode brings the bridge and the DHD door up from a cold boot, no login required.
+- **Chats live server-side; the badge syncs them (#139, #136, #150).** Chats are stored by the bridge and follow your Operator Badge between machines through the GitHub backup — the badge now has a true slot in Settings → Operator and on the sync card, and sync reports its verdict in Chat instead of spinning.
 
 [Read the changelog](CHANGELOG.md)
 
@@ -141,12 +141,14 @@ fallback, served by the bridge at the same address.
 
 ## What's in here
 
-- app/index.html — the Apex dashboard (left nav: Chat, Voice, Chips,
-  Memory, RAG, Documentation, Updater, GitHub, Settings; central panel;
-  right status column). Pure static file, no build step. Its header
-  reads "Apex"; the side menu collapses to a rail while the
-  status column stays visible; the Memory tab switches between saved
-  chats. Every menu option carries its own icon beside its label (and
+- app/index.html — the Apex dashboard (left nav: Chat; the
+  Apex | Systems group — Node, Mesh, DHD; the Apex | Navi group —
+  Chips, ChipDeck, RAG; then Vault; and at the foot the
+  Apex | Utilities group — Settings, Updater, GitHub, Docs; central
+  panel; right status column). Pure static file, no build step. Its
+  header reads "Apex"; the side menu collapses to a rail; the status
+  column starts hidden behind its Status toggle, and its Chats tab
+  switches between saved chats. Every menu option carries its own icon beside its label (and
   the collapsed rail is icons alone). The frame is fixed: the dashboard
   fills the viewport, the left menu and the right status column never
   scroll away, and in Chat only the message thread scrolls (the
@@ -253,7 +255,7 @@ fallback, served by the bridge at the same address.
 - config/navi.config.json — backend mode, paths, ports, startup mode,
   and the settings this package was exported with (sudo mode, threat
   level, operator name, installed commands) — the app ships as the
-  project stands. Its public_server block holds the Apex Node
+  project stands. Its public_server block holds the Apex | Node
   toggle (on the DHD page): off by default; on, the bridge binds
   0.0.0.0:8675 at launch and non-loopback visitors must enter the
   block's access code (the bridge generates one per install) before
@@ -295,7 +297,7 @@ the operator name her persona uses when she addresses you.
 ## DHD — Apex from anywhere
 
 DHD (Dial-Home Device — the way home) is Apex's public door, its own
-menu page in the dashboard. Apex Node serves Apex on your home
+menu page in the dashboard. Apex | Node serves Apex on your home
 network; DHD extends the same dashboard to a genuinely public address
 on your own machine, and everything is Apex's own work — no Tailscale,
 no external tunnel or proxy service, no Certbot. One click on the DHD

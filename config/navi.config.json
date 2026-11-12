@@ -75,25 +75,25 @@
     },
     "source": "auto",
     "tier": "fluid",
-    "tierLabel": "Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)",
+    "tierLabel": "Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)",
     "reasoning": [
-      "Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.",
-      "Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
-      "Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.",
-      "GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.",
-      "Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."
+      "Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
+      "Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+      "Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
+      "GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
+      "Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."
     ],
     "installLog": [
-      "[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)",
+      "[hardware] 2026-11-07T00:00:00.000Z \u2014 profiling this machine (source: install / re-detect)",
       "[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)",
-      "[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance",
+      "[hardware] CPU: 13th Gen Intel Core i5-1340P \u2014 12 logical cores, 4 performance",
       "[hardware] RAM: 9.4 GiB total",
       "[hardware] GPU: Intel Iris Xe Graphics (integrated)",
-      "[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.",
-      "[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
-      "[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.",
-      "[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.",
-      "[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).",
+      "[hardware] \u2192 Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
+      "[hardware] \u2192 Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+      "[hardware] \u2192 Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
+      "[hardware] \u2192 GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
+      "[hardware] \u2192 Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).",
       "[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"
     ],
     "detectedAt": "2026-11-07T00:00:00.000Z"
@@ -134,7 +134,8 @@
       "rag",
       "workflows",
       "vault",
-      "mesh-cards"
+      "mesh-cards",
+      "chats"
     ],
     "backup_interval_days": 1,
     "last_backup_at": null,
@@ -142,7 +143,7 @@
     "last_import_at": null,
     "last_import_result": ""
   },
-  "version": "0.1.8",
+  "version": "0.1.9",
   "version_status": "stable",
   "updater": {
     "channel": "stable"

@@ -348,6 +348,18 @@ import zipfile
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Guardian (Build 14, #156): the system-monitor engine lives in
+# its own stdlib module beside this bridge (it never imports the
+# bridge; the bridge imports it). The try/except is for benches
+# and partial copies that carry bridge.py alone — a real install
+# always ships guardian.py next to bridge.py (the packager and
+# the installer both carry it), and GUARDIAN below falls back to
+# an inert stub only when the module truly is not there.
+try:
+    import guardian as guardian_mod
+except Exception:
+    guardian_mod = None
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config", "navi.config.json")
 SOUL_PATH = os.path.join(ROOT, "config", "soul.md")
@@ -370,16 +382,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.8"
+SHIPPED_VERSION = "0.1.9"
 SHIPPED_VERSION_STATUS = "stable"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-09.91"
+BRIDGE_BUILD = "2026-11-12.915"
 # Edge build sequence (build .86): this package is its Edge
-# version's publication number SHIPPED_BUILD_SEQ — 0.1.8e
-# Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 10
+# version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
+# Build 3. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 15
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -798,7 +810,7 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
     door_line = (
         "Dial-Home Device · you reached this Apex from the internet"
         if is_dhd
-        else "Apex Node · on this network"
+        else "Apex | Node · on this network"
     )
     locked = lock_seconds is not None
     err_html = ""
@@ -2421,7 +2433,7 @@ def mesh_capabilities(cfg):
         "ramGB": ram,
         "model": "navi",
         "speedClass": speed,
-        # Build 7 (Fix F2): the idle posture rides the same
+        # Build 7 (Fix F2): the idle posture rides the same 
         # self-report as the caps, so a peer's card and roster
         # line state it truthfully — "lends when idle" vs "lends
         # even while busy" — from this machine's own setting.
@@ -2430,6 +2442,67 @@ def mesh_capabilities(cfg):
             "maxSharePercent": ms["lend"]["maxSharePercent"],
             "maxGenerationsPerHour": ms["lend"]["maxGenerationsPerHour"],
         },
+    }
+
+
+def guardian_settings(cfg):
+    # Guardian (Build 14, #156): absent-block-safe, like
+    # mesh_settings / dhd_settings — an install whose config
+    # predates the guardian block reads as the shipped defaults:
+    # ON, a 1024 MB reserve, a 2-second sample, kills allowed for
+    # operator-named expendable processes (none named by default,
+    # so nothing can be killed until the operator says what may).
+    g = cfg.get("guardian") if isinstance(cfg, dict) else None
+    if not isinstance(g, dict):
+        g = {}
+    expendable = g.get("expendable")
+    if not isinstance(expendable, list):
+        expendable = []
+    expendable = [str(x).strip() for x in expendable if str(x).strip()]
+    try:
+        sample_seconds = float(g.get("sampleSeconds"))
+    except Exception:
+        sample_seconds = 2.0
+    return {
+        "enabled": g.get("enabled") is not False,
+        "reserveMb": _mesh_int(g.get("reserveMb"), 1024),
+        "sampleSeconds": sample_seconds,
+        "slowGenSeconds": _mesh_int(g.get("slowGenSeconds"), 20),
+        "cpuCapPercent": _mesh_int(g.get("cpuCapPercent"), 50),
+        "killEnabled": g.get("killEnabled") is not False,
+        "expendable": expendable,
+        "warnAfterSeconds": _mesh_int(g.get("warnAfterSeconds"), 6),
+        "killGraceSeconds": _mesh_int(g.get("killGraceSeconds"), 15),
+    }
+
+
+def intel_settings(cfg):
+    # Threat Intelligence Center (Build 15, #165): absent-block-
+    # safe like the rest. Defaults: enabled, every keyless source
+    # on, an empty watchlist, this node collects for itself (no
+    # collector peer named), no silent local fallback, a 6-hour
+    # collection cadence (EPSS rides daily inside the engine).
+    b = cfg.get("intel") if isinstance(cfg, dict) else None
+    if not isinstance(b, dict):
+        b = {}
+    src = b.get("sources") if isinstance(b.get("sources"), dict) else {}
+    watch = b.get("watchlist")
+    if not isinstance(watch, list):
+        watch = []
+    watch = [str(x).strip() for x in watch if str(x).strip()][:40]
+    return {
+        "enabled": b.get("enabled") is not False,
+        "sources": {
+            "nvd": src.get("nvd") is not False,
+            "kev": src.get("kev") is not False,
+            "epss": src.get("epss") is not False,
+            "cisa": src.get("cisa") is not False,
+            "rss": src.get("rss") is not False,
+        },
+        "watchlist": watch,
+        "collectorPeer": str(b.get("collectorPeer") or "").strip(),
+        "fallbackLocal": b.get("fallbackLocal") is True,
+        "cadenceHours": _mesh_int(b.get("cadenceHours"), 6),
     }
 
 
@@ -2477,6 +2550,228 @@ def mesh_settings(cfg):
     }
 
 
+# -- Guardian service global (Build 14, #156) -------------------------
+# The engine runs whenever the bridge runs (the sampler is started
+# in __main__ beside the other background services, and re-checks
+# the enabled setting every tick), including headless: protecting
+# Navi's headroom matters most when nobody is watching the
+# dashboard. Generation activity is a module-level counter the
+# llamafile_chat wrapper below maintains, so Guardian can judge
+# pressure one level stricter exactly while she is generating.
+_GENERATION_LOCK = threading.Lock()
+_GENERATION_ACTIVE = {"count": 0}
+
+
+def _generation_is_active():
+    with _GENERATION_LOCK:
+        return _GENERATION_ACTIVE["count"] > 0
+
+
+def _guardian_llamafile_pids():
+    # The bridge's own handle on the llamafile process, when this
+    # bridge started her; when she was started by a launcher the
+    # handle is empty and Guardian's own /proc scan (for
+    # "navi.llamafile" in the cmdline) is the fallback.
+    proc = globals().get("_llamafile_proc")
+    try:
+        if proc is not None and proc.poll() is None:
+            return [proc.pid]
+    except Exception:
+        pass
+    return []
+
+
+def _guardian_mesh():
+    # The Mesh facts Guardian's state carries: (enabled, peers).
+    try:
+        _ms = mesh_settings(load_config())
+        return (bool(_ms["enabled"]), len(_ms["borrow"]["peers"]))
+    except Exception:
+        return (False, 0)
+
+
+class _GuardianUnavailable:
+    # The inert stand-in used only when guardian.py is missing
+    # from the tree (see the import note at the top): state reads
+    # as a disabled Guardian with an empty world rather than
+    # crashing a route, and every action is a no-op.
+    def start(self):
+        return False
+
+    def stop(self):
+        pass
+
+    def note_generation(self, duration_s):
+        pass
+
+    def context_block(self):
+        return "Guardian: not installed in this tree."
+
+    def state(self):
+        _s = guardian_settings(load_config())
+        return {
+            "enabled": False, "pressure": "ok", "freeMb": 0,
+            "reserveMb": _s["reserveMb"], "llamafileRssMb": 0,
+            "generating": False, "mesh": {"enabled": False, "peers": 0},
+            "top": [], "offenders": [], "expendable": list(_s["expendable"]),
+            "settings": _s, "log": [],
+        }
+
+
+if guardian_mod is not None:
+    GUARDIAN = guardian_mod.Guardian(
+        ROOT,
+        settings_getter=lambda: guardian_settings(load_config()),
+        callbacks={
+            "own_pid": os.getpid(),
+            "llamafile_pids": _guardian_llamafile_pids,
+            "is_generating": _generation_is_active,
+        },
+        mesh_getter=_guardian_mesh,
+    )
+else:
+    GUARDIAN = _GuardianUnavailable()
+
+
+# -- Threat Intelligence Center engine (Build 15, #165) ------------
+# intel.py beside the bridge, imported like guardian.py: an
+# install missing the module runs with the Center dark rather
+# than failing to boot. The engine owns the store, the pullers,
+# the matcher and the digest; the bridge owns config, the Mesh
+# door it travels through, and the chat seams it surfaces in.
+try:
+    import intel as intel_mod
+except Exception:
+    intel_mod = None
+
+
+class _IntelUnavailable:
+    # The Guardian's inert shape: every surface answers
+    # honestly-empty when intel.py is absent.
+    def start(self):
+        pass
+
+    def state(self):
+        return {"ok": False, "error": "intel.py is missing from this install — the Threat Intelligence Center is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
+
+    def brief_block(self):
+        return ""
+
+    def message_context(self, _text):
+        return ""
+
+    def case_context(self, _terms):
+        return ""
+
+    def lookup(self, _query):
+        return "The Threat Intelligence Center is unavailable on this install (intel.py missing)."
+
+    def build_digest(self):
+        return {}
+
+    def import_digest(self, _digest):
+        return {"ok": False, "error": "intel.py missing"}
+
+    def refresh_now(self):
+        return {"ok": False, "error": "intel.py missing"}
+
+    def compute_matches(self):
+        return 0
+
+    def item(self, _cve):
+        return None
+
+
+def _intel_identity():
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    return {"nodeId": ms["nodeId"], "name": ms["nodeName"] or socket.gethostname()}
+
+
+def _intel_peers():
+    try:
+        cfg = load_config()
+        return [{"nodeId": p.get("nodeId"), "name": p.get("name")}
+                for p in mesh_settings(cfg)["borrow"]["peers"]]
+    except Exception:
+        return []
+
+
+def _intel_case_terms(cfg, slug):
+    d = _case_dir(slug)
+    if not d:
+        return []
+    text = ""
+    try:
+        md = os.path.join(d, "case.md")
+        if os.path.exists(md):
+            with open(md, encoding="utf-8") as f:
+                text += f.read()
+        fdir = os.path.join(d, "findings")
+        if os.path.isdir(fdir):
+            for name in sorted(os.listdir(fdir))[:12]:
+                if not name.lower().endswith(".md"):
+                    continue
+                try:
+                    with open(os.path.join(fdir, name), encoding="utf-8") as f:
+                        fm, _b = _fm_parse(f.read())
+                    text += " " + str(fm.get("title") or "")
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    words = set(w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9._-]{2,}", text))
+    return [{"term": w} for w in sorted(words)]
+
+
+def _intel_case_terms_all():
+    cfg = load_config()
+    out = []
+    try:
+        for c in cases_list_payload()["cases"]:
+            out.extend(_intel_case_terms(cfg, c["slug"]))
+    except Exception:
+        pass
+    return out
+
+
+def _intel_fetch_digest(peer_id):
+    cfg = load_config()
+    peer = None
+    for p in mesh_settings(cfg)["borrow"]["peers"]:
+        if p.get("nodeId") == peer_id:
+            peer = p
+            break
+    if not peer:
+        return None
+    try:
+        code, raw = _mesh_request(peer, "GET", "/mesh/intel-digest", b"", "", 60)
+    except Exception:
+        return None
+    if code != 200:
+        return None
+    try:
+        parsed = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+if intel_mod is not None:
+    INTEL = intel_mod.Intel(
+        ROOT,
+        settings_getter=lambda: intel_settings(load_config()),
+        callbacks={
+            "identity": _intel_identity,
+            "peers": _intel_peers,
+            "case_terms": _intel_case_terms_all,
+            "fetch_digest": _intel_fetch_digest,
+        },
+    )
+else:
+    INTEL = _IntelUnavailable()
+
+
 # -- Node identity (spec section 4.2) -------------------------------
 # An Ed25519 keypair under config/mesh/, made with the openssl
 # binary — stdlib Python has no Ed25519, and openssl is already a
@@ -2485,7 +2780,7 @@ def mesh_settings(cfg):
 
 def mesh_openssl_missing_error():
     return (
-        "Navi Mesh needs the openssl program to create this machine's node key, "
+        "Apex | Mesh needs the openssl program to create this machine's node key, "
         "and openssl was not found on this machine. Install openssl (the same "
         "prerequisite DHD uses) and try again."
     )
@@ -3030,7 +3325,11 @@ def _mesh_card_png_render(card):
     W, H = 720, 452
     BG = (10, 14, 18)
     RIM = (34, 48, 61)
-    ACCENT = (34, 211, 238)
+    # The Mesh family blue (issue #117): a clear network blue,
+    # distinct at a glance from the chips' coral red and the
+    # knowledge packs' green. (It was a cyan until #117 ruled
+    # color is family; cyan sat too close to the RAG green.)
+    ACCENT = (59, 130, 246)
     INK = (230, 241, 245)
     DIM = (159, 179, 200)
     img = bytearray(bytes(BG) * (W * H))
@@ -3343,6 +3642,25 @@ def mesh_handle_status(handler, body):
         "model": "navi",
         "capabilities": mesh_capabilities(cfg),
     }
+
+
+def mesh_handle_intel_digest(handler, body):
+    # GET /mesh/intel-digest — signed, peer-authenticated (Build
+    # 15, #165). The collector serves its current
+    # navi-intel-digest/1 object to a paired receiver; the
+    # receiver imports it and matches locally. Only paired peers
+    # get it (same door rules as status/borrow), and the object
+    # carries public intel only — no inventory, no case data.
+    peer = mesh_authenticate(handler, body or b"", "")
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    try:
+        digest = INTEL.build_digest()
+    except Exception as e:
+        return 200, {"ok": False, "reason": "digest-failed", "error": str(e)[:160]}
+    if not digest:
+        return 200, {"ok": False, "reason": "no-digest"}
+    return 200, digest
 
 
 def mesh_handle_borrow(handler, body):
@@ -4127,6 +4445,9 @@ class MeshHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?")[0] == "/mesh/status":
             code, payload = mesh_handle_status(self, b"")
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/intel-digest":
+            code, payload = mesh_handle_intel_digest(self, b"")
             self._send(code, payload)
         else:
             self._send(404, {"ok": False, "reason": "not-found"})
@@ -4957,7 +5278,7 @@ def github_text(url, accept):
 # manual fallback — the staged folder and the one install
 # command — labeled as the fallback it is.
 #
-# Build 5 — the helper can no longer die traceless. The Build 4
+# Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate ran a genuine Build 3 install applying a
 # package through its own Updater: the staged installer ran
 # through to "Done.", and then the detached helper died without
@@ -5411,7 +5732,7 @@ def _tag_parts(tag):
 
 def _write_update_result(rec):
     try:
-        # Build 5: every write carries a freshness stamp, so a
+        # Build 6: every write carries a freshness stamp, so a
         # reader can always tell a live apply from an orphaned
         # one (see the apply watchdog below).
         rec["updatedAt"] = _now_iso()
@@ -5426,7 +5747,7 @@ def _write_update_result(rec):
 
 
 def _apply_watchdog(rec):
-    # The apply watchdog (Build 5): the backstop for the one
+    # The apply watchdog (Build 6): the backstop for the one
     # death the detached helper cannot record itself — killed
     # outright (SIGKILL, the kernel OOM killer, power loss)
     # before it could write again, like the silent death the
@@ -5499,7 +5820,7 @@ def update_result_payload():
     # confirmed outcome or the failure + fallback. No record yet
     # reads as state "none". A record orphaned by a helper that
     # died outright is closed by the apply watchdog on its way
-    # out (Build 5) — never left claiming "working" forever.
+    # out (Build 6) — never left claiming "working" forever.
     try:
         with open(UPDATE_RESULT_PATH) as f:
             rec = json.load(f)
@@ -5538,7 +5859,7 @@ def _unwrap_package(data):
 # stash-and-restore), relaunches the app through start.sh, and
 # finishes the update-result record the panel reads. It is a
 # standalone stdlib script: everything it needs arrives in the
-# job file beside it. Since Build 5 it also keeps the step log
+# job file beside it. Since Build 6 it also keeps the step log
 # (apply-trace.log) described in its own header: the Build 4
 # round-trip gate caught the old helper dying traceless
 # between the installer's "Done." and the relaunch — no log,
@@ -5556,7 +5877,7 @@ APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # the Updater panel reads its confirmation (or its failure and
 # fallback) from. Stdlib only, like the bridge.
 #
-# Build 5 — the helper can no longer die traceless. The Build 4
+# Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate caught it dying silently: the installer ran
 # through to "Done.", then nothing — apply.log 0 bytes, no
 # relaunch log, the record frozen at working/installing, no
@@ -5970,6 +6291,218 @@ def clear_wedged_bridge(root, port, tgt_seq):
     return (False, holder, desc)
 
 
+def read_installed_build_seq(root):
+    # The Edge build sequence baked into the bridge.py at the
+    # install root (Build 4): the on-disk half of the identity a
+    # same-version refresh has to prove, beside the VERSION
+    # file's number — which a refresh deliberately does not
+    # change. None when the file or the sequence cannot be read
+    # (a bridge from before build sequences existed).
+    try:
+        with open(os.path.join(root, "bridge.py"), "rb") as f:
+            m = re.search(
+                rb"SHIPPED_BUILD_SEQ\\s*=\\s*([0-9]+)", f.read())
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _pid_gone(pid):
+    # Gone = no such process, or a zombie: a zombie holds no
+    # sockets (the kernel closed them at death) and its parent
+    # reaps it in its own time.
+    if not pid:
+        return True
+    if not _pid_alive(pid):
+        return True
+    try:
+        with open("/proc/" + str(pid) + "/stat", "rb") as f:
+            parts = f.read().rsplit(b")", 1)
+        state = parts[1].split()[0].decode("utf-8", "replace") if len(parts) > 1 else ""
+        return state == "Z"
+    except Exception:
+        return False
+
+
+def _pid_cmdline(pid):
+    try:
+        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
+            raw = f.read()
+        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
+    except Exception:
+        return ""
+
+
+def _pid_cwd(pid):
+    try:
+        return os.path.realpath(os.readlink("/proc/" + str(pid) + "/cwd"))
+    except Exception:
+        return ""
+
+
+def _port_holder_pid(port):
+    # The PID holding the LISTEN socket on the port, resolved from
+    # /proc alone — names a holder that answers nothing, where a
+    # status probe can only shrug.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                rows = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for row in rows:
+            parts = row.split()
+            if len(parts) > 9 and parts[3] == "0A":
+                try:
+                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
+                        inodes.add(parts[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    targets = set("socket:[" + ino + "]" for ino in inodes)
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            fds = os.listdir("/proc/" + name + "/fd")
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
+                    return int(name)
+            except Exception:
+                pass
+    return None
+
+
+def _port_answers_expected(port, tgt_seq):
+    # True when the bridge answering on the port already reports
+    # the target identity — the case where a relaunch spawn
+    # failure must NOT fail the apply: the installer's own
+    # relaunch (build .91) already brought the new bridge up.
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:" + str(port) + "/api/status",
+            headers={"User-Agent": "navi-update-helper"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            seen = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not isinstance(seen, dict) or seen.get("app") != "Navi: Apex":
+        return False
+    return tgt_seq is None or seen.get("buildSeq") == tgt_seq
+
+
+def _holder_remedy(port):
+    # The failure-text remedy for a held port (build .91): name
+    # the holder and its exact kill command when the socket can
+    # resolve it — never "launch the app again" against a wedged
+    # port, the advice that stranded the field update this build
+    # answers.
+    holder = _port_holder_pid(port)
+    if holder:
+        cmd = _pid_cmdline(holder)
+        return ("The port is held by process " + str(holder)
+                + (" (" + cmd + ")" if cmd else "")
+                + ": end it with kill -9 " + str(holder)
+                + ", then run the update again — launching the app "
+                "again cannot work while that process holds the port.")
+    return ("If a process is holding the port, find it with lsof -i :"
+            + str(port) + " and end it, then run the update again; "
+            "otherwise launch the app again from its menu entry.")
+
+
+def clear_wedged_bridge(root, port, tgt_seq):
+    # Build .91 (issue #91): before relaunching, prove the OLD
+    # bridge is actually gone — not merely that its pid file is.
+    # A bridge can still hold the port while answering nothing
+    # (frozen, stopped, stuck mid-work), and every relaunch
+    # against it is a no-op: the new bridge cannot bind, and the
+    # confirmation that follows can only report failure with a
+    # remedy that cannot work. If the target build already
+    # answers, there is nothing to clear; if the port is free,
+    # likewise. A holder is signalled ONLY when it is provably
+    # this install's bridge — bridge.py in its command line AND
+    # its working directory the install root; anything else is
+    # reported, never touched. Escalation mirrors the installer:
+    # SIGTERM, wait for death AND a free port, SIGKILL, wait
+    # again. Returns (ok, holder_pid, holder_desc).
+    if _port_answers_expected(port, tgt_seq):
+        return (True, None, "")
+    holder = _port_holder_pid(port)
+    if holder is None:
+        try:
+            sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+            sock.close()
+            return (False, None,
+                    "something is listening on the port but its process could not be identified")
+        except Exception:
+            return (True, None, "")
+    cmd = _pid_cmdline(holder)
+    desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
+    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
+    if not owned:
+        return (False, holder, desc + " — not this install's bridge, so it was not touched")
+    trace("wedge-clear",
+          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
+    try:
+        os.kill(holder, signal.SIGTERM)
+    except Exception:
+        pass
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    try:
+        os.kill(holder, signal.SIGKILL)
+    except Exception:
+        pass
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    return (False, holder, desc)
+
+
+def _install_log_last_step(log_path):
+    # Issue #104: the installer's own step banners ("==> ...")
+    # name its steps; the last banner in the log is the step the
+    # run had reached when it failed — the tail step a nonzero
+    # exit is reported with when the build itself landed.
+    try:
+        with open(log_path, "rb") as f:
+            text = f.read().decode("utf-8", "replace")
+    except Exception:
+        return "an unnamed step"
+    last = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("==>"):
+            last = line.lstrip("=> ").strip()
+    return last or "an unnamed step"
+
+
 def version_label(number, status):
     return "v" + number + (
         "e" if status in ("edge", "alpha") else
@@ -6055,18 +6588,45 @@ def main():
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
 
+    tail_failure = ""
     if code != 0:
-        reason = why or ("it exited with code " + str(code))
-        fail("install",
-             "Installing the update failed — " + reason + ". The "
-             "installer's own output is in updates/" + job["tagDir"]
-             + "/apply-install.log. Nothing is confirmed updated: "
-             "the app is being relaunched as it lies, and the "
-             "staged package is still in place — the manual "
-             "fallback below finishes the job by hand.")
-        relaunch()
-        STATE["stop_beat"] = True
-        return
+        # Issue #104 (Build 6): a nonzero exit is not the whole
+        # story, in either direction. Classify before reporting:
+        # (2) the exit was nonzero BUT the target build is already
+        # installed on disk — the installer's version flip is its
+        # final act (Build 6), so a matching VERSION file and a
+        # matching baked-in build sequence together prove the new
+        # build landed and only a tail step failed. That is NOT
+        # the manual-fallback failure: fall through to the normal
+        # restart + confirmation with the tail failure recorded,
+        # and let confirmation have the last word. (3) Anything
+        # else is the original failure, unchanged.
+        tgt_seq_chk = job.get("targetBuildSeq")
+        chk_number, _chk_status = read_installed_version(root)
+        chk_seq = read_installed_build_seq(root)
+        installed_ok = bool(
+            chk_number
+            and tuples_equal(
+                version_tuple(chk_number), tuple(job["targetTuple"]))
+            and (tgt_seq_chk is None or chk_seq == tgt_seq_chk))
+        if installed_ok:
+            tail_failure = _install_log_last_step(job["installLog"])
+            trace("installer-tail-failure",
+                  "exit " + str(code) + " but the target build is "
+                  "installed (version " + chk_number + ", buildSeq "
+                  + str(chk_seq) + "); tail step: " + tail_failure)
+        else:
+            reason = why or ("it exited with code " + str(code))
+            fail("install",
+                 "Installing the update failed — " + reason + ". The "
+                 "installer's own output is in updates/" + job["tagDir"]
+                 + "/apply-install.log. Nothing is confirmed updated: "
+                 "the app is being relaunched as it lies, and the "
+                 "staged package is still in place — the manual "
+                 "fallback below finishes the job by hand.")
+            relaunch()
+            STATE["stop_beat"] = True
+            return
 
     # The installer's DHD prerequisite step is a named ladder
     # step of its own: its summary line is read back from the
@@ -6208,6 +6768,7 @@ def main():
         STATE["step"] = "done"
         write_result({
             "state": "done", "step": "done",
+            **({"tailFailure": tail_failure} if tail_failure else {}),
             "afterVersion": after_number,
             "afterStatus": after_status,
             # The worker's composed to-side label when it sent
@@ -6598,7 +7159,7 @@ def _run_update_apply(cfg):
                     stage_root, "apply-install.log"),
                 "relaunchLog": os.path.join(
                     stage_root, "apply-relaunch.log"),
-                # Build 5: the helper's step log — written from
+                # Build 6: the helper's step log — written from
                 # its first instruction, beside the job, with its
                 # path carried on the apply record so the panel,
                 # the watchdog, and anyone reading the wreckage
@@ -6781,8 +7342,14 @@ def save_download_payload(data):
 #                       from the stored card (the payload is the
 #                       card, so a restored picture imports whole).
 #                       The node keypair is never among them.
-# Never backed up: chat transcripts, call logs, caches and logs, the
-# hardware profile, and voice model files (they reinstall).
+#   chats/              chats.json + uploads.json — the server-side
+#                       chat store (Build 12, #139): the threads
+#                       themselves and the uploads index. A restore
+#                       CONVERGES them (newest-wins per thread, and
+#                       diverged threads survive as dated siblings)
+#                       rather than overwriting the store.
+# Never backed up: call logs, caches and logs, the hardware
+# profile, and voice model files (they reinstall).
 # Uploads go through the Contents API; downloads for import go
 # through git trees/blobs so a large chip restores whole.
 # Scheduling is honest: a thread checks on launch and while the
@@ -6793,7 +7360,7 @@ def save_download_payload(data):
 GITHUB_TOKEN_PATH = os.path.join(ROOT, "config", "github-auth.json")
 GITHUB_REPO_URL = "https://github.com/AlexKollar/Apex"
 GITHUB_API_BASE = "https://api.github.com/repos/AlexKollar/Apex"
-GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards"]
+GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards", "chats"]
 # The always-ticked core (build .36): Soul, Memory, and Settings &
 # config ride in every backup automatically — they are what makes
 # an imported Navi *her*, so github_settings folds them into the
@@ -6823,6 +7390,35 @@ def github_api(method, url, token=None, body=None, form=False):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            try:
+                return resp.status, json.loads(raw)
+            except Exception:
+                return resp.status, raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, raw
+    except Exception as e:
+        return 0, str(e)
+
+
+def github_api_raw(method, url, token, data, content_type):
+    # github_api's sibling for binary bodies (release assets ride
+    # the uploads host as raw bytes, not JSON). Same contract:
+    # (status, parsed JSON or text), never raises for HTTP errors.
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "navi-apex-bridge",
+        "Content-Type": content_type,
+    }
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read().decode("utf-8", "replace")
             try:
                 return resp.status, json.loads(raw)
@@ -7164,6 +7760,15 @@ def github_device_poll(cfg):
     return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err or ("HTTP " + str(st))) + ") — start again to retry."}
 
 
+def _dashboard_image_field(value):
+    # Dashboard-carried image fields (operator picture / operator badge,
+    # issue #116): only a data:image/ URL of sane size rides the backup
+    # slice. Anything else drops to empty - never trusted, never fatal.
+    if isinstance(value, str) and value.startswith("data:image/") and len(value) <= 420000:
+        return value
+    return ""
+
+
 def github_collect_backup(cfg, dashboard=None):
     # The ready-to-fly essentials as {path: bytes}. Only the ticked
     # essentials are gathered; the manifest always rides along and
@@ -7185,7 +7790,12 @@ def github_collect_backup(cfg, dashboard=None):
         if isinstance(dashboard, dict):
             files["dashboard.json"] = json.dumps({
                 "operatorName": str(dashboard.get("operatorName") or ""),
+                "operatorPicture": _dashboard_image_field((dashboard or {}).get("operatorPicture")),
+                "operatorBadge": _dashboard_image_field((dashboard or {}).get("operatorBadge")),
                 "theme": str(dashboard.get("theme") or ""),
+                "motion": str(dashboard.get("motion") or ""),
+                "uiScale": (dashboard.get("uiScale")
+                            if dashboard.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
             }, indent=2).encode()
     # The Mesh ledger rides a backup ONLY on the operator's
     # explicit tick (Settings → System → Navi Mesh; Q4, off by
@@ -7254,6 +7864,10 @@ def github_collect_backup(cfg, dashboard=None):
                     rel = os.path.relpath(fpath, VAULT_DIR).replace(os.sep, "/")
                     with open(fpath, "rb") as f:
                         files["vault/" + rel] = f.read()
+    if "chats" in items:
+        _chat_payload = chats_payload()
+        files["chats/chats.json"] = json.dumps({"chats": _chat_payload["chats"], "exportedAt": _now_iso()}, indent=2).encode()
+        files["chats/uploads.json"] = json.dumps(_chat_payload["uploads"], indent=2).encode()
     # The manifest's app name is the product name, "Apex" — it is
     # written into navi-backup.json in the operator's backup repo,
     # where it is read as identity, never matched as a token. (The
@@ -7299,7 +7913,7 @@ def github_run_backup(cfg, dashboard=None):
         st, created = github_api("POST", "https://api.github.com/user/repos", token, {
             "name": repo,
             "private": s["backup_private"],
-            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards).",
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards, chats).",
             "auto_init": True,
         })
         if st not in (200, 201):
@@ -7359,11 +7973,11 @@ def github_fetch_backup(cfg):
     fixed = {
         "navi-backup.json", "soul.md", "memory.md", "settings.json", "voice.json",
         "dashboard.json", "chips/installed.json", "chips/workflows.json",
-        "rag-packs/installed.json",
+        "rag-packs/installed.json", "chats/chats.json", "chats/uploads.json",
     }
     files = {}
     for path, sha in blobs.items():
-        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or (path.startswith("chips/") and path.endswith(".png")):
+        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or path.startswith("chats/") or (path.startswith("chips/") and path.endswith(".png")):
             bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
             if bst == 200 and isinstance(blob, dict) and blob.get("content"):
                 try:
@@ -7391,6 +8005,7 @@ def github_import_changes(cfg, fetched, dashboard=None):
         "workflows": "Workflows",
         "vault": "The Vault",
         "mesh-cards": "Mesh pairing cards",
+        "chats": "Chats",
     }
     changes = []
     if "soul" in items:
@@ -7440,6 +8055,10 @@ def github_import_changes(cfg, fetched, dashboard=None):
                 diffs.append("operator name → " + (str(dash.get("operatorName") or "") or "Operator"))
             if str(dash.get("theme") or "") != str(dashboard.get("theme") or ""):
                 diffs.append("theme → " + str(dash.get("theme") or ""))
+            if str(dash.get("motion") or "") != str(dashboard.get("motion") or ""):
+                diffs.append("motion → " + str(dash.get("motion") or ""))
+            if dash.get("uiScale") != dashboard.get("uiScale"):
+                diffs.append("UI scale → " + str(dash.get("uiScale") or ""))
         changes.append({
             "item": "settings", "label": labels["settings"],
             "detail": ("Would restore: " + " · ".join(diffs) + ".") if diffs else "Already matches the backup — nothing to change.",
@@ -7515,6 +8134,53 @@ def github_import_changes(cfg, fetched, dashboard=None):
             "detail": "Would restore " + str(len(backed_peers)) + " peer pairing-card picture(s) to config/mesh/cards/ and re-pair those peers through the normal card check" + ("; the backup also holds this machine's own card picture, kept as a file — it never replaces the identity of the machine restoring" if own_backed else "") + ". This machine is currently paired with " + str(len(cur_ids)) + ".",
             "willChange": backed_ids != cur_ids or (own_backed and not own_here),
         })
+    if "chats" in items:
+        backed_chats = []
+        backed_uploads = []
+        try:
+            _parsed_chats = json.loads(files.get("chats/chats.json", b"{}").decode("utf-8", "replace"))
+            if isinstance(_parsed_chats, dict) and isinstance(_parsed_chats.get("chats"), list):
+                backed_chats = _parsed_chats["chats"]
+        except Exception:
+            backed_chats = []
+        try:
+            _parsed_up = json.loads(files.get("chats/uploads.json", b"[]").decode("utf-8", "replace"))
+            if isinstance(_parsed_up, list):
+                backed_uploads = _parsed_up
+        except Exception:
+            backed_uploads = []
+        _prev = chats_converge_preview(backed_chats)
+        _moving = _prev["added"] + _prev["replaced"] + _prev["siblings"]
+        if not _moving and not backed_uploads:
+            _detail = "Already matches the backup — nothing to change."
+        elif not _moving:
+            _detail = "The threads already match the backup — nothing to change."
+        else:
+            _detail = ("Would converge " + str(len(backed_chats)) + " backed-up thread(s) into this machine's chat store: "
+                       + str(_prev["added"]) + " new, " + str(_prev["replaced"]) + " updated (newest wins), "
+                       + str(_prev["siblings"]) + " diverged — kept whole as dated sibling threads, never merged away. "
+                       "This machine currently holds " + str(len(chats_all())) + ".")
+        changes.append({
+            "item": "chats", "label": labels["chats"],
+            "detail": _detail,
+            "willChange": bool(_moving),
+        })
+    if "dashboard.json" in files:
+        try:
+            _backed_dash = json.loads(files["dashboard.json"].decode("utf-8", "replace"))
+        except Exception:
+            _backed_dash = None
+        if isinstance(_backed_dash, dict):
+            _cur_dash = dashboard if isinstance(dashboard, dict) else {}
+            for _key, _label in (("operatorPicture", "Operator picture"), ("operatorBadge", "Operator badge")):
+                _new = _dashboard_image_field(_backed_dash.get(_key))
+                _cur = _dashboard_image_field(_cur_dash.get(_key))
+                if _new and _new != _cur:
+                    changes.append({
+                        "item": "settings", "label": _label,
+                        "detail": "Would restore your " + _label.lower() + " from the backup.",
+                        "willChange": True,
+                    })
     return changes, items
 
 
@@ -7611,6 +8277,24 @@ def github_apply_import(cfg, fetched):
                     wrote = True
         if wrote:
             applied.append("The Vault")
+    if "chats" in items and "chats/chats.json" in files:
+        try:
+            _parsed_chats = json.loads(files["chats/chats.json"].decode("utf-8", "replace"))
+            _backed_chats = _parsed_chats.get("chats") if isinstance(_parsed_chats, dict) else []
+        except Exception:
+            _backed_chats = []
+        _backed_uploads = None
+        if "chats/uploads.json" in files:
+            try:
+                _parsed_up = json.loads(files["chats/uploads.json"].decode("utf-8", "replace"))
+                if isinstance(_parsed_up, list):
+                    _backed_uploads = _parsed_up
+            except Exception:
+                _backed_uploads = None
+        if isinstance(_backed_chats, list) and _backed_chats:
+            _conv = chats_converge(_backed_chats, _backed_uploads)
+            if _conv.get("changed"):
+                applied.append("Chats")
     if "mesh-cards" in items:
         wrote = False
         fresh_cfg = load_config()
@@ -7646,6 +8330,12 @@ def github_apply_import(cfg, fetched):
                 dashboard_out = {
                     "operatorName": str(parsed.get("operatorName") or ""),
                     "theme": str(parsed.get("theme") or ""),
+                    "motion": (str(parsed.get("motion") or "")
+                               if str(parsed.get("motion") or "") in ("full", "potato") else ""),
+                    "uiScale": (parsed.get("uiScale")
+                                if parsed.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
+                    "operatorPicture": _dashboard_image_field(parsed.get("operatorPicture")),
+                    "operatorBadge": _dashboard_image_field(parsed.get("operatorBadge")),
                 }
         except Exception:
             dashboard_out = None
@@ -7909,6 +8599,11 @@ def fetch_chip_payload(repo):
         "code": code[:200000],
         "output": str(manifest.get("output") or ""),
         "requirements": requirements,
+        "glyph": str(manifest.get("glyph") or ""),
+        "icon": _manifest_icon(manifest),
+        # Issue #99: the manifest's version rides inside the
+        # picture, the way its glyph already does.
+        "version": str(manifest.get("version") or ""),
         "files": _valid_chip_files(
             [{"path": "root.py", "content": code[:200000]}] + files,
             code[:200000],
@@ -8053,50 +8748,875 @@ def _png_chunk(kind, data):
     return out
 
 
+# --- Cartridge faces (0.1.9e, issue #92 graphics pass) --------------
+# A chip's face is DRAWN, not rolled: one chunky pixel glyph that
+# means the chip's function, on the family shell — black body, coral
+# notched bands top and bottom. The glyph is named in the chip's
+# metadata ("glyph" in the payload, and in navi-chip.json at export):
+# an explicit glyph wins; otherwise a keyword heuristic over the
+# chip's name and description picks one; a chip nothing claims keeps
+# the legacy name-seeded pattern face, which remains only as that
+# fallback. Faces are minted at forge time — installed and published
+# pictures are never rewritten.
+#
+# Build 3 (issue #101): the glyphs are redrawn as SOLID silhouettes
+# on a 20x20 grid — the same grid as the QR-style tile field that now
+# textures the window behind them — drawn as objects, not outlines:
+# filled masses with a few negative-space cuts (a lock's keyhole, a
+# die's pips, a terminal's prompt notch). "#" is the accent fill;
+# "o" is the shade fill (a darker tone of the same accent), used as
+# the interior tone on the heaviest masses so they read as solid
+# without going flat. An author can also draw their own: a manifest
+# "icon" in this same 20x20, three-character language outranks the
+# built-in set (see valid_icon_art).
+
+GLYPH_PIXELS = {
+    "key": [
+        "....................",
+        "....######..........",
+        "..##########........",
+        ".############.......",
+        ".####....####.......",
+        "###........###......",
+        "###........###......",
+        "###........###......",
+        ".####....####.......",
+        ".############.......",
+        "..##########........",
+        "....#######.........",
+        ".......####.........",
+        ".......####.........",
+        ".......####..####...",
+        ".......####.........",
+        ".......####..####...",
+        ".......####.........",
+        ".......####.........",
+        "....................",
+    ],
+    "lock": [
+        "....................",
+        ".......######.......",
+        ".....##########.....",
+        "....###......###....",
+        "....##........##....",
+        "....##........##....",
+        "....##........##....",
+        "...##############...",
+        "..################..",
+        "..################..",
+        "..#######..#######..",
+        "..######....######..",
+        "..######....######..",
+        "..#######..#######..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "...##############...",
+        "....................",
+        "....................",
+    ],
+    "hash": [
+        "....................",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        ".##################.",
+        ".##################.",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        ".##################.",
+        ".##################.",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....##......##......",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "text": [
+        "....................",
+        ".##################.",
+        ".##################.",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....##..##..##......",
+        "....#####.#####.....",
+        "....##..##..##......",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "swap": [
+        "....................",
+        "..........####......",
+        "..........#####.....",
+        "...################.",
+        ".##################.",
+        "###################.",
+        "...################.",
+        "..........#####.....",
+        "..........####......",
+        "....................",
+        "....................",
+        "......####..........",
+        ".....#####..........",
+        ".################...",
+        ".##################.",
+        ".##################.",
+        ".################...",
+        ".....#####..........",
+        "......####..........",
+        "....................",
+    ],
+    "gear": [
+        ".........##.........",
+        ".........##.........",
+        "....#....##....#....",
+        ".....#........#.....",
+        "......########......",
+        "...###oooooooo#####.",
+        "..#ooooo######ooooo#",
+        "..#oooo#......#oooo#",
+        "..#ooo#........#ooo#",
+        "..#ooo#........#ooo#",
+        "..#ooo#........#ooo#",
+        "..#oooo#......#oooo#",
+        "..#ooooo######ooooo#",
+        "...###oooooooo#####.",
+        "......########......",
+        ".....#........#.....",
+        "....#....##....#....",
+        ".........##.........",
+        ".........##.........",
+        "....................",
+    ],
+    "network": [
+        "....................",
+        ".........##.........",
+        ".........##.........",
+        "........#oo#........",
+        ".......#oooo#.......",
+        "........#oo#........",
+        ".........##.........",
+        ".........##.........",
+        "...##.....##.....##.",
+        "..#oo#....##....#oo#",
+        "..#ooo##..##..##ooo#",
+        "..#oooo#..##..#oooo#",
+        "...#oo#...##...#oo#.",
+        "....##....##....##..",
+        "....##..........##..",
+        "....##..........##..",
+        "....##..........##..",
+        "...####........####.",
+        "....................",
+        "....................",
+    ],
+    "image": [
+        "....................",
+        ".##################.",
+        ".#o##############o#.",
+        ".##..............##.",
+        ".##...####.......##.",
+        ".##..#oooo#......##.",
+        ".##...####.......##.",
+        ".##..............##.",
+        ".##..........#####..",
+        ".##........##oooo#..",
+        ".##......##oooooo#..",
+        ".##....##oooooooo#..",
+        ".##..##oooooooooo#..",
+        ".#o##ooooooooooooo#.",
+        ".##################.",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "music": [
+        "....................",
+        "..........########..",
+        "..........#########.",
+        "..........##.....##.",
+        "..........##......#.",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        "..........##........",
+        ".....######.........",
+        "....########........",
+        "...##########.......",
+        "...##########.......",
+        "....########........",
+        ".....######.........",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "dice": [
+        "....................",
+        ".##################.",
+        "####################",
+        "####################",
+        "###..............###",
+        "###..###.....###.###",
+        "###..###.....###.###",
+        "###..###.....###.###",
+        "###..............###",
+        "########..##########",
+        "########..##########",
+        "###..............###",
+        "###..###..###....###",
+        "###..###..###....###",
+        "###..###..###....###",
+        "###..............###",
+        "####################",
+        "####################",
+        ".##################.",
+        "....................",
+    ],
+    "book": [
+        "....................",
+        ".####............###",
+        ".######........#####",
+        ".########....#######",
+        ".###################",
+        ".###################",
+        ".###################",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".#####..........####",
+        ".###################",
+        ".###################",
+        "....................",
+    ],
+    "terminal": [
+        "....................",
+        ".##################.",
+        ".##################.",
+        ".##..............##.",
+        ".##..##..........##.",
+        ".##...##.........##.",
+        ".##....##........##.",
+        ".##...##.........##.",
+        ".##..##..........##.",
+        ".##..............##.",
+        ".##....#######...##.",
+        ".##..............##.",
+        ".##..............##.",
+        ".##################.",
+        ".##################.",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "shield": [
+        "....................",
+        "...##############...",
+        "..################..",
+        ".##################.",
+        ".##################.",
+        ".##################.",
+        ".####..######..####.",
+        "..####..####..####..",
+        "...#############....",
+        "....############....",
+        ".....##########.....",
+        "......########......",
+        ".......######.......",
+        "........####........",
+        ".........##.........",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "clock": [
+        "....................",
+        "......########......",
+        "....############....",
+        "...##############...",
+        "..################..",
+        "..################..",
+        "..######..########..",
+        "..######...#######..",
+        "..######....######..",
+        "..######.....#####..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "..################..",
+        "...##############...",
+        "....############....",
+        "......########......",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "chart": [
+        "....................",
+        "....................",
+        "....................",
+        "...##...............",
+        "...##.....##........",
+        "...##.....##........",
+        "...##.....##..##....",
+        "...##.....##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "...##..##.##..##....",
+        "..#oo##oo#oo##oo##..",
+        "..################..",
+        "....................",
+        "....................",
+        "....................",
+    ],
+    "star": [
+        ".........##.........",
+        ".........##.........",
+        "........####........",
+        "........####........",
+        ".......######.......",
+        ".##################.",
+        "..################..",
+        "...##############...",
+        "....############....",
+        ".....##########.....",
+        ".....##########.....",
+        "....############....",
+        "....###..##..###....",
+        "...###....##...###..",
+        "...##......##...##..",
+        "..##........##...##.",
+        "..#..........#....#.",
+        "....................",
+        "....................",
+        "....................",
+    ],
+}
+
+_GLYPH_KEYWORDS = [
+    ("key", ("cryptex", "cipher", "encrypt", "decrypt", "encode", "decode", "key")),
+    ("hash", ("hash", "md5", "sha1", "sha256", "sha512", "digest")),
+    ("lock", ("password", "vault", "lock", "secret")),
+    ("swap", ("translate", "convert", "swap", "exchange")),
+    ("music", ("music", "audio", "song", "sound", "play")),
+    ("image", ("image", "photo", "picture", "camera")),
+    ("dice", ("dice", "random", "game", "fun", "joke")),
+    ("book", ("book", "knowledge", "docs", "read", "library")),
+    ("network", ("mesh", "network", "net", "peer", "sync")),
+    ("shield", ("scan", "security", "shield", "guard", "nmap", "vuln")),
+    ("terminal", ("shell", "terminal", "command", "cli", "exec")),
+    ("clock", ("clock", "time", "schedule", "timer", "alarm")),
+    ("chart", ("chart", "stats", "graph", "metric", "report")),
+    ("text", ("text", "word", "string", "note", "write")),
+    ("gear", ("tool", "config", "setting", "util")),
+    ("star", ("oracle", "fortune", "magic", "star")),
+]
+
+
+def valid_icon_art(raw):
+    # Author-supplied face art (Build 3, issue #101): a manifest's
+    # "icon" — exactly 20 strings of exactly 20 characters over
+    # {'.', '#', 'o'} ('#' accent fill, 'o' shade fill, '.' empty),
+    # the same pixel language as GLYPH_PIXELS. Returns the rows
+    # normalized (a fresh list of plain strings) or None when the
+    # art is absent or malformed in any way. Callers decide what
+    # None means: a forge refuses in plain words; a picture parse
+    # treats bad art as no art, so a damaged icon never bricks a
+    # cartridge — it falls back to the glyph.
+    if not isinstance(raw, list) or len(raw) != 20:
+        return None
+    rows = []
+    for row in raw:
+        if not isinstance(row, str) or len(row) != 20:
+            return None
+        if any(c not in ".#o" for c in row):
+            return None
+        rows.append(row)
+    return rows
+
+
+ICON_ART_REFUSAL = (
+    "The icon art is not in the shape a cartridge face draws: "
+    "20 rows of 20 characters each, using only . (empty), "
+    "# (accent) and o (shade). Fix the icon in the manifest, "
+    "or take it out and let the chip wear its glyph."
+)
+
+
+def _icon_art_of(payload):
+    # The payload's own declared art, validated — None when the
+    # payload carries none or carries a damaged one.
+    if not isinstance(payload, dict):
+        return None
+    return valid_icon_art(payload.get("icon"))
+
+
+def _manifest_icon(manifest):
+    # A repo manifest's declared icon, for the install fetch: a
+    # manifest that declares art in the wrong shape refuses the
+    # install in plain words (the same refusal a forge gives) —
+    # silently dropping the author's art would forge a face they
+    # never approved. No icon declared is simply no icon.
+    raw = (manifest or {}).get("icon")
+    if not raw:
+        return []
+    rows = valid_icon_art(raw)
+    if rows is None:
+        raise ValueError(ICON_ART_REFUSAL)
+    return rows
+
+
+def _payload_icon(data):
+    # An endpoint body's declared icon: (rows, error) — rows is []
+    # when no art was sent; error is the plain-words refusal when
+    # art was sent in the wrong shape.
+    raw = (data or {}).get("icon")
+    if not raw:
+        return [], ""
+    rows = valid_icon_art(raw)
+    if rows is None:
+        return [], ICON_ART_REFUSAL
+    return rows, ""
+
+
+def _tile_field_seed(name):
+    # The legacy pattern's seed discipline: 7 folded with the
+    # name's characters — the window's field and the seeded
+    # fallback share one seed so a cartridge's texture is stable
+    # across forges of the same name.
+    seed = 7
+    for ch in str(name or ""):
+        seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
+    return seed
+
+
+def _draw_tile_field(rect, wx, wy, win, name, rgb, window_rgb, skip=None):
+    # The window's background texture (Build 3, issue #101): a
+    # QR-style tile field on the window's own 20x20 grid — tiles
+    # seeded from the cartridge's name with the legacy pattern's
+    # LCG, and QR finder squares in three corners (a 7x7 finder:
+    # filled border, one-cell gap, filled 3x3 core). Drawn in the
+    # face accent dimmed to a texture, behind the glyph. Cells the
+    # silhouette will stamp (skip) take the field UNDER the art
+    # instead of the finder squares: the glyph always covers the
+    # finders, so letting them draw there only punched two big
+    # holes through every solid mass the field was meant to sit
+    # behind.
+    cell = win // 20
+    seed = _tile_field_seed(name)
+    skip = skip or set()
+
+    def finder(fx, fy):
+        rect(wx + fx * cell, wy + fy * cell,
+             wx + (fx + 7) * cell, wy + (fy + 7) * cell, rgb)
+        rect(wx + (fx + 1) * cell, wy + (fy + 1) * cell,
+             wx + (fx + 6) * cell, wy + (fy + 6) * cell, window_rgb)
+        rect(wx + (fx + 2) * cell, wy + (fy + 2) * cell,
+             wx + (fx + 5) * cell, wy + (fy + 5) * cell, rgb)
+
+    def in_finder(cx, cy):
+        return ((cx < 8 and cy < 8) or (cx > 11 and cy < 8)
+                or (cx < 8 and cy > 11))
+
+    for cy in range(20):
+        for cx in range(20):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            if (cx, cy) in skip or in_finder(cx, cy):
+                continue
+            if seed / 0x7FFFFFFF > 0.52:
+                rect(wx + cx * cell, wy + cy * cell,
+                     wx + (cx + 1) * cell, wy + (cy + 1) * cell, rgb)
+    finder(0, 0)
+    finder(13, 0)
+    finder(0, 13)
+
+
+def _draw_spray(rect, wx, wy, win, name, accent, shade, field, dark, deep):
+    # The knowledge cartridge's window face (issue #117): the
+    # seeded tile spray grown to fill the whole window — no
+    # glyph. Same seed discipline as the tile field (the
+    # cartridge's name through the legacy LCG), on the window's
+    # 20x20 grid. Cells land in the family accent, its shade
+    # (x0.45), its field tone (x0.30), or dark; the fill runs
+    # denser and brighter toward the middle and thins toward
+    # the rim, the way the field-forged sample face reads.
+    cell = win // 20
+    seed = _tile_field_seed(name)
+
+    def rnd():
+        nonlocal seed
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        return seed / 0x7FFFFFFF
+
+    for cy in range(20):
+        for cx in range(20):
+            dx = (cx - 9.5) / 9.5
+            dy = (cy - 9.5) / 9.5
+            d = min(1.0, (dx * dx + dy * dy) ** 0.5)
+            if rnd() > 0.88 - 0.5 * d:
+                rgb = deep if rnd() < 0.22 else dark
+            else:
+                t = rnd()
+                if t < 0.55 - 0.30 * d:
+                    rgb = accent
+                elif t < 0.82:
+                    rgb = shade
+                else:
+                    rgb = field
+            rect(wx + cx * cell, wy + cy * cell,
+                 wx + (cx + 1) * cell, wy + (cy + 1) * cell, rgb)
+
+
+def _draw_silhouette(rect, wx, wy, win, grid, accent, shade):
+    # A 20x20 silhouette over the window's field, drawn like the
+    # Mesh renderer's own stamp: the art's cells stamp at full
+    # window size and the field shows only OUTSIDE the art — the
+    # stamp overwrites whole cells, finders included, and the
+    # field is never allowed to punch holes through a solid mass.
+    # '#' cells in the full accent, 'o' cells in the shade tone,
+    # and a shade offset copy beneath for depth. (An earlier
+    # version redrew the field INSIDE the art and the two read as
+    # one texture — the object dissolved; the stamp is what keeps
+    # it an object.)
+    cell = win // 20
+    off = (win - cell * 20) // 2
+    lift = max(3, cell // 3)
+    for passes in ((1, shade), (0, None)):
+        for cy in range(20):
+            for cx in range(20):
+                ch = grid[cy][cx]
+                if ch == ".":
+                    continue
+                if passes[0]:
+                    rgb = shade
+                    dx = dy = lift
+                else:
+                    rgb = accent if ch == "#" else shade
+                    dx = dy = 0
+                rect(wx + off + cx * cell + dx, wy + off + cy * cell + dy,
+                     wx + off + (cx + 1) * cell + dx,
+                     wy + off + (cy + 1) * cell + dy, rgb)
+
+
+def pick_chip_glyph(payload):
+    # The face a payload earns: its own declared glyph first, then
+    # the keyword heuristic over name + description, else None —
+    # and None is what keeps the legacy seeded face.
+    g = str((payload or {}).get("glyph") or "").strip().lower()
+    if g in GLYPH_PIXELS:
+        return g
+    hay = (
+        str((payload or {}).get("name") or "")
+        + " "
+        + str((payload or {}).get("description") or "")
+    ).lower()
+    for name, words in _GLYPH_KEYWORDS:
+        if any(w in hay for w in words):
+            return name
+    return None
+
+
+def _cartridge_face_png(payload, keyword):
+    # The card-grade family face (0.1.9e Build 2; window reworked
+    # in Build 3, issue #101): the cartridge drawn with the Mesh
+    # pairing cards' machinery — the same block font, pixel buffer,
+    # and PNG assembly — at card resolution in the classic portrait
+    # stance, 528x616 (the old 96x112 face at 5.5x, same proportions).
+    # Family DNA intact: black shell, rim, family-accent notched bands top
+    # and bottom as the cartridge's contacts (notches on the bands'
+    # inner edges), the thing's art large in its window, then its
+    # name, its use line, and honest small print. Build 3's window:
+    # a dim QR-style tile field textures the window, and the glyph
+    # — or the author's own declared "icon" art, which outranks it —
+    # renders over it as a solid silhouette with a shade offset. A
+    # chip no art claims keeps the legacy name-seeded pattern,
+    # drawn plain in the window as before. Faces are minted at
+    # forge time — installed and published pictures are never
+    # rewritten.
+    W, H = 528, 616
+    BG = (10, 14, 18)
+    SHELL = (8, 9, 11)
+    RIM = (34, 48, 61)
+    CORAL = (255, 111, 97)
+    # Color is family (issue #117): chips keep the coral red;
+    # knowledge packs wear the presence green (52, 211, 153 —
+    # the app's own #34d399); the Mesh pairing cards wear
+    # their blue in _mesh_card_png_render. Every derivation
+    # below — bands, header, shade (x0.45), field (x0.30),
+    # silhouette, spray — follows the family's accent.
+    FACE_ACCENTS = {"navi-chip": CORAL, "navi-rag": (52, 211, 153)}
+    ACCENT = FACE_ACCENTS.get(keyword, CORAL)
+    WINDOW = (14, 17, 21)
+    INK = (230, 241, 245)
+    DIM = (159, 179, 200)
+    img = bytearray(bytes(SHELL) * (W * H))
+
+    def px(x, y, rgb):
+        if 0 <= x < W and 0 <= y < H:
+            o = (y * W + x) * 3
+            img[o] = rgb[0]
+            img[o + 1] = rgb[1]
+            img[o + 2] = rgb[2]
+
+    def rect(x0, y0, x1, y1, rgb):
+        for yy in range(y0, y1):
+            for xx in range(x0, x1):
+                px(xx, yy, rgb)
+
+    for i in range(4):
+        for x in range(W):
+            px(x, i, RIM)
+            px(x, H - 1 - i, RIM)
+        for y in range(H):
+            px(i, y, RIM)
+            px(W - 1 - i, y, RIM)
+
+    BAND_H = 26
+    TOP_BAND_Y = 24
+    BOT_BAND_Y = H - 24 - BAND_H
+
+    def band(y0, notch_first):
+        # A family-accent contact band; along its inner edge a stepped
+        # bite is taken out of every second cell — the notches
+        # the small face drew, at card scale.
+        rect(4, y0, W - 4, y0 + BAND_H, ACCENT)
+        for x in range(4, W - 4):
+            if (x // 44) % 2 == 0:
+                for yy in notch_first:
+                    px(x, yy, SHELL)
+
+    band(TOP_BAND_Y, (TOP_BAND_Y + BAND_H - 2, TOP_BAND_Y + BAND_H - 1))
+    band(BOT_BAND_Y, (BOT_BAND_Y, BOT_BAND_Y + 1))
+
+    MX = 40
+    if keyword == "navi-rag":
+        head_l, head_r = "KNOWLEDGE", "NAVI-RAG"
+    else:
+        head_l, head_r = "APEX CHIP", "NAVI-CHIPS"
+    y = TOP_BAND_Y + BAND_H + 22
+    _mesh_face_draw(img, W, H, MX, y, head_l, 3, ACCENT)
+    _mesh_face_draw(
+        img, W, H, W - MX - _mesh_face_text_w(head_r, 3), y, head_r, 3, DIM
+    )
+    y += 21 + 22
+
+    # The glyph window: rim-framed, dark inside. Build 3's
+    # treatment: a dim QR-style tile field as the window's texture,
+    # and the art as a solid silhouette over it — the author's own
+    # declared icon first, then the built-in glyph (picked by name
+    # or keyword, chips only). A knowledge cartridge's window is
+    # the seeded spray instead (issue #117) unless the author's
+    # icon claims it. The shade tone is the family accent
+    # darkened; author art's 'o' cells draw in it. A chip no art
+    # claims keeps the legacy seeded pattern, plain.
+    WIN = 300
+    wx = (W - WIN) // 2
+    wy = y
+    rect(wx - 6, wy - 6, wx + WIN + 6, wy + WIN + 6, RIM)
+    rect(wx, wy, wx + WIN, wy + WIN, WINDOW)
+    art = _icon_art_of(payload)
+    glyph = None
+    if art is None and keyword != "navi-rag":
+        glyph = pick_chip_glyph(payload)
+        if glyph is not None and glyph in GLYPH_PIXELS:
+            art = GLYPH_PIXELS[glyph]
+    if keyword == "navi-rag" and art is None:
+        # A knowledge cartridge's center is the spray (issue
+        # #117): the seeded tile field grown to fill the whole
+        # window, in the green family — it outranks even a
+        # declared glyph. Only the author's own icon art
+        # (handled by the silhouette branch below) outranks it.
+        shade = tuple(int(c * 0.45) for c in ACCENT)
+        field = tuple(int(c * 0.30) for c in ACCENT)
+        _draw_spray(rect, wx, wy, WIN, payload.get("name"),
+                    ACCENT, shade, field, WINDOW, BG)
+    elif art is not None:
+        shade = tuple(int(c * 0.45) for c in ACCENT)
+        field = tuple(int(c * 0.30) for c in ACCENT)
+        # The art's own halo: the silhouette dilated by one cell in
+        # the window color, drawn FIRST — it clears the field out
+        # of the object's neighborhood so the eye meets a dark halo,
+        # then the silhouette, never field-against-accent noise.
+        # Behind it, the whole window sits on the shade's backplate
+        # so the texture reads as one woven field, the way the
+        # Mesh renderer's cards carry their accent field.
+        _cell = WIN // 20
+        _filled = {(cx, cy) for cy in range(20) for cx in range(20)
+                   if art[cy][cx] != "."}
+        _halo = set()
+        for (cx, cy) in _filled:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if 0 <= cx + dx < 20 and 0 <= cy + dy < 20:
+                        _halo.add((cx + dx, cy + dy))
+        rect(wx, wy, wx + WIN, wy + WIN, shade)
+        for (cx, cy) in sorted(_halo):
+            rect(wx + cx * _cell, wy + cy * _cell,
+                 wx + (cx + 1) * _cell, wy + (cy + 1) * _cell, WINDOW)
+        _draw_tile_field(rect, wx, wy, WIN, payload.get("name"), field, WINDOW,
+                         skip=_filled)
+        _draw_silhouette(rect, wx, wy, WIN, art, ACCENT, shade)
+    else:
+        if keyword == "navi-rag":
+            palette = [(52, 211, 153), (45, 180, 130), (74, 222, 180)]
+        else:
+            palette = [
+                (34, 211, 238), (245, 181, 68), (52, 211, 153),
+                (248, 113, 113), (167, 139, 250),
+            ]
+        h = 0
+        seed = 7
+        for ch in str(payload.get("name") or ""):
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+            seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
+        accent = palette[h % len(palette)]
+        blocks = []
+        for _ in range(64):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            blocks.append(seed / 0x7FFFFFFF > 0.55)
+        pad = 24
+        cell = (WIN - 2 * pad) / 8.0
+        for by in range(8):
+            for bx in range(8):
+                if blocks[by * 8 + bx]:
+                    rect(
+                        int(wx + pad + bx * cell), int(wy + pad + by * cell),
+                        int(wx + pad + (bx + 1) * cell),
+                        int(wy + pad + (by + 1) * cell),
+                        accent,
+                    )
+                else:
+                    rect(
+                        int(wx + pad + bx * cell), int(wy + pad + by * cell),
+                        int(wx + pad + (bx + 1) * cell),
+                        int(wy + pad + (by + 1) * cell),
+                        BG,
+                    )
+    y = wy + WIN + 24
+
+    # The name band: auto-fitting like the Mesh cards' name —
+    # start big, shrink until it fits, truncate only at the floor.
+    name = _mesh_face_clean(payload.get("name") or "") or (
+        "KNOWLEDGE PACK" if keyword == "navi-rag" else "CHIP"
+    )
+    scale = 7
+    while scale > 2 and _mesh_face_text_w(name, scale) > W - 2 * MX:
+        scale -= 1
+    if _mesh_face_text_w(name, scale) > W - 2 * MX:
+        name = name[: max(0, (W - 2 * MX) // (6 * scale) - 3)] + "..."
+    _mesh_face_draw(img, W, H, MX, y, name, scale, INK)
+    y += 7 * scale + 16
+
+    # The use line: the description, wrapped at the width that
+    # fits scale 2, up to three lines.
+    max_chars = (W - 2 * MX) // (6 * 2)
+    use = _mesh_face_wrap(
+        _mesh_face_clean(payload.get("description") or ""), max_chars
+    )
+    for line in use[:3]:
+        if y + 14 > BOT_BAND_Y - 44:
+            break
+        _mesh_face_draw(img, W, H, MX, y, line, 2, DIM)
+        y += 14 + 8
+
+    # Footer small print, above the bottom band with clearance:
+    # the version when the picture's own data knows it (never
+    # invented), the output kind, and the family mark. A
+    # knowledge cartridge's footer carries its version and its
+    # document count instead.
+    foot_bits = []
+    ver = str(payload.get("version") or "").strip()
+    if keyword == "navi-rag":
+        docs = payload.get("documents")
+        if isinstance(docs, list):
+            foot_bits.append(
+                str(len(docs)) + (" DOCUMENT" if len(docs) == 1 else " DOCUMENTS")
+            )
+        foot_bits.append("NAVI-RAG")
+    else:
+        # The output KIND, not the output text: a chip whose
+        # run() produces text wears TEXT; one that only declares
+        # an output wears the first words of it (the way a
+        # Mesh card reads its offer).
+        if str(payload.get("code") or "").strip():
+            foot_bits.append("TEXT")
+        else:
+            out_line = _mesh_face_clean(payload.get("output") or "")
+            if out_line:
+                foot_bits.append(out_line[:18])
+        foot_bits.append("NAVI-CHIPS")
+    foot = _mesh_face_clean(" - ".join(foot_bits))
+    # The version rides bottom-RIGHT (issue #117, layout lock):
+    # its own element on the same baseline as the left footer,
+    # omitted when the picture's data does not know it (never
+    # invented). The left footer truncates toward the version,
+    # never into it — the version's width is reserved first.
+    ver_txt = _mesh_face_clean("V" + ver.upper()) if ver else ""
+    ver_w = _mesh_face_text_w(ver_txt, 2) if ver_txt else 0
+    left_max = W - 2 * MX - (ver_w + 24 if ver_txt else 0)
+    while foot and _mesh_face_text_w(foot, 2) > left_max:
+        foot = foot[:-1]
+    _mesh_face_draw(img, W, H, MX, BOT_BAND_Y - 14 - 16, foot, 2, DIM)
+    if ver_txt:
+        _mesh_face_draw(img, W, H, W - MX - ver_w, BOT_BAND_Y - 14 - 16, ver_txt, 2, DIM)
+
+    raw = bytearray()
+    for yy in range(H):
+        raw.append(0)
+        raw += img[yy * W * 3:(yy + 1) * W * 3]
+    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 def build_cartridge_png(payload):
     # The PICO-8 trick in Battle Network dress: the visible image is
     # a battle-chip label; the chip's whole codebase rides inside the
     # PNG in a tEXt chunk (keyword "navi-chip", JSON payload).
-    W, H = 96, 112
-    palette = [
-        (34, 211, 238), (245, 181, 68), (52, 211, 153),
-        (248, 113, 113), (167, 139, 250),
-    ]
-    h = 0
-    seed = 7
-    for ch in payload["name"]:
-        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
-        seed = (seed * 31 + ord(ch)) & 0xFFFFFFFF
-    accent = palette[h % len(palette)]
-    blocks = []
-    for _ in range(64):
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        blocks.append(seed / 0x7FFFFFFF > 0.55)
-    raw = bytearray()
-    for y in range(H):
-        raw.append(0)
-        for x in range(W):
-            r, g, b = 10, 14, 18
-            if (8 <= y < 18) or (88 <= y < 100):
-                r, g, b = accent
-            elif 10 <= x < W - 10 and 26 <= y < 78:
-                bx = int((x - 10) / 9.5)
-                by = int((y - 26) / 6.5)
-                if blocks[(by * 8 + bx) % 64]:
-                    r, g, b = accent
-                else:
-                    r, g, b = 16, 22, 29
-            elif x < 4 or x >= W - 4 or y < 4 or y >= H - 4:
-                r, g, b = 34, 48, 61
-            raw += bytes([r, g, b])
-    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    face = _cartridge_face_png(payload, "navi-chip")
     text = b"navi-chip\x00" + json.dumps(payload).encode()
+    # Rebuild with the payload chunk ahead of the image data.
+    ihdr_end = 8 + 12 + 13
     return (
-        b"\x89PNG\r\n\x1a\n"
-        + _png_chunk(b"IHDR", ihdr)
+        face[:ihdr_end]
         + _png_chunk(b"tEXt", text)
-        + _png_chunk(b"IDAT", zlib.compress(bytes(raw)))
-        + _png_chunk(b"IEND", b"")
+        + face[ihdr_end:]
     )
 
 
@@ -8148,12 +9668,106 @@ def parse_cartridge_png(data):
                         "code": code,
                         "output": str(payload.get("output") or ""),
                         "files": _valid_chip_files(payload.get("files"), code),
+                        "glyph": str(payload.get("glyph") or ""),
+                        # Build 3 (#101): the author's declared
+                        # icon art rides the same way. A damaged
+                        # icon parses as NO icon — the face falls
+                        # back to the glyph, and a bad picture of
+                        # art never bricks the cartridge.
+                        "icon": _icon_art_of(payload) or [],
+                        # Issue #99: the version the picture itself
+                        # carries (Build 2 and later forges); older
+                        # pictures simply have none — "" here, and
+                        # no surface invents one for them.
+                        "version": str(payload.get("version") or ""),
                     }
                 return None
         if kind == b"IEND":
             break
         pos += 8 + length + 4
     return None
+
+
+def deck_contents(cfg):
+    # Everything that rides a picture, for ChipDeck (0.1.9e, #94):
+    # installed chips, the Mesh pairing cards on disk, and the
+    # knowledge packs (each pack's cartridge is built on demand by
+    # /api/rag/cartridge.png). State is read from the same stores
+    # the owning pages read — the Deck is a view, not a store.
+    chips = [
+        {
+            "file": c["file"], "name": c["name"],
+            "description": c.get("description") or "",
+            "glyph": pick_chip_glyph(c) or "",
+            # Issue #99: the version the picture itself carries —
+            # "" for pictures forged before it was carried, and
+            # the Deck shows nothing rather than a guess for them.
+            "version": str(c.get("version") or ""),
+            "source": c.get("source"), "sourceKey": c.get("sourceKey"),
+            "locallyEdited": bool(c.get("locallyEdited")),
+            "unreadable": bool(c.get("unreadable")),
+        }
+        for c in local_chips()
+    ]
+    cards = []
+    try:
+        ms = mesh_settings(cfg)
+        paired_ids = {
+            str(p.get("nodeId") or "")
+            for p in (ms["borrow"]["peers"] or [])
+            if isinstance(p, dict)
+        }
+    except Exception:
+        paired_ids = set()
+    try:
+        card_files = sorted(os.listdir(MESH_CARDS_DIR))
+    except Exception:
+        card_files = []
+    for fn in card_files:
+        if not fn.lower().endswith(".png"):
+            continue
+        entry = {"file": fn, "name": fn[:-4], "nodeId": "", "own": fn == "own.png", "paired": False}
+        try:
+            with open(os.path.join(MESH_CARDS_DIR, fn), "rb") as f:
+                peer, _e = parse_mesh_card_png(f.read())
+            if peer is not None:
+                entry["name"] = peer.get("name") or entry["name"]
+                entry["nodeId"] = str(peer.get("nodeId") or "")
+                entry["paired"] = entry["nodeId"] in paired_ids
+        except Exception:
+            pass
+        cards.append(entry)
+    packs = [
+        {
+            "slug": p["slug"], "name": p["name"],
+            "description": p.get("description") or "",
+            "fullName": p["fullName"], "active": bool(p["active"]),
+            "docCount": p["docCount"],
+        }
+        for p in local_rag_packs()
+    ]
+    return {"chips": chips, "meshCards": cards, "ragPacks": packs}
+
+
+def _png_text_keywords(data):
+    keys = []
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return keys
+    pos = 8
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            break
+        if kind == b"tEXt":
+            chunk_data = data[pos + 8:pos + 8 + length]
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                keys.append(chunk_data[:nul].decode("utf-8", "replace"))
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    return keys
 
 
 def local_chips():
@@ -8231,6 +9845,69 @@ def match_local_chip(query, chips):
             if q.startswith(key + " "):
                 return chip, (query or "").strip()[len(key):].strip()
     return None, ""
+
+
+def _chip_keys(chip):
+    return {
+        chip["slug"].lower(),
+        chip["name"].lower(),
+        re.sub(r"[^a-z0-9]+", "-", chip["name"].lower()).strip("-"),
+    }
+
+
+def resolve_chip_invocation(rest, chips):
+    # The ./ resolver (0.1.9e, issue #97): "./name args..." with the
+    # name resolved in widening rings — the exact slug or name, then
+    # the name with a leading "navi-" forgiven on either side
+    # ("./cryptex" finds navi-cryptex), then a unique prefix. Returns
+    # (chip, args) on a run, (None, candidates) when more than one
+    # chip fits, and (None, []) when nothing does.
+    text = (rest or "").strip()
+    if not text:
+        return None, []
+    parts = text.split(None, 1)
+    token = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    for chip in chips:
+        if token in _chip_keys(chip):
+            return chip, args
+    bare = token[5:] if token.startswith("navi-") else token
+    for chip in chips:
+        keys = {k[5:] if k.startswith("navi-") else k for k in _chip_keys(chip)}
+        if bare in keys:
+            return chip, args
+    hits = []
+    for chip in chips:
+        keys = set(_chip_keys(chip)) | {
+            k[5:] if k.startswith("navi-") else k for k in _chip_keys(chip)
+        }
+        if any(k.startswith(token) or k.startswith(bare) for k in keys if k):
+            hits.append(chip)
+    if len(hits) == 1:
+        return hits[0], args
+    return None, hits
+
+
+def chip_shelf_reply(inv):
+    # The shelf as a chat reply: every chip on this machine with its
+    # one-line description, for a bare "/chip" or a bare "./".
+    shelf = local_chips()
+    if not shelf:
+        return (
+            "No chips are installed yet — the shelf is empty. Open the Chips tab and "
+            "install one from the GitHub catalog (Navi User Repo) or forge your own in Chip "
+            "Studio; then it lands here and " + inv + " <name> runs it."
+        )
+    lines = []
+    for c in shelf:
+        d = (c.get("description") or "").strip()
+        if len(d) > 90:
+            d = d[:87] + "..."
+        lines.append("• " + c["name"] + (" — " + d if d else ""))
+    return (
+        "On the shelf — " + inv + " <name> runs one:\n"
+        + "\n".join(lines)
+    )
 
 
 _CHIP_SLASH = re.compile(r"^/chip\s+(.+)$", re.I)
@@ -8923,7 +10600,7 @@ def build_rag_index(documents):
     return {"documents": docs, "chunkCount": total}
 
 
-def write_rag_pack(slug, name, description, documents):
+def write_rag_pack(slug, name, description, documents, icon=None):
     # The pack on disk: its documents as files plus index.json —
     # the built index and the pack metadata — beside them. A
     # rewrite (update, re-forge) replaces the documents wholesale.
@@ -8958,12 +10635,20 @@ def write_rag_pack(slug, name, description, documents):
     index = build_rag_index(documents)
     index["name"] = name
     index["description"] = description
+    # Build 3 (#101): the pack's declared icon art lives on its
+    # index record, the pack folder's metadata home — validated
+    # here so a bad shape never reaches a face; the face falls
+    # back to the book. Callers who mean to REFUSE bad art (the
+    # Studio, the exports) validate before they get here.
+    icon_rows = valid_icon_art(icon)
+    if icon_rows:
+        index["icon"] = icon_rows
     with open(os.path.join(pdir, "index.json"), "w") as f:
         json.dump(index, f)
     return index
 
 
-def build_rag_repo_files(name, description, documents, version, index_text=""):
+def build_rag_repo_files(name, description, documents, version, index_text="", icon=None):
     # The GitHub-ready repo layout for a pack — the format the
     # installer already reads, made explicit. documents is
     # [{title, body}] with title a bare file name (the pack folder
@@ -8983,6 +10668,14 @@ def build_rag_repo_files(name, description, documents, version, index_text=""):
         "index": "index.json",
         "generatedBy": "Apex — RAG Studio pack export",
     }
+    # Build 3 (#101): the pack's declared icon art ships in its
+    # manifest, the way a chip's does — malformed art refuses the
+    # export in plain words rather than shipping a manifest whose
+    # face silently drops it.
+    if icon:
+        if valid_icon_art(icon) is None:
+            raise ValueError(ICON_ART_REFUSAL)
+        manifest["icon"] = valid_icon_art(icon)
     lines = [
         "# " + name,
         "",
@@ -9081,7 +10774,7 @@ def rag_repo_files(slug, version):
         index_text = ""
     files = build_rag_repo_files(
         index.get("name") or slug, index.get("description") or "",
-        documents, version, index_text,
+        documents, version, index_text, icon=index.get("icon"),
     )
     override = rag_readme_override(slug)
     if override is not None:
@@ -9111,6 +10804,19 @@ def build_chip_repo_files(chip, version):
     # the forged chip, .gitignore.
     slug = re.sub(r"[^a-z0-9]+", "-", chip["name"].lower()).strip("-") or "chip"
     chip_files = chip.get("files") or _valid_chip_files(None, chip.get("code") or "")
+    # Issue #99: the export's version rides inside the forged
+    # picture too, so the artifact states its own version wherever
+    # it travels — the export's manifest and its picture agree.
+    chip = dict(chip)
+    chip["version"] = version
+    # Build 3 (#101): the chip's declared icon art rides into the
+    # forged picture and the export manifest alike; malformed art
+    # refuses the export in plain words rather than shipping a
+    # picture whose face silently drops it.
+    if chip.get("icon"):
+        if valid_icon_art(chip.get("icon")) is None:
+            raise ValueError(ICON_ART_REFUSAL)
+        chip["icon"] = valid_icon_art(chip.get("icon"))
     manifest = {
         "format": "navi-chip/1",
         "name": chip["name"],
@@ -9119,6 +10825,8 @@ def build_chip_repo_files(chip, version):
         "entry": "root.py",
         "files": [f["path"] for f in chip_files],
         "output": chip.get("output") or "",
+        "glyph": pick_chip_glyph(chip) or "",
+        "icon": valid_icon_art(chip.get("icon")) or [],
         "generatedBy": "Apex — Chip Studio chip export",
     }
     lines = [
@@ -9150,9 +10858,13 @@ def build_chip_repo_files(chip, version):
         "",
         "## Publishing an update",
         "",
-        "Edit the code, bump `version` in `navi-chip.json`, push, and publish",
-        "a new release — the version tag is created with that publish (this export is `"
-        + version + "`). A newer release is what offers everyone who",
+        "Edit the code, bump `version` in `navi-chip.json`, and press",
+        "**Publish to GitHub** on the chip's card in Apex — Publish does",
+        "everything: repo, files, topic, the version tag, and the published",
+        "release with this picture attached (this export is `"
+        + version + "`). Publishing by hand from an export ZIP works too —",
+        "push the files and publish a release; the version tag is created",
+        "with that publish. A newer release is what offers everyone who",
         "installed the chip an update. Keep the `navi-chips` topic on the",
         "repo — that is how Navi finds it.",
         "",
@@ -9214,17 +10926,23 @@ def export_chip(fname, version):
     return zip_name, [arc for arc, _data in files]
 
 
-def github_publish_files(repo_name, files, topic, description):
-    # The publish loop, shared by RAG packs and chips: create the
-    # repo on the signed-in account when it is not there (public —
-    # the catalogs only find public repos), apply the topic with no
-    # prompt, and upload the exact file set the export builds.
-    # Navi never publishes the release: she creates the repo,
-    # applies the topic (that is the tagging), and uploads the
-    # files; publishing the release is the operator's one step,
-    # and the version tag is created with that publish. Returns
-    # a result dict; failures carry the real reason and never
-    # fake a success.
+def github_publish_files(repo_name, files, topic, description, release=None):
+    # The publish loop, shared by RAG packs and chips — the WHOLE
+    # chain in one action (0.1.9e): create the repo on the signed-in
+    # account when it is not there (public — the catalogs only find
+    # public repos), apply the topic with no prompt, upload the
+    # exact file set the export builds, then create the tag and
+    # PUBLISH the release (never a draft), named from the manifest
+    # version, with the cartridge picture attached as the release
+    # asset. The retired never-releases line is gone: Publish
+    # does everything — repo, files, topic, tag, release, picture
+    # attached. `release` carries {version, title, notes, assetName,
+    # assetData}; when it is None the loop stops after the upload,
+    # as before. A tag that already has a release is refused BEFORE
+    # anything uploads — a release is never overwritten silently.
+    # Returns a result dict; failures carry the real reason and
+    # never fake a success (a failure after the upload says plainly
+    # that the files landed and the release did not).
     auth = github_auth()
     if not auth:
         return {"ok": False, "error": "You are not signed in to GitHub. Sign in under Settings → GitHub & Backup, or use Export for GitHub and upload the ZIP yourself."}
@@ -9248,6 +10966,16 @@ def github_publish_files(repo_name, files, topic, description):
             if fresh:
                 state["token"] = fresh["token"]
                 st, resp = github_api(method, url, state["token"], body)
+        return st, resp
+
+    def pub_raw(method, url, data, content_type):
+        st, resp = github_api_raw(method, url, state["token"], data, content_type)
+        if st == 401 and not state["renewed"]:
+            state["renewed"] = True
+            fresh = github_refresh_auth()
+            if fresh:
+                state["token"] = fresh["token"]
+                st, resp = github_api_raw(method, url, state["token"], data, content_type)
         return st, resp
 
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(repo_name or "")).strip("-.")[:100]
@@ -9277,6 +11005,18 @@ def github_publish_files(repo_name, files, topic, description):
         created = True
     elif st != 200:
         return {"ok": False, "error": "GitHub would not answer for that repo (HTTP " + str(st) + "): " + github_err_text(_repo)}
+    # Release pre-check: a version that already has a release is
+    # refused before a single file uploads — bump the version in
+    # the manifest instead. (A leftover tag with NO release does
+    # not block: creating the release below adopts it.)
+    rel_tag = None
+    if release and release.get("version"):
+        rel_tag = "v" + str(release["version"]).strip().lstrip("v")
+        stg, rel_existing = pub("GET", base + "/releases/tags/" + urllib.parse.quote(rel_tag))
+        if stg == 401:
+            return reauth_error()
+        if stg == 200 and isinstance(rel_existing, dict):
+            return {"ok": False, "error": rel_tag + " is already released on " + login + "/" + name + " — bump the version in the manifest and publish again. Nothing was uploaded and the existing release was not touched."}
     # Topic: merge with whatever is already there, never prompt.
     _st3, topics_resp = pub("GET", base + "/topics")
     if _st3 == 401:
@@ -9304,12 +11044,46 @@ def github_publish_files(repo_name, files, topic, description):
             return reauth_error()
         if st4 not in (200, 201):
             return {"ok": False, "error": "Uploading " + arc + " failed (HTTP " + str(st4) + "): " + github_err_text(resp4)}
-    return {
+    result = {
         "ok": True, "error": None, "created": created,
         "repo": login + "/" + name,
         "repoUrl": "https://github.com/" + login + "/" + name,
         "files": [arc for arc, _d in files],
     }
+    if rel_tag:
+        notes = str(release.get("notes") or "")
+        if len(notes) > 120000:
+            notes = notes[:120000]
+        st5, rel = pub("POST", base + "/releases", {
+            "tag_name": rel_tag,
+            "name": str(release.get("title") or rel_tag),
+            "body": notes,
+            "draft": False,
+            "prerelease": False,
+        })
+        if st5 == 401:
+            return {"ok": False, "error": "The files are uploaded to " + login + "/" + name + ", but GitHub rejected the sign-in when the release step ran and Navi could not renew it. Sign out and back in under Settings \u2192 GitHub & Backup, then publish again — the files are already there."}
+        if st5 not in (200, 201) or not isinstance(rel, dict):
+            return {"ok": False, "error": "The repo, topic, and files are on GitHub (" + login + "/" + name + "), but GitHub would not create the release (HTTP " + str(st5) + "): " + github_err_text(rel) + " If the sign-in token cannot create releases, publish the " + rel_tag + " release on GitHub yourself — the files and the picture are already uploaded."}
+        rel_info = {
+            "tag": rel_tag,
+            "url": rel.get("html_url") or ("https://github.com/" + login + "/" + name + "/releases/tag/" + rel_tag),
+            "asset": None,
+        }
+        asset_name = str(release.get("assetName") or "")
+        asset_data = release.get("assetData")
+        if asset_name and isinstance(asset_data, (bytes, bytearray)) and rel.get("id"):
+            up_url = ("https://uploads.github.com/repos/" + login + "/" + name
+                      + "/releases/" + str(rel["id"]) + "/assets?name="
+                      + urllib.parse.quote(asset_name))
+            st6, _asset = pub_raw("POST", up_url, bytes(asset_data), "application/octet-stream")
+            if st6 == 401:
+                return {"ok": False, "error": "The release " + rel_tag + " is published on " + login + "/" + name + ", but GitHub rejected the sign-in when the picture attach ran. Attach " + asset_name + " to the release on GitHub — it is already at the repo root too."}
+            if st6 not in (200, 201):
+                return {"ok": False, "error": "The release " + rel_tag + " is published on " + login + "/" + name + ", but attaching the picture failed (HTTP " + str(st6) + "): " + github_err_text(_asset) + " The picture is at the repo root; attach " + asset_name + " to the release on GitHub if you want it there too."}
+            rel_info["asset"] = asset_name
+        result["release"] = rel_info
+    return result
 
 
 def _rag_pack_index(slug):
@@ -9319,6 +11093,154 @@ def _rag_pack_index(slug):
         return index if isinstance(index, dict) else None
     except Exception:
         return None
+
+
+# --- Knowledge cartridges (0.1.9e, issue #93) -----------------------
+# A RAG pack can ride a picture the way a chip does: one PNG whose
+# "navi-rag" tEXt chunk carries the pack's manifest and ALL of its
+# document texts, zlib-compressed and base64'd. Installing from the
+# picture validates it like a repo install and writes the pack with
+# write_rag_pack — which builds the search index LOCALLY, at install
+# time, from the carried texts. A cartridge never carries an index,
+# and nothing at query time ever reads the picture: once installed,
+# a pack is a pack. The ceiling is the finished picture's size: past
+# it the answer is an honest refusal, never a silent truncation.
+RAG_CARTRIDGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def build_rag_cartridge_png(payload):
+    # Build 2: the knowledge cartridge wears the same card-grade
+    # face as a chip — the face builder reads the pack's own name,
+    # description, version, and document count off the payload.
+    # Build 3 (#101): a payload whose declared icon is damaged
+    # refuses here, in plain words — forging a pack cartridge is a
+    # forge path, and the face never silently drops the art. (The
+    # PARSE side stays lenient: a damaged picture installs and
+    # falls back.)
+    if payload.get("icon"):
+        if valid_icon_art(payload.get("icon")) is None:
+            raise ValueError(ICON_ART_REFUSAL)
+    face = _cartridge_face_png(payload, "navi-rag")
+    blob = base64.b64encode(
+        zlib.compress(json.dumps(payload).encode("utf-8"), 9)
+    )
+    text = b"navi-rag\x00" + blob
+    ihdr_end = 8 + 12 + 13
+    return face[:ihdr_end] + _png_chunk(b"tEXt", text) + face[ihdr_end:]
+
+
+def parse_rag_cartridge_png(data):
+    # (payload, error): the inverse of build_rag_cartridge_png,
+    # with the Mesh card import's honesty rules — a picture with no
+    # payload, a damaged one, and the wrong kind of picture each get
+    # their own words.
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return None, "That file is not a PNG image — a knowledge cartridge travels as a .png picture."
+    data = bytes(data)
+    pos = 8
+    blob = None
+    saw_other = False
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+        chunk_data = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                if chunk_data[:nul] == b"navi-rag":
+                    (crc_stored,) = struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])
+                    if binascii.crc32(kind + chunk_data) & 0xFFFFFFFF != crc_stored:
+                        return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+                    blob = chunk_data[nul + 1:]
+                else:
+                    saw_other = True
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    if blob is None:
+        if saw_other:
+            return None, "That picture carries a different kind of payload — it is not a knowledge cartridge. Knowledge cartridges are exported from RAG Studio."
+        return None, "This image has no readable knowledge-cartridge data — it may have been recompressed by a chat app, which strips the data out of the picture while leaving the picture itself looking fine. Send the original file inside a .zip instead."
+    try:
+        payload = json.loads(zlib.decompress(base64.b64decode(blob)).decode("utf-8"))
+    except Exception:
+        return None, "This picture started life as a knowledge cartridge, but the data inside it is damaged — it no longer reads whole, so nothing was installed."
+    if not isinstance(payload, dict) or payload.get("format") != "navi-rag/1":
+        return None, "That picture's cartridge data is not in the shape a knowledge cartridge carries — nothing was installed."
+    return payload, ""
+
+
+def rag_cartridge_payload(slug):
+    # The cartridge payload for an installed pack: its manifest and
+    # every document's full text, read back from the pack folder.
+    src = rag_pack_documents(slug)
+    if src is None:
+        return None
+    index = _rag_pack_index(slug) or {}
+    return {
+        "format": "navi-rag/1",
+        "name": src["name"],
+        "description": src["description"],
+        "version": "0.1.0",
+        "documents": src["documents"],
+        "generatedBy": "Apex — RAG Studio cartridge export",
+        "chunkCountAtExport": index.get("chunkCount") or 0,
+        # Build 3 (#101): the pack's declared art rides inside the
+        # cartridge and draws its face, like a chip's icon.
+        "icon": valid_icon_art(index.get("icon")) or [],
+    }
+
+
+def install_rag_cartridge(payload):
+    # The one cartridge install path (Deck drops and the RAG tab's
+    # picture install both land here). Validation mirrors a repo
+    # install's caps; the pack is written by write_rag_pack, so its
+    # index is built on this machine from the carried texts.
+    name = str(payload.get("name") or "").strip()[:120]
+    description = str(payload.get("description") or "")[:500]
+    documents = []
+    for raw in payload.get("documents") or []:
+        if not isinstance(raw, dict):
+            continue
+        body = str(raw.get("body") or "")
+        if not body.strip():
+            continue
+        if len(body) > RAG_MAX_DOC_CHARS:
+            return None, "One document in this cartridge is longer than a pack document may be (" + str(RAG_MAX_DOC_CHARS) + " characters) — nothing was installed."
+        documents.append({"title": str(raw.get("title") or "document")[:200], "body": body})
+    if not name:
+        return None, "This cartridge's pack has no name — nothing was installed."
+    if not documents:
+        return None, "This cartridge carries no documents — nothing was installed."
+    if len(documents) > RAG_MAX_DOCS:
+        return None, "This cartridge carries " + str(len(documents)) + " documents — a pack caps at " + str(RAG_MAX_DOCS) + ". Nothing was installed."
+    rows = load_rag_installs()
+    slug = chip_slug(name)
+    taken = {r.get("local_dir") for r in rows if r.get("full_name") != "local/" + slug}
+    taken |= {
+        e for e in os.listdir(RAG_PACKS_DIR)
+        if os.path.isdir(os.path.join(RAG_PACKS_DIR, e))
+    } if os.path.isdir(RAG_PACKS_DIR) else set()
+    if slug in taken or any(r.get("full_name") == "local/" + slug for r in rows):
+        return None, "A pack named " + name + " is already on this machine — remove it first, or rename the cartridge's pack."
+    write_rag_pack(slug, name, description, documents,
+                   icon=valid_icon_art(payload.get("icon")))
+    rows.append({
+        "full_name": "local/" + slug,
+        "name": name,
+        "html_url": "",
+        "installed_tag": None,
+        "installed_ref": "knowledge cartridge (.png)",
+        "installed_pushed_at": None,
+        "installed_at": _now_iso(),
+        "local_dir": slug,
+        "active": True,
+        "doc_count": len(documents),
+    })
+    save_rag_installs(rows)
+    return slug, ""
 
 
 def local_rag_packs():
@@ -10623,6 +12545,54 @@ def wait_for_llamafile(endpoint, proc, log_path=None):
                    "its output is in navi.llamafile.log beside the app.")
 
 
+def hardware_tier_name(detected):
+    # The plain tier names (Build 14, #157): "potato" / "standard"
+    # / "beast", derived from the detected hardware alone. These
+    # sit alongside the derivation table's own tier words (fluid /
+    # balanced / performance / workstation / constrained, kept in
+    # the stored profile and its tierLabel) — this class is the
+    # one the warm-up default and the profile view speak in.
+    # Beast is judged first: a small-core-count machine with a
+    # real GPU or workstation RAM is not a potato.
+    d = detected if isinstance(detected, dict) else {}
+    try:
+        ram = float(d.get("totalRamGB") or 0)
+    except Exception:
+        ram = 0.0
+    try:
+        cores = int(d.get("cpuCores") or 0)
+    except Exception:
+        cores = 0
+    try:
+        vram = float(d.get("gpuVramGB") or 0)
+    except Exception:
+        vram = 0.0
+    discrete = d.get("gpuKind") == "discrete"
+    if (discrete and vram >= 8) or ram >= 32:
+        return "beast"
+    if (ram <= 12 and not discrete) or (cores and cores <= 4):
+        return "potato"
+    return "standard"
+
+
+def _warm_at_value(raw):
+    # runtime.warm_at, validated: a "HH:MM" 24h string, else None
+    # (absent / null / malformed all read as off) (Build 14, #157).
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hh = int(parts[0]); mm = int(parts[1])
+    except Exception:
+        return None
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    return "%02d:%02d" % (hh, mm)
+
+
 def runtime_settings(cfg):
     # Her llamafile runtime settings, from the hardware profile the
     # installer wrote into the config (hardware_profile + runtime).
@@ -10637,11 +12607,25 @@ def runtime_settings(cfg):
             return int(v)
         except Exception:
             return fallback
+    # Warm-up (Build 14, #157): runtime.warmup always wins when
+    # the operator set it; unset, warm-up is on for the potato and
+    # standard tiers and off for beast (a beast loads fast enough
+    # that the dead air is not the problem). No profile at all —
+    # the fluid floor, a modest machine by definition — reads as
+    # on. runtime.warm_at is the scheduled warm ("HH:MM" or off).
+    if rt.get("warmup") is not None:
+        warmup = bool(rt.get("warmup"))
+    else:
+        detected = (cfg.get("hardware_profile") or {}).get("detected")
+        warmup = (not isinstance(detected, dict)
+                  or hardware_tier_name(detected) in ("potato", "standard"))
     return {
         "threads": pick("threads", "threads", 4),
         "ctx_size": pick("ctx_size", "ctxSize", 4096),
         "batch_size": pick("batch_size", "batchSize", 512),
         "gpu_layers": pick("gpu_layers", "gpuLayers", 0),
+        "warmup": warmup,
+        "warm_at": _warm_at_value(rt.get("warm_at")),
     }
 
 
@@ -10794,6 +12778,25 @@ def derive_hardware_settings(d):
     return {"threads": threads, "ctxSize": ctx, "batchSize": batch, "gpuLayers": gpu_layers}, tier, tier_label, reasoning
 
 
+def _profile_source(hp):
+    # Who wrote this hardware profile (Build 14, #157), as best
+    # the config itself can say: the startup auto-profile pass
+    # marks its block with auto=True and only that block reads as
+    # "auto"; a Settings override is the operator's; anything else
+    # with a profile is the installer's — pre-Build-14 profiles
+    # wrote source "auto" for both the installer and a Settings
+    # re-detect, and those two cannot be told apart after the
+    # fact, so they read as "installer", their original writer.
+    if hp.get("auto") is True:
+        return "auto"
+    src = str(hp.get("source") or "")
+    if src == "manual":
+        return "operator"
+    if src in ("auto", "installer"):
+        return "installer"
+    return None
+
+
 def hardware_profile_view(cfg):
     hp = cfg.get("hardware_profile")
     if isinstance(hp, dict) and hp.get("detected") and hp.get("settings"):
@@ -10801,17 +12804,109 @@ def hardware_profile_view(cfg):
         s = runtime_settings(cfg)
         view["settings"] = {"threads": s["threads"], "ctxSize": s["ctx_size"], "batchSize": s["batch_size"], "gpuLayers": s["gpu_layers"]}
         view["flags"] = " ".join(llamafile_args(cfg)[2:])
+        # Tier naming (Build 14, #157): the view's "tier" is the
+        # plain potato / standard / beast class derived from the
+        # detected hardware; the derivation table's own tier word
+        # stays readable alongside it as "derivedTier" (and in
+        # tierLabel, which the dashboard already shows).
+        view["derivedTier"] = hp.get("tier")
+        view["tier"] = hardware_tier_name(hp.get("detected") or {})
+        view["profileSource"] = _profile_source(hp)
         return view
     return {"detected": None, "settings": runtime_settings(cfg), "source": "auto",
+            "tier": None, "profileSource": None,
             "note": "No hardware profile in this config (it predates build .34) — the fluid floor is in use. Re-detect to profile this machine."}
+
+
+def auto_profile_on_startup(cfg):
+    # Automatic profiling (Build 14, #157): a config with NO
+    # hardware profile used to run the fluid floor (4096/4/512)
+    # forever — the machine never profiled itself. On bridge
+    # startup, profile it once: detect + derive, persist the
+    # profile, and fill derived runtime defaults ONLY where the
+    # runtime keys are absent — operator-set runtime values are
+    # never overridden. Any failure leaves the floor behavior
+    # exactly as it was before this pass existed.
+    try:
+        hp = cfg.get("hardware_profile") if isinstance(cfg, dict) else None
+        if isinstance(hp, dict) and hp.get("detected") and hp.get("settings"):
+            return cfg
+        detected = detect_hardware()
+        settings, tier, tier_label, reasoning = derive_hardware_settings(detected)
+        tier_name = hardware_tier_name(detected)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        profile = {"detected": detected, "settings": settings, "autoSettings": settings,
+                   "source": "auto", "auto": True, "tier": tier, "tierLabel": tier_label,
+                   "reasoning": reasoning, "detectedAt": now,
+                   "installLog": [f"[hardware] {now} — automatic profiling on bridge startup (Build 14, #157): this config carried no hardware profile",
+                                  f"[hardware] CPU: {detected['cpuModel']} — {detected['cpuCores']} logical cores",
+                                  f"[hardware] RAM: {detected['totalRamGB']} GiB",
+                                  f"[hardware] GPU: {detected['gpuName'] or 'none'} ({detected['gpuKind']})",
+                                  f"[hardware] Tier class: {tier_name}"] + [f"[hardware] → {r}" for r in reasoning]}
+        fresh = load_config()
+        hp2 = fresh.get("hardware_profile") if isinstance(fresh, dict) else None
+        if isinstance(hp2, dict) and hp2.get("detected") and hp2.get("settings"):
+            return fresh
+        fresh["hardware_profile"] = profile
+        rt = fresh.get("runtime") if isinstance(fresh.get("runtime"), dict) else {}
+        rt = dict(rt)
+        defaults = {"threads": settings["threads"], "ctx_size": settings["ctxSize"],
+                    "batch_size": settings["batchSize"], "gpu_layers": settings["gpuLayers"]}
+        filled = []
+        for key, val in defaults.items():
+            if rt.get(key) is None:
+                rt[key] = val
+                filled.append(key)
+        if rt.get("flags") is None and len(filled) == len(defaults):
+            rt["flags"] = (f"--ctx-size {settings['ctxSize']} --threads {settings['threads']} "
+                           f"--batch-size {settings['batchSize']}"
+                           + (f" --n-gpu-layers {settings['gpuLayers']}" if settings["gpuLayers"] > 0 else ""))
+        fresh["runtime"] = rt
+        if not save_config(fresh):
+            print("Hardware profile: this config had none saved and the automatic "
+                  "profile could not be written to the config file — the fluid "
+                  "floor settings stay in use for this run.", flush=True)
+            return cfg
+        try:
+            with open(os.path.join(ROOT, "hardware-profile.log"), "a") as f:
+                for line in profile.get("installLog") or []:
+                    f.write(line + "\n")
+        except Exception:
+            pass
+        gpu_words = (("discrete GPU " + str(detected.get("gpuName") or "")) if detected.get("gpuKind") == "discrete"
+                     else ("integrated graphics" if detected.get("gpuKind") == "integrated" else "no discrete GPU"))
+        print("Hardware profile: this config had none saved, so Apex profiled this "
+              "machine on startup and saved the profile — " + tier_name + " tier: "
+              + str(detected.get("totalRamGB")) + " GiB RAM, "
+              + str(detected.get("cpuCores")) + " CPU cores, " + gpu_words + ". "
+              "Navi will run with context " + str(settings["ctxSize"])
+              + ", threads " + str(settings["threads"])
+              + ", batch " + str(settings["batchSize"])
+              + ". Any runtime settings you set yourself were left untouched.",
+              flush=True)
+        return fresh
+    except Exception as e:
+        print("Hardware profile: automatic profiling on startup did not run ("
+              + str(e) + ") — the fluid floor settings stay in use, exactly as before.",
+              flush=True)
+        return cfg
 
 
 def save_hardware_profile(profile):
     cfg = load_config()
+    # Warm-up keys round-trip (Build 14, #157): a re-detect or an
+    # override rewrites the runtime block from the profile below,
+    # but runtime.warmup / runtime.warm_at are operator choices
+    # that live only in that block — capture them before the
+    # rewrite and carry them over, never drop them.
+    _prev_rt = cfg.get("runtime") if isinstance(cfg.get("runtime"), dict) else {}
     cfg["hardware_profile"] = profile
     s = profile["settings"]
     cfg["runtime"] = {"threads": s["threads"], "ctx_size": s["ctxSize"], "batch_size": s["batchSize"], "gpu_layers": s["gpuLayers"],
                       "flags": f"--ctx-size {s['ctxSize']} --threads {s['threads']} --batch-size {s['batchSize']}" + (f" --n-gpu-layers {s['gpuLayers']}" if s["gpuLayers"] > 0 else "")}
+    for _k in ("warmup", "warm_at"):
+        if _k in _prev_rt:
+            cfg["runtime"][_k] = _prev_rt[_k]
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
     try:
@@ -10821,6 +12916,101 @@ def save_hardware_profile(profile):
     except Exception:
         pass
     return cfg
+
+
+def _warmup_completion(endpoint, cfg):
+    # One throwaway completion (Build 14, #157): the same chat
+    # completions shape llamafile_chat builds, capped at a single
+    # token, with a one-word prompt that is never shown anywhere.
+    # Its only job is to make the model do its first real work —
+    # page in, caches hot — before the operator's first ask, so
+    # the first-ask dead air happens here instead. A failure is a
+    # log line, never an error: warm-up is a courtesy, not a gate.
+    try:
+        name = served_model(endpoint) or (cfg.get("live") or {}).get("model_name") or "navi"
+        body = json.dumps({
+            "model": name,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": False,
+            "max_tokens": 1,
+        }).encode()
+        req = urllib.request.Request(
+            endpoint.rstrip("/") + "/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            resp.read()
+        print("Warm-up: navi.llamafile answered a one-token warm-up "
+              "completion — the model is warm for the first ask.", flush=True)
+        return True
+    except Exception as e:
+        print("Warm-up: the warm-up completion did not finish (" + str(e)
+              + ") — Navi will simply warm up on the first ask instead.",
+              flush=True)
+        return False
+
+
+def _maybe_warmup_llamafile(cfg, endpoint):
+    # Fire the warm-up on its own daemon thread (Build 14, #157):
+    # the start that triggered it has already reported healthy and
+    # must not wait on a generation, however small. Whether it
+    # fires at all is runtime_settings' call (explicit
+    # runtime.warmup wins; the tier decides when it is unset).
+    try:
+        if not runtime_settings(cfg)["warmup"]:
+            return False
+    except Exception:
+        return False
+    threading.Thread(target=_warmup_completion, args=(endpoint, cfg),
+                     daemon=True).start()
+    return True
+
+
+def _warm_at_loop():
+    # Scheduled warm (Build 14, #157): a lightweight timer that
+    # checks once a minute for runtime.warm_at ("HH:MM", 24h;
+    # absent/null = off). At the configured minute, a llamafile
+    # that is not answering is started through the same start
+    # path the dashboard's Connect uses — and that fresh start
+    # warms it via the warm-on-start hook above. One fire per
+    # configured minute per day. (Looked for an existing minute-
+    # cadence thread to ride first: the backup loop sleeps 30
+    # minutes and the update loop 3 hours, so this is its own.)
+    fired_for = ""
+    while True:
+        time.sleep(60)
+        try:
+            cfg = load_config()
+            warm_at = runtime_settings(cfg)["warm_at"]
+            if not warm_at:
+                continue
+            now = time.localtime()
+            if time.strftime("%H:%M", now) != warm_at:
+                continue
+            stamp = time.strftime("%Y-%m-%d", now) + " " + warm_at
+            if fired_for == stamp:
+                continue
+            fired_for = stamp
+            endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
+            if llamafile_alive(endpoint):
+                continue
+            if cfg.get("startup", "on-ui-launch") == "on-boot":
+                # Boot mode owns the server (same rule as Connect):
+                # the bridge never spawns a second copy behind the
+                # service's back, scheduled or not.
+                print("Scheduled warm (" + warm_at + "): navi.llamafile is not "
+                      "answering, but this install starts it at system boot — "
+                      "leaving it to the boot service.", flush=True)
+                continue
+            print("Scheduled warm (" + warm_at + "): navi.llamafile is not "
+                  "answering — starting and warming it now.", flush=True)
+            ok, error = start_llamafile(cfg, endpoint)
+            if not ok:
+                print("Scheduled warm (" + warm_at + "): the start did not "
+                      "come up: " + str(error), flush=True)
+        except Exception:
+            pass
 
 
 def start_llamafile(cfg, endpoint):
@@ -10853,7 +13043,16 @@ def start_llamafile(cfg, endpoint):
         )
     except Exception as e:
         return False, "Could not start navi.llamafile: " + str(e)
-    return wait_for_llamafile(endpoint, _llamafile_proc, log_path)
+    ok, error = wait_for_llamafile(endpoint, _llamafile_proc, log_path)
+    if ok:
+        # Warm-on-start (Build 14, #157): this bridge just started
+        # the server and it reports healthy — fire ONE warm-up
+        # completion on a daemon thread so the model-load dead air
+        # is spent now, not on the operator's first ask. Only the
+        # fresh-start path warms: the already-running return at the
+        # top of this function is a probe, not a start.
+        _maybe_warmup_llamafile(cfg, endpoint)
+    return ok, error
 
 
 _served_model_cache = {}
@@ -10898,6 +13097,28 @@ CHAT_TIMEOUT = 600
 
 
 def llamafile_chat(messages, endpoint, model):
+    # Guardian (Build 14, #156): every local generation is timed
+    # and counted. The counter is what Guardian's is_generating
+    # callback reads (pressure judges stricter mid-generation),
+    # and the duration is what note_generation() learns slow-
+    # generation collisions from. The return contract — the
+    # reply text, or the same RuntimeErrors — is unchanged: this
+    # wrapper only observes the call it wraps.
+    _gen_t0 = time.time()
+    with _GENERATION_LOCK:
+        _GENERATION_ACTIVE["count"] += 1
+    try:
+        return _llamafile_chat_impl(messages, endpoint, model)
+    finally:
+        with _GENERATION_LOCK:
+            _GENERATION_ACTIVE["count"] = max(0, _GENERATION_ACTIVE["count"] - 1)
+        try:
+            GUARDIAN.note_generation(time.time() - _gen_t0)
+        except Exception:
+            pass
+
+
+def _llamafile_chat_impl(messages, endpoint, model):
     # The llamafile server rejects a chat request whose JSON has no
     # "model" string (400 "JSON missing model string"), so a model
     # name rides along on every request — the id the server reports
@@ -10965,6 +13186,1085 @@ def llamafile_chat(messages, endpoint, model):
             "the message again usually gets a real answer."
         )
     return content
+
+
+# --- Server-side chats (0.1.9e Build 12, issue #139) -----------------
+# Chats lived only in browser localStorage (navi.chats) until this
+# build: every install — and every browser origin — held its own
+# set, and DHD into the server was continuous with the server only
+# through the server's own browser. The store of record now lives
+# HERE, in plain files under config/chats/ — one JSON file per chat
+# (the Vault's plain-files rule), written atomically — so any door
+# (the desktop window, a DHD session, a second browser) hydrates
+# the same threads from the same install. localStorage is demoted
+# to a cache and an offline fallback: the window writes through on
+# every persist and hydrates back on load. Uploads follow chats:
+# their index rides in config/chats/uploads.json beside the threads
+# it belongs to (file bytes were always handed to the bridge
+# inline; the index is the record).
+# Convergence for foreign copies (a backup restore, #136's badge
+# sync) is chats_converge: per chat, newest-wins by timestamp when
+# one thread is the other's continuation — and when two copies of
+# a thread have genuinely diverged, BOTH survive: the incoming one
+# lands as a dated sibling thread, never a silent merge.
+
+CHATS_DIR = os.path.join(ROOT, "config", "chats")
+CHATS_UPLOADS_PATH = os.path.join(CHATS_DIR, "uploads.json")
+
+
+def _chat_clean_id(value):
+    s = str(value if value is not None else "").strip()
+    if not s or len(s) > 80:
+        return None
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", s):
+        return None
+    if s in (".", "..", "uploads"):
+        return None
+    return s
+
+
+def _chat_normalize(rec):
+    if not isinstance(rec, dict):
+        return None
+    cid = _chat_clean_id(rec.get("id"))
+    if cid is None:
+        return None
+    msgs = rec.get("messages")
+    clean_msgs = [m for m in msgs if isinstance(m, dict)] if isinstance(msgs, list) else []
+    out = {
+        "id": cid,
+        "title": str(rec.get("title") or "Chat")[:200],
+        "messages": clean_msgs,
+        "createdAt": rec.get("createdAt") if isinstance(rec.get("createdAt"), (int, float)) else 0,
+        "updatedAt": rec.get("updatedAt") if isinstance(rec.get("updatedAt"), (int, float)) else 0,
+    }
+    # Case-tied chats (Build 15, #161): a chat bound to a case
+    # carries the case slug in "case" — a reference only; the
+    # case's content stays the Vault's plain files. The binding
+    # survives normalization (and therefore write-through and
+    # convergence) exactly like the thread itself does.
+    case_ref = rec.get("case")
+    if isinstance(case_ref, str) and re.match(r"^[a-z0-9][a-z0-9-]*$", case_ref):
+        out["case"] = case_ref
+    return out
+
+
+def _chat_path(cid):
+    return os.path.join(CHATS_DIR, cid + ".json")
+
+
+def chat_write(rec):
+    rec = _chat_normalize(rec)
+    if rec is None:
+        return None
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    full = _chat_path(rec["id"])
+    tmp = full + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rec, f)
+    os.replace(tmp, full)
+    return rec
+
+
+def chats_all():
+    out = []
+    if os.path.isdir(CHATS_DIR):
+        for name in sorted(os.listdir(CHATS_DIR)):
+            if not name.endswith(".json") or name == "uploads.json":
+                continue
+            try:
+                with open(os.path.join(CHATS_DIR, name), encoding="utf-8") as f:
+                    rec = json.load(f)
+            except Exception:
+                continue
+            rec = _chat_normalize(rec)
+            if rec is not None:
+                out.append(rec)
+    out.sort(key=lambda r: (r.get("updatedAt") or 0, str(r.get("id"))))
+    return out
+
+
+def chat_delete(cid):
+    cid = _chat_clean_id(cid)
+    if cid is None:
+        return False
+    try:
+        os.remove(_chat_path(cid))
+        return True
+    except Exception:
+        return False
+
+
+def chats_uploads():
+    try:
+        with open(CHATS_UPLOADS_PATH, encoding="utf-8") as f:
+            rows = json.load(f)
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def chats_save_uploads(rows):
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    tmp = CHATS_UPLOADS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump([r for r in (rows or []) if isinstance(r, dict)], f)
+    os.replace(tmp, CHATS_UPLOADS_PATH)
+
+
+def chats_payload():
+    return {"chats": chats_all(), "uploads": chats_uploads()}
+
+
+def chats_replace_all(records, uploads):
+    # The write-through path: the window that is actively writing
+    # owns the store, and its word is authoritative — the whole set
+    # lands as given, and threads it no longer holds are gone here
+    # too (a chat deleted at one door stays deleted at every door).
+    keep = set()
+    written = 0
+    for rec in (records or []):
+        saved = chat_write(rec)
+        if saved is not None:
+            keep.add(saved["id"])
+            written += 1
+    if os.path.isdir(CHATS_DIR):
+        for name in sorted(os.listdir(CHATS_DIR)):
+            if name.endswith(".json") and name != "uploads.json" and name[:-5] not in keep:
+                try:
+                    os.remove(os.path.join(CHATS_DIR, name))
+                except Exception:
+                    pass
+    if uploads is not None:
+        chats_save_uploads(uploads)
+    return {"ok": True, "chats": written}
+
+
+def _chat_msgs_key(rec):
+    return json.dumps(rec.get("messages") or [], sort_keys=True)
+
+
+def _chat_msgs_prefix(shorter, longer):
+    a = shorter.get("messages") or []
+    b = longer.get("messages") or []
+    if len(a) > len(b):
+        return False
+    return json.dumps(a, sort_keys=True) == json.dumps(b[:len(a)], sort_keys=True)
+
+
+def _chat_merge_verdict(cur, rec):
+    # What merging `rec` into a store holding `cur` (same id) does:
+    # "kept" (nothing to do), "replaced" (the incoming thread is
+    # this thread continued, and newer — newest-wins), or "sibling"
+    # (the two copies genuinely diverged — both survive).
+    if _chat_msgs_key(cur) == _chat_msgs_key(rec):
+        return "replaced" if (rec.get("updatedAt") or 0) > (cur.get("updatedAt") or 0) else "kept"
+    if _chat_msgs_prefix(cur, rec) and (rec.get("updatedAt") or 0) >= (cur.get("updatedAt") or 0):
+        return "replaced"
+    if _chat_msgs_prefix(rec, cur):
+        return "kept"
+    return "sibling"
+
+
+def chats_converge_preview(incoming):
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0}
+    rows = chats_all()
+    local = {str(r["id"]): r for r in rows}
+    held_keys = {_chat_msgs_key(r) for r in rows}
+    for raw in (incoming or []):
+        rec = _chat_normalize(raw)
+        if rec is None:
+            continue
+        cur = local.get(str(rec["id"]))
+        if cur is None:
+            summary["added"] += 1
+        else:
+            v = _chat_merge_verdict(cur, rec)
+            if v == "sibling" and _chat_msgs_key(rec) in held_keys:
+                v = "kept"
+            summary["replaced" if v == "replaced" else "siblings" if v == "sibling" else "kept"] += 1
+    return summary
+
+
+def chats_converge(incoming, incoming_uploads=None):
+    # Merging a FOREIGN copy (backup restore / badge sync) into
+    # this store — see the section header for the rules. Returns a
+    # summary the caller can speak out loud.
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "uploads": 0}
+    rows = chats_all()
+    local = {str(r["id"]): r for r in rows}
+    held_keys = {_chat_msgs_key(r) for r in rows}
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    for raw in (incoming or []):
+        rec = _chat_normalize(raw)
+        if rec is None:
+            continue
+        cur = local.get(str(rec["id"]))
+        if cur is None:
+            chat_write(rec)
+            summary["added"] += 1
+            continue
+        verdict = _chat_merge_verdict(cur, rec)
+        if verdict == "sibling" and _chat_msgs_key(rec) in held_keys:
+            # The same diverged copy was already converged once and
+            # its sibling is on file — a repeated sync of the same
+            # backup must not mint a fresh sibling every time.
+            verdict = "kept"
+        if verdict == "replaced":
+            chat_write(rec)
+            summary["replaced"] += 1
+        elif verdict == "kept":
+            summary["kept"] += 1
+        else:
+            sib = dict(rec)
+            base = str(rec["id"]) + "-sync-" + stamp
+            nid = base
+            n = 2
+            while os.path.exists(_chat_path(nid)):
+                nid = base + "-" + str(n)
+                n += 1
+            sib["id"] = nid
+            sib["title"] = (str(rec.get("title") or "Chat") + " (from sync " + day + ")")[:200]
+            chat_write(sib)
+            summary["siblings"] += 1
+    if incoming_uploads is not None:
+        def _up_key(r):
+            return str(r.get("id") or (str(r.get("name") or "") + "|" + str(r.get("at") or "")))
+        merged = {_up_key(r): r for r in chats_uploads()}
+        for r in incoming_uploads:
+            if not isinstance(r, dict):
+                continue
+            k = _up_key(r)
+            if k not in merged:
+                merged[k] = r
+                summary["uploads"] += 1
+        if summary["uploads"]:
+            chats_save_uploads(list(merged.values()))
+    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"]
+    return summary
+
+
+# --- Boot mode (0.1.9e Build 12, issue #142) -------------------------
+# Whether this install is armed to come up headless at boot is read
+# from the system every time it is shown — the systemd user units'
+# enabled state and the user's linger state — never assumed from
+# what an installer once did. Cached briefly: /api/status is polled
+# and systemctl is not free.
+_BOOT_CACHE = {"at": 0, "payload": None}
+
+
+def _systemd_user_state(unit):
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-enabled", unit],
+                           capture_output=True, text=True, timeout=3)
+        out = (r.stdout or "").strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _linger_state():
+    user = os.environ.get("USER") or ""
+    if not user:
+        try:
+            import pwd
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = ""
+    if user:
+        try:
+            r = subprocess.run(["loginctl", "show-user", user, "--property=Linger", "--value"],
+                               capture_output=True, text=True, timeout=3)
+            out = (r.stdout or "").strip().lower()
+            if out in ("yes", "no"):
+                return out == "yes"
+        except Exception:
+            pass
+        try:
+            if os.path.exists("/var/lib/systemd/linger/" + user):
+                return True
+        except Exception:
+            pass
+    return None
+
+
+def boot_mode_payload():
+    now = time.time()
+    if _BOOT_CACHE["payload"] is not None and now - _BOOT_CACHE["at"] < 30:
+        return _BOOT_CACHE["payload"]
+    bridge_unit = _systemd_user_state("navi-bridge.service")
+    llama_unit = _systemd_user_state("navi-llamafile.service")
+    linger = _linger_state()
+    payload = {
+        "bridgeUnit": bridge_unit,
+        "llamafileUnit": llama_unit,
+        "linger": linger,
+        "armed": bridge_unit == "enabled" and llama_unit == "enabled" and linger is True,
+    }
+    _BOOT_CACHE["at"] = now
+    _BOOT_CACHE["payload"] = payload
+    return payload
+
+
+# --- Arm / disarm at boot from inside the app (Build 14, #159) -----
+# The Boot row read the state live from Build 12 on; this is the
+# hand that goes with the eyes. Arming does exactly what the
+# installer's "At system boot" choice does — install both unit
+# files from the templates this package ships (with this install
+# folder substituted), daemon-reload, enable --now both units —
+# and then tries linger the one way the app honestly can: a plain
+# loginctl call, no sudo (the bridge has no sudo channel and does
+# not borrow the parked sudo toggle). When linger cannot be
+# enabled from here, the result carries the exact command for a
+# terminal, the way the installer prints it. Disarming disables
+# both units (never --now: what is running keeps running — it
+# simply will not come up at boot) and deliberately leaves linger
+# alone. Both directions are idempotent, and the verdict is never
+# the steps' word: the state is re-read from the system at the
+# end and reported as found — partial shows as partial.
+
+_BOOT_UNITS = ("navi-llamafile.service", "navi-bridge.service")
+
+
+def _boot_user():
+    user = os.environ.get("USER") or ""
+    if not user:
+        try:
+            import pwd
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = ""
+    return user
+
+
+def _boot_run(argv, timeout=25):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+    except Exception as e:
+        return None, str(e)
+
+
+def boot_set_armed(want_armed):
+    steps = []
+    user = _boot_user()
+    linger_cmd = ("sudo loginctl enable-linger " + user) if user else None
+    unit_dir = os.path.join(os.path.expanduser("~"), ".config", "systemd", "user")
+    if want_armed:
+        for unit in _BOOT_UNITS:
+            try:
+                with open(os.path.join(ROOT, "systemd", unit)) as f:
+                    text = f.read().replace("__INSTALL_DIR__", ROOT)
+                os.makedirs(unit_dir, exist_ok=True)
+                with open(os.path.join(unit_dir, unit), "w") as f:
+                    f.write(text)
+                steps.append({"step": "install " + unit, "ok": True})
+            except Exception as e:
+                steps.append({"step": "install " + unit, "ok": False, "detail": str(e)})
+        rc, out = _boot_run(["systemctl", "--user", "daemon-reload"])
+        steps.append({"step": "daemon-reload", "ok": rc == 0, "detail": out if rc != 0 else ""})
+        for unit in _BOOT_UNITS:
+            rc, out = _boot_run(["systemctl", "--user", "enable", "--now", unit])
+            steps.append({"step": "enable " + unit, "ok": rc == 0, "detail": out if rc != 0 else ""})
+        if _linger_state() is True:
+            steps.append({"step": "linger", "ok": True, "detail": "already on"})
+        elif user:
+            rc, out = _boot_run(["loginctl", "enable-linger", user])
+            steps.append({"step": "linger", "ok": rc == 0, "detail": out if rc != 0 else ""})
+        else:
+            steps.append({"step": "linger", "ok": False, "detail": "no user name to enable linger for"})
+        try:
+            cfg = load_config()
+            cfg["startup"] = "on-boot"
+            save_config(cfg)
+        except Exception:
+            pass
+    else:
+        for unit in reversed(_BOOT_UNITS):
+            rc, out = _boot_run(["systemctl", "--user", "disable", unit])
+            steps.append({"step": "disable " + unit, "ok": rc == 0, "detail": out if rc != 0 else ""})
+        _boot_run(["systemctl", "--user", "daemon-reload"])
+        try:
+            cfg = load_config()
+            cfg["startup"] = "on-ui-launch"
+            save_config(cfg)
+        except Exception:
+            pass
+    _BOOT_CACHE["at"] = 0
+    _BOOT_CACHE["payload"] = None
+    boot = boot_mode_payload()
+    if want_armed:
+        units_on = boot["bridgeUnit"] == "enabled" and boot["llamafileUnit"] == "enabled"
+        if boot["armed"]:
+            return {"ok": True, "partial": False, "armed": True, "boot": boot,
+                    "steps": steps, "lingerCommand": None,
+                    "message": "Armed — the system confirms both services are enabled and linger is on. Apex will come up headless at boot."}
+        if units_on:
+            return {"ok": False, "partial": True, "armed": False, "boot": boot,
+                    "steps": steps, "lingerCommand": linger_cmd,
+                    "message": "Half-armed: both services are enabled, but linger is still off, so for now they start at login, not at boot. One command in a terminal finishes it:"}
+        return {"ok": False, "partial": False, "armed": False, "boot": boot,
+                "steps": steps, "lingerCommand": None,
+                "message": "Arming did not take — the system does not report the services enabled. The steps above say where it stopped; the installer remains the fallback."}
+    still_on = boot["bridgeUnit"] == "enabled" or boot["llamafileUnit"] == "enabled"
+    if not still_on:
+        return {"ok": True, "partial": False, "armed": False, "boot": boot,
+                "steps": steps, "lingerCommand": None,
+                "message": "Disarmed — Apex will not come up at boot. What is running now keeps running; linger was left as it is, on purpose."}
+    return {"ok": False, "partial": True, "armed": bool(boot["armed"]), "boot": boot,
+            "steps": steps, "lingerCommand": None,
+            "message": "Disarming only half-took — the system still reports a service enabled. The steps above say which."}
+
+
+# --- Case Files (0.1.9e Build 12, issues #137/#138) ------------------
+# The first Apex | App. A case is a folder of plain markdown in the
+# Vault — cases/<slug>/ — so cases ride the Vault's backups and
+# sync like every other note on the desk, and open in Obsidian as
+# they lie. case.md carries the manifest as frontmatter; findings
+# are notes in findings/ with their own frontmatter (severity,
+# internal); evidence is whatever lands in evidence/; the timeline
+# is one newest-first markdown file. The report (#138) is composed
+# from those same files — internal findings are withheld AND
+# counted, never silently omitted.
+
+CASE_SEVERITIES = ["critical", "high", "medium", "low", "info"]
+
+# Build 15 (#162): the image evidence a case report embeds.
+CASE_IMAGE_MIMES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp",
+}
+CASE_EMBED_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _fm_parse(text):
+    meta = {}
+    body = text or ""
+    if body.startswith("---\n"):
+        end = body.find("\n---\n", 3)
+        if end != -1:
+            head = body[4:end]
+            body = body[end + 5:]
+            for ln in head.split("\n"):
+                if ":" in ln:
+                    k, v = ln.split(":", 1)
+                    meta[k.strip().lower()] = v.strip()
+    return meta, body
+
+
+def _fm_render(meta_pairs, body):
+    lines = ["---"]
+    for k, v in meta_pairs:
+        lines.append(k + ": " + str(v))
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines) + body
+
+
+def _case_slug(name):
+    s = re.sub(r"[^A-Za-z0-9]+", "-", str(name or "")).strip("-").lower()
+    return s or "case"
+
+
+def _case_dir(slug):
+    if not re.match(r"^[a-z0-9][a-z0-9-]*$", str(slug or "")):
+        return None
+    rel = vault_join("cases/" + slug)
+    if rel is None:
+        return None
+    return vault_fs_path(rel)
+
+
+def _case_manifest(slug):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None
+    try:
+        with open(os.path.join(d, "case.md"), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return None
+    meta, _body = _fm_parse(text)
+    return meta
+
+
+def _case_findings(slug):
+    d = _case_dir(slug)
+    out = []
+    fdir = os.path.join(d, "findings") if d else ""
+    if fdir and os.path.isdir(fdir):
+        for name in sorted(os.listdir(fdir)):
+            if not name.lower().endswith(".md"):
+                continue
+            try:
+                with open(os.path.join(fdir, name), encoding="utf-8") as f:
+                    text = f.read()
+            except Exception:
+                continue
+            meta, body = _fm_parse(text)
+            sev = str(meta.get("severity") or "info").lower()
+            if sev not in CASE_SEVERITIES:
+                sev = "info"
+            out.append({
+                "file": name,
+                "title": str(meta.get("title") or name[:-3]),
+                "severity": sev,
+                "internal": str(meta.get("internal") or "").lower() in ("yes", "true", "1"),
+                "filed": str(meta.get("filed") or ""),
+                # Build 15 (#161): who filed this — Navi's own
+                # filings are marked as hers in the frontmatter;
+                # notes from before the marking existed are the
+                # operator's, which is what they always were.
+                "author": "navi" if str(meta.get("author") or "").lower() == "navi" else "operator",
+                "body": body.strip(),
+            })
+    out.sort(key=lambda f: (CASE_SEVERITIES.index(f["severity"]), f["file"]))
+    return out
+
+
+def _case_evidence(slug):
+    d = _case_dir(slug)
+    out = []
+    edir = os.path.join(d, "evidence") if d else ""
+    if edir and os.path.isdir(edir):
+        for name in sorted(os.listdir(edir)):
+            full = os.path.join(edir, name)
+            if os.path.isfile(full):
+                out.append({"name": name, "size": os.path.getsize(full)})
+    return out
+
+
+def _case_timeline(slug):
+    d = _case_dir(slug)
+    out = []
+    if not d:
+        return out
+    try:
+        with open(os.path.join(d, "timeline.md"), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return out
+    cur = None
+    for ln in text.split("\n"):
+        if ln.startswith("## "):
+            head = ln[3:].strip()
+            date, sep, title = head.partition(" — ")
+            cur = {"date": date.strip(), "title": (title if sep else head).strip(), "body": ""}
+            out.append(cur)
+        elif cur is not None:
+            cur["body"] += ln + "\n"
+    for e in out:
+        e["body"] = e["body"].strip()
+    return out
+
+
+def _case_head(slug, meta):
+    return {
+        "slug": slug,
+        "name": str(meta.get("title") or slug),
+        "client": str(meta.get("client") or ""),
+        "scope": str(meta.get("scope") or ""),
+        "status": str(meta.get("status") or "open"),
+        "opened": str(meta.get("opened") or ""),
+    }
+
+
+def cases_list_payload():
+    root = os.path.join(VAULT_DIR, "cases")
+    cases = []
+    if os.path.isdir(root):
+        for slug in sorted(os.listdir(root)):
+            if not os.path.isdir(os.path.join(root, slug)):
+                continue
+            meta = _case_manifest(slug)
+            if meta is None:
+                continue
+            head = _case_head(slug, meta)
+            head["findings"] = len(_case_findings(slug))
+            head["evidence"] = len(_case_evidence(slug))
+            head["timeline"] = len(_case_timeline(slug))
+            cases.append(head)
+    cases.sort(key=lambda c: c["slug"])
+    return {"cases": cases}
+
+
+def case_detail_payload(slug):
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None
+    detail = _case_head(slug, meta)
+    detail["findings"] = _case_findings(slug)
+    detail["evidence"] = _case_evidence(slug)
+    detail["timeline"] = _case_timeline(slug)
+    # Build 15 (#161): the case's tied chat, when one exists —
+    # looked up, never created, by a read.
+    bound = case_chat_for(slug)
+    detail["chatId"] = bound["id"] if bound else None
+    return detail
+
+
+def case_create(name, client, scope):
+    name = str(name or "").strip()
+    if not name:
+        return None, "A case needs a name."
+    base = _case_slug(name)
+    slug = base
+    n = 2
+    while True:
+        d = _case_dir(slug)
+        if not d or not os.path.isdir(d):
+            break
+        slug = base + "-" + str(n)
+        n += 1
+    d = _case_dir(slug)
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    os.makedirs(os.path.join(d, "findings"), exist_ok=True)
+    os.makedirs(os.path.join(d, "evidence"), exist_ok=True)
+    vault_write("cases/" + slug + "/case.md", _fm_render([
+        ("title", name), ("client", str(client or "")), ("scope", str(scope or "")),
+        ("status", "open"), ("opened", today),
+    ], "# " + name + "\n\nThe case manifest. Findings live in `findings/`, evidence in `evidence/`, the story in `timeline.md`.\n"))
+    vault_write("cases/" + slug + "/timeline.md",
+               "# Timeline — " + name + "\n\n## " + today + " — Case opened\n\nThe case was opened" + ((" for " + str(client) + ".") if client else ".") + "\n")
+    return case_detail_payload(slug), None
+
+
+def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator"):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    title = " ".join(str(title or "").split()).strip() or "Untitled"
+    body = str(body or "")
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    if kind == "timeline":
+        tpath = os.path.join(d, "timeline.md")
+        try:
+            with open(tpath, encoding="utf-8") as f:
+                text = f.read()
+        except Exception:
+            text = "# Timeline\n"
+        entry = "## " + now + " — " + title + "\n\n" + body.strip() + "\n\n"
+        idx = text.find("\n## ")
+        if idx == -1:
+            text = text.rstrip("\n") + "\n\n" + entry
+        else:
+            text = text[:idx + 1] + entry + text[idx + 1:]
+        with open(tpath, "w", encoding="utf-8") as f:
+            f.write(text)
+        return {"path": "cases/" + slug + "/timeline.md"}, None
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    if kind == "evidence-note":
+        sub = "evidence"
+        fname = stamp + "-" + _case_slug(title) + ".md"
+        content = "# " + title + "\n\n" + body.strip() + "\n"
+    else:
+        sub = "findings"
+        sev = str(severity or "info").lower()
+        if sev not in CASE_SEVERITIES:
+            sev = "info"
+        fname = stamp + "-" + _case_slug(title) + ".md"
+        content = _fm_render([
+            ("title", title), ("severity", sev),
+            ("internal", "yes" if internal else "no"), ("filed", now),
+            ("author", "navi" if author == "navi" else "operator"),
+        ], "# " + title + "\n\n" + body.strip() + "\n")
+    target_dir = os.path.join(d, sub)
+    os.makedirs(target_dir, exist_ok=True)
+    full = os.path.join(target_dir, fname)
+    n = 2
+    while os.path.exists(full):
+        fname = stamp + "-" + _case_slug(title) + "-" + str(n) + ".md"
+        full = os.path.join(target_dir, fname)
+        n += 1
+    with open(full, "w", encoding="utf-8") as f:
+        f.write(content)
+    return {"path": "cases/" + slug + "/" + sub + "/" + fname}, None
+
+
+def case_add_evidence(slug, filename, data):
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    base = os.path.basename(str(filename or "")).strip()
+    if not base or base in (".", ".."):
+        return None, "The evidence needs a file name."
+    edir = os.path.join(d, "evidence")
+    os.makedirs(edir, exist_ok=True)
+    full = os.path.join(edir, base)
+    n = 2
+    stem, dot, ext = base.rpartition(".")
+    while os.path.exists(full):
+        base2 = (stem + "-" + str(n) + dot + ext) if dot else (base + "-" + str(n))
+        full = os.path.join(edir, base2)
+        n += 1
+    with open(full, "wb") as f:
+        f.write(data or b"")
+    return {"name": os.path.basename(full), "size": len(data or b"")}, None
+
+
+def case_report(slug):
+    # #138: one markdown document per case — head, findings by
+    # severity in full, timeline appendix, evidence listed. Internal
+    # findings are withheld AND counted in the document itself: an
+    # export that silently drops material is a lie by omission.
+    # Case files hold no node names or Mesh detail by construction,
+    # and none is added here. The report lands in the case folder
+    # as report.md and is returned for the matching download.
+    detail = case_detail_payload(slug)
+    if detail is None:
+        return None, 0, "No such case."
+    d = _case_dir(slug)
+    withheld = sum(1 for f in detail["findings"] if f["internal"])
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    lines = [
+        "# Case report — " + detail["name"], "",
+        "- **Client:** " + (detail["client"] or "—"),
+        "- **Scope:** " + (detail["scope"] or "—"),
+        "- **Opened:** " + (detail["opened"] or "—"),
+        "- **Status:** " + detail["status"],
+        "- **Exported:** " + today, "",
+    ]
+    if withheld:
+        lines += ["> " + str(withheld) + " internal note" + ("s" if withheld != 1 else "")
+                  + " withheld from this export — counted here, never silently omitted.", ""]
+    lines += ["## Findings", ""]
+    shown = [f for f in detail["findings"] if not f["internal"]]
+    if not shown:
+        lines += ["No findings on file" + (" outside the internal set." if withheld else ".") + "", ""]
+    cur_sev = None
+    for f in shown:
+        if f["severity"] != cur_sev:
+            cur_sev = f["severity"]
+            lines += ["### " + cur_sev.capitalize(), ""]
+        lines += ["#### " + f["title"], "", f["body"] or "_(no detail recorded)_", ""]
+    lines += ["## Timeline", ""]
+    for e in detail["timeline"]:
+        lines += ["### " + e["date"] + " — " + e["title"], "", e["body"] or "", ""]
+    lines += ["## Evidence on file", ""]
+    if detail["evidence"]:
+        # Build 15 (#162): image evidence is SHOWN, not just
+        # named — embedded in the report as base64 data URIs, so
+        # the single-file promise survives for the downloaded
+        # copy too (the report travels; a relative reference
+        # would break the moment it left the case folder). An
+        # image too large to embed honestly (over ~8 MB) stays
+        # listed by name with the reason stated. Non-image
+        # evidence keeps the name+size listing.
+        edir = os.path.join(d, "evidence")
+        for ev in detail["evidence"]:
+            ext = os.path.splitext(ev["name"])[1].lower()
+            mime = CASE_IMAGE_MIMES.get(ext)
+            if mime and ev["size"] <= CASE_EMBED_MAX_BYTES:
+                try:
+                    with open(os.path.join(edir, ev["name"]), "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("ascii")
+                    lines += ["### " + ev["name"] + " (" + str(ev["size"]) + " bytes)", "",
+                              "![" + ev["name"] + "](data:" + mime + ";base64," + b64 + ")", ""]
+                    continue
+                except Exception:
+                    pass
+            note = " — too large to embed in the report; the file itself is in the case's evidence/" if mime else ""
+            lines.append("- " + ev["name"] + " (" + str(ev["size"]) + " bytes)" + note)
+    else:
+        lines.append("No evidence files on file.")
+    lines.append("")
+    text = "\n".join(lines)
+    with open(os.path.join(d, "report.md"), "w", encoding="utf-8") as f:
+        f.write(text)
+    return text, withheld, None
+
+
+def case_open_slug(cfg):
+    block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
+    slug = str(block.get("open") or "")
+    return slug if _case_manifest(slug) is not None else ""
+
+
+def open_case_payload(cfg):
+    # Build 15 (#161): the running case as the status column
+    # shows it — slug and display name, or None when the desk is
+    # clear.
+    slug = case_open_slug(cfg)
+    if not slug:
+        return None
+    meta = _case_manifest(slug)
+    return {"slug": slug, "name": str((meta or {}).get("title") or slug)}
+
+
+def case_file_from_chat(text, history, cfg):
+    # Navi files to the OPEN case from chat — out loud, in #54's
+    # Vault-filing pattern: the reply names the case and the
+    # finding, or says plainly that no case is open. The note is
+    # about the thing just discussed, so the recent exchange rides
+    # along as the finding's context.
+    slug = case_open_slug(cfg)
+    if not slug:
+        return None, "No case is open — open one in Case Files (Apex | Apps) and I'll file straight into it."
+    raw = (text or "").strip()
+    ctx = []
+    for item in reversed(history or []):
+        if not isinstance(item, dict):
+            continue
+        c = str(item.get("content") or "").strip()
+        if not c or c == raw:
+            continue
+        ctx.append(c)
+        if len(ctx) >= 2:
+            break
+    subject = raw.split(":", 1)[1].strip() if ":" in raw else ""
+    if len(subject.split()) < 2:
+        subject = ""
+    title = subject or (ctx[-1][:70] if ctx else "Filed from chat")
+    title = " ".join(str(title).replace("#", "").split()).strip(" .:") or "Filed from chat"
+    body_lines = ["Filed from chat — in the operator's words: “" + raw + "”", ""]
+    if ctx:
+        body_lines += ["## Context", ""]
+        for c in reversed(ctx):
+            body_lines += [c, ""]
+    filed, err = case_file_entry(slug, "finding", title, "\n".join(body_lines), "info", False)
+    if err:
+        return None, err
+    meta = _case_manifest(slug)
+    return {"case": str((meta or {}).get("title") or slug), "path": filed["path"]}, None
+
+
+# --- Case-tied chats, Navi's own filings, deletion (Build 15, #161/#163)
+# A case is a working context, not just a folder. Opening a case
+# ensures its chat: one canonical thread bound to the case by the
+# slug in its "case" field, riding the server-side chat store
+# (#139) like every other thread — so it survives machines, and
+# Mesh borrowing applies to it like any other chat. The chat is a
+# reference; the case's content stays the Vault's plain files.
+
+def _case_chat_out(rec):
+    # The store's canonical id is a string (it is a filename);
+    # the frontend's own hydration turns numeric-string ids back
+    # into numbers, and its identity comparisons are numeric.
+    # Records handed to the dashboard from here wear the numeric
+    # shape the frontend expects; the stored record is untouched.
+    if rec is None:
+        return None
+    out = dict(rec)
+    if isinstance(out.get("id"), str) and out["id"].isdigit():
+        out["id"] = int(out["id"])
+    return out
+
+
+def case_chat_for(slug):
+    for rec in chats_all():
+        if rec.get("case") == slug:
+            return _case_chat_out(rec)
+    return None
+
+
+def case_chat_ensure(slug):
+    # Find the case's chat, or create it on first open. The id is
+    # epoch-milliseconds, the frontend's own id shape, so every
+    # door treats the thread like any other. Seeded with one line
+    # from Navi naming the room for what it is.
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None
+    found = case_chat_for(slug)
+    if found is not None:
+        return found
+    # (creation below builds the id as epoch-ms; chat_write
+    # normalizes it to the store's string shape, so the return
+    # goes through the same numeric-shape hand-off.)
+    name = str(meta.get("title") or slug)
+    cid = int(time.time() * 1000)
+    existing = {str(r.get("id")) for r in chats_all()}
+    while str(cid) in existing:
+        cid += 1
+    rec = {
+        "id": cid,
+        "title": "Case — " + name,
+        "case": slug,
+        "messages": [{
+            "who": "NAVI",
+            "text": "This is the case room for **" + name + "**. Everything we work in here is tied to the case: findings I file land in its record in `findings/`, marked as mine, with a line in its timeline — always in the open, receipted in this thread.",
+            "exec": None,
+        }],
+        "createdAt": cid,
+        "updatedAt": cid,
+    }
+    return _case_chat_out(chat_write(rec))
+
+
+# Navi files her OWN findings (#161): the same judgment-marker
+# discipline as her memory saves (#72). The persona prompt teaches
+# her the marker only while a case is open; the bridge strips the
+# marker lines from the reply before it is shown or spoken, files
+# each one into the open case as a finding authored by Navi plus
+# a timeline entry, and the filings ride the payload back as
+# data — the dashboard receipts them in the thread where they
+# happened. Nothing is filed from a chat without that receipt:
+# no background filing, ever. At most two per reply, like memory.
+FINDING_MARKER_RE = re.compile(
+    r"^\s*\[\[finding(?::|\s*\[(critical|high|medium|low|info)\]\s*:)\s*(.+?)\s*\]\]\s*$",
+    re.I | re.M)
+
+
+def navi_file_finding(slug, severity, content):
+    # One of Navi's findings, in her words, into the open case:
+    # the finding note (author: navi in its frontmatter, plainly)
+    # and the timeline entry that records the act.
+    content = " ".join(str(content or "").split()).strip()
+    if not content:
+        return None
+    title, sep, body = content.partition(" | ")
+    if not sep:
+        title, body = "", content
+    title = " ".join(str(title).replace("#", "").split()).strip(" .:") or (
+        (body[:70] + "…") if len(body) > 70 else body)
+    filed, err = case_file_entry(slug, "finding", title, body.strip(),
+                                 severity or "info", False, author="navi")
+    if err:
+        return None
+    case_file_entry(slug, "timeline", "Navi filed a finding — " + title,
+                    "Filed from the case chat as `" + filed["path"] + "`.")
+    meta = _case_manifest(slug)
+    return {"case": slug, "caseName": str((meta or {}).get("title") or slug),
+            "path": filed["path"], "title": title}
+
+
+def extract_finding_markers(reply, cfg):
+    # Returns (clean_reply, filings). Markers are honored only
+    # while a case is open — the prompt only teaches them then —
+    # and a stray marker with no case open is stripped and
+    # dropped, never filed anywhere.
+    slug = case_open_slug(cfg)
+    filings = []
+
+    def _take(m):
+        if not slug or len(filings) >= 2:
+            return ""
+        sev = (m.group(1) or "info").lower()
+        filed = navi_file_finding(slug, sev, m.group(2))
+        if filed:
+            filings.append(filed)
+        return ""
+
+    clean = FINDING_MARKER_RE.sub(_take, reply or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return clean, filings
+
+
+def case_delete(slug):
+    # #163, as ruled by Alex (2026-11-12): removing a case
+    # removes ALL of its files — the case folder and everything
+    # in it goes, and (Build 15, the parent ruling for the #161
+    # pairing) its tied chat goes with it. Backups are snapshots
+    # and are NOT reached into: a case inside an existing backup
+    # stays in that backup. Deleting the open case clears the
+    # open-case pointer.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    detail = case_detail_payload(slug)
+    counts = {
+        "findings": len(detail["findings"]) if detail else 0,
+        "evidence": len(detail["evidence"]) if detail else 0,
+        "timeline": len(detail["timeline"]) if detail else 0,
+    }
+    chat_removed = False
+    bound = case_chat_for(slug)
+    if bound is not None:
+        chat_removed = chat_delete(bound["id"])
+    try:
+        shutil.rmtree(d)
+    except Exception as e:
+        return None, "The case folder could not be removed: " + str(e)
+    cfg = load_config()
+    block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
+    was_open = block.get("open") == slug
+    if was_open:
+        block.pop("open", None)
+        cfg["casefiles"] = block
+        save_config(cfg)
+    return {"slug": slug, "counts": counts, "chatRemoved": chat_removed,
+            "wasOpen": was_open}, None
+
+
+# --- Account sync via the Operator Badge (Build 12, issue #136) ------
+# The Badge (#116) is an identity pointer and a trigger — never an
+# authenticator; the GitHub sign-in remains the only key. Slotting
+# the badge starts this flow: check the sign-in, pull the latest
+# backup, build the same per-item preview the GitHub view's import
+# builds, and hold it against the operation while the card waits in
+# chat for the operator's confirmation. Nothing is applied before
+# that confirmation; a signed-out start fails its first step
+# politely and NO fetch is attempted. The node keypair and the Mesh
+# cert never ride a backup (the collect step has never gathered
+# them — see the backup section header), so they cannot ride a
+# sync either.
+BADGE_SYNC_PENDING = {}
+
+
+def badge_sync_start(cfg, dashboard=None):
+    op_id = op_new("badge-sync", "Account sync — Operator Badge", [
+        ("signin", "GitHub sign-in"),
+        ("fetch", "Pull the latest backup"),
+        ("preview", "Build the change preview"),
+        ("confirm", "Your confirmation"),
+    ], source="badge")
+    auth = github_auth()
+    if not auth:
+        op_set(op_id, "signin", "failed", "Not signed in to GitHub — the badge points, but the sign-in is the key. Sign in from the GitHub page, then slot the badge again.")
+        op_finish(op_id, "failed", "Account sync needs the GitHub sign-in first — no fetch was attempted.")
+        return {"ok": False, "operationId": op_id, "operation": op_snapshot(op_id),
+                "error": "Not signed in to GitHub — sign in from the GitHub page first. No fetch was attempted."}
+    op_set(op_id, "signin", "done", "Signed in as @" + str(auth.get("login") or "") + " — the badge pointed; the sign-in unlocked.")
+    op_set(op_id, "fetch", "running")
+    fetched, err = github_fetch_backup(cfg)
+    if err:
+        op_set(op_id, "fetch", "failed", err)
+        op_finish(op_id, "failed", err)
+        return {"ok": False, "operationId": op_id, "operation": op_snapshot(op_id), "error": err}
+    op_set(op_id, "fetch", "done", "The backup from " + str(fetched["manifest"].get("backedUpAt") or "an unknown date") + " is down.")
+    op_set(op_id, "preview", "running")
+    changes, _items = github_import_changes(cfg, fetched, dashboard)
+    BADGE_SYNC_PENDING[op_id] = fetched
+    moving = sum(1 for c in changes if c.get("willChange"))
+    lines = []
+    for c in changes:
+        lines.append(str(c.get("label") or c.get("key") or "Item") + " — " + str(c.get("detail") or c.get("kind") or ""))
+    detail = str(moving) + " essential(s) would change. " + " · ".join(lines)
+    if len(detail) > 1200:
+        detail = detail[:1180] + "… (the full preview is in Settings → GitHub & Backup)"
+    op_set(op_id, "preview", "done", detail)
+    op_set(op_id, "confirm", "waiting", "Nothing has been applied. Confirm on the card to land exactly this preview.", op_state="waiting")
+    return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id), "changes": changes,
+            "backedUpAt": fetched["manifest"].get("backedUpAt")}
+
+
+def badge_sync_apply(cfg, op_id):
+    fetched = BADGE_SYNC_PENDING.pop(str(op_id or ""), None)
+    if fetched is None or op_snapshot(op_id) is None:
+        return {"ok": False, "error": "That sync preview is no longer held — slot the badge again to build a fresh one."}
+    op_set(op_id, "confirm", "running", "Applying the preview you confirmed.")
+    result = github_apply_import(cfg, fetched)
+    if result.get("ok"):
+        op_set(op_id, "confirm", "done", result.get("result") or "Applied.")
+        op_finish(op_id, "done", result.get("result") or "Account sync applied.")
+    else:
+        op_set(op_id, "confirm", "failed", result.get("error") or "The apply failed.")
+        op_finish(op_id, "failed", result.get("error") or "The apply failed.")
+    out = dict(result)
+    out["operationId"] = op_id
+    out["operation"] = op_snapshot(op_id)
+    return out
+
+
+def badge_sync_dismiss(op_id):
+    BADGE_SYNC_PENDING.pop(str(op_id or ""), None)
+    op_set(op_id, "confirm", "done", "Left as it was — nothing applied.")
+    op_finish(op_id, "done", "Account sync set aside — nothing was applied.")
+    return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id)}
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -11067,7 +14367,7 @@ class Handler(BaseHTTPRequestHandler):
             # card and whose payload is the card.
             _cfg = load_config()
             if not mesh_settings(_cfg)["enabled"]:
-                self._send(200, {"ok": False, "error": "Navi Mesh is off on this machine — turn it on from the Mesh page first."})
+                self._send(200, {"ok": False, "error": "Apex | Mesh is off on this machine — turn it on from the Mesh page first."})
                 return
             _ok, _err = mesh_ensure_identity(_cfg)
             if not _ok:
@@ -11078,6 +14378,36 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": _err})
                 return
             self._send(200, build_mesh_card_png(load_config()), "image/png")
+            return
+        if _path in ("/favicon-32.png", "/apple-touch-icon.png", "/icon-180.png"):
+            # Build 13 (issue #151): the DHD door wears the Row's
+            # icon. favicon-scale derivatives of the Nocturne Row
+            # site's logo.png, bundled as plain app assets and
+            # served behind the same public gate as every other
+            # dashboard byte (the #116 portrait precedent below).
+            # /apple-touch-icon.png answers the name browsers ask
+            # for by default with the 180x180 file; a missing file
+            # answers 404, never a crash.
+            _icon_name = "favicon-32.png" if _path == "/favicon-32.png" else "icon-180.png"
+            try:
+                with open(os.path.join(ROOT, "assets", _icon_name), "rb") as _if:
+                    _idata = _if.read()
+                self._send(200, _idata, "image/png")
+            except OSError:
+                self._send(404, {"ok": False, "error": "icon not found"})
+            return
+        if _path == "/assets/navi-portrait.jpg":
+            # Issue #116: Navi's bundled portrait (the lamp-post key
+            # art) for the chat presence header and message gutter.
+            # A plain app asset behind the same public gate as every
+            # other dashboard byte; a missing file answers 404, never
+            # a crash.
+            try:
+                with open(os.path.join(ROOT, "assets", "navi-portrait.jpg"), "rb") as _pf:
+                    _pdata = _pf.read()
+                self._send(200, _pdata, "image/jpeg")
+            except OSError:
+                self._send(404, {"ok": False, "error": "portrait not found"})
             return
         if self.path.split("?")[0] in ("/", "/index.html"):
             with open(os.path.join(ROOT, "app", "index.html"), "rb") as f:
@@ -11122,8 +14452,13 @@ class Handler(BaseHTTPRequestHandler):
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
+                # Build 15 (#161): the running case, read true —
+                # the status column shows which case is open the
+                # way it shows every other live state.
+                "openCase": open_case_payload(cfg),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
                 "mesh": mesh_status_payload(cfg, (self.headers.get("X-Apex-Via") or "") == "dhd"),
+                "boot": boot_mode_payload(),
             })
         elif self.path.startswith("/api/operations/"):
             _op_id = urllib.parse.unquote(self.path.rsplit("/", 1)[-1])
@@ -11141,6 +14476,19 @@ class Handler(BaseHTTPRequestHandler):
                 "soul": read_file(SOUL_PATH),
                 "memory": read_file(MEMORY_PATH),
             })
+        elif self.path == "/api/guardian/state":
+            # Guardian (Build 14, #156): the Utilities face's one
+            # read — pressure, headroom, her llamafile's RSS, the
+            # top processes, learned offenders, settings, and the
+            # recent action log, straight from the engine.
+            try:
+                self._send(200, GUARDIAN.state())
+            except Exception as e:
+                self._send(200, {"enabled": False, "pressure": "ok", "freeMb": 0,
+                                 "reserveMb": 1024, "llamafileRssMb": 0, "generating": False,
+                                 "mesh": {"enabled": False, "peers": 0}, "top": [], "offenders": [],
+                                 "expendable": [], "settings": {}, "log": [],
+                                 "error": "Guardian state failed: " + str(e)})
         elif self.path == "/api/voice":
             # The Voice tab's state: her settings, whether each
             # speech engine is actually installed (never assumed),
@@ -11178,6 +14526,19 @@ class Handler(BaseHTTPRequestHandler):
                 })
         elif self.path == "/api/voice/calls":
             self._send(200, {"calls": load_voice_calls()})
+        elif self.path == "/api/operator/badge-info":
+            # Issue #116: the fact an Operator Badge may carry about
+            # this install beyond the operator's own profile: the
+            # node's display name, public-by-design and self-asserted
+            # when it rides the badge. Deliberately NOT the Mesh
+            # identity: no node id, no key material, no certificate
+            # fingerprint - a badge is a self-portrait, never a
+            # credential, and nothing anywhere reads this (or a badge)
+            # to authenticate anyone.
+            _ms = mesh_settings(load_config())
+            self._send(200, {
+                "nodeName": str(_ms.get("nodeName") or ""),
+            })
         elif self.path == "/api/chips/catalog":
             # Navi User Repo tab: live GitHub search for the navi-chips
             # topic, merged with the installs recorded on this
@@ -11270,6 +14631,58 @@ class Handler(BaseHTTPRequestHandler):
                             full = os.path.join(base, name)
                             z.write(full, os.path.relpath(full, VAULT_DIR).replace(os.sep, "/"))
             self._send(200, buf.getvalue(), "application/zip")
+        elif self.path == "/api/chats":
+            # Server-side chats (#139): the whole store — threads
+            # and the uploads index — for the window to hydrate.
+            self._send(200, chats_payload())
+        elif self.path == "/api/intel":
+            # Threat Intelligence Center (Build 15, #165): the
+            # Apps surface's whole picture in one payload —
+            # freshness first, the triage queue, the brief.
+            try:
+                self._send(200, INTEL.state())
+            except Exception as e:
+                self._send(200, {"ok": False, "error": "The intel store could not be read: " + str(e)[:160], "sources": [], "queue": [], "advisories": [], "watchlist": []})
+        elif self.path.split("?")[0] == "/api/intel/item":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _item = None
+            try:
+                _item = INTEL.item((qs.get("cve") or [""])[0])
+            except Exception:
+                _item = None
+            if _item is None:
+                self._send(404, {"ok": False, "error": "Not in the local intel store."})
+            else:
+                self._send(200, {"ok": True, "item": _item})
+        elif self.path == "/api/intel/digest":
+            try:
+                self._send(200, INTEL.build_digest())
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)[:160]})
+        elif self.path == "/api/cases":
+            self._send(200, cases_list_payload())
+        elif self.path.split("?")[0] == "/api/cases/detail":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _detail = case_detail_payload((qs.get("case") or [""])[0])
+            if _detail is None:
+                self._send(404, {"ok": False, "error": "No such case."})
+            else:
+                self._send(200, {"ok": True, "case": _detail})
+        elif self.path.split("?")[0] == "/api/rag/cartridge.png":
+            # The pack as a picture, built on demand from the pack
+            # folder (issue #93): the sleeve image the RAG tab and
+            # ChipDeck show, and the file a download saves.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            slug = os.path.basename((qs.get("slug") or [""])[0])
+            payload = rag_cartridge_payload(slug) if slug else None
+            if payload is None:
+                self._send(404, {"error": "not found"})
+            else:
+                png = build_rag_cartridge_png(payload)
+                if len(png) > RAG_CARTRIDGE_MAX_BYTES:
+                    self._send(404, {"error": "too big for a picture"})
+                else:
+                    self._send(200, png, "image/png")
         elif self.path == "/api/rag/packs":
             self._send(200, {"packs": local_rag_packs()})
         elif self.path.split("?")[0] == "/api/rag/pack-source":
@@ -11281,14 +14694,17 @@ class Handler(BaseHTTPRequestHandler):
             slug = os.path.basename((qs.get("slug") or [""])[0])
             pack = rag_pack_documents(slug) if slug else None
             if pack:
-                self._send(200, {"ok": True, "slug": slug, "name": pack["name"], "description": pack["description"], "documents": pack["documents"]})
+                self._send(200, {"ok": True, "slug": slug, "name": pack["name"], "description": pack["description"], "documents": pack["documents"], "icon": valid_icon_art((_rag_pack_index(slug) or {}).get("icon")) or []})
             else:
                 self._send(200, {"ok": False, "error": "That pack is not in the folder."})
         elif self.path.split("?")[0] == "/api/rag/export-file":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             name = os.path.basename((qs.get("file") or qs.get("name") or [""])[0])
             path = os.path.join(RAG_EXPORTS_DIR, name)
-            if name.endswith(".zip") and os.path.isfile(path):
+            if name.endswith(".png") and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            elif name.endswith(".zip") and os.path.isfile(path):
                 with open(path, "rb") as f:
                     self._send(200, f.read(), "application/zip")
             else:
@@ -11306,6 +14722,25 @@ class Handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             name = os.path.basename((qs.get("file") or qs.get("name") or [""])[0])
             path = os.path.join(CHIPS_DIR, name)
+            if name.endswith(".png") and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            else:
+                self._send(404, {"error": "not found"})
+        elif self.path == "/api/deck":
+            # ChipDeck (0.1.9e, #94): the binder's contents — every
+            # picture-riding thing on this machine, with its state.
+            # (Loads its own config: this route sits above the
+            # handler's shared cfg assignment.)
+            self._send(200, deck_contents(load_config()))
+        elif self.path.split("?")[0] == "/api/deck/file":
+            # A Mesh pairing card's picture, for its ChipDeck
+            # sleeve (chips ride /api/chips/file, packs ride
+            # /api/rag/cartridge.png). Basename-jailed to the
+            # cards folder, .png only.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = os.path.basename((qs.get("name") or [""])[0])
+            path = os.path.join(MESH_CARDS_DIR, name)
             if name.endswith(".png") and os.path.isfile(path):
                 with open(path, "rb") as f:
                     self._send(200, f.read(), "image/png")
@@ -11421,6 +14856,50 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
                 return
             self._send(200, {"ok": True, "mesh": mesh_stop_lending((self.headers.get("X-Apex-Via") or "") == "dhd")})
+            return
+        if self.path == "/api/guardian/settings":
+            # Guardian (Build 14, #156): the Utilities face's save.
+            # Whitelisted keys only, merged into the config's
+            # guardian block (the dhd_save / mesh-settings idiom);
+            # the engine reads settings fresh every tick, so the
+            # save is live on the next sample. The answer is the
+            # new state, so the face renders what is actually true.
+            data = self._body()
+            block = cfg.get("guardian") if isinstance(cfg.get("guardian"), dict) else {}
+            block = dict(block)
+            if isinstance(data.get("enabled"), bool):
+                block["enabled"] = data["enabled"]
+            if isinstance(data.get("killEnabled"), bool):
+                block["killEnabled"] = data["killEnabled"]
+            for _gk in ("reserveMb", "slowGenSeconds", "cpuCapPercent", "warnAfterSeconds", "killGraceSeconds"):
+                try:
+                    block[_gk] = int(data[_gk])
+                except Exception:
+                    pass
+            try:
+                block["sampleSeconds"] = float(data["sampleSeconds"])
+            except Exception:
+                pass
+            if isinstance(data.get("expendable"), list):
+                block["expendable"] = [str(x).strip() for x in data["expendable"] if str(x).strip()]
+            cfg["guardian"] = block
+            save_config(cfg)
+            if block.get("enabled") is not False:
+                try:
+                    GUARDIAN.start()
+                except Exception:
+                    pass
+            self._send(200, {"ok": True, "state": GUARDIAN.state()})
+            return
+        if self.path in ("/api/boot/arm", "/api/boot/disarm"):
+            # Arm at boot (Build 14, #159): a LOCAL dashboard
+            # action only — it rewrites this machine's boot
+            # behavior, so it is never served through the DHD
+            # door, the same refusal as Stop-lending above.
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(403, {"ok": False, "error": "Arming at boot is a local action — it is not available through the DHD door."})
+                return
+            self._send(200, boot_set_armed(self.path == "/api/boot/arm"))
             return
         if self.path == "/api/mesh/settings":
             # The Settings → System Mesh card's save. Persists the
@@ -12022,6 +15501,10 @@ class Handler(BaseHTTPRequestHandler):
                 turn = {
                     "who": "navi" if data.get("who") == "navi" else "you",
                     "text": str(data.get("text") or "")[:4000],
+                    # Issue #116: when this turn was spoken (epoch
+                    # seconds), so the transcript can carry the same
+                    # timestamps the chat thread wears.
+                    "ts": int(time.time()),
                 }
                 ex = data.get("exec")
                 if isinstance(ex, dict):
@@ -12120,24 +15603,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, payload)
                 return
             if (last or "").strip().lower() == "/chip":
-                _shelf = local_chips()
-                if _shelf:
-                    _lines = []
-                    for c in _shelf:
-                        _d = (c.get("description") or "").strip()
-                        if len(_d) > 90:
-                            _d = _d[:87] + "..."
-                        _lines.append("• " + c["name"] + (" — " + _d if _d else ""))
-                    _reply = (
-                        "On the shelf — /chip <name> runs one (the pills above the composer do too):\n"
-                        + "\n".join(_lines)
-                    )
-                else:
-                    _reply = (
-                        "No chips are installed yet — the shelf is empty. Open the Chips tab and "
-                        "install one from the GitHub catalog (Navi User Repo) or forge your own in Chip "
-                        "Studio; then it lands here and /chip <name> runs it."
-                    )
+                _reply = chip_shelf_reply("./")
                 payload = {
                     "reply": _reply,
                     "exec": None,
@@ -12146,6 +15612,66 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_reply, cfg)
+                self._send(200, payload)
+                return
+            # "./name args..." runs a chip the way ./ runs a
+            # program (0.1.9e, issue #97) — the composer's pill
+            # shelf is retired, and this is the keyboard way in.
+            # Bare "./" answers with the shelf. The latch decides
+            # collisions: a $-forced line or a CLI-latched composer
+            # never reaches here, so under the latch "./x" is still
+            # the shell's own.
+            _lt = (last or "").strip()
+            if (
+                _lt.startswith("./")
+                and not _lt.startswith("$")
+                and chat_mode != "cli"
+            ):
+                _rest = _lt[2:]
+                if not _rest.strip():
+                    _reply = chip_shelf_reply("./")
+                    payload = {
+                        "reply": _reply,
+                        "exec": None,
+                        "mode": "chip",
+                        "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    }
+                    if data.get("speak"):
+                        payload["spoken"] = speak_reply(_reply, cfg)
+                    self._send(200, payload)
+                    return
+                _chip, _cargs = resolve_chip_invocation(_rest, local_chips())
+                if isinstance(_cargs, list):
+                    if _cargs:
+                        _reply = (
+                            "That name fits more than one chip on this machine: "
+                            + ", ".join(c["name"] for c in _cargs)
+                            + " — say which one, as ./<name>."
+                        )
+                    else:
+                        _reply = (
+                            "No chip by that name is loaded on this machine. "
+                            + chip_shelf_reply("./")
+                        )
+                    payload = {
+                        "reply": _reply,
+                        "exec": None,
+                        "mode": "chip",
+                        "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                    }
+                    if data.get("speak"):
+                        payload["spoken"] = speak_reply(_reply, cfg)
+                    self._send(200, payload)
+                    return
+                _result = execute_chip(_chip, _cargs, cfg)
+                payload = {
+                    "reply": "Slotted in " + _chip["name"] + " and ran it — here's what it gave me:",
+                    "exec": _result,
+                    "mode": "chip",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_result.get("output") or payload["reply"], cfg)
                 self._send(200, payload)
                 return
             _query = chip_invocation(last)
@@ -12287,6 +15813,52 @@ class Handler(BaseHTTPRequestHandler):
                         payload["spoken"] = speak_reply(payload["reply"], cfg)
                     self._send(200, payload)
                     return
+            # Case filing from chat (Build 12, #137): "file that as
+            # a finding" / "file this to the case" lands in the OPEN
+            # case, out loud — the deterministic sibling of Vault
+            # filing, decided in the same place for the same reason:
+            # it works with or without the model connected.
+            _cfiling = re.search(r"\bfile\s+(?:this|that|it)\s+(?:as\s+(?:a\s+)?(?:finding|evidence)|to\s+the\s+case)\b", (last or ""), re.I) or re.search(r"\badd\s+(?:this|that|it)\s+to\s+the\s+case\b", (last or ""), re.I)
+            if _cfiling:
+                _cfiled, _cerr = case_file_from_chat(last or "", messages, cfg)
+                if _cfiled:
+                    _creply = "Filed it to the case **" + _cfiled["case"] + "** — a new finding at `" + _cfiled["path"] + "`, where it stays in plain markdown on the desk. Nothing filed silently, ever: that's the whole entry, and it's yours to edit in Case Files."
+                else:
+                    _creply = _cerr
+                payload = {
+                    "reply": _creply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_creply, cfg)
+                self._send(200, payload)
+                return
+            # Threat intel lookup (Build 15, #165): "intel: …" or
+            # "what do we know about CVE-…" is answered straight
+            # from the local store by the same deterministic logic
+            # as the routes above — no model round-trip, and the
+            # store's own words about its freshness ride along in
+            # the answer (absence is stated as absence).
+            _im = re.match(r"\s*intel\s*[:\-]\s*(.+)", last or "", re.I)
+            _cm = re.search(r"\bwhat do we know about\s+(CVE-\d{4}-\d{4,7})\b", last or "", re.I) or re.search(r"\blook\s*up\s+(CVE-\d{4}-\d{4,7})\b", last or "", re.I)
+            if _im or _cm:
+                _iquery = (_im.group(1) if _im else _cm.group(1)).strip()
+                try:
+                    _ireply = INTEL.lookup(_iquery)
+                except Exception:
+                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → Threat Intelligence) shows its state."
+                payload = {
+                    "reply": _ireply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_ireply, cfg)
+                self._send(200, payload)
+                return
             if not llamafile_alive(endpoint):
                 # Command-line mode: no model is connected, so the
                 # message itself is the command. A leading "$" is
@@ -12351,9 +15923,78 @@ class Handler(BaseHTTPRequestHandler):
                 }]
             # Navi's persona (Soul + Memory, from the config files)
             # rides along as the system prompt on every chat.
+            _system_prompt = persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode)
+            # Guardian (Build 14, #156): she answers questions
+            # about this machine from what is true of it NOW, so
+            # the Guardian brief — pressure, headroom, current
+            # offenders, the latest actions — rides the system
+            # prompt actually sent, exactly as assembled here
+            # (the Mesh borrow path below carries these same
+            # assembled messages, unchanged, as it always has).
+            try:
+                if guardian_settings(cfg)["enabled"]:
+                    _system_prompt += "\n\n[Guardian — this machine right now]\n" + GUARDIAN.context_block()
+            except Exception:
+                pass
+            # Case Files (Build 15, #161): while a case is open
+            # she knows which one it is, and she can file her own
+            # findings into it — her words, her name on them,
+            # receipted in the thread (extract_finding_markers,
+            # below, beside her memory saves).
+            _open_case = open_case_payload(cfg)
+            if _open_case:
+                _system_prompt += (
+                    "\n\n[Case open — " + _open_case["name"] + "]\n"
+                    "The case \"" + _open_case["name"] + "\" is open on the desk, and work in this conversation may belong to it. "
+                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by ending your reply with a line of exactly this form: "
+                    "[[finding: <short title> | <the finding, stated plainly>]] — optionally with a severity: [[finding[high]: <title> | <finding>]]. "
+                    "At most two per reply, and only for real conclusions about this case — not small talk, and not the operator's words restated as yours. "
+                    "The marker line is removed before the operator sees your reply; the filing is made in your name, a line goes into the case's timeline, and the operator is shown a receipt of exactly what you filed — never mention the marker itself."
+                )
+            # Threat Intelligence Center (Build 15, #165): the
+            # standing brief rides the system prompt the way the
+            # Guardian's does — one bounded block (~700 tokens),
+            # only when the store holds anything at all, always
+            # carrying its freshness so she never states a stale
+            # picture as a fresh one. In a case-bound chat the
+            # case's own matched records ride too — the join
+            # between the Center and the case on the desk.
+            try:
+                _ibrief = INTEL.brief_block()
+                if _ibrief:
+                    _system_prompt += "\n\n" + _ibrief
+            except Exception:
+                pass
+            _bound_case = ""
+            try:
+                _cid = data.get("chatId")
+                if _cid is not None:
+                    for _rec in chats_all():
+                        if str(_rec.get("id")) == str(_cid) and _rec.get("case"):
+                            _bound_case = str(_rec["case"])
+                            break
+            except Exception:
+                _bound_case = ""
+            if _bound_case:
+                try:
+                    _cterms = [t["term"] for t in _intel_case_terms(cfg, _bound_case)]
+                    _cctx = INTEL.case_context(_cterms)
+                    if _cctx:
+                        _system_prompt += "\n\n" + _cctx
+                except Exception:
+                    pass
+            # The message seam: an exact CVE ID or a stack/case
+            # term in the operator's own words pulls the record in
+            # for THIS reply only.
+            try:
+                _ictx = INTEL.message_context(last or "")
+                if _ictx:
+                    messages = messages + [{"role": "system", "content": _ictx}]
+            except Exception:
+                pass
             messages = [{
                 "role": "system",
-                "content": persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode),
+                "content": _system_prompt,
             }] + messages
             try:
                 model = cfg.get("live", {}).get("model_name") or "navi"
@@ -12395,9 +16036,17 @@ class Handler(BaseHTTPRequestHandler):
                 # saves ride the payload back as data for the
                 # dashboard to file and receipt.
                 reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
+                # Her own case filings (Build 15, #161): the
+                # [[finding: …]] markers come out of the reply the
+                # same way, are filed into the open case in her
+                # name before this payload returns, and ride back
+                # as data for the dashboard's receipt.
+                reply, _cfilings = extract_finding_markers(reply, cfg)
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload
+                if _cfilings:
+                    payload["caseFilings"] = _cfilings
                 if _msaves:
                     payload["memorySaves"] = _msaves
                 if _mrefused:
@@ -12507,12 +16156,19 @@ class Handler(BaseHTTPRequestHandler):
             if not fname.endswith(".png") or not name or not code.strip():
                 self._send(200, {"ok": False, "error": "A chip save needs a chip file, a name, and code."})
             else:
+                icon_rows, icon_err = _payload_icon(data)
+                if icon_err:
+                    self._send(200, {"ok": False, "error": icon_err})
+                    return
                 payload = {
                     "name": name,
                     "description": str(data.get("description") or "")[:500],
                     "code": code[:200000],
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
+                    "glyph": str(data.get("glyph") or "")[:40],
+                    "version": str(data.get("version") or "")[:40],
+                    "icon": icon_rows,
                 }
                 os.makedirs(CHIPS_DIR, exist_ok=True)
                 with open(os.path.join(CHIPS_DIR, fname), "wb") as f:
@@ -12758,7 +16414,10 @@ class Handler(BaseHTTPRequestHandler):
                         "body": str(raw.get("body"))[:RAG_MAX_DOC_CHARS],
                     })
             documents = documents[:RAG_MAX_DOCS]
-            if not name:
+            icon_rows, icon_err = _payload_icon(data)
+            if icon_err:
+                self._send(200, {"ok": False, "error": icon_err})
+            elif not name:
                 self._send(200, {"ok": False, "error": "A pack needs a name."})
             elif not documents:
                 self._send(200, {"ok": False, "error": "A pack needs at least one document — pick files in the Studio or name a folder on disk."})
@@ -12774,7 +16433,8 @@ class Handler(BaseHTTPRequestHandler):
                 while slug in taken:
                     slug = base + "-" + str(n)
                     n += 1
-                write_rag_pack(slug, name, description, documents)
+                write_rag_pack(slug, name, description, documents,
+                               icon=icon_rows or None)
                 rows = [r for r in rows if r.get("full_name") != "local/" + slug]
                 rows.append({
                     "full_name": "local/" + slug,
@@ -12822,6 +16482,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif str(raw.get("body") or "").strip():
                     documents.append({"title": title, "body": str(raw.get("body"))[:RAG_MAX_DOC_CHARS]})
             documents = documents[:RAG_MAX_DOCS]
+            icon_rows, icon_err = _payload_icon(data)
+            if icon_err:
+                self._send(200, {"ok": False, "error": icon_err})
+                return
             if not slug or _rag_pack_index(slug) is None:
                 self._send(200, {"ok": False, "error": "That pack is not in the folder."})
             elif not name:
@@ -12829,7 +16493,8 @@ class Handler(BaseHTTPRequestHandler):
             elif not documents:
                 self._send(200, {"ok": False, "error": "A pack needs at least one document — add one in the Studio before saving."})
             else:
-                write_rag_pack(slug, name, description, documents)
+                write_rag_pack(slug, name, description, documents,
+                               icon=icon_rows or None)
                 rows = load_rag_installs()
                 for r in rows:
                     if r.get("local_dir") == slug:
@@ -12852,10 +16517,60 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None, "file": zip_name, "files": repo_files})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e), "file": None, "files": []})
+        elif self.path == "/api/rag/export-png":
+            # Export as a knowledge cartridge (issue #93): the pack
+            # as ONE picture in rag-exports/, beside the ZIP export.
+            # Past the size ceiling the refusal is honest — the ZIP
+            # stays the way to carry a big pack — and nothing is
+            # truncated to fit.
+            data = self._body()
+            slug = os.path.basename(str(data.get("slug") or ""))
+            payload = rag_cartridge_payload(slug)
+            if payload is None:
+                self._send(200, {"ok": False, "error": "That pack is not in rag-packs/.", "file": None})
+                return
+            payload["version"] = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
+            png = build_rag_cartridge_png(payload)
+            if len(png) > RAG_CARTRIDGE_MAX_BYTES:
+                self._send(200, {"ok": False, "error": "This pack is too big for a picture — its cartridge would run " + str(len(png)) + " bytes against the " + str(RAG_CARTRIDGE_MAX_BYTES) + "-byte ceiling. Use the ZIP export for this one; nothing was written.", "file": None})
+                return
+            os.makedirs(RAG_EXPORTS_DIR, exist_ok=True)
+            fname = slug + "-cartridge.png"
+            with open(os.path.join(RAG_EXPORTS_DIR, fname), "wb") as f:
+                f.write(png)
+            self._send(200, {"ok": True, "error": None, "file": fname, "size": len(png)})
+        elif self.path == "/api/rag/install-cartridge":
+            # Install a pack from its picture alone (issue #93):
+            # the dashboard sends the picture's bytes base64'd;
+            # the payload validates and installs through the one
+            # cartridge path, index built locally at install.
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
+                return
+            if len(raw) > RAG_CARTRIDGE_MAX_BYTES:
+                self._send(200, {"ok": False, "error": "That file is larger than a knowledge cartridge may be (" + str(RAG_CARTRIDGE_MAX_BYTES) + " bytes) — nothing was installed."})
+                return
+            payload, perr = parse_rag_cartridge_png(raw)
+            if payload is None:
+                self._send(200, {"ok": False, "error": perr})
+                return
+            slug, ierr = install_rag_cartridge(payload)
+            if slug is None:
+                self._send(200, {"ok": False, "error": ierr})
+                return
+            self._send(200, {"ok": True, "error": None, "slug": slug})
         elif self.path == "/api/rag/publish":
             # Publish to GitHub: upload the export's exact file set
             # to a repo on the signed-in account (created when
-            # missing, navi-rag topic applied). Navi never releases.
+            # missing, navi-rag topic applied), and — since
+            # 0.1.9e — the tag and the PUBLISHED release too,
+            # with the knowledge cartridge attached. Publish
+            # does everything; there is no manual release step.
             data = self._body()
             slug = os.path.basename(str(data.get("slug") or ""))
             version = str(data.get("version") or "0.1.0").strip()[:40] or "0.1.0"
@@ -12866,7 +16581,36 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 index = _rag_pack_index(slug) or {}
                 repo_name = str(data.get("repo_name") or "").strip() or (index.get("name") or slug)
-                result = github_publish_files(repo_name, files, "navi-rag", index.get("description") or "")
+                # The knowledge cartridge rides along: at the repo
+                # root as the pack's picture, and attached to the
+                # release. A pack too big for a picture publishes
+                # without one, and says so in the result.
+                asset_skip = None
+                cart_name = slug + "-cartridge.png"
+                cart_png = None
+                try:
+                    cart_png = build_rag_cartridge_png(rag_cartridge_payload(slug))
+                    if len(cart_png) > RAG_CARTRIDGE_MAX_BYTES:
+                        asset_skip = ("The pack is too big for a picture ("
+                                      + str(len(cart_png)) + " bytes against the "
+                                      + str(RAG_CARTRIDGE_MAX_BYTES) + "-byte ceiling), so the release carries no cartridge — the files and documents are all there. The ZIP export carries the pack whole.")
+                        cart_png = None
+                except Exception as e:
+                    cart_png = None
+                    asset_skip = "The knowledge cartridge could not be built (" + str(e) + "), so the release carries no cartridge — the files and documents are all there."
+                if cart_png:
+                    files = files + [(cart_name, cart_png)]
+                _rreadme = next((d for a, d in files if a == "README.md"), "")
+                release = {
+                    "version": version,
+                    "title": (index.get("name") or slug) + " v" + version.lstrip("v"),
+                    "notes": _rreadme if isinstance(_rreadme, str) else "",
+                    "assetName": cart_name if cart_png else "",
+                    "assetData": cart_png,
+                }
+                result = github_publish_files(repo_name, files, "navi-rag", index.get("description") or "", release)
+                if asset_skip and result.get("ok"):
+                    result["assetSkipped"] = asset_skip
                 self._send(200, result)
         elif self.path == "/api/rag/readme":
             # The effective README for the editor: the operator's
@@ -12925,7 +16669,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": str(e)})
             else:
                 repo_name = str(data.get("repo_name") or "").strip() or chip.get("name") or ""
-                result = github_publish_files(repo_name, files, "navi-chips", chip.get("description") or "")
+                _png = next(((a, d) for a, d in files if a.endswith(".png") and isinstance(d, (bytes, bytearray))), (None, None))
+                _readme = next((d for a, d in files if a == "README.md"), "")
+                release = {
+                    "version": version,
+                    "title": (chip.get("name") or "Chip") + " v" + version.lstrip("v"),
+                    "notes": _readme if isinstance(_readme, str) else "",
+                    "assetName": _png[0] or "",
+                    "assetData": _png[1],
+                }
+                result = github_publish_files(repo_name, files, "navi-chips", chip.get("description") or "", release)
                 self._send(200, result)
         elif self.path == "/api/chips/readme":
             data = self._body()
@@ -12958,6 +16711,84 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "error": None})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)})
+        elif self.path == "/api/deck/install":
+            # Drop-to-install on ChipDeck (0.1.9e, #94): one door
+            # for every picture — the payload keyword inside the
+            # PNG says what it is, and each kind installs through
+            # its own kind's one path (chip picture install, the
+            # knowledge-cartridge path, the Mesh card pairing).
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
+                return
+            keys = _png_text_keywords(raw)
+            if "navi-mesh-card" in keys:
+                peer, perr = parse_mesh_card_png(raw)
+                if peer is None:
+                    self._send(200, {"ok": False, "error": perr})
+                    return
+                err = mesh_add_peer(cfg, peer)
+                if err:
+                    self._send(200, {"ok": False, "error": err})
+                    return
+                # The card's picture joins the binder's card folder
+                # (the backup's naming: peer-<node>.png) — pairing
+                # through the Deck keeps the picture it paired from,
+                # exactly as a backup restore lands it.
+                try:
+                    os.makedirs(MESH_CARDS_DIR, exist_ok=True)
+                    cname = "peer-" + str(peer.get("nodeId") or "card")[:12] + ".png"
+                    with open(os.path.join(MESH_CARDS_DIR, cname), "wb") as f:
+                        f.write(raw)
+                except Exception:
+                    pass
+                mesh_probe_peers_soon()
+                self._send(200, {"ok": True, "error": None, "kind": "mesh", "name": peer.get("name") or ""})
+                return
+            if "navi-rag" in keys:
+                payload, perr = parse_rag_cartridge_png(raw)
+                if payload is None:
+                    self._send(200, {"ok": False, "error": perr})
+                    return
+                slug, ierr = install_rag_cartridge(payload)
+                if slug is None:
+                    self._send(200, {"ok": False, "error": ierr})
+                    return
+                self._send(200, {"ok": True, "error": None, "kind": "rag", "name": payload.get("name") or slug})
+                return
+            if "navi-chip" in keys:
+                payload = parse_cartridge_png(raw)
+                if payload is None:
+                    self._send(200, {"ok": False, "error": "That picture's chip data could not be read — it may have been recompressed on its way here, which strips the data out. Send the original file inside a .zip instead."})
+                    return
+                slug = chip_slug(payload["name"])
+                filename = slug + ".png"
+                if os.path.isfile(os.path.join(CHIPS_DIR, filename)):
+                    self._send(200, {"ok": False, "error": payload["name"] + " is already on this machine — its picture is in the chips folder."})
+                    return
+                os.makedirs(CHIPS_DIR, exist_ok=True)
+                with open(os.path.join(CHIPS_DIR, filename), "wb") as f:
+                    f.write(raw)
+                rows = [r for r in load_chip_installs() if r.get("full_name") != "local/" + slug]
+                rows.append({
+                    "full_name": "local/" + slug,
+                    "name": payload["name"],
+                    "html_url": "",
+                    "installed_tag": None,
+                    "installed_ref": "chip " + filename + " (from its picture)",
+                    "installed_pushed_at": None,
+                    "installed_at": _now_iso(),
+                    "local_file": filename,
+                    "requirements": list(payload.get("requirements") or []),
+                })
+                save_chip_installs(rows)
+                self._send(200, {"ok": True, "error": None, "kind": "chip", "name": payload["name"], "version": str(payload.get("version") or "")})
+                return
+            self._send(200, {"ok": False, "error": "That picture carries nothing the binder can slot in — no chip, knowledge cartridge, or Mesh card data inside it. A picture that was recompressed on its way here loses its data while looking the same; send the original inside a .zip."})
         elif self.path == "/api/chips/install":
             # Installing a chip means the chip itself lands here:
             # its source is downloaded from the repo at the ref
@@ -13003,7 +16834,7 @@ class Handler(BaseHTTPRequestHandler):
                         why = "its cartridge could not be read back (unparseable cartridge)"
                     self._send(200, {"ok": False, "error": "The chip landed on disk as " + filename + " but does not list: " + why + ". Nothing was kept as installed."})
                     return
-                self._send(200, {"ok": True, "error": None})
+                self._send(200, {"ok": True, "error": None, "version": str(payload.get("version") or "")})
         elif self.path == "/api/chips/update":
             data = self._body()
             full = str(data.get("full_name") or "")
@@ -13068,6 +16899,19 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(os.path.join(CHIPS_DIR, target["local_file"]))
                 except Exception:
                     pass
+            elif full.startswith("local/"):
+                # 0.1.9e audit fix: a chip dropped into chips/ by
+                # hand has NO install record, so the record-driven
+                # delete above removed nothing while the UI said
+                # "Deleted" — the cartridge stayed on the shelf.
+                # A local/ delete names the file by its stem; take
+                # the picture with the (absent) record.
+                _stem = re.sub(r"[^a-z0-9-]+", "-", full[len("local/"):].lower()).strip("-")
+                if _stem:
+                    try:
+                        os.remove(os.path.join(CHIPS_DIR, _stem + ".png"))
+                    except Exception:
+                        pass
             self._send(200, {"ok": True, "error": None})
         elif self.path == "/api/chips/create":
             # Chip Studio: forge a new chip into a .png chip —
@@ -13079,12 +16923,19 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not code.strip():
                 self._send(200, {"ok": False, "error": "A chip needs a name and code.", "filename": None})
             else:
+                icon_rows, icon_err = _payload_icon(data)
+                if icon_err:
+                    self._send(200, {"ok": False, "error": icon_err, "filename": None})
+                    return
                 payload = {
                     "name": name,
                     "description": str(data.get("description") or "")[:500],
                     "code": code[:200000],
                     "output": str(data.get("output") or "")[:5000],
                     "files": _valid_chip_files(data.get("files"), code[:200000]),
+                    "glyph": str(data.get("glyph") or "")[:40],
+                    "version": str(data.get("version") or "")[:40],
+                    "icon": icon_rows,
                 }
                 slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "chip"
                 filename = slug + ".png"
@@ -13142,6 +16993,207 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/chats/sync":
+            # Write-through (#139): the writing window's whole set,
+            # authoritative for the store it owns.
+            data = self._body()
+            rows = data.get("chats") if isinstance(data.get("chats"), list) else []
+            ups = data.get("uploads") if isinstance(data.get("uploads"), list) else None
+            self._send(200, chats_replace_all(rows, ups))
+        elif self.path == "/api/chats/put":
+            data = self._body()
+            saved = chat_write(data.get("chat") if isinstance(data.get("chat"), dict) else None)
+            if saved is None:
+                self._send(400, {"ok": False, "error": "That chat record was refused — it needs a usable id and a messages list."})
+            else:
+                self._send(200, {"ok": True, "chat": saved})
+        elif self.path == "/api/chats/delete":
+            data = self._body()
+            self._send(200, {"ok": chat_delete(data.get("id"))})
+        elif self.path == "/api/cases/create":
+            data = self._body()
+            detail, err = case_create(data.get("name"), data.get("client"), data.get("scope"))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                # Build 15 (#161): a case is born with its chat.
+                chat = case_chat_ensure(detail["slug"])
+                detail["chatId"] = chat["id"] if chat else None
+                self._send(200, {"ok": True, "case": detail})
+        elif self.path == "/api/cases/file":
+            data = self._body()
+            filed, err = case_file_entry(str(data.get("case") or ""), str(data.get("kind") or "finding"),
+                                         data.get("title"), data.get("body"),
+                                         str(data.get("severity") or "info"), data.get("internal") is True)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "filed": filed})
+        elif self.path == "/api/cases/evidence":
+            data = self._body()
+            try:
+                raw = base64.b64decode(str(data.get("dataBase64") or ""))
+            except Exception:
+                raw = b""
+            saved, err = case_add_evidence(str(data.get("case") or ""), data.get("name"), raw)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "evidence": saved})
+        elif self.path == "/api/cases/report":
+            data = self._body()
+            text, withheld, err = case_report(str(data.get("case") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "report": text, "withheld": withheld})
+        elif self.path == "/api/cases/open":
+            data = self._body()
+            slug = str(data.get("case") or "")
+            cfg2 = load_config()
+            block = cfg2.get("casefiles") if isinstance(cfg2.get("casefiles"), dict) else {}
+            chat_id = None
+            if slug and _case_manifest(slug) is not None:
+                block["open"] = slug
+                # Build 15 (#161): opening a case ensures its
+                # chat — created on first open, returned to after.
+                chat = case_chat_ensure(slug)
+                chat_id = chat["id"] if chat else None
+            else:
+                block.pop("open", None)
+                slug = ""
+            cfg2["casefiles"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "open": slug, "chatId": chat_id})
+        elif self.path == "/api/cases/chat":
+            # Build 15 (#161): the case chat's door — ensure the
+            # tied chat and hand back its id, for the Case Files
+            # view's jump into the room.
+            data = self._body()
+            slug = str(data.get("case") or "")
+            chat = case_chat_ensure(slug) if slug else None
+            if chat is None:
+                self._send(200, {"ok": False, "error": "No such case."})
+            else:
+                self._send(200, {"ok": True, "chatId": chat["id"], "chat": chat})
+        elif self.path == "/api/cases/delete":
+            # Build 15 (#163): delete is complete — the case, all
+            # its Vault files, and its tied chat. The dashboard's
+            # confirm names all of it (and the backup truth)
+            # before this is ever called.
+            data = self._body()
+            gone, err = case_delete(str(data.get("case") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "deleted": gone})
+        elif self.path == "/api/intel/refresh":
+            # Build 15 (#165): a manual cycle, run on the engine's
+            # own thread — the response never waits on a feed.
+            self._send(200, INTEL.refresh_now())
+        elif self.path == "/api/intel/watchlist":
+            data = self._body()
+            terms = data.get("terms")
+            if not isinstance(terms, list):
+                self._send(200, {"ok": False, "error": "The watchlist rides as a list of terms."})
+            else:
+                cfg2 = load_config()
+                block = cfg2.get("intel") if isinstance(cfg2.get("intel"), dict) else {}
+                block["watchlist"] = [str(t).strip() for t in terms if str(t).strip()][:40]
+                cfg2["intel"] = block
+                save_config(cfg2)
+                try:
+                    INTEL.compute_matches()
+                except Exception:
+                    pass
+                self._send(200, {"ok": True, "watchlist": intel_settings(cfg2)["watchlist"]})
+        elif self.path == "/api/intel/settings":
+            data = self._body()
+            cfg2 = load_config()
+            block = cfg2.get("intel") if isinstance(cfg2.get("intel"), dict) else {}
+            if "enabled" in data:
+                block["enabled"] = data.get("enabled") is not False
+            if "collectorPeer" in data:
+                block["collectorPeer"] = str(data.get("collectorPeer") or "").strip()
+            if "fallbackLocal" in data:
+                block["fallbackLocal"] = data.get("fallbackLocal") is True
+            if "cadenceHours" in data:
+                block["cadenceHours"] = _mesh_int(data.get("cadenceHours"), 6)
+            if isinstance(data.get("sources"), dict):
+                src = block.get("sources") if isinstance(block.get("sources"), dict) else {}
+                for k in ("nvd", "kev", "epss", "cisa", "rss"):
+                    if k in data["sources"]:
+                        src[k] = data["sources"][k] is not False
+                block["sources"] = src
+            cfg2["intel"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "intel": intel_settings(cfg2)})
+        elif self.path == "/api/intel/file":
+            # Build 15 (#165 × #161): file an intel record into a
+            # case as a finding. The citation travels in the note
+            # itself — CVE ID and the digest's stamp — so case
+            # exports carry it without the Center existing there.
+            data = self._body()
+            slug = str(data.get("case") or "")
+            cid = str(data.get("cve") or "").upper()
+            item = None
+            try:
+                item = INTEL.item(cid)
+            except Exception:
+                item = None
+            if item is None:
+                self._send(200, {"ok": False, "error": "That record is not in the local intel store."})
+            elif _case_manifest(slug) is None:
+                self._send(200, {"ok": False, "error": "No such case."})
+            else:
+                gen_at = ""
+                coll = ""
+                try:
+                    with open(INTEL.digest_path, encoding="utf-8") as f:
+                        _dg = json.load(f)
+                    gen_at = str(_dg.get("generated_at") or "")
+                    coll = str((_dg.get("collector") or {}).get("name") or "")
+                except Exception:
+                    gen_at = ""
+                cvss = item.get("cvss")
+                sev = "info"
+                if isinstance(cvss, (int, float)):
+                    sev = "critical" if cvss >= 9 else "high" if cvss >= 7 else "medium" if cvss >= 4 else "low"
+                body_lines = [
+                    item.get("title") or cid, "",
+                    item.get("description") or "", "",
+                    "- **CVE:** " + cid,
+                    "- **CVSS:** " + (str(cvss) if cvss is not None else "—") + ((" (" + item["cvssSeverity"] + ")") if item.get("cvssSeverity") else ""),
+                    "- **EPSS:** " + (str(item["epss"]) if item.get("epss") is not None else "—"),
+                    "- **Known-exploited (CISA KEV):** " + ("yes — remediation due " + (item.get("kevDue") or "?") if item.get("kev") else "no"),
+                    "- **Products (CPE):** " + (", ".join(item.get("products") or []) or "—"),
+                    "",
+                    "Filed from the Threat Intelligence Center — " + cid
+                    + ", per the intel digest generated " + (gen_at or "at an unstamped time")
+                    + ((" by " + coll) if coll else "")
+                    + ". Sources: NVD / CISA KEV / EPSS, as stamped in the Center.",
+                ]
+                refs = item.get("refs") or []
+                if refs:
+                    body_lines += ["", "References: " + " · ".join(refs[:5])]
+                filed, err = case_file_entry(slug, "finding", "Intel — " + cid, "\n".join(body_lines), sev, False)
+                if err:
+                    self._send(200, {"ok": False, "error": err})
+                else:
+                    self._send(200, {"ok": True, "filed": filed})
+        elif self.path == "/api/github/badge-sync/start":
+            # #136: slotting the Operator Badge pulls the latest
+            # backup into a preview on a live operation card. The
+            # badge authenticates nothing; the sign-in is the key.
+            data = self._body()
+            dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None
+            self._send(200, badge_sync_start(load_config(), dash))
+        elif self.path == "/api/github/badge-sync/apply":
+            data = self._body()
+            self._send(200, badge_sync_apply(load_config(), str(data.get("operationId") or "")))
+        elif self.path == "/api/github/badge-sync/dismiss":
+            data = self._body()
+            self._send(200, badge_sync_dismiss(str(data.get("operationId") or "")))
         elif self.path == "/api/github/backup":
             data = self._body()
             dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None
@@ -13332,6 +17384,11 @@ def watchdog(started_mtime):
 
 if __name__ == "__main__":
     cfg = load_config()
+    # Automatic profiling (Build 14, #157): a config with no
+    # hardware profile profiles this machine once, here, before
+    # anything reads the runtime settings — guarded inside, so a
+    # failure leaves the fluid-floor behavior exactly as before.
+    cfg = auto_profile_on_startup(cfg)
     # The port is this build's own constant (BRIDGE_PORT), never the
     # config's: a navi.config.json carried across from an older
     # package build records that build's port, and honoring it once
@@ -13418,6 +17475,37 @@ if __name__ == "__main__":
     # runs whether a backup is due on the operator's chosen interval,
     # and runs it when signed in. Daemon thread; dies with the bridge.
     threading.Thread(target=github_auto_backup_loop, daemon=True).start()
+    # Scheduled warm (Build 14, #157): checks runtime.warm_at once
+    # a minute and, at the configured minute, starts + warms a
+    # llamafile that is not answering. Daemon thread; dies with
+    # the bridge; inert while warm_at is unset.
+    threading.Thread(target=_warm_at_loop, daemon=True).start()
+    # Guardian (Build 14, #156): the headroom sampler starts with
+    # the bridge's other background services whenever its saved
+    # setting is on (headless included — this block runs before
+    # the bind either way). The engine re-checks enabled on every
+    # tick regardless, so a settings save can quiet it live.
+    try:
+        if guardian_settings(cfg)["enabled"]:
+            GUARDIAN.start()
+            print("Guardian is ON: watching headroom (reserve "
+                  + str(guardian_settings(cfg)["reserveMb"]) + " MB).", flush=True)
+    except Exception:
+        pass
+    # Threat Intelligence Center (Build 15, #165): the
+    # collection scheduler starts with the bridge's other
+    # background services. The engine re-checks its enabled
+    # setting every cycle, and a node named as a receiver pulls
+    # its collector's digest over the Mesh door instead of
+    # polling the feeds itself.
+    try:
+        if intel_settings(cfg)["enabled"]:
+            INTEL.start()
+            print("Threat Intelligence Center is ON: "
+                  + ("receiving from a Mesh collector." if intel_settings(cfg)["collectorPeer"]
+                     else "collecting on the scheduled cadence."), flush=True)
+    except Exception:
+        pass
     # Local server (build .59): the saved choice picks the bind
     # for THIS process, once, here. ON binds every interface so
     # the LAN can reach the port; OFF keeps the loopback-only

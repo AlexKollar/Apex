@@ -618,7 +618,7 @@ pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
 
 if [ -n "$FRESH" ]; then
   echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
-  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, and your Soul/Memory documents are kept)"
+  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, your chats, and your Soul/Memory documents are kept)"
   # Stash the operator's own state before the wipe: the installed
   # chips (chips, installs, workflows) and the Soul/Memory
   # documents. A first install has none of these — the stash stays
@@ -649,6 +649,12 @@ if [ -n "$FRESH" ]; then
   # holds. The ledger rides with it; it is metadata, not content.
   if [ -d "$INSTALL_DIR/config/mesh" ]; then
     $SUDO cp -r "$INSTALL_DIR/config/mesh" "$STASH_DIR/mesh" 2>/dev/null || true
+  fi
+  # The server-side chat store (config/chats/, Build 12, #139)
+  # rides the same keep-list: the threads are the operator's
+  # history with her, kept the way the Mesh identity is kept.
+  if [ -d "$INSTALL_DIR/config/chats" ]; then
+    $SUDO cp -r "$INSTALL_DIR/config/chats" "$STASH_DIR/chats" 2>/dev/null || true
   fi
   # Her downloaded speech models and her call log are hers too —
   # they ride the same keep-list. The voice venv rides along as
@@ -696,6 +702,11 @@ if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/config"
     $SUDO cp -r "$STASH_DIR/mesh" "$INSTALL_DIR/config/mesh"
     echo "    the Mesh identity home (config/mesh/) restored across the fresh install"
+  fi
+  if [ -d "$STASH_DIR/chats" ]; then
+    $SUDO mkdir -p "$INSTALL_DIR/config"
+    $SUDO cp -r "$STASH_DIR/chats" "$INSTALL_DIR/config/chats"
+    echo "    the chat store (config/chats/) restored across the fresh install"
   fi
   if [ -d "$STASH_DIR/voice-models" ]; then
     $SUDO mkdir -p "$INSTALL_DIR/voice"
@@ -758,7 +769,45 @@ fi
 
 echo "==> Installing the dashboard, bridge, icon, and config"
 $SUDO cp -r app/* "$INSTALL_DIR/app/"
-$SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
+# Issue #104 (Build 6): the bridge is staged under a pending
+# name, NOT installed — the running version witnesses (bridge.py
+# with its baked-in build sequence, the config's version record,
+# and the VERSION file) all keep naming the OLD build until the
+# version flip at the very end of this installer lands them
+# together. A failure anywhere before the flip therefore leaves
+# an install that honestly reports its old version, and Check
+# for updates re-offers the update instead of crying current.
+$SUDO cp bridge.py "$INSTALL_DIR/bridge.py.pending"
+# Guardian (Build 14, #156): the bridge imports guardian.py from
+# beside itself, so the engine lands in the install root next to
+# bridge.py. It is a plain source file like the assets above —
+# a copy of the sources missing it (a partial tree, say) must not
+# abort the install: say so in plain words and carry on; the
+# bridge runs with its inert Guardian fallback until Apex is
+# installed from a tree that carries the engine.
+if [ -f guardian.py ]; then
+  $SUDO cp guardian.py "$INSTALL_DIR/guardian.py"
+else
+  echo "    note: the Guardian engine file (guardian.py) is missing from this copy of the"
+  echo "          sources. The install continues without it — the bridge will run, but"
+  echo "          Guardian's headroom protection stays off until Apex is installed from"
+  echo "          a copy of the sources that carries guardian.py (the release zip does)."
+fi
+# Threat Intelligence Center (Build 15, #165): the bridge
+# imports intel.py from beside itself, so the engine lands in
+# the install root next to bridge.py, the Guardian's way — a
+# copy of the sources missing it must not abort the install:
+# say so in plain words and carry on; the bridge runs with the
+# Center dark (its inert fallback) until Apex is installed from
+# a tree that carries the engine.
+if [ -f intel.py ]; then
+  $SUDO cp intel.py "$INSTALL_DIR/intel.py"
+else
+  echo "    note: the Threat Intelligence Center engine file (intel.py) is missing from"
+  echo "          this copy of the sources. The install continues without it — the bridge"
+  echo "          will run, but the Center stays dark until Apex is installed from a copy"
+  echo "          of the sources that carries intel.py (the release zip does)."
+fi
 # The VERSION file is the app's single source of truth for its own
 # version — the bridge reads it on every /api/status and the Updater
 # compares it against the latest release. It is app code, not
@@ -768,7 +817,11 @@ $SUDO cp bridge.py "$INSTALL_DIR/bridge.py"
 # file written by whichever build installed first — and the menu
 # footer flashed the new build's baked 0.1.0 at first paint before
 # the status poll "reverted" it to that stale 1.0.0.)
-$SUDO cp VERSION "$INSTALL_DIR/VERSION"
+# Issue #104 (Build 6): staged as VERSION.pending like the bridge
+# — it becomes the install's VERSION only in the flip at the end,
+# and it is the LAST file the flip moves, because it is the first
+# witness every reader asks.
+$SUDO cp VERSION "$INSTALL_DIR/VERSION.pending"
 $SUDO cp start.sh "$INSTALL_DIR/start.sh"
 $SUDO chmod +x "$INSTALL_DIR/start.sh"
 $SUDO cp run-llamafile.sh "$INSTALL_DIR/run-llamafile.sh"
@@ -796,6 +849,43 @@ else
   echo "          the binary icon files; they ship inside the release zip. The install continues"
   echo "          without it, and the app and its menu entry will use a fallback icon."
 fi
+# Navi's chat portrait gets the same treatment as the icon — and
+# for the same reason. The bridge serves it from the install tree
+# (GET /assets/navi-portrait.jpg) for her chat gutter faces and
+# the presence header, and a git clone carries none of the binary
+# asset files (they ship only inside the release zip), so a clone
+# install reaches this line with no portrait to copy: say so in
+# plain words and carry on — chat shows without her picture, and
+# nothing else about the install changes. (Build 7 shipped the
+# portrait inside the zip but this copy step did not exist yet,
+# so Build 7 installs served no picture at all.)
+if [ -f assets/navi-portrait.jpg ]; then
+  $SUDO cp assets/navi-portrait.jpg "$INSTALL_DIR/assets/navi-portrait.jpg"
+else
+  echo "    note: Navi's chat portrait (assets/navi-portrait.jpg) is missing from this copy"
+  echo "          of the sources. That is expected when installing from a git clone — the"
+  echo "          clone does not carry the binary asset files; they ship inside the release"
+  echo "          zip. The install continues without it, and chat will show without her"
+  echo "          picture until Apex is installed from the release zip."
+fi
+# The Row's icon, worn by the DHD door as its favicon (Build 13,
+# issue #151), gets the same treatment: favicon-scale derivatives
+# of the Nocturne Row site's logo, served by the bridge from the
+# install tree (GET /favicon-32.png and /apple-touch-icon.png).
+# A git clone carries none of the binary asset files, so a clone
+# install reaches this line with no icons to copy: say so in
+# plain words and carry on — the door simply wears no icon.
+for icon_file in favicon-32.png icon-180.png; do
+  if [ -f "assets/$icon_file" ]; then
+    $SUDO cp "assets/$icon_file" "$INSTALL_DIR/assets/$icon_file"
+  else
+    echo "    note: the DHD door icon (assets/$icon_file) is missing from this copy of the"
+    echo "          sources. That is expected when installing from a git clone — the clone"
+    echo "          does not carry the binary asset files; they ship inside the release"
+    echo "          zip. The install continues without it, and the door wears no icon"
+    echo "          until Apex is installed from the release zip."
+  fi
+done
 if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
   $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
 fi
@@ -826,19 +916,11 @@ cfg["startup"] = "on-ui-launch" if mode == "launch" else "on-boot"
 cfg.setdefault("bridge", {})["host"] = "127.0.0.1"
 cfg["bridge"]["port"] = port
 cfg["install_dir"] = install_dir
-# The config's recorded version is re-stamped from this package's
-# VERSION file as well: the config is carried across installs, so
-# without this its version stays whatever the first-ever install
-# recorded (the retired 1.0.0 placeholder) long after the app has
-# moved on — the stale record behind the menu footer's flash.
-try:
-    with open("VERSION") as f:
-        ver_parts = f.read().strip().splitlines()[0].split()
-    if ver_parts:
-        cfg["version"] = ver_parts[0]
-        cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
-except Exception:
-    pass
+# The config's recorded version is NOT stamped here (issue
+# #104, Build 6): it is one of the version witnesses, so it is
+# stamped in the flip at the end of this installer, from the
+# staged VERSION.pending — stamping it here would let a later
+# failure leave the witnesses disagreeing about the build.
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PY
@@ -1067,13 +1149,27 @@ else
 fi
 
 if [ "$STARTUP" = "boot" ]; then
-  echo "==> Registering the llamafile server as a systemd user service"
+  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
   sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-bridge.service > "$UNIT_DIR/navi-bridge.service"
   systemctl --user daemon-reload
   systemctl --user enable --now navi-llamafile.service
-  echo "    service enabled: navi-llamafile.service"
+  systemctl --user enable --now navi-bridge.service
+  echo "    services enabled: navi-llamafile.service, navi-bridge.service"
+  # User services start at LOGIN, not boot, unless lingering is
+  # on for the user. Try to enable it; when this session cannot,
+  # print the exact command instead of leaving the operator to
+  # believe boot-start works when it does not (Build 12, #142).
+  if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
+    echo "    linger: already on — the services start at boot"
+  elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
+    echo "    linger: enabled — the services start at boot, before any login"
+  else
+    echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
+    echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
+  fi
 else
   echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
 fi
@@ -1370,6 +1466,36 @@ if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
   echo "    removed: $AUTOSTART_DIR/navi-apex.desktop (the tray autostart an earlier build registered)"
 fi
 
+
+# --- VERSION FLIP (issue #104) ---
+# The install's final act, deliberately last: everything above
+# this line can fail under set -e and leave an install whose
+# witnesses all still name the OLD build, so Check for updates
+# honestly re-offers and a retry starts clean. The flip lands
+# the witnesses in an order that is safe to interrupt: the
+# config's version record first (it is only the fallback
+# witness), the staged bridge second (its baked-in build
+# sequence becomes the disk truth), and the VERSION file LAST
+# of all — it is the primary witness, the one the bridge reads
+# on every /api/status, so it is the last thing that may change.
+echo "==> Stamping the new version (the install's final step)"
+$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$INSTALL_DIR/VERSION.pending" <<'PY'
+import json, sys
+path, ver_path = sys.argv[1], sys.argv[2]
+with open(ver_path) as f:
+    ver_parts = f.read().strip().splitlines()[0].split()
+if ver_parts:
+    with open(path) as f:
+        cfg = json.load(f)
+    cfg["version"] = ver_parts[0]
+    cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+PY
+$SUDO mv "$INSTALL_DIR/bridge.py.pending" "$INSTALL_DIR/bridge.py"
+$SUDO mv "$INSTALL_DIR/VERSION.pending" "$INSTALL_DIR/VERSION"
+echo "    version stamped: $(head -n 1 "$INSTALL_DIR/VERSION")"
+# --- END VERSION FLIP ---
 
 # --- Relaunch what the install stopped, and verify it (build
 # .91, issue #91, Cause 3) ---
