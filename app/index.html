@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Apex</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <style>
   :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   /* Curated themes (Settings): the same variables, eleven palettes.
@@ -411,6 +413,21 @@
   #app.vault-focus .vault-pair .vault-files { display:none; }
   #app.vault-focus .vault-pair .vault-editor { grid-column:1; }
   #vault-focus-btn { min-width:40px; min-height:40px; }
+  /* Studio focus mode (0.1.9e Build 13, issue #146): the
+     Vault's #135 idiom in the same shape — the app rail, the
+     status column and the presence bar yield, and inside the
+     Studio its header rows, pane switch and docs tail yield
+     with them, leaving the panes and (on a phone) the thumb
+     action bar. The state lives in studioFocus and nowhere
+     else; the class on #app is render()'s reflection of it. */
+  #app.studio-focus, #app.studio-focus.closed, #app.studio-focus.no-status, #app.studio-focus.no-status.closed { grid-template-columns:minmax(0,1fr); }
+  #app.studio-focus nav, #app.studio-focus aside { display:none; }
+  #app.studio-focus main { grid-column:1 / -1; }
+  #app.studio-focus #presence-bar { display:none; }
+  #app.studio-focus .studio-head, #app.studio-focus .studio-switch, #app.studio-focus .studio-tail { display:none; }
+  #app.studio-focus #st-forge, #app.studio-focus .studio-made { display:none; }
+  #app.studio-focus .studio-root { height:100%; display:flex; flex-direction:column; min-height:0; }
+  #app.studio-focus .studio-panes { flex:1 1 auto; min-height:0; overflow-y:auto; }
   .msg { margin-bottom:10px; } .msg .who { font-size:11px; color:var(--dim); letter-spacing:.1em; }
   /* Issue #116: chat faces — the gutter avatar rides a flex row;
      the presence header wears her bundled portrait. */
@@ -486,6 +503,49 @@
   @media (max-width: 800px) {
     .sleeve { flex:1 1 42%; }
     .deck-actions button, .deck-actions a { min-height:44px; }
+  }
+  /* Chip Studio phone elements (0.1.9e Build 13, issue #146):
+     rendered always, visible only at phone widths — above
+     800px the Studio is pixel-for-pixel the desktop it was. */
+  .studio-switch, .studio-actions, .studio-snips, .studio-ac, .studio-face-toggle, .studio-run-out { display:none; }
+  @media (max-width: 800px) {
+    /* One pane at a time under a full-width segmented switch;
+       the face as a collapsible strip; snippet shelf and an
+       autocomplete row as the primary input aids; Run / Forge /
+       Save in a bottom action bar that RESERVES its height in
+       the flow (the #133 line — nothing slides under fixed
+       chrome; the bar is a flex row of the bounded root, never
+       position:fixed). The frame reserves its true height:
+       head, strip, switch and bar are flex:0 rows and the
+       panes take exactly what remains, scrolling inside. */
+    #view-root:has(.studio-root) { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; display:flex; flex-direction:column; }
+    #view-root:has(.studio-root) > .tabbar { flex:0 0 auto; }
+    .studio-root { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+    #app.studio-focus .studio-root { height:auto; }
+    .studio-head { flex:0 0 auto; }
+    .studio-face { flex:0 0 auto; }
+    .studio-face-toggle { display:flex; width:100%; min-height:44px; align-items:center; margin-top:8px; }
+    .studio-face .studio-face-row { display:none; }
+    .studio-face.open .studio-face-row { display:flex; }
+    .studio-switch { display:flex; gap:6px; width:100%; box-sizing:border-box; flex:0 0 auto; margin-top:8px; }
+    .studio-switch button { flex:1 1 0; min-height:44px; }
+    .studio-switch button.act, .studio-switch button.ghost { min-height:44px; }
+    .studio-panes { flex:1 1 auto; min-height:0; overflow-y:auto; margin-top:8px; }
+    .studio-pane { display:none; }
+    .studio-pane.act { display:block; }
+    .studio-snips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+    .studio-snips button { min-height:44px; }
+    .studio-snips button.ghost { min-height:44px; }
+    .studio-ac { display:flex; gap:6px; flex-wrap:wrap; flex:0 0 auto; margin-top:8px; }
+    .studio-ac:empty { display:none; }
+    .studio-ac button { min-height:44px; }
+    .studio-ac button.ghost { min-height:44px; }
+    .studio-actions { display:flex; gap:8px; flex:0 0 auto; margin-top:8px; }
+    .studio-actions button { flex:1 1 0; min-height:48px; }
+    .studio-actions button.act, .studio-actions button.ghost { min-height:48px; }
+    .studio-run-out { display:block; }
+    #st-forge { display:none; }
+    .studio-root .ed-scroll { height:300px; }
   }
   .chips-label { color:var(--dim); font-size:11px; letter-spacing:.14em; flex:0 0 auto; }
   .chipbtn.chippill { height:32px; min-height:32px; margin:0; padding:0 12px; font-size:12px; display:inline-flex; align-items:center; flex:0 0 auto; }
@@ -659,8 +719,9 @@
      textarea, sticky line-number gutter (same construction as the
      space's editor). */
   .ed-wrap { position:relative; border:1px solid var(--line); border-radius:6px; background:#0b0f14; overflow:hidden; }
-  .ed-wrap.fs { position:fixed; inset:0; z-index:70; border-radius:0; display:flex; flex-direction:column; }
-  .ed-wrap.fs .ed-scroll { flex:1; height:auto; }
+  /* Build 13 (#146): the editor's old fixed-position fullscreen
+     (.ed-wrap.fs) is RETIRED — focus mode (#app.studio-focus,
+     beside the Vault's rules) is the one expand idiom app-wide. */
   .ed-guides, .ed-squigs, .ed-extras { position:absolute; top:0; left:0; right:0; bottom:0; pointer-events:none; overflow:hidden; }
   .ed-guides i { position:absolute; top:0; bottom:0; width:1px; background:var(--line); opacity:.45; }
   .ed-squigs i { position:absolute; height:3px; background:repeating-linear-gradient(45deg,#f87171 0 2px,transparent 2px 4px); }
@@ -1267,7 +1328,7 @@ var NAV_ICON_PATHS = {
   Memory: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
   RAG: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
   Vault: '<path d="M4 4a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2z"/><path d="M8 2v20"/><path d="M12 7h5"/><path d="M12 11h5"/>',
-  CaseFiles: '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7h16"/>',
+  CaseFiles: '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7h16"/><circle cx="16.6" cy="15.6" r="3.1"/><path d="M19 18l2.4 2.4"/>',
   Updater: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   GitHub: '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
   Settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -1526,8 +1587,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-11.912";
-var SHIPPED_BUILD_SEQ = 12;
+var BRIDGE_BUILD = "2026-11-11.913";
+var SHIPPED_BUILD_SEQ = 13;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -1725,6 +1786,7 @@ var githubPollTimer = null;
 var githubPreview = null;    // last import preview {ok, changes, backedUpAt}
 var githubApplied = null;    // last import apply answer
 function ghSetMsg(text, isError) { githubMsg = text || ""; githubError = !!isError; }
+var badgeSyncBusy = false;   // a badge-sync pull is in flight (Build 13, #136)
 function mockGithubLoad() {
   var d = { repoUrl: NAVI_REPO_URL, issuesUrl: NAVI_REPO_URL + "/issues", clientId: "", clientIdConfigured: false, signedIn: false, login: "", backupRepo: "navi-backup", backupPrivate: true, backupItems: GH_ITEMS.map(function (i) { return i.id; }), intervalDays: 1, lastBackupAt: null, lastBackupFileCount: null, lastBackupResult: "", lastImportAt: null, lastImportResult: "", hasBackup: false };
   try { var raw = localStorage.getItem("navi.github"); if (raw) { var p = JSON.parse(raw); for (var k in d) if (p[k] !== undefined) d[k] = p[k]; } } catch (e) {}
@@ -2236,7 +2298,10 @@ setInterval(function () {
     }).catch(function () {});
   }
 }, 800);
-var studioFs = false;        // studio editor fullscreen
+var studioFocus = false;     // studio focus mode (Build 13, #146 — the Vault's #135 idiom; replaces the retired editor fullscreen)
+var studioPane = "code";     // phone pane state (Build 13, #146): code | test — Face is the collapsible strip, not a pane
+var studioFaceOpen = false;  // phone face-strip expanded state (Build 13, #146)
+var studioRunOut = "";       // last phone Run result, shown in the Test pane (Build 13, #146)
 var studioWrap = false;      // studio editor word wrap
 var studioZoom = (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ? 16 : 12.5; // studio editor font size (px); touch starts at 16 so focusing the editor never triggers the browser's focus zoom
 var studioExtras = [];       // studio editor extra caret offsets (multi-cursor)
@@ -2253,8 +2318,16 @@ var STUDIO_COMMANDS = [
   ["duplicate", "Duplicate line"], ["moveup", "Move line up"], ["movedown", "Move line down"],
   ["comment", "Toggle comment"], ["goto", "Go to line…"], ["find", "Find in this file"],
   ["findall", "Find in all files"], ["wrap", "Toggle word wrap"], ["zoomin", "Zoom in"],
-  ["zoomout", "Zoom out"], ["fullscreen", "Toggle fullscreen"], ["clearcursors", "Clear extra cursors"]
+  ["zoomout", "Zoom out"], ["focus", "Toggle focus mode"], ["clearcursors", "Clear extra cursors"]
 ];
+var STUDIO_SNIPPETS = {
+  run: "def run(arguments=None):\n  navi_instance = navi_internal.navi_instance\n  \n",
+  import: "import navi_internal\n",
+  header: "command: str = \"\"\nuse: str = \"\"\n",
+  print: "navi_instance.print_message(\"\")",
+  llm: "navi_instance.llm_chat(\"\")",
+  user: "navi_instance.get_user()"
+};
 var studioMsg = "";
 var studioFind = "";         // find-bar query in the studio editor
 var wfData = null;           // live: last /api/workflows answer {workflows, chips}
@@ -2428,22 +2501,72 @@ function adoptDashboardSlice(d) {
   if (typeof d.operatorBadge === "string" && /^data:image\//.test(d.operatorBadge) && d.operatorBadge.length <= 420000) CONFIG.operatorBadge = d.operatorBadge;
   saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
 }
+// The badge slot intake (Build 13, issues #150 + #136): ONE
+// implementation shared by both Settings rooms — the Operator
+// card's slot and the GitHub Account sync card's slot read a
+// badge picture file, parse its navi-badge payload, and set
+// the SAME single badge state (CONFIG.operatorBadge) the
+// account sync consumes. Anything that is not an operator
+// badge is refused in plain words, and the badge held on this
+// machine — if any — is left exactly as it was.
+function badgeSlotFile(file, done) {
+  if (!file) { done(false, ""); return; }
+  var rd = new FileReader();
+  rd.onload = function () {
+    var url = String(rd.result || "");
+    var payload = badgeParse(url);
+    if (!payload) { done(false, "That file is not an Operator Badge — no navi-badge payload with kind \"operator-badge\" inside it. The badge held on this machine is untouched."); return; }
+    if (url.length > 420000) { done(false, "That badge picture is too large to keep — the badge state caps at the size a settings backup carries. The badge held on this machine is untouched."); return; }
+    CONFIG.operatorBadge = url;
+    saveCfg();
+    done(true, "Badge slotted — it says " + (payload.name || "(no name)") + (payload.node ? ", minted on node " + payload.node : "") + ". This machine holds one badge state, and the account sync uses this same badge.");
+  };
+  rd.onerror = function () { done(false, "That file could not be read — the badge held on this machine is untouched."); };
+  rd.readAsDataURL(file);
+}
 function ghBadgeSync() {
   if (CONFIG.backend !== "live") { ghSetMsg("Account sync runs against the live bridge — mock mode simulates backups themselves, not the pull.", false); render(); return; }
   if (!githubState || !githubState.signedIn) { ghSetMsg("Sign in first — the badge points, but the GitHub sign-in is the only key. Nothing was fetched.", true); render(); return; }
-  ghSetMsg("Slotting your badge…", false); render();
-  fetch("/api/github/badge-sync/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dashboard: ghDashboardSlice() }) })
+  if (badgeSyncBusy) return;
+  badgeSyncBusy = true;
+  // Build 13 (#136, the field round): the pull's progress and
+  // verdict live on the operation card in Chat, so pressing
+  // the button goes there AT PRESS TIME — Settings never sits
+  // spinning on a fetch whose answer lands in another room.
+  // The start carries a 45-second timeout: a bridge that does
+  // not answer in time fails in plain words in both rooms and
+  // frees the button (the bridge may still finish its pull;
+  // if its card lands, it is live in Chat, and nothing ever
+  // applies without a confirm on the card).
+  ghSetMsg("Pulling the latest backup — its preview and its confirm live on the sync card in Chat.", false);
+  goView("Chat");
+  var ctl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function () { ctl.abort(); }, 45000) : null;
+  fetch("/api/github/badge-sync/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dashboard: ghDashboardSlice() }), signal: ctl ? ctl.signal : undefined })
     .then(function (r) { return r.json(); })
     .then(function (j) {
+      if (timer) clearTimeout(timer);
+      badgeSyncBusy = false;
       var intro = j && j.ok
         ? "Your badge pointed the way and the sign-in did the unlocking — the latest backup's preview is on the card below. Nothing lands until you confirm it there; a thread both machines moved on will arrive whole, as a dated sibling, never merged away."
         : "The badge sync stopped at its first step — the card below has the reason, in plain words.";
+      ghSetMsg(j && j.ok ? "The latest backup's preview is on the sync card in Chat — nothing lands until you confirm there." : "The badge sync stopped at its first step — the card in Chat has the reason, in plain words.", !(j && j.ok));
       messages.push({ who: "NAVI", text: intro, exec: null, operation: (j && j.operation) || null });
       persist();
-      goView("Chat");
+      if (view === "Chat") render();
       if (j && j.operationId) watchOperation(j.operationId);
     })
-    .catch(function () { ghSetMsg("The bridge didn't answer — the sync never started.", true); render(); });
+    .catch(function (err) {
+      if (timer) clearTimeout(timer);
+      badgeSyncBusy = false;
+      var why = (err && err.name === "AbortError")
+        ? "The badge sync didn't answer within 45 seconds — the bridge may still be pulling the backup, and if its card lands in Chat it is live there; nothing applies without your confirm. The same note is in Settings, and the button is free to try again."
+        : "The bridge didn't answer — the sync never started.";
+      ghSetMsg(why, true);
+      messages.push({ who: "NAVI", text: why, exec: null, operation: null });
+      persist();
+      if (view === "Chat") render();
+    });
 }
 
 /* ------------------- Boot mode, read live (#142) ------------------- */
@@ -3412,6 +3535,14 @@ document.addEventListener("keydown", function (e) {
   if (e.key === "Escape" && vaultFocus && view === "Vault") { e.preventDefault(); e.stopImmediatePropagation(); vaultFocus = false; render(); }
 });
 
+// Studio focus mode's keyboard door (0.1.9e Build 13, issue
+// #146): the same one-press-one-thing discipline as the
+// Vault's above — Escape leaves Studio focus, only while
+// focus is on and the Studio is what is on screen.
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && studioFocus && view === "Chips" && chipsTab === "studio") { e.preventDefault(); e.stopImmediatePropagation(); studioFocus = false; render(); }
+});
+
 function stripLeadH1(md, rel) {
   // The Updater panel's header already names the release, so a
   // leading H1 that merely repeats it is skipped (build .72,
@@ -3570,7 +3701,7 @@ var DOC_PAGES = [
   "<li>It says what it does with <span class='mono'>use</span> — one short line.</li>" +
   "<li>It can list other names in <span class='mono'>aliases</span> and describe its inputs in <span class='mono'>params</span> (what <span class='mono'>-help</span> shows).</li>" +
   "<li>It defines <span class='mono'>run(arguments)</span> — the part Navi calls; <span class='mono'>arguments.text</span> is the words typed after the chip's name.</li></ol>" +
-  "<p>Through navi_instance a chip can <span class='mono'>print_message(text)</span> (show a line), <span class='mono'>llm_chat(text)</span> (ask her model), <span class='mono'>process_message(text)</span> (hand text to Navi as if typed), <span class='mono'>get_user()</span>/<span class='mono'>set_user(name)</span>, <span class='mono'>clear_terminal()</span>, and <span class='mono'>chat_with_navi()</span>. Every one of those functions is explained in full — what it takes, what it gives back, and when to reach for it — on this wiki's <b>Navi Chip Functions</b> page, in the sidebar. <b>Making one:</b></p><ol><li>Chips tab → Chip Studio.</li><li>Name it.</li><li>Write root.py.</li><li>Add helper files in the file list.</li><li>Forge chip.</li></ol><p>The whole file set packs into the chip picture. The editor colors code, guides indents, folds blocks, finds words in every file, saves on its own, underlines missing pieces, and goes full screen — its toolbar holds the rest (command palette, outline, zoom, wrap). The writing desk itself has its own page in the sidebar: <b>The Chip Studio editor</b>.</p></div>" },
+  "<p>Through navi_instance a chip can <span class='mono'>print_message(text)</span> (show a line), <span class='mono'>llm_chat(text)</span> (ask her model), <span class='mono'>process_message(text)</span> (hand text to Navi as if typed), <span class='mono'>get_user()</span>/<span class='mono'>set_user(name)</span>, <span class='mono'>clear_terminal()</span>, and <span class='mono'>chat_with_navi()</span>. Every one of those functions is explained in full — what it takes, what it gives back, and when to reach for it — on this wiki's <b>Navi Chip Functions</b> page, in the sidebar. <b>Making one:</b></p><ol><li>Chips tab → Chip Studio.</li><li>Name it.</li><li>Write root.py.</li><li>Add helper files in the file list.</li><li>Forge chip.</li></ol><p>The whole file set packs into the chip picture. The editor colors code, guides indents, folds blocks, finds words in every file, saves on its own, underlines missing pieces, and takes focus mode — the app's one expand idiom, the Vault's — which puts everything but the editor away; its toolbar holds the rest (command palette, outline, zoom, wrap). On a phone the Studio works one pane at a time — Face, Code, Test under a full-width switch — with the face as a collapsible strip, a snippet shelf and autocomplete over the keyboard, and Run, Forge and Save pinned to the thumb. The writing desk itself has its own page in the sidebar: <b>The Chip Studio editor</b>.</p></div>" },
   { id: "navi-functions", title: "Navi Chip Functions", related: ["chips-guide", "studio-editor"], html:
     "<div class='doc-sec'><h4>Navi Chip Functions — what a chip can call</h4>" +
   "<p>A chip does not run off on its own — it runs inside Navi, and everything it does with her goes through one doorway: <span class='mono'>navi_internal</span>, her own chip API. At the top of root.py the chip brings her in and takes hold of the live instance:</p><ul>" +
@@ -3596,7 +3727,8 @@ var DOC_PAGES = [
   "<p>The editor is the writing desk inside Chip Studio — the place chip code gets written. It looks plain on purpose: everything it does is one click or one key away, and this page names each thing in the order you will meet it.</p>" +
   "<p><b>These pages live in the Docs view.</b> This wiki's home is the Docs view — the main documentation window. Press <b>Pop out</b> at the top of the Docs view and the wiki detaches into its own window, open at the page you were reading, so you can keep it beside the editor or the chat while you work. <b>Pop back in</b> — in the popped window or in the Docs view holding its place — returns it to the Docs view, same page. The pop-out is always another window entirely — the app's own second window — never a panel inside this one; if a window host ever blocks it, the Docs view says so and offers a direct link that opens the wiki in a new window instead.</p>" +
   "<p><b>The file list.</b> On the left is the list of the chip's files. <span class='mono'>root.py</span> sits at the top — the main file, the one Navi runs. Click any file to open it. Buttons under the list add a new file, rename the open one, or delete it (root.py cannot be deleted — every chip needs its main file). A dot beside a file's name means “changed, not saved yet”. Everything in the list travels with the chip: forge the chip and all the files go inside the picture.</p>" +
-  "<p><b>Full screen.</b> The button in the toolbar with the four corners makes the editor fill the whole app window — room to think on a big chip. Press it again, or press <span class='mono'>Esc</span>, to shrink it back. Your place in the code does not move either way.</p>" +
+  "<p><b>Focus mode.</b> The button in the toolbar with the four corners puts everything but the editor away — the rail, the status column, the Studio's own header rows — room to think on a big chip. It is the same expand idiom the Vault uses; the app has exactly one. Press it again, or press <span class='mono'>Esc</span>, to bring the room back. Your place in the code does not move either way.</p>" +
+  "<p><b>On a phone</b> the Studio works one pane at a time — <b>Face</b>, <b>Code</b>, <b>Test</b> under a full-width switch — the face art as a collapsible strip, and Run, Forge and Save pinned in a bar at the thumb that reserves its own height in the layout, so nothing ever slides under it. A snippet shelf and an autocomplete row sit over the keyboard as the primary input aids. No desktop feature is cut to make room.</p>" +
   "<p><b>Reading the code.</b> The editor colors the code — names, words, and numbers each get their own color, so the shape of a line is visible at a glance. Thin vertical lines (<b>indent guides</b>) show where a block starts and ends. Click the small arrow beside a block to <b>fold</b> it away; click again to bring it back. Folding is only for your eyes — a save always keeps the whole file.</p>" +
   "<p><b>Finding things.</b> <b>Find</b> searches the open file, and can replace what it finds. <b>Find in all files</b> searches every file in the chip and lists the hits as file and line — click a hit to jump straight there. The <b>Outline</b> list names every function and class in the file; pick one to jump to it. The command palette also has <b>go to line</b> for when you know the number.</p>" +
   "<p><b>The red squiggles.</b> A wavy red line under code means the chip is missing something it needs — a file with no <span class='mono'>run()</span>, say. The bar under the editor says what is wrong, in words. Fix the words and the line goes away.</p>" +
@@ -3832,7 +3964,7 @@ var DOC_PAGES = [
   "<p>You pick how often: <b>every day, every 3 days, every 5 days, or every 7 days</b>. Navi checks the clock herself — when she starts, and while she is running — and when a backup is due and she is signed in, she runs it. That is the honest limit: <b>backups happen while Navi is running.</b> If the machine is off when one comes due, it simply runs at her next start. Settings → GitHub &amp; Backup shows the last backup's time and what it wrote, and the same for the last import — and the status column carries a <b>Backup</b> section with the last backup's time and result at a glance (or says plainly that no backup has run yet).</p>" +
   "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — call logs, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" +
     "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
-  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync.</p></div>" },
+  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
     "<div class='doc-sec'><h4>Apex without the window</h4>" +
   "<p>A server does not need a window. <span class='mono'>./start.sh --headless</span> starts exactly the services — the llamafile (check-first, as always: an answering server is left alone) and the bridge, supervised — and opens <b>no window</b>. It is safe over SSH, safe to run twice (a service already answering is adopted, never doubled), and it writes the same <span class='mono'>start.log</span> the desktop launch writes, so a headless start explains itself after the fact the same way. Run it after a reboot and Apex — with DHD, if DHD was left on — is simply back.</p>" +
@@ -4510,7 +4642,11 @@ function navGroupWrap(gid) {
   var inner = document.createElement("div");
   inner.className = "nav-children-inner";
   NAV_GROUPS[gid].children.forEach(function (pair, i) {
-    var b = navBtn("nav-child-" + gid + "-" + pair[0], pair[0], pair[0], pair[1]);
+    // Build 13 (#149, bake find): the icon resolves by the
+    // VIEW KEY (pair[1]), not the label — "Case Files" is the
+    // one label that differs from its key, and by label its
+    // rail icon had rendered as an empty svg since Build 12.
+    var b = navBtn("nav-child-" + gid + "-" + pair[0], pair[0], pair[1], pair[1]);
     b.classList.add("nav-child");
     b.style.transitionDelay = (i * 55) + "ms";
     inner.appendChild(b);
@@ -7012,17 +7148,25 @@ function githubSettingsHtml() {
   }
   if (githubApplied && githubApplied.ok) h += "<p style='color:var(--green)'>" + esc(githubApplied.result || "Import complete.") + "</p>";
   h += "<p class='mono' style='color:var(--dim);font-size:11px;margin-top:8px'>LAST IMPORT · " + (gh.lastImportAt ? ghWhen(gh.lastImportAt) + " — " + esc(gh.lastImportResult || "") : "never yet") + "</p></div>";
-  // Account sync card (Build 12, #136): the Operator Badge's
+  // Account sync card (Build 12, #136; Build 13, #136/#150):
+  // truthful per-state labels, the bootstrap path in writing,
+  // the same real file slot the Operator room has (one shared
+  // intake, one badge state), and a sync that goes to Chat at
+  // press time under a timeout instead of spinning here. The
+  // Operator Badge's
   // functional home is here, with the account machinery — slotting
   // it pulls the latest backup into a preview on a live operation
   // card in Chat, and nothing lands until the operator confirms
   // there. The badge authenticates nothing; the sign-in is the key.
-  h += "<div class='card'><h3>Account sync — slot your Operator Badge</h3><p style='color:var(--dim)'>Your <b>Operator Badge</b> is a pointer, never a key: slotting it tells Navi <i>whose</i> backup to pull, and the GitHub sign-in above remains the only thing that can unlock it. Slotting the badge pulls the latest backup and lays its per-item preview on a <b>live operation card in Chat</b> — Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing lands until you confirm on the card</b>. Chats converge rather than overwrite, and her node keypair and Mesh certificate never ride a backup, so they can never ride a sync.</p>";
+  h += "<div class='card'><h3>Account sync — slot your Operator Badge</h3><p style='color:var(--dim)'>Your <b>Operator Badge</b> is a pointer, never a key: slotting it tells Navi <i>whose</i> backup to pull, and the GitHub sign-in above remains the only thing that can unlock it. Slotting the badge pulls the latest backup and lays its per-item preview on a <b>live operation card in Chat</b> — pressing the button takes you to Chat at once, where the card runs: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing lands until you confirm on the card</b>. A pull that does not answer within 45 seconds says so in plain words — this card never spins forever. Chats converge rather than overwrite, and her node keypair and Mesh certificate never ride a backup, so they can never ride a sync.</p>";
+  var syncBtnDis = (!gh.signedIn || badgeSyncBusy) ? " disabled" + (!gh.signedIn ? " title='Sign in above first'" : "") : "";
+  var syncBtnLabel = badgeSyncBusy ? "Pulling the latest backup…" : (CONFIG.operatorBadge ? "Slot the badge — pull the latest backup" : "Pull the latest backup — no badge slotted");
   if (CONFIG.operatorBadge) {
-    h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:88px;border-radius:8px'><div><button class='act' id='gh-badge-sync' style='min-height:44px'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Slot the badge — pull the latest backup</button>" + (gh.signedIn ? "" : "<p style='color:var(--dim);font-size:12px'>Signed out, slotting the badge stops at the sign-in step and fetches nothing — sign in above first.</p>") + "</div></div>";
+    h += "<div style='display:flex;gap:14px;align-items:center;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:88px;border-radius:8px'><div><button class='act' id='gh-badge-sync' style='min-height:44px'" + syncBtnDis + ">" + syncBtnLabel + "</button>" + (gh.signedIn ? "" : "<p style='color:var(--dim);font-size:12px'>Signed out, slotting the badge stops at the sign-in step and fetches nothing — sign in above first.</p>") + "</div></div>";
   } else {
-    h += "<p style='color:var(--dim)'>No badge yet — mint one in <b>Settings → Operator</b>, then slot it here. The sync needs only the sign-in; the badge is how you point it.</p><button class='act' id='gh-badge-sync' style='min-height:44px'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Pull the latest backup</button>";
+    h += "<p style='color:var(--dim)'>No badge slotted on this machine yet. Two ways in: <b>mint one here</b> — in Settings → Operator — then <b>Back up now</b> above, and the badge rides that backup to your other machines; or <b>slot a badge picture</b> minted on another machine — right here, or in Settings → Operator; the badge file alone is enough, and you can also pull a backup that already carries one. The sync itself needs only the sign-in; the badge is how you point it.</p><button class='act' id='gh-badge-sync' style='min-height:44px'" + syncBtnDis + ">" + syncBtnLabel + "</button>";
   }
+  h += "<div class='row' style='margin-top:8px'><button class='ghost' id='gh-badge-slot'>Slot a badge from a file…</button><input id='gh-badge-file' type='file' accept='image/png' style='display:none' aria-label='Choose an operator badge picture'></div>";
   h += "</div>";
   if (githubMsg) h += "<p style='font-size:13px;color:" + (githubError ? "#f87171" : "var(--green)") + "'>" + esc(githubMsg) + "</p>";
   return h;
@@ -7215,6 +7359,12 @@ function render() {
   // around another view.
   if (view !== "Vault") vaultFocus = false;
   appEl.classList.toggle("vault-focus", vaultFocus);
+  // Build 13 (#146): Studio focus mode's class is the same
+  // kind of reflection of the one studioFocus flag — cleared
+  // by any move away from the Studio, so the collapsed frame
+  // can never strand around another tab or view.
+  if (!(view === "Chips" && chipsTab === "studio")) studioFocus = false;
+  appEl.classList.toggle("studio-focus", studioFocus);
   var smallScreen = window.innerWidth <= 800;
   toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
@@ -7333,6 +7483,7 @@ function render() {
     h += "<div class='tabbar' role='tablist' aria-label='Chips sections' style='margin-bottom:10px'><button class='" + (chipsTab === "management" ? "act" : "ghost") + "' data-ctab='management' aria-label='Navi User Repo tab'>Navi User Repo (NUR)</button><button class='" + (chipsTab === "studio" ? "act" : "ghost") + "' data-ctab='studio' aria-label='Chip studio tab'>Chip Studio</button><button class='" + (chipsTab === "workflows" ? "act" : "ghost") + "' data-ctab='workflows' aria-label='Chip workflows tab'>Workflows</button></div>";
     if (chipsTab === "studio") {
       var d = studioDraft || (studioDraft = defaultStudioDraft());
+      h += "<div class='studio-root'><div class='studio-head'>";
       h += "<p style='color:var(--dim)'>Write a chip in a real code editor — Python, the way the published navi-chips are written. Saving packs the whole thing into a .png chip — code inside the image — in the chips folder, ready to run from the folder, from chat (<span class='mono'>/chip &lt;name&gt;</span>), and chained in Workflows.</p>";
       if (studioMsg) h += "<p>" + esc(studioMsg) + "</p>";
       if (chipMsg) h += "<p>" + esc(chipMsg) + "</p>";
@@ -7345,8 +7496,13 @@ function render() {
       }
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='st-name' type='text' placeholder='Chip name — e.g. Port Sweep' aria-label='Chip name' value='" + esc(d.name) + "'></div>";
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='st-desc' type='text' placeholder='Description — what the chip does, in one line' aria-label='Chip description' value='" + esc(d.description) + "'></div>";
-      h += "<div class='row' style='margin-top:8px'><textarea class='grow mono' id='st-icon' rows='6' placeholder='Face art (optional) — 20 rows of 20 characters: # accent, o shade, . empty. Your art outranks the built-in glyph.' aria-label='Chip face art, 20 rows of 20 characters'>" + esc(d.icon || "") + "</textarea></div>";
+      // Build 13 (#146): the face art renders below, as the collapsible strip (.studio-face) — not as a head row.
       h += "<div class='row' style='margin-top:8px'><select id='st-template' class='grow' aria-label='Apply a chip template'><option value=''>Apply a template…</option>" + CHIP_TEMPLATES.map(function (t) { return "<option value='" + t.id + "'>" + esc(t.label) + "</option>"; }).join("") + "</select></div>";
+      h += "</div>"; // .studio-head
+      h += "<div class='studio-face" + (studioFaceOpen ? " open" : "") + "'><button class='studio-face-toggle' id='st-face-toggle' aria-expanded='" + (studioFaceOpen ? "true" : "false") + "'>Face art — the chip's picture, a 20×20 grid</button><div class='row studio-face-row' style='margin-top:8px'><textarea class='grow mono' id='st-icon' rows='6' placeholder='Face art (optional) — 20 rows of 20 characters: # accent, o shade, . empty. Your art outranks the built-in glyph.' aria-label='Chip face art, 20 rows of 20 characters'>" + esc(d.icon || "") + "</textarea></div></div>";
+      h += "<div class='studio-switch' role='tablist' aria-label='Studio panes — one at a time on a phone'><button class='" + (studioFaceOpen ? "act" : "ghost") + "' data-stpane='face' aria-pressed='" + studioFaceOpen + "'>Face</button><button class='" + (studioPane === "code" ? "act" : "ghost") + "' data-stpane='code' aria-pressed='" + (studioPane === "code") + "'>Code</button><button class='" + (studioPane === "test" ? "act" : "ghost") + "' data-stpane='test' aria-pressed='" + (studioPane === "test") + "'>Test</button></div>";
+      h += "<div class='studio-panes'><div class='studio-pane studio-pane-code" + (studioPane === "code" ? " act" : "") + "' data-spane='code'>";
+      h += "<div class='studio-snips' aria-label='Snippet shelf — tap to insert at the caret'>" + [["run", "def run()"], ["import", "import navi_internal"], ["header", "command / use"], ["print", "print_message()"], ["llm", "llm_chat()"], ["user", "get_user()"]].map(function (sn) { return "<button class='ghost' data-stsnip='" + sn[0] + "'>" + sn[1] + "</button>"; }).join("") + "</div>";
       var edLines = d.code.split("\n");
       var edSymbols = [];
       edLines.forEach(function (ln, i) { var m = /^(\s*)(def|class)\s+(\w+)/.exec(ln); if (m) edSymbols.push({ line: i + 1, label: (m[1] ? "· " : "") + m[2] + " " + m[3] }); });
@@ -7366,7 +7522,7 @@ function render() {
         + "<p style='color:var(--dim);font-size:11px;margin:6px 0 0'>Other files are modules: <span class='mono'>import helpers</span> in root.py. They travel with the chip — its picture, the GitHub export, and installs.</p></div>"
         + "<div style='flex:1;min-width:300px'>"
         + "<div style='display:flex;gap:4px;flex-wrap:wrap'>" + filesOf.map(function (f) { return "<button class='" + (d.active === f.path ? "act" : "ghost") + "' data-stfile='" + esc(f.path) + "' aria-label='Switch to file " + esc(f.path) + "'>" + (studioFileDirty(d, f.path) ? "● " : "") + esc(f.path) + "</button>"; }).join("") + "</div>"
-        + "<div class='ed-wrap" + (studioFs ? " fs" : "") + "' style='margin-top:6px'><div class='ed-bar'>"
+        + "<div class='ed-wrap' style='margin-top:6px'><div class='ed-bar'>"
         + "<button class='ghost' id='ed-undo' aria-label='Undo'>↩ Undo</button><button class='ghost' id='ed-redo' aria-label='Redo'>↪ Redo</button>"
         + "<input id='ed-find' type='text' placeholder='Find in code' aria-label='Find in code' value='" + esc(studioFind) + "' style='width:130px'>"
         + "<button class='ghost' id='ed-find-next' aria-label='Find next match'>↓ Next</button>"
@@ -7375,7 +7531,7 @@ function render() {
         + "<button class='ghost' id='ed-zoom-out' aria-label='Zoom the editor out'>A−</button><button class='ghost' id='ed-zoom-in' aria-label='Zoom the editor in'>A+</button>"
         + "<button class='ghost' id='ed-wrap' aria-label='Toggle word wrap'>" + (studioWrap ? "Wrap on" : "Wrap off") + "</button>"
         + "<button class='ghost' id='ed-pal' aria-label='Open the editor command palette'>⌘ Commands</button>"
-        + "<button class='ghost' id='ed-fs' aria-label='" + (studioFs ? "Exit fullscreen editor" : "Expand the editor to fill the window") + "'>" + (studioFs ? "⤡ Exit fullscreen" : "⤢ Fullscreen") + "</button>"
+        + "<button class='ghost' id='ed-fs' aria-pressed='" + studioFocus + "' aria-label='" + (studioFocus ? "Exit focus mode" : "Enter focus mode — the app's one expand idiom") + "'>" + (studioFocus ? "⤡ Exit focus" : "⤢ Focus") + "</button>"
         + "<span class='mono' id='ed-status' style='color:var(--dim);font-size:11px;margin-left:auto'></span></div>"
         + (studioPal ? "<div class='ed-pal'><input id='ed-pal-q' type='text' placeholder='Type a command…' aria-label='Command palette — type to filter commands' value='" + esc(studioPalQuery) + "' style='width:100%'>" + STUDIO_COMMANDS.filter(function (c) { return !studioPalQuery || c[1].toLowerCase().indexOf(studioPalQuery.toLowerCase()) >= 0; }).map(function (c) { return "<button class='ghost' style='display:block;width:100%;text-align:left;margin-top:4px' data-pal='" + c[0] + "'>" + esc(c[1]) + "</button>"; }).join("") + "</div>" : "")
         + "<div class='ed-scroll'><div class='ed-inner'><div class='ed-gutter' id='ed-gutter'>" + edLines.map(function (ln, i) {
@@ -7390,12 +7546,19 @@ function render() {
         + (studioFindAllResults ? (studioFindAllResults.length ? "<div style='margin-top:4px'>" + studioFindAllResults.map(function (r) { return "<button class='ghost' style='display:block;width:100%;text-align:left;margin-top:2px' data-findall-jump='" + esc(r.path) + "|" + r.line + "' aria-label='Go to " + esc(r.path) + " line " + r.line + "'><span class='mono' style='color:var(--cy)'>" + esc(r.path) + ":" + r.line + "</span> " + esc(r.text) + "</button>"; }).join("") + "</div>" : "<p style='color:var(--dim);font-size:12px'>No matches in this chip's files.</p>") : "")
         + "</div></div>";
       var chk = [["imports navi_internal", /^\s*import\s+navi_internal/m.test(rootCode)], ["declares command", /^\s*command\s*[:=]/m.test(rootCode)], ["declares use (one-line description)", /^\s*use\s*[:=]/m.test(rootCode)], ["defines run(arguments) — the entry point Navi calls", /^\s*def\s+run\s*\(/m.test(rootCode)]];
+      h += "</div><div class='studio-pane studio-pane-test" + (studioPane === "test" ? " act" : "") + "' data-spane='test'>";
       h += "<div class='card' style='margin-top:8px'><b class='mono' style='font-size:11px;letter-spacing:.14em;color:var(--dim)'>STRUCTURE CHECK — THE SHAPE NAVI LOADS</b><br>" + chk.map(function (c) { return "<span class='mono' style='font-size:11px;color:" + (c[1] ? "#34d399" : "#f87171") + "'>" + (c[1] ? "✓" : "✗") + " " + c[0] + "</span>"; }).join(" · ") + "</div>";
       h += "<textarea id='st-output' rows='3' class='mono' placeholder='Declared run output — shown when the chip runs and its code defines no run(); in Workflows this output flows into the next chip (optional)' aria-label='Declared run output' style='margin-top:8px'>" + esc(d.output) + "</textarea>";
+      if (studioRunOut) h += "<pre class='out mono studio-run-out' id='st-run-out' style='font-size:11px;white-space:pre-wrap;margin-top:8px'>" + esc(studioRunOut) + "</pre>";
       h += "<button class='act' id='st-forge' style='margin-top:8px'>" + (d.file ? "Save changes · re-forge chip" : "Forge chip") + "</button>";
-      if (studioMade) h += "<div class='card' style='margin-top:10px'>Forged <b>" + esc(studioMade) + "</b> — find it on the Local Chips tab of Navi User Repo (NUR), under Forged. <a class='ghost' href='/api/chips/file?name=" + encodeURIComponent(studioMade) + "' download='" + esc(studioMade) + "'>Download the chip .png</a></div>";
-      h += "<h3 style='margin-top:12px'>The chip API, in full</h3><div class='api-m'><span style='color:var(--dim);font-size:12px'>Every function a chip can call — what it takes, what it gives back, and when to reach for it — is written up on the wiki's <b>Navi Chip Functions</b> page. Open it beside the editor and read while you write:</span><br><button class='ghost' id='studio-api-docs' style='margin-top:4px' aria-label='Open the documentation at Navi Chip Functions page'>Open the chip API docs ⧉</button></div>";
-      h += "<h3 style='margin-top:16px'>Publish it to GitHub</h3><ol style='color:var(--dim)'><li>Forge the chip here.</li><li>On its card under Navi User Repo (NUR) → Local Chips, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept inside the chip and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the chip's card, check the repo name (pre-filled from the chip's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-chips</span> topic on its own, and uploads root.py and every module file at the root, a navi-chip.json manifest, the chip .png, and the README. An existing repo is updated, and she says so.</li><li>Not signed in? Use <b>Export for GitHub</b> instead: it builds the same file set as a repo-ready ZIP — create a public GitHub repo and unzip the export at its root, then add the <span class='mono'>navi-chips</span> topic yourself.</li><li>With the ZIP route, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so use the version in the manifest. With Publish to GitHub there is no last step: the release is published for you, picture attached. A newer release later offers every install an update, and installs download the whole file set.</li><li>Navi User Repo (NUR) finds it on the next search.</li></ol>";
+      if (studioMade) h += "<div class='card studio-made' style='margin-top:10px'>Forged <b>" + esc(studioMade) + "</b> — find it on the Local Chips tab of Navi User Repo (NUR), under Forged. <a class='ghost' href='/api/chips/file?name=" + encodeURIComponent(studioMade) + "' download='" + esc(studioMade) + "'>Download the chip .png</a></div>";
+      h += "</div>"; // .studio-pane-test
+      h += "<div class='studio-tail'><h3 style='margin-top:12px'>The chip API, in full</h3><div class='api-m'><span style='color:var(--dim);font-size:12px'>Every function a chip can call — what it takes, what it gives back, and when to reach for it — is written up on the wiki's <b>Navi Chip Functions</b> page. Open it beside the editor and read while you write:</span><br><button class='ghost' id='studio-api-docs' style='margin-top:4px' aria-label='Open the documentation at Navi Chip Functions page'>Open the chip API docs ⧉</button></div>";
+      h += "<h3 style='margin-top:16px'>Publish it to GitHub</h3><ol style='color:var(--dim)'><li>Forge the chip here.</li><li>On its card under Navi User Repo (NUR) → Local Chips, press <b>Edit README</b> if you want your own words on its GitHub page — your edited README is kept inside the chip and ships in the export and the upload alike (Restore generated README undoes it).</li><li>Signed in to GitHub? Press <b>Publish to GitHub</b> on the chip's card, check the repo name (pre-filled from the chip's name, editable), and confirm: Navi creates the public repo if it is new, sets the <span class='mono'>navi-chips</span> topic on its own, and uploads root.py and every module file at the root, a navi-chip.json manifest, the chip .png, and the README. An existing repo is updated, and she says so.</li><li>Not signed in? Use <b>Export for GitHub</b> instead: it builds the same file set as a repo-ready ZIP — create a public GitHub repo and unzip the export at its root, then add the <span class='mono'>navi-chips</span> topic yourself.</li><li>With the ZIP route, the last step is yours: publish the release on GitHub — the version tag is created with that publish, so use the version in the manifest. With Publish to GitHub there is no last step: the release is published for you, picture attached. A newer release later offers every install an update, and installs download the whole file set.</li><li>Navi User Repo (NUR) finds it on the next search.</li></ol></div>";
+      h += "</div>"; // .studio-panes
+      h += "<div class='studio-ac' id='st-ac-row' aria-label='Autocomplete suggestions'></div>";
+      h += "<div class='studio-actions'><button class='act' id='st-act-run'" + (d.file ? "" : " disabled title='Forge the chip first — Run tests the forged chip'") + ">Run</button><button class='" + (d.file ? "ghost" : "act") + "' id='st-act-forge'" + (d.file ? " disabled title='Already forged — Save re-forges your changes'" : "") + ">Forge</button><button class='" + (d.file ? "act" : "ghost") + "' id='st-act-save'" + (d.file ? "" : " disabled title='Nothing to save yet — forge the chip first'") + ">Save</button></div>";
+      h += "</div>"; // .studio-root
     } else if (chipsTab === "workflows") {
       h += "<p style='color:var(--dim)'>A workflow chains chips together: the first chip runs, its output becomes the next chip's input, and so on — the last chip's output is the result.</p>";
       if (chipMsg) h += "<p>" + esc(chipMsg) + "</p>";
@@ -7657,7 +7820,8 @@ function render() {
         + "<p style='color:var(--dim);font-size:12px'>Uploads are trimmed to a 256&times;256 square on this machine before they are kept — the full original never lands in the profile.</p></div></div>"
         + "<h4 style='margin:14px 0 6px'>Operator Badge</h4>"
         + "<p style='color:var(--dim)'>A badge is your self-portrait in the cartridge format — your face in a card-grade frame, with your name (and this node's name) carried inside the picture itself. It is <b>not</b> a credential: nothing anywhere reads a badge to prove who you are, and a damaged payload simply reads as no badge at all. Pick the face — your uploaded picture, or art generated from your name — and mint it. With a badge minted and no picture uploaded, chat wears the badge's face for you.</p>"
-        + (CONFIG.operatorBadge ? "<div style='display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:132px;border-radius:8px'><div style='flex:1;min-width:200px'><p style='color:var(--dim);margin-top:0'>" + (opBadgePayload ? "This badge says: <b>" + esc(opBadgePayload.name || "") + "</b>" + (opBadgePayload.node ? " · node <b>" + esc(opBadgePayload.node) + "</b>" : "") + " — self-asserted, as every badge is." : "This badge's payload doesn't parse — it reads as no badge at all, and it harms nothing.") + "</p><div class='row'><button class='ghost' id='op-badge-export'>Export the badge picture</button> <button class='ghost' id='op-badge-clear'>Remove the badge</button></div></div></div>" : "<p style='color:var(--dim)'>No badge yet.</p>")
+        + (CONFIG.operatorBadge ? "<div style='display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap'><img src='" + esc(CONFIG.operatorBadge) + "' alt='Your Operator Badge' style='width:132px;border-radius:8px'><div style='flex:1;min-width:200px'><p style='color:var(--dim);margin-top:0'>" + (opBadgePayload ? "This badge says: <b>" + esc(opBadgePayload.name || "") + "</b>" + (opBadgePayload.node ? " · node <b>" + esc(opBadgePayload.node) + "</b>" : "") + " — self-asserted, as every badge is." : "This badge's payload doesn't parse — it reads as no badge at all, and it harms nothing.") + "</p><div class='row'><button class='ghost' id='op-badge-export'>Export the badge picture</button> <button class='ghost' id='op-badge-clear'>Remove the badge</button></div></div></div>" : "<p style='color:var(--dim)'>No badge yet — mint one below, or slot a badge picture from a file.</p>")
+        + "<div class='row' style='margin-top:8px'><button class='ghost' id='op-badge-slot'>Slot a badge from a file…</button><input id='op-badge-file' type='file' accept='image/png' style='display:none' aria-label='Choose an operator badge picture'><span style='font-size:12px;color:var(--dim)'>Minted on another machine? Its badge picture alone slots it here — the same single badge the account sync uses. This node: <b>" + esc(badgeNodeName || "…") + "</b></span></div>"
         + "<div class='row' style='margin-top:8px'><span style='font-size:12px;color:var(--dim)'>Face:</span> <button class='ghost' id='op-badge-face-photo' aria-pressed='" + (badgeFaceChoice === "photo") + "'>My picture</button> <button class='ghost' id='op-badge-face-art' aria-pressed='" + (badgeFaceChoice === "art") + "'>Generated art</button> <button class='act' id='op-badge-mint'>Mint my badge</button></div>"
         + (badgeMsg ? "<p style='font-size:12px'>" + esc(badgeMsg) + "</p>" : "")
         + "</div>";
@@ -8091,6 +8255,7 @@ function wire() {
           if (studioSaveTimer) clearTimeout(studioSaveTimer);
           studioSaveTimer = setTimeout(function () { saveStudio(true); }, 1600);
         }
+        syncAc();
       };
       var saveStudio = function (silent) {
         if (!d) return;
@@ -8114,6 +8279,28 @@ function wire() {
             .then(function (j) { if (j.ok) { studioMade = j.filename; chipCatalog = null; studioMsg = ""; d.file = j.filename; d.snapshot = studioSnapshot(d); wfData = null; } else studioMsg = j.error || "Forge failed."; render(); })
             .catch(function () { studioMsg = "The bridge could not be reached."; render(); });
         }
+      };
+      var STUDIO_AC_WORDS = ["navi_internal", "navi_instance", "print_message", "llm_chat", "process_message", "get_user", "set_user", "clear_terminal", "chat_with_navi", "arguments", "command", "use", "def", "return", "import", "from", "class", "if", "else", "elif", "for", "while", "try", "except", "with", "as", "print", "len", "str", "int", "list", "dict", "True", "False", "None"];
+      var syncAc = function () {
+        // Build 13 (#146): the phone's autocomplete row — completes
+        // the word at the caret from the chip API's own vocabulary
+        // plus Python's keywords; tapping a suggestion replaces
+        // the partial word. Recomputed on every editor sync, the
+        // same heartbeat as the status line.
+        var row = document.getElementById("st-ac-row");
+        if (!row || !ta) return;
+        var caret = ta.selectionStart || 0;
+        var m = /[A-Za-z_][A-Za-z0-9_]*$/.exec(ta.value.slice(0, caret));
+        var word = m ? m[0] : "";
+        var words = word.length >= 2 ? STUDIO_AC_WORDS.filter(function (x) { return x !== word && x.indexOf(word) === 0; }).slice(0, 6) : [];
+        row.innerHTML = words.map(function (x) { return "<button class='ghost' data-stac='" + x + "' data-stacword='" + word + "'>" + esc(x) + "</button>"; }).join("");
+        row.querySelectorAll("[data-stac]").forEach(function (b) { b.onclick = function () {
+          var w0 = b.getAttribute("data-stacword") || "";
+          var c0 = ta.selectionStart || 0;
+          ta.focus();
+          ta.setRangeText(b.getAttribute("data-stac"), Math.max(0, c0 - w0.length), c0, "end");
+          syncEd();
+        }; });
       };
       var gotoLine = function (n) {
         if (!ta || !n || n < 1) return;
@@ -8150,7 +8337,7 @@ function wire() {
           var mod = e.ctrlKey || e.metaKey;
           if (e.key === "Escape") {
             if (studioPal) { studioPal = false; render(); return; }
-            if (studioFs) { studioFs = false; render(); return; }
+            if (studioFocus) { studioFocus = false; render(); return; }
             if (studioExtras.length) { studioExtras = []; syncEd(); }
             return;
           }
@@ -8301,14 +8488,14 @@ function wire() {
       var zi = document.getElementById("ed-zoom-in"); if (zi) zi.onclick = function () { studioZoom = Math.min(20, studioZoom + 1); render(); };
       var zo = document.getElementById("ed-zoom-out"); if (zo) zo.onclick = function () { studioZoom = Math.max(10, studioZoom - 1); render(); };
       var wr = document.getElementById("ed-wrap"); if (wr) wr.onclick = function () { studioWrap = !studioWrap; render(); };
-      var fsBtn = document.getElementById("ed-fs"); if (fsBtn) fsBtn.onclick = function () { studioFs = !studioFs; render(); };
+      var fsBtn = document.getElementById("ed-fs"); if (fsBtn) fsBtn.onclick = function () { studioFocus = !studioFocus; render(); };
       var palBtn = document.getElementById("ed-pal"); if (palBtn) palBtn.onclick = function () { studioPal = true; studioPalQuery = ""; render(); setTimeout(function () { var q = document.getElementById("ed-pal-q"); if (q) q.focus(); }, 0); };
       var palQ = document.getElementById("ed-pal-q"); if (palQ) palQ.addEventListener("input", function () { studioPalQuery = palQ.value; render(); var q2 = document.getElementById("ed-pal-q"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } });
       mainEl.querySelectorAll("[data-pal]").forEach(function (b) { b.onclick = function () {
         var cmd = b.getAttribute("data-pal");
         studioPal = false;
         if (cmd === "save") { saveStudio(false); return; }
-        if (cmd === "fullscreen") { studioFs = !studioFs; render(); return; }
+        if (cmd === "focus") { studioFocus = !studioFocus; render(); return; }
         if (cmd === "wrap") { studioWrap = !studioWrap; render(); return; }
         if (cmd === "zoomin") { studioZoom = Math.min(20, studioZoom + 1); render(); return; }
         if (cmd === "zoomout") { studioZoom = Math.max(10, studioZoom - 1); render(); return; }
@@ -8425,6 +8612,46 @@ function wire() {
         loadChipIntoStudio(file, null, function (msg) { studioMsg = msg; });
       };
       var fg = document.getElementById("st-forge");
+      // Build 13 (#146): the phone Studio's controls — the
+      // segmented pane switch, the face strip's toggle, the
+      // snippet shelf, and the thumb action bar. The switch and
+      // the strip share one truth: choosing Face opens the
+      // strip; the strip's own toggle can open it over any pane.
+      mainEl.querySelectorAll("[data-stpane]").forEach(function (b) { b.onclick = function () {
+        var pane = b.getAttribute("data-stpane");
+        // Face is not a pane: its segment opens the strip (and
+        // the strip's own toggle closes it again). Code and
+        // Test are the panes — one at a time in the region.
+        if (pane === "face") studioFaceOpen = true;
+        else studioPane = pane;
+        render();
+      }; });
+      var faceTgl = document.getElementById("st-face-toggle");
+      if (faceTgl) faceTgl.onclick = function () { studioFaceOpen = !studioFaceOpen; render(); };
+      mainEl.querySelectorAll("[data-stsnip]").forEach(function (b) { b.onclick = function () {
+        if (!ta) return;
+        var snip = STUDIO_SNIPPETS[b.getAttribute("data-stsnip")] || "";
+        var s0 = ta.selectionStart || 0, e0 = ta.selectionEnd || 0;
+        ta.focus();
+        ta.setRangeText(snip, s0, e0, "end");
+        syncEd();
+      }; });
+      var runStudioChip = function () {
+        // Run tests the FORGED chip — the real .png in the chips
+        // folder, through the bridge's own run route — and its
+        // output lands in the Test pane.
+        if (!d || !d.file) { studioRunOut = "Forge the chip first — Run tests the forged chip, the real .png in the chips folder."; studioPane = "test"; render(); return; }
+        if (CONFIG.backend !== "live") { studioRunOut = "Run needs the live bridge — switch the backend to Live in Settings."; studioPane = "test"; render(); return; }
+        studioRunOut = "Running " + d.file + " …";
+        studioPane = "test"; render();
+        fetch("/api/chips/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: String(d.file).replace(/\.png$/i, "") }) })
+          .then(function (r) { return r.json(); })
+          .then(function (j) { studioRunOut = (j && (j.output || j.error)) || "The chip ran and said nothing."; if (view === "Chips" && chipsTab === "studio") render(); })
+          .catch(function () { studioRunOut = "The bridge didn't answer — the run never started."; if (view === "Chips" && chipsTab === "studio") render(); });
+      };
+      var actRun = document.getElementById("st-act-run"); if (actRun) actRun.onclick = runStudioChip;
+      var actForge = document.getElementById("st-act-forge"); if (actForge) actForge.onclick = function () { saveStudio(false); };
+      var actSave = document.getElementById("st-act-save"); if (actSave) actSave.onclick = function () { saveStudio(false); };
       if (fg) fg.onclick = function () { saveStudio(false); };
     }
     if (chipsTab === "workflows") {
@@ -8857,6 +9084,20 @@ function wire() {
     bind("gh-preview", ghImportPreview);
     bind("gh-apply", ghImportApply);
     bind("gh-badge-sync", ghBadgeSync);
+    // Build 13 (#136/#150): the Account sync card's own badge
+    // slot — the shared intake (badgeSlotFile), the same single
+    // badge state the Operator room's slot feeds.
+    var ghSlotBtn = document.getElementById("gh-badge-slot");
+    var ghSlotFile = document.getElementById("gh-badge-file");
+    if (ghSlotBtn && ghSlotFile) {
+      ghSlotBtn.onclick = function () { ghSlotFile.click(); };
+      ghSlotFile.addEventListener("change", function () {
+        var f = ghSlotFile.files && ghSlotFile.files[0];
+        ghSlotFile.value = "";
+        if (!f) return;
+        badgeSlotFile(f, function (okSlot, msg) { ghSetMsg(msg, !okSlot); render(); });
+      });
+    }
     var visSel = document.getElementById("gh-vis");
     var paintPubWarn = function () {
       var w = document.getElementById("gh-pubwarn");
@@ -8927,6 +9168,21 @@ function wire() {
     };
     var opBadgeClear = document.getElementById("op-badge-clear");
     if (opBadgeClear) opBadgeClear.onclick = function () { CONFIG.operatorBadge = ""; badgeMsg = ""; saveCfg(); render(); };
+    // Build 13 (#150): the Operator room's badge slot — a badge
+    // minted on another machine slots here from its picture
+    // file alone, into the same single badge state.
+    refreshBadgeInfo();
+    var opSlotBtn = document.getElementById("op-badge-slot");
+    var opSlotFile = document.getElementById("op-badge-file");
+    if (opSlotBtn && opSlotFile) {
+      opSlotBtn.onclick = function () { opSlotFile.click(); };
+      opSlotFile.addEventListener("change", function () {
+        var f = opSlotFile.files && opSlotFile.files[0];
+        opSlotFile.value = "";
+        if (!f) return;
+        badgeSlotFile(f, function (okSlot, msg) { badgeMsg = msg; render(); });
+      });
+    }
     // Hardware profile card: load the profile on first Settings open.
     if (!hardwareState) fetchHardware(true);
     // Prefill override inputs from the profile.

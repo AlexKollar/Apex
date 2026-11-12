@@ -375,11 +375,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-11.912"
+BRIDGE_BUILD = "2026-11-11.913"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 12
+SHIPPED_BUILD_SEQ = 13
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -13242,6 +13242,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": _err})
                 return
             self._send(200, build_mesh_card_png(load_config()), "image/png")
+            return
+        if _path in ("/favicon-32.png", "/apple-touch-icon.png", "/icon-180.png"):
+            # Build 13 (issue #151): the DHD door wears the Row's
+            # icon. favicon-scale derivatives of the Nocturne Row
+            # site's logo.png, bundled as plain app assets and
+            # served behind the same public gate as every other
+            # dashboard byte (the #116 portrait precedent below).
+            # /apple-touch-icon.png answers the name browsers ask
+            # for by default with the 180x180 file; a missing file
+            # answers 404, never a crash.
+            _icon_name = "favicon-32.png" if _path == "/favicon-32.png" else "icon-180.png"
+            try:
+                with open(os.path.join(ROOT, "assets", _icon_name), "rb") as _if:
+                    _idata = _if.read()
+                self._send(200, _idata, "image/png")
+            except OSError:
+                self._send(404, {"ok": False, "error": "icon not found"})
             return
         if _path == "/assets/navi-portrait.jpg":
             # Issue #116: Navi's bundled portrait (the lamp-post key

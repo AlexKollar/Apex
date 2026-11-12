@@ -838,6 +838,24 @@ else
   echo "          zip. The install continues without it, and chat will show without her"
   echo "          picture until Apex is installed from the release zip."
 fi
+# The Row's icon, worn by the DHD door as its favicon (Build 13,
+# issue #151), gets the same treatment: favicon-scale derivatives
+# of the Nocturne Row site's logo, served by the bridge from the
+# install tree (GET /favicon-32.png and /apple-touch-icon.png).
+# A git clone carries none of the binary asset files, so a clone
+# install reaches this line with no icons to copy: say so in
+# plain words and carry on — the door simply wears no icon.
+for icon_file in favicon-32.png icon-180.png; do
+  if [ -f "assets/$icon_file" ]; then
+    $SUDO cp "assets/$icon_file" "$INSTALL_DIR/assets/$icon_file"
+  else
+    echo "    note: the DHD door icon (assets/$icon_file) is missing from this copy of the"
+    echo "          sources. That is expected when installing from a git clone — the clone"
+    echo "          does not carry the binary asset files; they ship inside the release"
+    echo "          zip. The install continues without it, and the door wears no icon"
+    echo "          until Apex is installed from the release zip."
+  fi
+done
 if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
   $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
 fi
