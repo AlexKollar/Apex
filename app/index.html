@@ -500,6 +500,22 @@
   .deck-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .deck-actions button, .deck-actions a { min-height:40px; display:inline-flex; align-items:center; }
   .deck-drop { margin-top:10px; border:1px dashed var(--line); border-radius:8px; padding:16px 12px; text-align:center; }
+  /* Threat Intelligence Center (0.1.9e Build 15, issue #165):
+     desktop-first three-region grid — triage, the record, the
+     brief rail. The phone gets its own arrangement, not a
+     squeeze: one column, the brief FIRST (order is the phone's
+     whole point — the answer before the apparatus), then the
+     queue, then the record. */
+  .tic-grid { display:grid; grid-template-columns:minmax(260px, 340px) 1fr minmax(240px, 300px); gap:12px; align-items:start; margin-top:10px; }
+  .tic-fresh { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .tic-chip { border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:12px; min-height:32px; display:inline-flex; align-items:center; }
+  .tic-qitem { width:100%; text-align:left; margin-top:6px; min-height:44px; }
+  @media (max-width: 800px) {
+    .tic-grid { display:flex; flex-direction:column; }
+    .tic-rail { order:-1; width:100%; }
+    .tic-queue, .tic-detail { width:100%; }
+    .tic-qitem { min-height:48px; }
+  }
   @media (max-width: 800px) {
     .sleeve { flex:1 1 42%; }
     .deck-actions button, .deck-actions a { min-height:44px; }
@@ -1365,7 +1381,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater"
 var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
-  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Vault", "Vault"]] },
+  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Threat Intelligence", "ThreatIntel"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"]] }
 };
 var NAV_FLAT = ["Chat"];
@@ -1543,6 +1559,7 @@ var hardwareMsg = "";
 var publicState = null;      // live: last /api/status publicServer report; mock: the baked CONFIG shape
 var dhdState = null;         // live: last /api/status dhd report; mock: the baked CONFIG shape (build .74)
 var meshState = null;        // live: last /api/status mesh report (build .85); mock: derived from the baked CONFIG shape
+var openCaseState = null;    // live: last /api/status openCase report (Build 15, #161) — the running case, read true
 var meshMsg = "";
 var meshPngMsg = "";         // the PNG card import's own verdict, shown at the drop zone (Build 7)
 var meshPngDrag = false;     // the drop zone is lit while a file drags over it (Build 7)
@@ -1644,8 +1661,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-12.914";
-var SHIPPED_BUILD_SEQ = 14;
+var BRIDGE_BUILD = "2026-11-12.915";
+var SHIPPED_BUILD_SEQ = 15;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2159,7 +2176,7 @@ var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
-  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files"] },
+  { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
   { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
@@ -2692,6 +2709,7 @@ function renderBootStatus(boot) {
 var casesState = null, casesFetching = false;
 var caseDetailState = null, caseDetailFetching = false;
 var caseMsg = "", caseReportState = null, caseDragOver = false;
+var caseDeleteArm = "";   // Build 15 (#163): the slug whose delete confirm is showing, if any
 var caseOpenSlug = "";
 try { caseOpenSlug = localStorage.getItem("navi.openCase") || ""; } catch (e) {}
 var lastChatExec = null;   // newest terminal/chip output from chat, for filing
@@ -2705,6 +2723,186 @@ function refreshCaseDetail(slug) {
   caseDetailFetching = true;
   fetch("/api/cases/detail?case=" + encodeURIComponent(slug)).then(function (r) { return r.json(); }).then(function (j) { caseDetailFetching = false; if (j && j.ok) { caseDetailState = j.case; if (view === "CaseFiles") render(); } }).catch(function () { caseDetailFetching = false; });
 }
+// ---------- Threat Intelligence Center (Build 15, #165) ----------
+// The pullers, the store, the matcher and the digest live in
+// the bridge (intel.py); this view is a window onto their state
+// — freshness first, because a stale picture presented as fresh
+// is worse than none. Navi carries the same brief in chat.
+var intelState = null, intelFetching = false, intelMsg = "";
+var intelSelId = "", intelItem = null, intelItemFetching = false;
+function intelPost(path, body, cb) { casePost(path, body, cb); }
+function refreshIntel() {
+  if (intelFetching) return;
+  intelFetching = true;
+  fetch("/api/intel").then(function (r) { return r.json(); }).then(function (j) { intelState = j; intelFetching = false; if (view === "ThreatIntel") render(); }).catch(function () { intelFetching = false; });
+}
+function refreshIntelItem(cve) {
+  intelItemFetching = true;
+  fetch("/api/intel/item?cve=" + encodeURIComponent(cve)).then(function (r) { return r.json(); }).then(function (j) { intelItemFetching = false; if (j && j.ok) intelItem = j.item; if (view === "ThreatIntel") render(); }).catch(function () { intelItemFetching = false; });
+}
+function intelSev(cvss) {
+  if (cvss === null || cvss === undefined) return "info";
+  return cvss >= 9 ? "critical" : cvss >= 7 ? "high" : cvss >= 4 ? "medium" : "low";
+}
+function intelBandColor(band) { return { fresh: "#34d399", aging: "#f5b544", stale: "#f87171", never: "var(--dim)" }[band] || "var(--dim)"; }
+function intelItemHtml(it, sel) {
+  var badges = "";
+  if (it.kev) badges += " <span class='mono' style='font-size:11px;color:#f87171'>KEV" + (it.kevDue ? " · due " + esc(it.kevDue) : "") + "</span>";
+  if (it.matched) badges += " <span class='mono' style='font-size:11px;color:#34d399'>" + (it.matched.grade === "exact" ? "MATCHES" : "mentions") + " " + esc(it.matched.via) + ": " + esc(it.matched.term) + "</span>";
+  var meta = "";
+  if (it.cvss !== null && it.cvss !== undefined) meta += "CVSS " + it.cvss + " ";
+  if (it.epss !== null && it.epss !== undefined) meta += "· EPSS " + Math.round(it.epss * 100) + "% ";
+  if (it.published) meta += "· " + esc(String(it.published).slice(0, 10));
+  return "<button class='ghost tic-qitem' data-ti-sel='" + esc(it.id) + "'" + (sel ? " style='border-color:var(--cy)'" : "") + "><b style='color:" + caseSevColor(intelSev(it.cvss)) + "'>" + esc(it.id) + "</b>" + badges + "<br><span style='font-size:13px'>" + esc(it.title || "") + "</span><br><span class='mono' style='color:var(--dim);font-size:11px'>" + esc(meta) + "</span></button>";
+}
+function threatIntelHtml() {
+  var h = "<h3>Threat Intelligence</h3>";
+  h += "<p style='color:var(--dim)'>The picture Navi reasons with: known-exploited vulnerabilities, fresh disclosures scored by likelihood, matched against your declared stack and your open cases. Public feeds only, pulled on a cadence — and every number here carries the stamp of when its source last answered. She has the same brief in chat; ask her <span class='mono'>intel: &lt;product or CVE&gt;</span> any time.</p>";
+  if (intelMsg) h += "<p style='font-size:13px'>" + esc(intelMsg) + "</p>";
+  if (CONFIG.backend !== "live") { h += "<div class='card'>The Threat Intelligence Center works through the live bridge — the store lives in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
+  if (!intelState) {
+    if (!intelFetching) refreshIntel();
+    return h + "<div class='card'>Gathering the picture…</div>";
+  }
+  var s = intelState;
+  if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The Center is unavailable.") + "</div>";
+  // Freshness strip: who collected, and how old each source is.
+  var collName = (s.collector && s.collector.name) || "";
+  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><div><b>" +
+    (s.mode === "receiver" ? "Receiving the digest over the Mesh" : "Collecting on this node") + "</b>" +
+    (collName ? " <span style='color:var(--dim)'>· gathered by " + esc(collName) + "</span>" : "") +
+    " <span style='color:var(--dim)'>· " + s.kevTotal + " known-exploited · " + s.matchedCount + " matched to you</span></div>" +
+    "<button class='act' id='ti-pull' style='min-height:44px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Pulling…" : "Pull now") + "</button></div>";
+  h += "<div class='tic-fresh'>";
+  (s.sources || []).forEach(function (src) {
+    if (src.source === "mesh" && s.mode !== "receiver") return;
+    var age = src.ageHours === null || src.ageHours === undefined ? "never pulled" : (src.ageHours < 1 ? "under an hour old" : Math.round(src.ageHours) + "h old");
+    h += "<span class='tic-chip'><span style='color:" + intelBandColor(src.band) + "'>●</span>&nbsp;" + esc(src.label) + " · " + esc(src.band) + " · " + age + (src.count ? " · " + src.count : "") + "</span>";
+  });
+  h += "</div>";
+  (s.sources || []).forEach(function (src) { if (src.error) h += "<p style='color:#f87171;font-size:12px;margin-top:6px'>" + esc(src.label) + ": " + esc(src.error) + "</p>"; });
+  h += "</div>";
+  // The three regions.
+  h += "<div class='tic-grid'>";
+  // -- triage queue
+  h += "<div class='tic-queue'><div class='card'><h3 style='margin-top:0'>Triage</h3><p style='color:var(--dim);font-size:12px'>Your matches first, then what's newly exploited, then the loudest new disclosures. Ranked, never raw.</p>";
+  if (!s.queue || !s.queue.length) h += "<p style='color:var(--dim)'>Nothing in the queue — either the world is quiet or the store is still empty. Pull now, or let the cadence work.</p>";
+  (s.queue || []).forEach(function (it) { h += intelItemHtml(it, it.id === intelSelId); });
+  if (s.movers && s.movers.length) {
+    h += "<p style='margin-top:10px'><b>EPSS movers</b> <span style='color:var(--dim);font-size:12px'>— likelihood climbing:</span></p>";
+    s.movers.slice(0, 6).forEach(function (m) { h += "<div class='mono' style='font-size:12px;margin-top:2px'>" + esc(m.id) + " <span style='color:#f5b544'>+" + Math.round(m.delta * 100) + " pts</span></div>"; });
+  }
+  h += "</div></div>";
+  // -- the record
+  h += "<div class='tic-detail'><div class='card'><h3 style='margin-top:0'>The record</h3>";
+  if (!intelSelId) h += "<p style='color:var(--dim)'>Pick a record from the queue and it opens here — the full description, the references, and the join to your cases.</p>";
+  else if (intelItemFetching && (!intelItem || intelItem.id !== intelSelId)) h += "<p style='color:var(--dim)'>Opening " + esc(intelSelId) + "…</p>";
+  else if (intelItem && intelItem.id === intelSelId) {
+    var it = intelItem;
+    h += "<b style='color:" + caseSevColor(intelSev(it.cvss)) + ";font-size:16px'>" + esc(it.id) + "</b>";
+    if (it.kev) h += " <span class='mono' style='font-size:11px;color:#f87171'>KNOWN-EXPLOITED" + (it.kevDue ? " · due " + esc(it.kevDue) : "") + (it.kevRansomware && it.kevRansomware !== "Unknown" ? " · ransomware: " + esc(it.kevRansomware) : "") + "</span>";
+    if (it.matched) h += "<div style='margin-top:4px'><span class='mono' style='font-size:11px;color:#34d399'>" + (it.matched.grade === "exact" ? "MATCHES" : "mentions") + " your " + esc(it.matched.via) + " term “" + esc(it.matched.term) + "”</span></div>";
+    h += "<p style='margin-top:6px'><b>" + esc(it.title || "") + "</b></p>";
+    h += "<div class='mono' style='font-size:12px;color:var(--dim)'>" +
+      (it.cvss !== null && it.cvss !== undefined ? "CVSS " + it.cvss + (it.cvssSeverity ? " " + esc(it.cvssSeverity) : "") + " · " : "") +
+      (it.epss !== null && it.epss !== undefined ? "EPSS " + Math.round(it.epss * 100) + "% (" + Math.round((it.epssPercentile || 0) * 100) + "th pct) · " : "") +
+      (it.published ? "published " + esc(String(it.published).slice(0, 10)) : "") + "</div>";
+    if (it.products && it.products.length) h += "<div class='mono' style='font-size:12px;margin-top:4px'>Products: " + esc(it.products.slice(0, 8).join(", ")) + "</div>";
+    if (it.description) h += "<div style='margin-top:8px;white-space:pre-wrap'>" + esc(it.description) + "</div>";
+    if (it.epssHistory && it.epssHistory.length > 1) h += "<div class='mono' style='font-size:11px;color:var(--dim);margin-top:8px'>EPSS history: " + it.epssHistory.slice(0, 7).map(function (x) { return esc(x.date) + " " + Math.round(x.epss * 100) + "%"; }).join(" · ") + "</div>";
+    if (it.refs && it.refs.length) h += "<div style='margin-top:8px'>" + it.refs.slice(0, 6).map(function (r) { return "<div><a href='" + esc(r) + "' target='_blank' rel='noopener' style='color:var(--cy);font-size:13px'>" + esc(r) + "</a></div>"; }).join("") + "</div>";
+    h += "<div class='row' style='margin-top:10px'>";
+    if (openCaseState) h += "<button class='act' id='ti-file' style='min-height:44px'>File into the open case — " + esc(openCaseState.name) + "</button>";
+    else h += "<span style='color:var(--dim);font-size:12px'>Open a case in Case Files and this record can be filed straight into it, citation and all.</span>";
+    h += "</div>";
+  } else h += "<p style='color:var(--dim)'>That record is not in the local store.</p>";
+  h += "</div></div>";
+  // -- the rail: brief, watchlist, collection
+  h += "<div class='tic-rail'>";
+  h += "<div class='card'><h3 style='margin-top:0'>Navi's brief</h3>";
+  if (s.brief) h += "<div class='mono' style='font-size:12px;white-space:pre-wrap'>" + esc(s.brief) + "</div>";
+  else h += "<p style='color:var(--dim)'>No brief yet — the store is empty. Once a pull lands, this is the standing picture she carries into chat.</p>";
+  h += "</div>";
+  h += "<div class='card'><h3 style='margin-top:0'>Watchlist</h3><p style='color:var(--dim);font-size:12px'>The software you declare. Matching happens here, on this machine — the list is never sent to a feed.</p>";
+  h += "<div style='display:flex;flex-wrap:wrap;gap:6px'>" + (s.watchlist || []).map(function (t) { return "<span class='tic-chip'>" + esc(t) + " <button class='ghost' data-ti-watch-del='" + esc(t).replace(/"/g, "&quot;") + "' style='min-height:32px;padding:0 8px' aria-label='Remove " + esc(t) + "'>×</button></span>"; }).join("") + "</div>";
+  h += "<div class='row' style='margin-top:8px'><input id='ti-watch-in' placeholder='e.g. openssl, log4j, wordpress' style='flex:1;min-height:44px'> <button class='ghost' id='ti-watch-add' style='min-height:44px'>Add</button></div></div>";
+  h += "<div class='card'><h3 style='margin-top:0'>Collection</h3>";
+  h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' id='ti-enabled'" + (s.enabled ? " checked" : "") + "> Center enabled</label>";
+  var srcs = (s.settings && s.settings.sources) || {};
+  [["nvd", "NVD (CVEs, CVSS, products)"], ["kev", "CISA KEV (known-exploited)"], ["epss", "EPSS (likelihood, daily)"], ["cisa", "CISA advisories"], ["rss", "Curated RSS (Krebs, BleepingComputer)"]].forEach(function (pair) {
+    h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' data-ti-src='" + pair[0] + "'" + (srcs[pair[0]] !== false ? " checked" : "") + "> " + pair[1] + "</label>";
+  });
+  h += "<div style='margin-top:6px'><label style='font-size:12px;color:var(--dim)'>Collect every</label> <select id='ti-cadence' style='min-height:44px'>" + [3, 6, 12, 24].map(function (n) { return "<option value='" + n + "'" + (Number(s.cadenceHours) === n ? " selected" : "") + ">" + n + " hours</option>"; }).join("") + "</select></div>";
+  h += "<div style='margin-top:8px'><label style='font-size:12px;color:var(--dim)'>Mesh collector (node id — blank = this node collects)</label><input id='ti-peer' value='" + esc(s.collectorPeer || "") + "' placeholder='collector node id' style='width:100%;min-height:44px;margin-top:4px'></div>";
+  h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' id='ti-fallback'" + (s.fallbackLocal ? " checked" : "") + "> If the collector is unreachable, collect locally</label>";
+  h += "<p style='color:var(--dim);font-size:12px'>One collector per Mesh is the design: the digest travels, every node matches locally. A receiver never polls the feeds itself unless the fallback says so.</p>";
+  h += "<div class='row' style='margin-top:8px'><button class='act' id='ti-save' style='min-height:44px'>Save collection settings</button></div></div>";
+  h += "</div></div>";
+  // -- advisories
+  if (s.advisories && s.advisories.length) {
+    h += "<div class='card' style='margin-top:12px'><h3 style='margin-top:0'>Latest advisories &amp; reporting</h3>";
+    s.advisories.slice(0, 10).forEach(function (a) {
+      h += "<div style='margin-top:6px'><a href='" + esc(a.link) + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(a.title) + "</a> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(a.source) + (a.published ? " · " + esc(String(a.published).slice(0, 16)) : "") + "</span></div>";
+    });
+    h += "</div>";
+  }
+  return h;
+}
+function wireThreatIntel() {
+  if (!intelState && !intelFetching) refreshIntel();
+  var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
+  bind("ti-pull", function () {
+    intelPost("/api/intel/refresh", {}, function (j) {
+      intelMsg = j && j.ok ? "Pull started — the picture refreshes when the feeds answer." : ((j && j.error) || "The pull could not start.");
+      intelState = null;
+      render();
+      setTimeout(function () { refreshIntel(); }, 4000);
+    });
+  });
+  mainEl.querySelectorAll("[data-ti-sel]").forEach(function (b) { b.onclick = function () { intelSelId = b.getAttribute("data-ti-sel"); intelItem = null; refreshIntelItem(intelSelId); render(); }; });
+  bind("ti-file", function () {
+    if (!openCaseState || !intelSelId) return;
+    intelPost("/api/intel/file", { case: openCaseState.slug, cve: intelSelId }, function (j) {
+      intelMsg = j && j.ok ? "Filed — " + intelSelId + " is in the case “" + openCaseState.name + "” as a finding, citation and all." : ((j && j.error) || "The filing failed.");
+      render();
+    });
+  });
+  var saveWatch = function (terms) {
+    intelPost("/api/intel/watchlist", { terms: terms }, function (j) {
+      if (j && j.ok) { intelMsg = "Watchlist saved — matching recomputed against it."; intelState = null; refreshIntel(); }
+      else intelMsg = (j && j.error) || "The watchlist could not be saved.";
+      render();
+    });
+  };
+  bind("ti-watch-add", function () {
+    var inp = document.getElementById("ti-watch-in");
+    var t = inp ? inp.value.trim().toLowerCase() : "";
+    if (!t) return;
+    var terms = (intelState.watchlist || []).slice();
+    if (terms.indexOf(t) === -1) terms.push(t);
+    saveWatch(terms);
+  });
+  mainEl.querySelectorAll("[data-ti-watch-del]").forEach(function (b) { b.onclick = function () { var t = b.getAttribute("data-ti-watch-del"); saveWatch((intelState.watchlist || []).filter(function (x) { return x !== t; })); }; });
+  bind("ti-save", function () {
+    var src = {};
+    mainEl.querySelectorAll("[data-ti-src]").forEach(function (c) { src[c.getAttribute("data-ti-src")] = c.checked; });
+    var peer = document.getElementById("ti-peer");
+    var cad = document.getElementById("ti-cadence");
+    intelPost("/api/intel/settings", {
+      enabled: document.getElementById("ti-enabled").checked,
+      sources: src,
+      collectorPeer: peer ? peer.value.trim() : "",
+      fallbackLocal: document.getElementById("ti-fallback").checked,
+      cadenceHours: cad ? Number(cad.value) : 6
+    }, function (j) {
+      intelMsg = j && j.ok ? "Collection settings saved." : ((j && j.error) || "The settings could not be saved.");
+      intelState = null;
+      refreshIntel();
+      render();
+    });
+  });
+}
+
 function caseSevColor(sev) { return { critical: "#f87171", high: "#f5b544", medium: "var(--cy)", low: "#9fb3c8", info: "var(--dim)" }[sev] || "var(--dim)"; }
 function caseFilesHtml() {
   var h = "<h3>Case Files</h3>";
@@ -2719,7 +2917,7 @@ function caseFilesHtml() {
     h += "<p class='mono' style='color:var(--dim);font-size:12px;margin:2px 0'>" + esc(d.slug) + " · status " + esc(d.status) + " · opened " + esc(d.opened) + "</p>";
     if (d.client) h += "<p style='color:var(--dim);margin:2px 0'><b>Client:</b> " + esc(d.client) + "</p>";
     if (d.scope) h += "<p style='color:var(--dim);margin:2px 0'><b>Scope:</b> " + esc(d.scope) + "</p>";
-    h += "<div class='row' style='margin-top:8px'><button class='ghost' id='cf-setopen' style='min-height:44px'>" + (isOpen ? "This is the open case — close it" : "Make this the open case") + "</button> <button class='act' id='cf-report' style='min-height:44px'>Export the report</button></div>";
+    h += "<div class='row' style='margin-top:8px'><button class='ghost' id='cf-setopen' style='min-height:44px'>" + (isOpen ? "This is the open case — close it" : "Make this the open case") + "</button> <button class='act' id='cf-report' style='min-height:44px'>Export the report</button> <button class='ghost' id='cf-chat' style='min-height:44px'>Open the case chat</button></div>";
     h += "<p style='color:var(--dim);font-size:12px'>" + (isOpen ? "Navi files to this case from chat — say <i>“file that as a finding.”</i>" : "Only the open case receives filings from chat.") + "</p>";
     if (caseReportState && caseReportState.slug === d.slug) {
       h += "<div class='card' style='border-color:var(--cy)'><b>Report exported</b> — saved as <span class='mono'>report.md</span> in the case folder" + (caseReportState.withheld ? ", with <b>" + caseReportState.withheld + " internal note" + (caseReportState.withheld === 1 ? "" : "s") + " withheld and counted</b> in the document itself" : "") + ". <button class='ghost' id='cf-report-dl' style='min-height:44px'>Download report.md</button><details style='margin-top:6px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Read the report</summary><pre class='exec mono' style='margin-top:6px;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>" + esc(caseReportState.text) + "</pre></details></div>";
@@ -2733,7 +2931,7 @@ function caseFilesHtml() {
     h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-f-add' style='min-height:44px'>File the finding</button>" + (lastChatExec ? " <button class='ghost' id='cf-file-exec' style='min-height:44px'>File the latest chat output as a finding</button>" : "") + "</div>";
     if (!d.findings.length) h += "<p style='color:var(--dim)'>No findings yet.</p>";
     d.findings.forEach(function (f) {
-      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div></div>";
+      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div></div>";
     });
     h += "</div>";
     // Evidence
@@ -2749,6 +2947,21 @@ function caseFilesHtml() {
     h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-t-add' style='min-height:44px'>Add the entry</button></div>";
     if (!d.timeline.length) h += "<p style='color:var(--dim)'>No entries yet.</p>";
     d.timeline.forEach(function (e) { h += "<div style='margin-top:10px'><b>" + esc(e.title) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(e.date) + "</span><div style='color:var(--dim);white-space:pre-wrap'>" + esc(e.body) + "</div></div>"; });
+    h += "</div>";
+    // Delete this case (Build 15, #163): complete, and confirmed
+    // in words before it happens — the confirm names the case,
+    // everything of it in the Vault, and its tied chat, and
+    // states the backup truth. No one-tap accidents.
+    h += "<div class='card' style='border-color:#f87171'><h3 style='color:#f87171'>Delete this case</h3>";
+    if (caseDeleteArm === d.slug) {
+      h += "<p>Deleting <b>" + esc(d.name) + "</b> removes all of it, for good:</p>";
+      h += "<p style='color:var(--dim)'>· the case itself and <b>every file it owns in the Vault</b> — " + d.findings.length + " finding" + (d.findings.length === 1 ? "" : "s") + ", " + d.evidence.length + " evidence file" + (d.evidence.length === 1 ? "" : "s") + ", " + d.timeline.length + " timeline entr" + (d.timeline.length === 1 ? "y" : "ies") + ", its manifest and any exported report;<br>· <b>its tied chat</b> — the whole case conversation goes with it.</p>";
+      h += "<p style='color:var(--dim)'>Backups already taken keep the copies inside them — deleting here does not reach into backup history.</p>";
+      h += "<div class='row' style='margin-top:8px'><button class='act' id='cf-del-yes' style='min-height:44px;background:#f87171;border-color:#f87171;color:#14100f'>Delete the case, its files, and its chat</button> <button class='ghost' id='cf-del-no' style='min-height:44px'>Keep the case</button></div>";
+    } else {
+      h += "<p style='color:var(--dim)'>Removing a case removes all of its files from the Vault as well — and its tied chat. There is no undo here; backups already taken keep their snapshot copies.</p>";
+      h += "<div class='row' style='margin-top:8px'><button class='ghost' id='cf-del' style='min-height:44px;color:#f87171'>Delete this case…</button></div>";
+    }
     h += "</div>";
     return h;
   }
@@ -2775,19 +2988,56 @@ function wireCaseFiles() {
     var client = (document.getElementById("cf-client") || {}).value || "";
     var scope = (document.getElementById("cf-scope") || {}).value || "";
     casePost("/api/cases/create", { name: name, client: client, scope: scope }, function (j) {
-      if (j.ok) { caseMsg = "Case opened — it lives at cases/" + j.case.slug + "/ on the desk."; casesState = null; caseDetailState = j.case; }
+      if (j.ok) { caseMsg = "Case opened — it lives at cases/" + j.case.slug + "/ on the desk, with its own chat on the Chats tab."; casesState = null; caseDetailState = j.case; hydrateChatsFromServer(); }
       else caseMsg = j.error || "The case could not be opened.";
       render();
     });
   });
-  bind("cf-back", function () { caseDetailState = null; casesState = null; caseReportState = null; render(); });
-  mainEl.querySelectorAll("[data-case-open]").forEach(function (b) { b.onclick = function () { caseReportState = null; refreshCaseDetail(b.getAttribute("data-case-open")); }; });
+  bind("cf-back", function () { caseDetailState = null; casesState = null; caseReportState = null; caseDeleteArm = ""; render(); });
+  mainEl.querySelectorAll("[data-case-open]").forEach(function (b) { b.onclick = function () { caseReportState = null; caseDeleteArm = ""; refreshCaseDetail(b.getAttribute("data-case-open")); }; });
   bind("cf-setopen", function () {
     if (!caseDetailState) return;
     var slug = caseOpenSlug === caseDetailState.slug ? "" : caseDetailState.slug;
     caseOpenSlug = slug;
     try { localStorage.setItem("navi.openCase", slug); } catch (e) {}
-    casePost("/api/cases/open", { case: slug }, function () { caseMsg = slug ? "The open case is now " + caseDetailState.name + " — Navi files to it from chat." : "No case is open now — chat filings will say so."; render(); });
+    casePost("/api/cases/open", { case: slug }, function () { caseMsg = slug ? "The open case is now " + caseDetailState.name + " — Navi files to it from chat." : "No case is open now — chat filings will say so."; if (slug) hydrateChatsFromServer(); render(); });
+  });
+  bind("cf-chat", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/chat", { case: slug }, function (j) {
+      if (j.ok && j.chat) {
+        var rec = j.chat;
+        if (!chats.some(function (c) { return c.id === rec.id; })) chats.push(rec);
+        activeChatId = rec.id; messages = rec.messages; persist(); landOnChat();
+      } else {
+        caseMsg = j.error || "The case chat could not be opened.";
+        render();
+      }
+    });
+  });
+  bind("cf-del", function () { if (caseDetailState) { caseDeleteArm = caseDetailState.slug; render(); } });
+  bind("cf-del-no", function () { caseDeleteArm = ""; render(); });
+  bind("cf-del-yes", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug, name = caseDetailState.name;
+    casePost("/api/cases/delete", { case: slug }, function (j) {
+      caseDeleteArm = "";
+      if (j.ok) {
+        // The tied chat goes with the case (Build 15, #163):
+        // out of this window's store too, so the write-through
+        // cannot resurrect it at the next persist.
+        var before = chats.length;
+        chats = chats.filter(function (c) { return c.case !== slug; });
+        if (!chats.length) seedChats();
+        if (!chats.some(function (c) { return c.id === activeChatId; })) { activeChatId = chats[0].id; messages = chats[0].messages; }
+        if (caseOpenSlug === slug) { caseOpenSlug = ""; try { localStorage.setItem("navi.openCase", ""); } catch (e) {} openCaseState = null; }
+        caseDetailState = null; casesState = null; caseReportState = null;
+        caseMsg = "Deleted — " + name + " and all of its files are gone from the Vault" + (chats.length !== before ? ", and its chat went with it" : "") + ". Copies inside backups already taken are untouched.";
+        persist();
+      } else caseMsg = j.error || "The case could not be deleted.";
+      render();
+    });
   });
   bind("cf-f-add", function () {
     if (!caseDetailState) return;
@@ -3896,12 +4146,28 @@ var DOC_PAGES = [
   "<li>A strip at the foot of the editor shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
   "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" },
-  { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide"], html:
+  { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
   "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
   "<p>The view cold-starts on the <b>case list</b>, always. Open a case for its findings (structured cards, by severity), its evidence (drop files straight onto the case), and its timeline. Mark <b>one case open</b> and it becomes the case Navi works: ask her in chat to <i>“file that as a finding”</i> and she files the exchange into the open case and tells you she did — out loud, naming the case and the file, never silently. The latest terminal or chip output from chat can be filed as a finding from the case page, too.</p></div>" +
+    "<div class='doc-sec'><h4>The case chat, her own findings, and the open case (Build 15)</h4>" +
+  "<p>Every case has <b>its own chat</b>, made the first time the case is opened and returned to ever after — one case, one canonical thread, riding the same server-side store as every other chat (it survives machines the way chats now do). It is listed on the Chats tab with a CASE tag, and <b>Open the case chat</b> on the case page walks you straight into it. The chat is a reference, not a container: the case's content stays in the Vault's plain files.</p>" +
+  "<p>While a case is open, <b>Navi can file her own findings</b> into it — conclusions she reaches, in her own words, filed under her own name (the finding's frontmatter says so, the case page marks it FILED BY NAVI, and a line lands in the timeline). It is never silent: the filing happens in the thread where she reached the conclusion, and the receipt — the finding's title and its path — hangs on her message there. She files nothing from unrelated chats and nothing without that receipt.</p>" +
+  "<p>The <b>open case is visible</b>: the status column carries it (CASE, in the stats), and in the case's own chat a chip above the thread names it — tap it to jump to the case. Closing the case (making another one open, or none) clears both.</p></div>" +
+    "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
+  "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p></div>" +
     "<div class='doc-sec'><h4>The report export</h4>" +
-  "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence listed — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
+  "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
+  { id: "threat-intelligence", title: "Threat Intelligence — the Center", related: ["case-files", "mesh"], html:
+    "<div class='doc-sec'><h4>What the Center is</h4>" +
+  "<p><b>Threat Intelligence</b> (in the menu's <b>Apex | Apps</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
+  "<p>The page is <b>freshness first</b>: a strip up top says who gathered the picture and how old every source is — <i>fresh</i> under 12 hours, <i>aging</i> under 48, <i>stale</i> beyond — because a stale picture presented as fresh is worse than none. Below it, the <b>triage queue</b> (your matches first, then what's newly exploited, then the loudest new disclosures), <b>the record</b> (one CVE in full: description, products, references, EPSS history), and <b>Navi's brief</b> — the same standing summary she carries into chat. On a phone the arrangement is its own: one column, brief first.</p></div>" +
+    "<div class='doc-sec'><h4>Matching — declared, local, honest</h4>" +
+  "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>words from your open cases</b>. A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case words are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
+    "<div class='doc-sec'><h4>Navi's three depths of knowing</h4>" +
+  "<p><b>The standing brief</b> rides her chat context on every turn — bounded (roughly 700 tokens), always carrying its freshness stamps, so she answers “what's the picture?” from the store and dates it when she does. <b>Deliberate lookup</b>: type <span class='mono'>intel: openssl</span>, or ask <i>“what do we know about CVE-2024-3094?”</i>, and the answer comes straight from the store without a model round-trip — including when the honest answer is “not in the store.” <b>The seam</b>: name a CVE ID or a watched product in ordinary chat and that record is pulled into her context for that reply only. In a <b>case chat</b>, the case's own matched records ride along — and from the Center's record view, a record can be <b>filed straight into the open case</b> as a finding, its citation (the CVE ID and the digest's stamp) written into the note so case exports carry it.</p></div>" +
+    "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
+  "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -4409,6 +4675,17 @@ function memoryReceiptHtml(m, idx) {
     return h + "</div>";
   }).join("");
 }
+function caseFilingsHtml(m) {
+  // Build 15 (#161): the receipt for Navi's own case filings —
+  // what she filed, into which case, at which path. Filed in
+  // her name; the finding itself lives in the case's findings/.
+  if (!m.caseFilings || !m.caseFilings.length) return "";
+  return m.caseFilings.map(function (f) {
+    return "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Filed to the case</b> <span style='color:var(--dim)'>her finding, in her name</span></div>"
+      + "<div style='font-size:13px;margin-top:2px'>“" + esc(f.title) + "” — into <b>" + esc(f.caseName || f.case) + "</b></div>"
+      + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div></div>";
+  }).join("");
+}
 var MEMORY_ORIGIN_LABELS = { manual: "Added by hand", trigger: "From chat — you asked", autonomous: "From chat — her call", correction: "From chat — correction" };
 function srcPills(sources) {
   // The breadcrumb path of where an answer came from: one quiet
@@ -4466,10 +4743,10 @@ function liveChat(text, speak) {
     if (x.exec) content += "\n\n[terminal]\n" + execContextText(x.exec);
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
-  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal };
+  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null }; });
+    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, chatId: activeChatId }; });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -4874,10 +5151,10 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-Threat Intelligence", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Threat Intelligence", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -5014,10 +5291,24 @@ function renderPresenceBar() {
   // keyed to the same classes. One fact, one place: the button
   // cannot tell a different story from the screen.
   var framePressed = window.innerWidth <= 800 ? appEl.classList.contains("dock-open") : !appEl.classList.contains("no-status");
+  // Build 15 (#161): in a case's own chat, the header says which
+  // case this room belongs to — the running case, visible where
+  // the work happens; the chip is the door back to the case.
+  var caseChip = "";
+  if (view === "Chat") {
+    var ac = (typeof activeChat === "function") ? activeChat() : null;
+    if (ac && ac.case) {
+      var cname = String(ac.title || ac.case).replace(/^Case — /, "");
+      caseChip = "<button class='ghost' id='presence-case-chip' aria-label='Open the case this chat belongs to' style='min-height:44px;padding:4px 10px;font-size:12px;white-space:nowrap'>⚖ Case: " + esc(cname) + "</button>";
+    }
+  }
   presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div>"
+    + caseChip
     + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
   chatStatusToggleBtn = document.getElementById("chat-status-toggle");
   if (chatStatusToggleBtn) chatStatusToggleBtn.onclick = function () { toggleStatusColumn(); };
+  var pcc = document.getElementById("presence-case-chip");
+  if (pcc) pcc.onclick = function () { var a2 = activeChat(); if (a2 && a2.case) { caseDetailState = null; view = "CaseFiles"; refreshCaseDetail(a2.case); render(); } };
 }
 function statusPanelSvg() {
   return "<svg aria-hidden='true' focusable='false' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16' rx='2'/><path d='M15.5 4v16'/><rect x='15.5' y='4' width='5.5' height='16' fill='currentColor' stroke='none' opacity='0.45'/></svg>";
@@ -6753,7 +7044,7 @@ function chatsPanelHtml() {
   h += "<p style='color:var(--dim);font-size:12px;margin:2px 0 8px'>Every conversation is saved locally. Switch here and the thread picks that conversation back up.</p>";
   h += chats.map(function (c) {
     var on = c.id === activeChatId;
-    return "<div class='card' style='margin-bottom:8px;padding:10px;" + (on ? "border-color:var(--cy)" : "") + "'><b>" + esc(c.title) + "</b> <span style='color:var(--dim);font-size:12px'>" + c.messages.length + " messages</span><div style='margin-top:6px;display:flex;gap:6px'>" +
+    return "<div class='card' style='margin-bottom:8px;padding:10px;" + (on ? "border-color:var(--cy)" : "") + "'><b>" + esc(c.title) + "</b>" + (c.case ? " <span class='mono' style='font-size:11px;color:#34d399'>CASE</span>" : "") + " <span style='color:var(--dim);font-size:12px'>" + c.messages.length + " messages</span><div style='margin-top:6px;display:flex;gap:6px'>" +
       (on ? "<span class='mono' style='color:var(--cy);font-size:11px;align-self:center'>ACTIVE</span>" : "<button class='ghost' data-switch='" + c.id + "' style='min-height:40px'>Switch</button>") +
       (chats.length > 1 ? "<button class='ghost' data-delchat='" + c.id + "' style='min-height:40px'>Delete</button>" : "") + "</div></div>";
   }).join("");
@@ -6812,6 +7103,7 @@ function renderStatus(live) {
     "</details></div>" +
     renderSudo() +
     renderVoiceStatus() +
+    stat("CASE", openCaseState ? openCaseState.name : "No case open", openCaseState ? "#34d399" : "#9fb3c8") +
     stat("MEMORY", memory.length + " entries (local)", "#34d399") +
     stat("RAG", CONFIG.backend === "live" ? (ragPacksState ? ragPacksState.filter(function (p) { return p.active; }).length + " of " + ragPacksState.length + " packs active" : "…") : "simulated (mock mode)", "#34d399") +
     stat("BACKUP", githubState ? ghBackupSummary(githubState) : "…", githubState && githubState.lastBackupAt ? "#34d399" : "#9fb3c8");
@@ -7743,7 +8035,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Updater") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Updater") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -7795,6 +8087,7 @@ function render() {
       if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
+      if (m.who === "NAVI") h += caseFilingsHtml(m);
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
@@ -7986,6 +8279,8 @@ function render() {
     h += vaultHtml();
   } else if (view === "CaseFiles") {
     h += caseFilesHtml();
+  } else if (view === "ThreatIntel") {
+    h += threatIntelHtml();
   } else if (view === "DHD") {
     h += dhdHtml();
   } else if (view === "Mesh") {
@@ -8390,6 +8685,10 @@ function sendChat(text) {
       // memory work as payload data — file it against the store
       // and hang the receipts on this message.
       if (r.memorySaves || r.memoryRefused) { var rcs = applyMemorySaves(r.memorySaves, r.memoryRefused); if (rcs.length) nm.memoryReceipts = rcs; }
+      // Her own case filings (Build 15, #161): the bridge filed
+      // them before answering; the receipt hangs on this message,
+      // in the thread where the filing happened.
+      if (r.caseFilings && r.caseFilings.length) nm.caseFilings = r.caseFilings;
       messages.push(nm);
     }
     persist(); render(); if (CONFIG.backend !== "live" && CONFIG.speakReplies && r.text) mockSpeak(r.text);
@@ -9094,6 +9393,8 @@ function wire() {
     }
   } else if (view === "CaseFiles") {
     wireCaseFiles();
+  } else if (view === "ThreatIntel") {
+    wireThreatIntel();
   } else if (view === "DHD") {
     wireDhd();
   } else if (view === "Mesh") {

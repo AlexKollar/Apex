@@ -793,6 +793,21 @@ else
   echo "          Guardian's headroom protection stays off until Apex is installed from"
   echo "          a copy of the sources that carries guardian.py (the release zip does)."
 fi
+# Threat Intelligence Center (Build 15, #165): the bridge
+# imports intel.py from beside itself, so the engine lands in
+# the install root next to bridge.py, the Guardian's way — a
+# copy of the sources missing it must not abort the install:
+# say so in plain words and carry on; the bridge runs with the
+# Center dark (its inert fallback) until Apex is installed from
+# a tree that carries the engine.
+if [ -f intel.py ]; then
+  $SUDO cp intel.py "$INSTALL_DIR/intel.py"
+else
+  echo "    note: the Threat Intelligence Center engine file (intel.py) is missing from"
+  echo "          this copy of the sources. The install continues without it — the bridge"
+  echo "          will run, but the Center stays dark until Apex is installed from a copy"
+  echo "          of the sources that carries intel.py (the release zip does)."
+fi
 # The VERSION file is the app's single source of truth for its own
 # version — the bridge reads it on every /api/status and the Updater
 # compares it against the latest release. It is app code, not

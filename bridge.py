@@ -387,11 +387,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-12.914"
+BRIDGE_BUILD = "2026-11-12.915"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 14
+SHIPPED_BUILD_SEQ = 15
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2476,6 +2476,36 @@ def guardian_settings(cfg):
     }
 
 
+def intel_settings(cfg):
+    # Threat Intelligence Center (Build 15, #165): absent-block-
+    # safe like the rest. Defaults: enabled, every keyless source
+    # on, an empty watchlist, this node collects for itself (no
+    # collector peer named), no silent local fallback, a 6-hour
+    # collection cadence (EPSS rides daily inside the engine).
+    b = cfg.get("intel") if isinstance(cfg, dict) else None
+    if not isinstance(b, dict):
+        b = {}
+    src = b.get("sources") if isinstance(b.get("sources"), dict) else {}
+    watch = b.get("watchlist")
+    if not isinstance(watch, list):
+        watch = []
+    watch = [str(x).strip() for x in watch if str(x).strip()][:40]
+    return {
+        "enabled": b.get("enabled") is not False,
+        "sources": {
+            "nvd": src.get("nvd") is not False,
+            "kev": src.get("kev") is not False,
+            "epss": src.get("epss") is not False,
+            "cisa": src.get("cisa") is not False,
+            "rss": src.get("rss") is not False,
+        },
+        "watchlist": watch,
+        "collectorPeer": str(b.get("collectorPeer") or "").strip(),
+        "fallbackLocal": b.get("fallbackLocal") is True,
+        "cadenceHours": _mesh_int(b.get("cadenceHours"), 6),
+    }
+
+
 def mesh_settings(cfg):
     # Absent-block-safe, like dhd_settings: an install whose config
     # predates the mesh block (or a field of it) reads as the
@@ -2601,6 +2631,145 @@ if guardian_mod is not None:
     )
 else:
     GUARDIAN = _GuardianUnavailable()
+
+
+# -- Threat Intelligence Center engine (Build 15, #165) ------------
+# intel.py beside the bridge, imported like guardian.py: an
+# install missing the module runs with the Center dark rather
+# than failing to boot. The engine owns the store, the pullers,
+# the matcher and the digest; the bridge owns config, the Mesh
+# door it travels through, and the chat seams it surfaces in.
+try:
+    import intel as intel_mod
+except Exception:
+    intel_mod = None
+
+
+class _IntelUnavailable:
+    # The Guardian's inert shape: every surface answers
+    # honestly-empty when intel.py is absent.
+    def start(self):
+        pass
+
+    def state(self):
+        return {"ok": False, "error": "intel.py is missing from this install — the Threat Intelligence Center is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
+
+    def brief_block(self):
+        return ""
+
+    def message_context(self, _text):
+        return ""
+
+    def case_context(self, _terms):
+        return ""
+
+    def lookup(self, _query):
+        return "The Threat Intelligence Center is unavailable on this install (intel.py missing)."
+
+    def build_digest(self):
+        return {}
+
+    def import_digest(self, _digest):
+        return {"ok": False, "error": "intel.py missing"}
+
+    def refresh_now(self):
+        return {"ok": False, "error": "intel.py missing"}
+
+    def compute_matches(self):
+        return 0
+
+    def item(self, _cve):
+        return None
+
+
+def _intel_identity():
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    return {"nodeId": ms["nodeId"], "name": ms["nodeName"] or socket.gethostname()}
+
+
+def _intel_peers():
+    try:
+        cfg = load_config()
+        return [{"nodeId": p.get("nodeId"), "name": p.get("name")}
+                for p in mesh_settings(cfg)["borrow"]["peers"]]
+    except Exception:
+        return []
+
+
+def _intel_case_terms(cfg, slug):
+    d = _case_dir(slug)
+    if not d:
+        return []
+    text = ""
+    try:
+        md = os.path.join(d, "case.md")
+        if os.path.exists(md):
+            with open(md, encoding="utf-8") as f:
+                text += f.read()
+        fdir = os.path.join(d, "findings")
+        if os.path.isdir(fdir):
+            for name in sorted(os.listdir(fdir))[:12]:
+                if not name.lower().endswith(".md"):
+                    continue
+                try:
+                    with open(os.path.join(fdir, name), encoding="utf-8") as f:
+                        fm, _b = _fm_parse(f.read())
+                    text += " " + str(fm.get("title") or "")
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    words = set(w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9._-]{2,}", text))
+    return [{"term": w} for w in sorted(words)]
+
+
+def _intel_case_terms_all():
+    cfg = load_config()
+    out = []
+    try:
+        for c in cases_list_payload()["cases"]:
+            out.extend(_intel_case_terms(cfg, c["slug"]))
+    except Exception:
+        pass
+    return out
+
+
+def _intel_fetch_digest(peer_id):
+    cfg = load_config()
+    peer = None
+    for p in mesh_settings(cfg)["borrow"]["peers"]:
+        if p.get("nodeId") == peer_id:
+            peer = p
+            break
+    if not peer:
+        return None
+    try:
+        code, raw = _mesh_request(peer, "GET", "/mesh/intel-digest", b"", "", 60)
+    except Exception:
+        return None
+    if code != 200:
+        return None
+    try:
+        parsed = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+if intel_mod is not None:
+    INTEL = intel_mod.Intel(
+        ROOT,
+        settings_getter=lambda: intel_settings(load_config()),
+        callbacks={
+            "identity": _intel_identity,
+            "peers": _intel_peers,
+            "case_terms": _intel_case_terms_all,
+            "fetch_digest": _intel_fetch_digest,
+        },
+    )
+else:
+    INTEL = _IntelUnavailable()
 
 
 # -- Node identity (spec section 4.2) -------------------------------
@@ -3475,6 +3644,25 @@ def mesh_handle_status(handler, body):
     }
 
 
+def mesh_handle_intel_digest(handler, body):
+    # GET /mesh/intel-digest — signed, peer-authenticated (Build
+    # 15, #165). The collector serves its current
+    # navi-intel-digest/1 object to a paired receiver; the
+    # receiver imports it and matches locally. Only paired peers
+    # get it (same door rules as status/borrow), and the object
+    # carries public intel only — no inventory, no case data.
+    peer = mesh_authenticate(handler, body or b"", "")
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    try:
+        digest = INTEL.build_digest()
+    except Exception as e:
+        return 200, {"ok": False, "reason": "digest-failed", "error": str(e)[:160]}
+    if not digest:
+        return 200, {"ok": False, "reason": "no-digest"}
+    return 200, digest
+
+
 def mesh_handle_borrow(handler, body):
     # POST /mesh/borrow — admission in the spec's order, then the
     # lender's own model answers the exact messages it was sent.
@@ -4257,6 +4445,9 @@ class MeshHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?")[0] == "/mesh/status":
             code, payload = mesh_handle_status(self, b"")
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/intel-digest":
+            code, payload = mesh_handle_intel_digest(self, b"")
             self._send(code, payload)
         else:
             self._send(404, {"ok": False, "reason": "not-found"})
@@ -12846,13 +13037,22 @@ def _chat_normalize(rec):
         return None
     msgs = rec.get("messages")
     clean_msgs = [m for m in msgs if isinstance(m, dict)] if isinstance(msgs, list) else []
-    return {
+    out = {
         "id": cid,
         "title": str(rec.get("title") or "Chat")[:200],
         "messages": clean_msgs,
         "createdAt": rec.get("createdAt") if isinstance(rec.get("createdAt"), (int, float)) else 0,
         "updatedAt": rec.get("updatedAt") if isinstance(rec.get("updatedAt"), (int, float)) else 0,
     }
+    # Case-tied chats (Build 15, #161): a chat bound to a case
+    # carries the case slug in "case" — a reference only; the
+    # case's content stays the Vault's plain files. The binding
+    # survives normalization (and therefore write-through and
+    # convergence) exactly like the thread itself does.
+    case_ref = rec.get("case")
+    if isinstance(case_ref, str) and re.match(r"^[a-z0-9][a-z0-9-]*$", case_ref):
+        out["case"] = case_ref
+    return out
 
 
 def _chat_path(cid):
@@ -13238,6 +13438,13 @@ def boot_set_armed(want_armed):
 
 CASE_SEVERITIES = ["critical", "high", "medium", "low", "info"]
 
+# Build 15 (#162): the image evidence a case report embeds.
+CASE_IMAGE_MIMES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp",
+}
+CASE_EMBED_MAX_BYTES = 8 * 1024 * 1024
+
 
 def _fm_parse(text):
     meta = {}
@@ -13313,6 +13520,11 @@ def _case_findings(slug):
                 "severity": sev,
                 "internal": str(meta.get("internal") or "").lower() in ("yes", "true", "1"),
                 "filed": str(meta.get("filed") or ""),
+                # Build 15 (#161): who filed this — Navi's own
+                # filings are marked as hers in the frontmatter;
+                # notes from before the marking existed are the
+                # operator's, which is what they always were.
+                "author": "navi" if str(meta.get("author") or "").lower() == "navi" else "operator",
                 "body": body.strip(),
             })
     out.sort(key=lambda f: (CASE_SEVERITIES.index(f["severity"]), f["file"]))
@@ -13393,6 +13605,10 @@ def case_detail_payload(slug):
     detail["findings"] = _case_findings(slug)
     detail["evidence"] = _case_evidence(slug)
     detail["timeline"] = _case_timeline(slug)
+    # Build 15 (#161): the case's tied chat, when one exists —
+    # looked up, never created, by a read.
+    bound = case_chat_for(slug)
+    detail["chatId"] = bound["id"] if bound else None
     return detail
 
 
@@ -13422,7 +13638,7 @@ def case_create(name, client, scope):
     return case_detail_payload(slug), None
 
 
-def case_file_entry(slug, kind, title, body, severity="info", internal=False):
+def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator"):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
@@ -13459,6 +13675,7 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False):
         content = _fm_render([
             ("title", title), ("severity", sev),
             ("internal", "yes" if internal else "no"), ("filed", now),
+            ("author", "navi" if author == "navi" else "operator"),
         ], "# " + title + "\n\n" + body.strip() + "\n")
     target_dir = os.path.join(d, sub)
     os.makedirs(target_dir, exist_ok=True)
@@ -13505,6 +13722,7 @@ def case_report(slug):
     detail = case_detail_payload(slug)
     if detail is None:
         return None, 0, "No such case."
+    d = _case_dir(slug)
     withheld = sum(1 for f in detail["findings"] if f["internal"])
     today = time.strftime("%Y-%m-%d", time.localtime())
     lines = [
@@ -13533,13 +13751,33 @@ def case_report(slug):
         lines += ["### " + e["date"] + " — " + e["title"], "", e["body"] or "", ""]
     lines += ["## Evidence on file", ""]
     if detail["evidence"]:
+        # Build 15 (#162): image evidence is SHOWN, not just
+        # named — embedded in the report as base64 data URIs, so
+        # the single-file promise survives for the downloaded
+        # copy too (the report travels; a relative reference
+        # would break the moment it left the case folder). An
+        # image too large to embed honestly (over ~8 MB) stays
+        # listed by name with the reason stated. Non-image
+        # evidence keeps the name+size listing.
+        edir = os.path.join(d, "evidence")
         for ev in detail["evidence"]:
-            lines.append("- " + ev["name"] + " (" + str(ev["size"]) + " bytes)")
+            ext = os.path.splitext(ev["name"])[1].lower()
+            mime = CASE_IMAGE_MIMES.get(ext)
+            if mime and ev["size"] <= CASE_EMBED_MAX_BYTES:
+                try:
+                    with open(os.path.join(edir, ev["name"]), "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("ascii")
+                    lines += ["### " + ev["name"] + " (" + str(ev["size"]) + " bytes)", "",
+                              "![" + ev["name"] + "](data:" + mime + ";base64," + b64 + ")", ""]
+                    continue
+                except Exception:
+                    pass
+            note = " — too large to embed in the report; the file itself is in the case's evidence/" if mime else ""
+            lines.append("- " + ev["name"] + " (" + str(ev["size"]) + " bytes)" + note)
     else:
         lines.append("No evidence files on file.")
     lines.append("")
     text = "\n".join(lines)
-    d = _case_dir(slug)
     with open(os.path.join(d, "report.md"), "w", encoding="utf-8") as f:
         f.write(text)
     return text, withheld, None
@@ -13549,6 +13787,17 @@ def case_open_slug(cfg):
     block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
     slug = str(block.get("open") or "")
     return slug if _case_manifest(slug) is not None else ""
+
+
+def open_case_payload(cfg):
+    # Build 15 (#161): the running case as the status column
+    # shows it — slug and display name, or None when the desk is
+    # clear.
+    slug = case_open_slug(cfg)
+    if not slug:
+        return None
+    meta = _case_manifest(slug)
+    return {"slug": slug, "name": str((meta or {}).get("title") or slug)}
 
 
 def case_file_from_chat(text, history, cfg):
@@ -13586,6 +13835,164 @@ def case_file_from_chat(text, history, cfg):
         return None, err
     meta = _case_manifest(slug)
     return {"case": str((meta or {}).get("title") or slug), "path": filed["path"]}, None
+
+
+# --- Case-tied chats, Navi's own filings, deletion (Build 15, #161/#163)
+# A case is a working context, not just a folder. Opening a case
+# ensures its chat: one canonical thread bound to the case by the
+# slug in its "case" field, riding the server-side chat store
+# (#139) like every other thread — so it survives machines, and
+# Mesh borrowing applies to it like any other chat. The chat is a
+# reference; the case's content stays the Vault's plain files.
+
+def _case_chat_out(rec):
+    # The store's canonical id is a string (it is a filename);
+    # the frontend's own hydration turns numeric-string ids back
+    # into numbers, and its identity comparisons are numeric.
+    # Records handed to the dashboard from here wear the numeric
+    # shape the frontend expects; the stored record is untouched.
+    if rec is None:
+        return None
+    out = dict(rec)
+    if isinstance(out.get("id"), str) and out["id"].isdigit():
+        out["id"] = int(out["id"])
+    return out
+
+
+def case_chat_for(slug):
+    for rec in chats_all():
+        if rec.get("case") == slug:
+            return _case_chat_out(rec)
+    return None
+
+
+def case_chat_ensure(slug):
+    # Find the case's chat, or create it on first open. The id is
+    # epoch-milliseconds, the frontend's own id shape, so every
+    # door treats the thread like any other. Seeded with one line
+    # from Navi naming the room for what it is.
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None
+    found = case_chat_for(slug)
+    if found is not None:
+        return found
+    # (creation below builds the id as epoch-ms; chat_write
+    # normalizes it to the store's string shape, so the return
+    # goes through the same numeric-shape hand-off.)
+    name = str(meta.get("title") or slug)
+    cid = int(time.time() * 1000)
+    existing = {str(r.get("id")) for r in chats_all()}
+    while str(cid) in existing:
+        cid += 1
+    rec = {
+        "id": cid,
+        "title": "Case — " + name,
+        "case": slug,
+        "messages": [{
+            "who": "NAVI",
+            "text": "This is the case room for **" + name + "**. Everything we work in here is tied to the case: findings I file land in its record in `findings/`, marked as mine, with a line in its timeline — always in the open, receipted in this thread.",
+            "exec": None,
+        }],
+        "createdAt": cid,
+        "updatedAt": cid,
+    }
+    return _case_chat_out(chat_write(rec))
+
+
+# Navi files her OWN findings (#161): the same judgment-marker
+# discipline as her memory saves (#72). The persona prompt teaches
+# her the marker only while a case is open; the bridge strips the
+# marker lines from the reply before it is shown or spoken, files
+# each one into the open case as a finding authored by Navi plus
+# a timeline entry, and the filings ride the payload back as
+# data — the dashboard receipts them in the thread where they
+# happened. Nothing is filed from a chat without that receipt:
+# no background filing, ever. At most two per reply, like memory.
+FINDING_MARKER_RE = re.compile(
+    r"^\s*\[\[finding(?::|\s*\[(critical|high|medium|low|info)\]\s*:)\s*(.+?)\s*\]\]\s*$",
+    re.I | re.M)
+
+
+def navi_file_finding(slug, severity, content):
+    # One of Navi's findings, in her words, into the open case:
+    # the finding note (author: navi in its frontmatter, plainly)
+    # and the timeline entry that records the act.
+    content = " ".join(str(content or "").split()).strip()
+    if not content:
+        return None
+    title, sep, body = content.partition(" | ")
+    if not sep:
+        title, body = "", content
+    title = " ".join(str(title).replace("#", "").split()).strip(" .:") or (
+        (body[:70] + "…") if len(body) > 70 else body)
+    filed, err = case_file_entry(slug, "finding", title, body.strip(),
+                                 severity or "info", False, author="navi")
+    if err:
+        return None
+    case_file_entry(slug, "timeline", "Navi filed a finding — " + title,
+                    "Filed from the case chat as `" + filed["path"] + "`.")
+    meta = _case_manifest(slug)
+    return {"case": slug, "caseName": str((meta or {}).get("title") or slug),
+            "path": filed["path"], "title": title}
+
+
+def extract_finding_markers(reply, cfg):
+    # Returns (clean_reply, filings). Markers are honored only
+    # while a case is open — the prompt only teaches them then —
+    # and a stray marker with no case open is stripped and
+    # dropped, never filed anywhere.
+    slug = case_open_slug(cfg)
+    filings = []
+
+    def _take(m):
+        if not slug or len(filings) >= 2:
+            return ""
+        sev = (m.group(1) or "info").lower()
+        filed = navi_file_finding(slug, sev, m.group(2))
+        if filed:
+            filings.append(filed)
+        return ""
+
+    clean = FINDING_MARKER_RE.sub(_take, reply or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return clean, filings
+
+
+def case_delete(slug):
+    # #163, as ruled by Alex (2026-11-12): removing a case
+    # removes ALL of its files — the case folder and everything
+    # in it goes, and (Build 15, the parent ruling for the #161
+    # pairing) its tied chat goes with it. Backups are snapshots
+    # and are NOT reached into: a case inside an existing backup
+    # stays in that backup. Deleting the open case clears the
+    # open-case pointer.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    detail = case_detail_payload(slug)
+    counts = {
+        "findings": len(detail["findings"]) if detail else 0,
+        "evidence": len(detail["evidence"]) if detail else 0,
+        "timeline": len(detail["timeline"]) if detail else 0,
+    }
+    chat_removed = False
+    bound = case_chat_for(slug)
+    if bound is not None:
+        chat_removed = chat_delete(bound["id"])
+    try:
+        shutil.rmtree(d)
+    except Exception as e:
+        return None, "The case folder could not be removed: " + str(e)
+    cfg = load_config()
+    block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
+    was_open = block.get("open") == slug
+    if was_open:
+        block.pop("open", None)
+        cfg["casefiles"] = block
+        save_config(cfg)
+    return {"slug": slug, "counts": counts, "chatRemoved": chat_removed,
+            "wasOpen": was_open}, None
 
 
 # --- Account sync via the Operator Badge (Build 12, issue #136) ------
@@ -13851,6 +14258,10 @@ class Handler(BaseHTTPRequestHandler):
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
+                # Build 15 (#161): the running case, read true —
+                # the status column shows which case is open the
+                # way it shows every other live state.
+                "openCase": open_case_payload(cfg),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
                 "mesh": mesh_status_payload(cfg, (self.headers.get("X-Apex-Via") or "") == "dhd"),
                 "boot": boot_mode_payload(),
@@ -14030,6 +14441,30 @@ class Handler(BaseHTTPRequestHandler):
             # Server-side chats (#139): the whole store — threads
             # and the uploads index — for the window to hydrate.
             self._send(200, chats_payload())
+        elif self.path == "/api/intel":
+            # Threat Intelligence Center (Build 15, #165): the
+            # Apps surface's whole picture in one payload —
+            # freshness first, the triage queue, the brief.
+            try:
+                self._send(200, INTEL.state())
+            except Exception as e:
+                self._send(200, {"ok": False, "error": "The intel store could not be read: " + str(e)[:160], "sources": [], "queue": [], "advisories": [], "watchlist": []})
+        elif self.path.split("?")[0] == "/api/intel/item":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            _item = None
+            try:
+                _item = INTEL.item((qs.get("cve") or [""])[0])
+            except Exception:
+                _item = None
+            if _item is None:
+                self._send(404, {"ok": False, "error": "Not in the local intel store."})
+            else:
+                self._send(200, {"ok": True, "item": _item})
+        elif self.path == "/api/intel/digest":
+            try:
+                self._send(200, INTEL.build_digest())
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)[:160]})
         elif self.path == "/api/cases":
             self._send(200, cases_list_payload())
         elif self.path.split("?")[0] == "/api/cases/detail":
@@ -15206,6 +15641,30 @@ class Handler(BaseHTTPRequestHandler):
                     payload["spoken"] = speak_reply(_creply, cfg)
                 self._send(200, payload)
                 return
+            # Threat intel lookup (Build 15, #165): "intel: …" or
+            # "what do we know about CVE-…" is answered straight
+            # from the local store by the same deterministic logic
+            # as the routes above — no model round-trip, and the
+            # store's own words about its freshness ride along in
+            # the answer (absence is stated as absence).
+            _im = re.match(r"\s*intel\s*[:\-]\s*(.+)", last or "", re.I)
+            _cm = re.search(r"\bwhat do we know about\s+(CVE-\d{4}-\d{4,7})\b", last or "", re.I) or re.search(r"\blook\s*up\s+(CVE-\d{4}-\d{4,7})\b", last or "", re.I)
+            if _im or _cm:
+                _iquery = (_im.group(1) if _im else _cm.group(1)).strip()
+                try:
+                    _ireply = INTEL.lookup(_iquery)
+                except Exception:
+                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → Threat Intelligence) shows its state."
+                payload = {
+                    "reply": _ireply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_ireply, cfg)
+                self._send(200, payload)
+                return
             if not llamafile_alive(endpoint):
                 # Command-line mode: no model is connected, so the
                 # message itself is the command. A leading "$" is
@@ -15283,6 +15742,62 @@ class Handler(BaseHTTPRequestHandler):
                     _system_prompt += "\n\n[Guardian — this machine right now]\n" + GUARDIAN.context_block()
             except Exception:
                 pass
+            # Case Files (Build 15, #161): while a case is open
+            # she knows which one it is, and she can file her own
+            # findings into it — her words, her name on them,
+            # receipted in the thread (extract_finding_markers,
+            # below, beside her memory saves).
+            _open_case = open_case_payload(cfg)
+            if _open_case:
+                _system_prompt += (
+                    "\n\n[Case open — " + _open_case["name"] + "]\n"
+                    "The case \"" + _open_case["name"] + "\" is open on the desk, and work in this conversation may belong to it. "
+                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by ending your reply with a line of exactly this form: "
+                    "[[finding: <short title> | <the finding, stated plainly>]] — optionally with a severity: [[finding[high]: <title> | <finding>]]. "
+                    "At most two per reply, and only for real conclusions about this case — not small talk, and not the operator's words restated as yours. "
+                    "The marker line is removed before the operator sees your reply; the filing is made in your name, a line goes into the case's timeline, and the operator is shown a receipt of exactly what you filed — never mention the marker itself."
+                )
+            # Threat Intelligence Center (Build 15, #165): the
+            # standing brief rides the system prompt the way the
+            # Guardian's does — one bounded block (~700 tokens),
+            # only when the store holds anything at all, always
+            # carrying its freshness so she never states a stale
+            # picture as a fresh one. In a case-bound chat the
+            # case's own matched records ride too — the join
+            # between the Center and the case on the desk.
+            try:
+                _ibrief = INTEL.brief_block()
+                if _ibrief:
+                    _system_prompt += "\n\n" + _ibrief
+            except Exception:
+                pass
+            _bound_case = ""
+            try:
+                _cid = data.get("chatId")
+                if _cid is not None:
+                    for _rec in chats_all():
+                        if str(_rec.get("id")) == str(_cid) and _rec.get("case"):
+                            _bound_case = str(_rec["case"])
+                            break
+            except Exception:
+                _bound_case = ""
+            if _bound_case:
+                try:
+                    _cterms = [t["term"] for t in _intel_case_terms(cfg, _bound_case)]
+                    _cctx = INTEL.case_context(_cterms)
+                    if _cctx:
+                        _system_prompt += "\n\n" + _cctx
+                except Exception:
+                    pass
+            # The message seam: an exact CVE ID or a stack/case
+            # term in the operator's own words pulls the record in
+            # for THIS reply only.
+            try:
+                _ictx = INTEL.message_context(last or "")
+                if _ictx:
+                    messages = messages + [{"role": "system", "content": _ictx}]
+            except Exception:
+                pass
             messages = [{
                 "role": "system",
                 "content": _system_prompt,
@@ -15327,9 +15842,17 @@ class Handler(BaseHTTPRequestHandler):
                 # saves ride the payload back as data for the
                 # dashboard to file and receipt.
                 reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
+                # Her own case filings (Build 15, #161): the
+                # [[finding: …]] markers come out of the reply the
+                # same way, are filed into the open case in her
+                # name before this payload returns, and ride back
+                # as data for the dashboard's receipt.
+                reply, _cfilings = extract_finding_markers(reply, cfg)
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload
+                if _cfilings:
+                    payload["caseFilings"] = _cfilings
                 if _msaves:
                     payload["memorySaves"] = _msaves
                 if _mrefused:
@@ -16299,6 +16822,9 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
+                # Build 15 (#161): a case is born with its chat.
+                chat = case_chat_ensure(detail["slug"])
+                detail["chatId"] = chat["id"] if chat else None
                 self._send(200, {"ok": True, "case": detail})
         elif self.path == "/api/cases/file":
             data = self._body()
@@ -16332,14 +16858,135 @@ class Handler(BaseHTTPRequestHandler):
             slug = str(data.get("case") or "")
             cfg2 = load_config()
             block = cfg2.get("casefiles") if isinstance(cfg2.get("casefiles"), dict) else {}
+            chat_id = None
             if slug and _case_manifest(slug) is not None:
                 block["open"] = slug
+                # Build 15 (#161): opening a case ensures its
+                # chat — created on first open, returned to after.
+                chat = case_chat_ensure(slug)
+                chat_id = chat["id"] if chat else None
             else:
                 block.pop("open", None)
                 slug = ""
             cfg2["casefiles"] = block
             save_config(cfg2)
-            self._send(200, {"ok": True, "open": slug})
+            self._send(200, {"ok": True, "open": slug, "chatId": chat_id})
+        elif self.path == "/api/cases/chat":
+            # Build 15 (#161): the case chat's door — ensure the
+            # tied chat and hand back its id, for the Case Files
+            # view's jump into the room.
+            data = self._body()
+            slug = str(data.get("case") or "")
+            chat = case_chat_ensure(slug) if slug else None
+            if chat is None:
+                self._send(200, {"ok": False, "error": "No such case."})
+            else:
+                self._send(200, {"ok": True, "chatId": chat["id"], "chat": chat})
+        elif self.path == "/api/cases/delete":
+            # Build 15 (#163): delete is complete — the case, all
+            # its Vault files, and its tied chat. The dashboard's
+            # confirm names all of it (and the backup truth)
+            # before this is ever called.
+            data = self._body()
+            gone, err = case_delete(str(data.get("case") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "deleted": gone})
+        elif self.path == "/api/intel/refresh":
+            # Build 15 (#165): a manual cycle, run on the engine's
+            # own thread — the response never waits on a feed.
+            self._send(200, INTEL.refresh_now())
+        elif self.path == "/api/intel/watchlist":
+            data = self._body()
+            terms = data.get("terms")
+            if not isinstance(terms, list):
+                self._send(200, {"ok": False, "error": "The watchlist rides as a list of terms."})
+            else:
+                cfg2 = load_config()
+                block = cfg2.get("intel") if isinstance(cfg2.get("intel"), dict) else {}
+                block["watchlist"] = [str(t).strip() for t in terms if str(t).strip()][:40]
+                cfg2["intel"] = block
+                save_config(cfg2)
+                try:
+                    INTEL.compute_matches()
+                except Exception:
+                    pass
+                self._send(200, {"ok": True, "watchlist": intel_settings(cfg2)["watchlist"]})
+        elif self.path == "/api/intel/settings":
+            data = self._body()
+            cfg2 = load_config()
+            block = cfg2.get("intel") if isinstance(cfg2.get("intel"), dict) else {}
+            if "enabled" in data:
+                block["enabled"] = data.get("enabled") is not False
+            if "collectorPeer" in data:
+                block["collectorPeer"] = str(data.get("collectorPeer") or "").strip()
+            if "fallbackLocal" in data:
+                block["fallbackLocal"] = data.get("fallbackLocal") is True
+            if "cadenceHours" in data:
+                block["cadenceHours"] = _mesh_int(data.get("cadenceHours"), 6)
+            if isinstance(data.get("sources"), dict):
+                src = block.get("sources") if isinstance(block.get("sources"), dict) else {}
+                for k in ("nvd", "kev", "epss", "cisa", "rss"):
+                    if k in data["sources"]:
+                        src[k] = data["sources"][k] is not False
+                block["sources"] = src
+            cfg2["intel"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "intel": intel_settings(cfg2)})
+        elif self.path == "/api/intel/file":
+            # Build 15 (#165 × #161): file an intel record into a
+            # case as a finding. The citation travels in the note
+            # itself — CVE ID and the digest's stamp — so case
+            # exports carry it without the Center existing there.
+            data = self._body()
+            slug = str(data.get("case") or "")
+            cid = str(data.get("cve") or "").upper()
+            item = None
+            try:
+                item = INTEL.item(cid)
+            except Exception:
+                item = None
+            if item is None:
+                self._send(200, {"ok": False, "error": "That record is not in the local intel store."})
+            elif _case_manifest(slug) is None:
+                self._send(200, {"ok": False, "error": "No such case."})
+            else:
+                gen_at = ""
+                coll = ""
+                try:
+                    with open(INTEL.digest_path, encoding="utf-8") as f:
+                        _dg = json.load(f)
+                    gen_at = str(_dg.get("generated_at") or "")
+                    coll = str((_dg.get("collector") or {}).get("name") or "")
+                except Exception:
+                    gen_at = ""
+                cvss = item.get("cvss")
+                sev = "info"
+                if isinstance(cvss, (int, float)):
+                    sev = "critical" if cvss >= 9 else "high" if cvss >= 7 else "medium" if cvss >= 4 else "low"
+                body_lines = [
+                    item.get("title") or cid, "",
+                    item.get("description") or "", "",
+                    "- **CVE:** " + cid,
+                    "- **CVSS:** " + (str(cvss) if cvss is not None else "—") + ((" (" + item["cvssSeverity"] + ")") if item.get("cvssSeverity") else ""),
+                    "- **EPSS:** " + (str(item["epss"]) if item.get("epss") is not None else "—"),
+                    "- **Known-exploited (CISA KEV):** " + ("yes — remediation due " + (item.get("kevDue") or "?") if item.get("kev") else "no"),
+                    "- **Products (CPE):** " + (", ".join(item.get("products") or []) or "—"),
+                    "",
+                    "Filed from the Threat Intelligence Center — " + cid
+                    + ", per the intel digest generated " + (gen_at or "at an unstamped time")
+                    + ((" by " + coll) if coll else "")
+                    + ". Sources: NVD / CISA KEV / EPSS, as stamped in the Center.",
+                ]
+                refs = item.get("refs") or []
+                if refs:
+                    body_lines += ["", "References: " + " · ".join(refs[:5])]
+                filed, err = case_file_entry(slug, "finding", "Intel — " + cid, "\n".join(body_lines), sev, False)
+                if err:
+                    self._send(200, {"ok": False, "error": err})
+                else:
+                    self._send(200, {"ok": True, "filed": filed})
         elif self.path == "/api/github/badge-sync/start":
             # #136: slotting the Operator Badge pulls the latest
             # backup into a preview on a live operation card. The
@@ -16649,6 +17296,20 @@ if __name__ == "__main__":
             GUARDIAN.start()
             print("Guardian is ON: watching headroom (reserve "
                   + str(guardian_settings(cfg)["reserveMb"]) + " MB).", flush=True)
+    except Exception:
+        pass
+    # Threat Intelligence Center (Build 15, #165): the
+    # collection scheduler starts with the bridge's other
+    # background services. The engine re-checks its enabled
+    # setting every cycle, and a node named as a receiver pulls
+    # its collector's digest over the Mesh door instead of
+    # polling the feeds itself.
+    try:
+        if intel_settings(cfg)["enabled"]:
+            INTEL.start()
+            print("Threat Intelligence Center is ON: "
+                  + ("receiving from a Mesh collector." if intel_settings(cfg)["collectorPeer"]
+                     else "collecting on the scheduled cadence."), flush=True)
     except Exception:
         pass
     # Local server (build .59): the saved choice picks the bind
