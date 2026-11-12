@@ -2433,7 +2433,7 @@ def mesh_capabilities(cfg):
         "ramGB": ram,
         "model": "navi",
         "speedClass": speed,
-        # Build 7 (Fix F2): the idle posture rides the same
+        # Build 7 (Fix F2): the idle posture rides the same 
         # self-report as the caps, so a peer's card and roster
         # line state it truthfully — "lends when idle" vs "lends
         # even while busy" — from this machine's own setting.
@@ -6095,6 +6095,200 @@ def read_installed_version(root):
             token = token[: -(len(word) + 1)]
             break
     return token, status
+
+
+def read_installed_build_seq(root):
+    # The Edge build sequence baked into the bridge.py at the
+    # install root (Build 4): the on-disk half of the identity a
+    # same-version refresh has to prove, beside the VERSION
+    # file's number — which a refresh deliberately does not
+    # change. None when the file or the sequence cannot be read
+    # (a bridge from before build sequences existed).
+    try:
+        with open(os.path.join(root, "bridge.py"), "rb") as f:
+            m = re.search(
+                rb"SHIPPED_BUILD_SEQ\\s*=\\s*([0-9]+)", f.read())
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _pid_gone(pid):
+    # Gone = no such process, or a zombie: a zombie holds no
+    # sockets (the kernel closed them at death) and its parent
+    # reaps it in its own time.
+    if not pid:
+        return True
+    if not _pid_alive(pid):
+        return True
+    try:
+        with open("/proc/" + str(pid) + "/stat", "rb") as f:
+            parts = f.read().rsplit(b")", 1)
+        state = parts[1].split()[0].decode("utf-8", "replace") if len(parts) > 1 else ""
+        return state == "Z"
+    except Exception:
+        return False
+
+
+def _pid_cmdline(pid):
+    try:
+        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
+            raw = f.read()
+        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
+    except Exception:
+        return ""
+
+
+def _pid_cwd(pid):
+    try:
+        return os.path.realpath(os.readlink("/proc/" + str(pid) + "/cwd"))
+    except Exception:
+        return ""
+
+
+def _port_holder_pid(port):
+    # The PID holding the LISTEN socket on the port, resolved from
+    # /proc alone — names a holder that answers nothing, where a
+    # status probe can only shrug.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                rows = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for row in rows:
+            parts = row.split()
+            if len(parts) > 9 and parts[3] == "0A":
+                try:
+                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
+                        inodes.add(parts[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    targets = set("socket:[" + ino + "]" for ino in inodes)
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            fds = os.listdir("/proc/" + name + "/fd")
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
+                    return int(name)
+            except Exception:
+                pass
+    return None
+
+
+def _port_answers_expected(port, tgt_seq):
+    # True when the bridge answering on the port already reports
+    # the target identity — the case where a relaunch spawn
+    # failure must NOT fail the apply: the installer's own
+    # relaunch (build .91) already brought the new bridge up.
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:" + str(port) + "/api/status",
+            headers={"User-Agent": "navi-update-helper"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            seen = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not isinstance(seen, dict) or seen.get("app") != "Navi: Apex":
+        return False
+    return tgt_seq is None or seen.get("buildSeq") == tgt_seq
+
+
+def _holder_remedy(port):
+    # The failure-text remedy for a held port (build .91): name
+    # the holder and its exact kill command when the socket can
+    # resolve it — never "launch the app again" against a wedged
+    # port, the advice that stranded the field update this build
+    # answers.
+    holder = _port_holder_pid(port)
+    if holder:
+        cmd = _pid_cmdline(holder)
+        return ("The port is held by process " + str(holder)
+                + (" (" + cmd + ")" if cmd else "")
+                + ": end it with kill -9 " + str(holder)
+                + ", then run the update again — launching the app "
+                "again cannot work while that process holds the port.")
+    return ("If a process is holding the port, find it with lsof -i :"
+            + str(port) + " and end it, then run the update again; "
+            "otherwise launch the app again from its menu entry.")
+
+
+def clear_wedged_bridge(root, port, tgt_seq):
+    # Build .91 (issue #91): before relaunching, prove the OLD
+    # bridge is actually gone — not merely that its pid file is.
+    # A bridge can still hold the port while answering nothing
+    # (frozen, stopped, stuck mid-work), and every relaunch
+    # against it is a no-op: the new bridge cannot bind, and the
+    # confirmation that follows can only report failure with a
+    # remedy that cannot work. If the target build already
+    # answers, there is nothing to clear; if the port is free,
+    # likewise. A holder is signalled ONLY when it is provably
+    # this install's bridge — bridge.py in its command line AND
+    # its working directory the install root; anything else is
+    # reported, never touched. Escalation mirrors the installer:
+    # SIGTERM, wait for death AND a free port, SIGKILL, wait
+    # again. Returns (ok, holder_pid, holder_desc).
+    if _port_answers_expected(port, tgt_seq):
+        return (True, None, "")
+    holder = _port_holder_pid(port)
+    if holder is None:
+        try:
+            sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+            sock.close()
+            return (False, None,
+                    "something is listening on the port but its process could not be identified")
+        except Exception:
+            return (True, None, "")
+    cmd = _pid_cmdline(holder)
+    desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
+    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
+    if not owned:
+        return (False, holder, desc + " — not this install's bridge, so it was not touched")
+    trace("wedge-clear",
+          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
+    try:
+        os.kill(holder, signal.SIGTERM)
+    except Exception:
+        pass
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    try:
+        os.kill(holder, signal.SIGKILL)
+    except Exception:
+        pass
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
+            return (True, holder, desc)
+        time.sleep(0.5)
+    return (False, holder, desc)
 
 
 def read_installed_build_seq(root):
