@@ -1583,6 +1583,7 @@ var dhdState = null;         // live: last /api/status dhd report; mock: the bak
 var meshState = null;        // live: last /api/status mesh report (build .85); mock: derived from the baked CONFIG shape
 var openCaseState = null;    // live: last /api/status openCase report (Build 15, #161) — the running case, read true
 var meshMsg = "";
+var meshTunnelArmed = {};    // Build 5 (#179): peers whose Backup route switch stands flipped on locally, awaiting the SSH host/user the bridge requires — UI state only, never posted until the fields stand filled
 var meshPngMsg = "";         // the PNG card import's own verdict, shown at the drop zone (Build 7)
 var meshHealth = null;       // the last /api/mesh/health report (0.2.0e Build 1, #143); null until the operator runs the check
 var meshHealthBusy = false;  // a health check is in flight
@@ -1687,8 +1688,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.04";
-var SHIPPED_BUILD_SEQ = 4;
+var BRIDGE_BUILD = "2026-11-13.05";
+var SHIPPED_BUILD_SEQ = 5;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -6331,14 +6332,18 @@ function meshTunnelHtml(p, m) {
   // same in-person doctrine as arming lending, and the bridge
   // refuses it there regardless.
   var t = p.tunnel || { enabled: false, sshHost: "", sshPort: 227, sshUser: "", localPort: null };
+  var armed = !t.enabled && !!meshTunnelArmed[p.nodeId];
   var inp = "min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px";
   var h = "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'>" +
-    "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (t.enabled ? "true" : "false") + "' data-mesh-tunnel='" + esc(p.nodeId) + "' aria-label='Backup route to " + esc(p.name) + " — a managed SSH tunnel this bridge keeps open itself'><span class='knob'></span></button><span style='font-size:12px'>Backup route — managed SSH tunnel</span></div>" +
+    "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (t.enabled || armed ? "true" : "false") + "' data-mesh-tunnel='" + esc(p.nodeId) + "' aria-label='Backup route to " + esc(p.name) + " — a managed SSH tunnel this bridge keeps open itself'><span class='knob'></span></button><span style='font-size:12px'>Backup route — managed SSH tunnel</span></div>" +
     "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'>" +
     "<label style='font-size:12px'>SSH host <input type='text' data-mesh-tun-host='" + esc(p.nodeId) + "' value='" + esc(t.sshHost || "") + "' placeholder='e.g. ssh.example.org' aria-label='SSH host for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
     "<label style='font-size:12px'>SSH port <input type='number' data-mesh-tun-port='" + esc(p.nodeId) + "' value='" + (t.sshPort || 227) + "' min='1' max='65535' aria-label='SSH port for the backup route to " + esc(p.name) + "' style='width:84px;" + inp + "'></label>" +
     "<label style='font-size:12px'>SSH user <input type='text' data-mesh-tun-user='" + esc(p.nodeId) + "' value='" + esc(t.sshUser || "") + "' aria-label='SSH user for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
     "<button type='button' class='ghost' data-mesh-tunnel-save='" + esc(p.nodeId) + "' aria-label='Save the backup route to " + esc(p.name) + "' style='min-height:44px'>Save route</button></div>";
+  if (armed) {
+    h += "<p style='font-size:12px;margin-top:6px;color:var(--accent)'>The route is armed, not on: it still needs that machine's SSH host and user. Fill in whichever is blank above and press Save route — the bridge keeps the tunnel from there.</p>";
+  }
   if (t.enabled) {
     h += p.tunnelSentence
       ? "<p style='font-size:12px;margin-top:6px'>" + esc(p.tunnelSentence) + "</p>"
@@ -6520,7 +6525,7 @@ function meshTunnelPost(nodeId, enabled) {
   if (userEl) body.sshUser = userEl.value;
   fetch("/api/mesh/peers/tunnel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
     .then(function (r) { return r.json(); })
-    .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = "Backup route saved."; } else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+    .then(function (j) { if (j && j.ok) { meshState = j.mesh; delete meshTunnelArmed[nodeId]; meshMsg = "Backup route saved."; } else meshMsg = (j && j.error) || "The bridge refused."; render(); })
     .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
 }
 function wireMeshCard() {
@@ -6618,7 +6623,37 @@ function wireMeshCard() {
     b.onclick = function () {
       var nodeId = b.getAttribute("data-mesh-tunnel");
       var now = b.getAttribute("aria-checked") === "true";
-      meshTunnelPost(nodeId, !now);
+      if (now) {
+        // Build 5 (#179): turning OFF always lands at once — a
+        // saved route posts its disable; an armed-only route
+        // simply disarms, with nothing to post.
+        var wasArmed = !!meshTunnelArmed[nodeId];
+        delete meshTunnelArmed[nodeId];
+        var vsOff = meshViewState();
+        var peersNow = vsOff.peers || (vsOff.borrow || {}).peers || [];
+        var pv = null;
+        for (var i = 0; i < peersNow.length; i++) if (peersNow[i].nodeId === nodeId) pv = peersNow[i];
+        if (pv && pv.tunnel && pv.tunnel.enabled) meshTunnelPost(nodeId, false);
+        else if (wasArmed) render();
+        return;
+      }
+      // Build 5 (#179): turning ON posts only when the route
+      // fields already stand filled — the bridge refuses an
+      // enable with a blank SSH host or user, and that refusal
+      // re-rendered the switch off under the operator's finger.
+      // With a blank field the flip ARMS the route instead: the
+      // switch stays on, the route block says what is missing,
+      // and focus lands on the first blank field. Save route
+      // commits an armed route once the fields stand filled.
+      var hostEl = mainEl.querySelector("[data-mesh-tun-host='" + nodeId + "']");
+      var userEl = mainEl.querySelector("[data-mesh-tun-user='" + nodeId + "']");
+      var host = hostEl ? hostEl.value.trim() : "";
+      var user = userEl ? userEl.value.trim() : "";
+      if (host && user) { delete meshTunnelArmed[nodeId]; meshTunnelPost(nodeId, true); return; }
+      meshTunnelArmed[nodeId] = true;
+      render();
+      var miss = mainEl.querySelector(!host ? "[data-mesh-tun-host='" + nodeId + "']" : "[data-mesh-tun-user='" + nodeId + "']");
+      if (miss) { try { miss.focus(); } catch (e) {} }
     };
   });
   mainEl.querySelectorAll("[data-mesh-tunnel-save]").forEach(function (b) {
