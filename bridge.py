@@ -74,6 +74,13 @@ Stdlib only. Endpoints:
                       would change, per essential; writes nothing
   POST /api/github/import/apply -> restores the backup's essentials
                       (only ever called after a preview + confirm)
+  GET  /api/sync -> Quick Sync state: the Operator sign-in, the
+                      last round's verdict and when it ran (Build 3,
+                      issue #176)
+  POST /api/sync/run {openChatId} -> one full Quick Sync round:
+                      pull, converge, push — chats and Case Files
+                      both ways, over the backup repo, riding the
+                      Operator identity
   GET  /api/chips/catalog -> the Navi User Repo (NUR) list: a live
                       GitHub search for repos tagged navi-chips,
                       each with its latest release, merged with the
@@ -387,11 +394,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-13.02"
+BRIDGE_BUILD = "2026-11-13.03"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 2
+SHIPPED_BUILD_SEQ = 3
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -1660,6 +1667,12 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         ok, dev, _legacy = door_gate_acceptance(cfg, door_cookie_value(self.headers.get("Cookie")))
         if ok and dev is not None:
             door_touch_device(cfg, dev)
+        if ok:
+            # Build 3 (#176): a DHD session starting is a pull
+            # trigger — the phone's arrival refreshes the room.
+            # The call is debounced inside; it fires at most one
+            # pull per session gap and never blocks the door.
+            sync_note_dhd_session((dev or {}).get("id") or "legacy")
         return ok
 
     def _pending_poll(self):
@@ -6782,7 +6795,23 @@ def update_result_payload():
         with open(UPDATE_RESULT_PATH) as f:
             rec = json.load(f)
         if isinstance(rec, dict):
-            return dict(_apply_watchdog(rec), ok=True)
+            out = dict(_apply_watchdog(rec), ok=True)
+            # Build 3 (#175): the failure card pairs its fix with
+            # the reading — a "See what happened" command beside
+            # the manual fallback, derived HERE, at the one read
+            # every record passes through, so a record written by
+            # the helper, by the bridge, or closed by the watchdog
+            # all carry it. The staged folder's parent is the
+            # tag's folder under updates/, where the apply's two
+            # logs live: the installer's own output and the
+            # helper's step log.
+            staged = str(out.get("stagedDir") or "")
+            if staged:
+                tag_dir = os.path.dirname(staged)
+                out["diagnoseCommand"] = (
+                    "cat " + os.path.join(tag_dir, "apply-install.log")
+                    + "; cat " + os.path.join(tag_dir, "apply-trace.log"))
+            return out
     except Exception:
         pass
     return {"ok": True, "state": "none"}
@@ -12289,6 +12318,43 @@ def vault_write(rel, content):
     os.replace(tmp, full)
 
 
+def vault_delete_note(rel):
+    # One note out of the desk (Build 3, #177: factored out of the
+    # /api/vault/delete handler so the deletion's tombstone lives
+    # in exactly one place). Returns True when a file went.
+    full = vault_fs_path(rel)
+    if not os.path.isfile(full):
+        return False
+    os.remove(full)
+    sync_record_tombstone("vault", rel)
+    return True
+
+
+def vault_delete_folder(rel):
+    # A folder and everything in it (the handler's walk, kept).
+    # Every note inside is tombstoned by its vault path; when the
+    # folder IS a case folder (cases/<slug>), the case itself is
+    # tombstoned too, so deleting a case from the Vault's tree
+    # cannot resurrect through sync either. Returns the number of
+    # markdown notes removed, exactly as the handler always has.
+    full = vault_fs_path(rel)
+    count = 0
+    if os.path.isdir(full):
+        notes = []
+        for base, dirs, files in os.walk(full):
+            for name in files:
+                if name.lower().endswith(".md"):
+                    notes.append(os.path.relpath(os.path.join(base, name), VAULT_DIR).replace(os.sep, "/"))
+                    count += 1
+        shutil.rmtree(full)
+        for note_rel in notes:
+            sync_record_tombstone("vault", note_rel)
+        parts = rel.split("/")
+        if len(parts) == 2 and parts[0] == "cases":
+            sync_record_tombstone("cases", parts[1])
+    return count
+
+
 def vault_ensure_seed():
     # First run only: if the folder already exists, the operator's
     # desk is theirs — seeding never writes into it again.
@@ -14065,6 +14131,119 @@ def _llamafile_chat_impl(messages, endpoint, model):
     return content
 
 
+# --- Sync tombstones (0.2.0e Build 3, issues #176/#177) -------------
+# A deletion on one machine must never resurrect from another
+# machine's copy. Convergence (below) never deletes — it only
+# merges — so a delete needs its own travelling record: the
+# tombstone, {kind: {key: deletion epoch}}, kept in
+# config/sync-state.json beside the store it describes and carried
+# by every Quick Sync payload. The funnels that delete record
+# here: chat_delete and the write-through's removals (chats),
+# case_delete (cases), and the Vault's delete paths (notes).
+# Stored backups are snapshots and are NEVER reached into — a
+# tombstone governs convergence between live machines only; the
+# copy inside an old backup stays in that backup (the #163 law).
+# A tombstone yields to newer work: if the surviving copy carries
+# a stamp LATER than the deletion, the copy wins and the tombstone
+# is dropped — a thread genuinely continued after its deletion
+# elsewhere is not a resurrection.
+SYNC_STATE_PATH = os.path.join(ROOT, "config", "sync-state.json")
+_SYNC_TOMBSTONE_KEEP_SECONDS = 90 * 86400
+_sync_state_cache = {"mtime": None, "state": None}
+
+
+def _sync_state_load():
+    # Read-through cache on the file's mtime: the state is small,
+    # written rarely, and read by hot paths (every chat delete).
+    try:
+        mtime = os.path.getmtime(SYNC_STATE_PATH)
+    except Exception:
+        mtime = None
+    if _sync_state_cache["state"] is not None and _sync_state_cache["mtime"] == mtime:
+        return _sync_state_cache["state"]
+    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}},
+             "lastSyncAt": None, "lastSyncEpoch": 0, "lastResult": "",
+             "lastTrigger": "", "lastState": ""}
+    try:
+        with open(SYNC_STATE_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            state.update({k: raw[k] for k in state if k in raw})
+            tombs = raw.get("tombstones")
+            if isinstance(tombs, dict):
+                for kind in ("chats", "cases", "vault"):
+                    if isinstance(tombs.get(kind), dict):
+                        state["tombstones"][kind] = {
+                            str(k): float(v) for k, v in tombs[kind].items()
+                            if isinstance(v, (int, float))}
+    except Exception:
+        pass
+    _sync_state_cache["mtime"] = mtime
+    _sync_state_cache["state"] = state
+    return state
+
+
+def _sync_state_save(state):
+    try:
+        os.makedirs(os.path.dirname(SYNC_STATE_PATH), exist_ok=True)
+        tmp = SYNC_STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, SYNC_STATE_PATH)
+        try:
+            _sync_state_cache["mtime"] = os.path.getmtime(SYNC_STATE_PATH)
+        except Exception:
+            _sync_state_cache["mtime"] = None
+        _sync_state_cache["state"] = state
+    except Exception:
+        pass
+
+
+def _sync_tombstones_pruned(tombs, now=None):
+    now = now if now is not None else time.time()
+    out = {}
+    for kind in ("chats", "cases", "vault"):
+        rows = tombs.get(kind) if isinstance(tombs, dict) else None
+        out[kind] = {}
+        if isinstance(rows, dict):
+            for k, v in rows.items():
+                if isinstance(v, (int, float)) and now - float(v) <= _SYNC_TOMBSTONE_KEEP_SECONDS:
+                    out[kind][str(k)] = float(v)
+    return out
+
+
+def sync_record_tombstone(kind, key, at=None):
+    # The deletion funnels' one call. Best-effort by design: a
+    # tombstone that fails to record must never fail the delete
+    # the operator asked for — the delete itself already happened.
+    if kind not in ("chats", "cases", "vault") or not key:
+        return
+    try:
+        state = _sync_state_load()
+        tombs = _sync_tombstones_pruned(state.get("tombstones") or {})
+        when = float(at) if at else time.time()
+        prev = tombs[kind].get(str(key))
+        if prev is None or when > prev:
+            tombs[kind][str(key)] = when
+        state["tombstones"] = tombs
+        _sync_state_save(state)
+    except Exception:
+        pass
+
+
+def _sync_merge_tombstones(local, remote):
+    # Union by key, newest deletion wins — a tombstone one machine
+    # has not seen yet must survive every round until it ages out,
+    # or the delete it guards could resurrect from the one machine
+    # that missed it.
+    merged = _sync_tombstones_pruned(local or {})
+    for kind, rows in _sync_tombstones_pruned(remote or {}).items():
+        for k, v in rows.items():
+            if k not in merged[kind] or v > merged[kind][k]:
+                merged[kind][k] = v
+    return merged
+
+
 # --- Server-side chats (0.1.9e Build 12, issue #139) -----------------
 # Chats lived only in browser localStorage (navi.chats) until this
 # build: every install — and every browser origin — held its own
@@ -14167,6 +14346,9 @@ def chat_delete(cid):
         return False
     try:
         os.remove(_chat_path(cid))
+        # Build 3 (#177): the deletion is tombstoned, so a sync
+        # with another machine's older copy cannot resurrect it.
+        sync_record_tombstone("chats", cid)
         return True
     except Exception:
         return False
@@ -14212,6 +14394,10 @@ def chats_replace_all(records, uploads):
             if name.endswith(".json") and name != "uploads.json" and name[:-5] not in keep:
                 try:
                     os.remove(os.path.join(CHATS_DIR, name))
+                    # Build 3 (#177): a thread the writing window
+                    # dropped is a deletion like any other — it is
+                    # tombstoned so sync cannot bring it back.
+                    sync_record_tombstone("chats", name[:-5])
                 except Exception:
                     pass
     if uploads is not None:
@@ -14322,6 +14508,615 @@ def chats_converge(incoming, incoming_uploads=None):
             chats_save_uploads(list(merged.values()))
     summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"]
     return summary
+
+
+# --- Quick Sync (0.2.0e Build 3, issue #176) -------------------------
+# The Operator Badge backup round (#136) is proven and deliberate;
+# Quick Sync is its fluid sibling, ruled by Alex the night the
+# badge round passed in the field (2026-11-13): a Sync control in
+# Apex | Utilities that opens nothing and pops a card — one tap
+# runs the whole round (pull, converge, push) so work started on
+# the laptop is pickable-up on the phone over DHD, and vice versa.
+#
+# The sync set is the living work: the chat store AND Case Files.
+# Settings, Soul/Memory, chips and RAG packs stay with the full
+# badge backup (chips and packs keep themselves synced through
+# their own channels anyway). The transport is the backup repo,
+# under a sync/ prefix the restore format never touches, riding
+# the OPERATOR identity — per #173's separation, never the
+# read-only Runtime PAT. The badge in its slot is the round's
+# identity root and trigger, as #136 ruled: a pointer, never an
+# authenticator; the Operator sign-in remains the only key, and a
+# signed-out round is refused and NAMED, never silently skipped.
+#
+# Convergence is the badge round's semantics (chats_converge)
+# plus the tombstones of the section above: deletions travel as
+# records and yield only to genuinely newer work. Diverged chats
+# park as dated siblings; a case file that diverged inside the
+# same second parks its remote copy as a ".from-sync-<date>"
+# sibling file — nothing is ever silently lost, and only a parked
+# pair makes the card say "Needs your eyes", naming it.
+#
+# Pull triggers: the button (the full round), app start, and DHD
+# session start (pull + converge each). No polling daemon; the
+# Mesh peer-contact trigger is phase 2, with the Mesh transport.
+
+SYNC_FORMAT = "navi-sync/1"
+SYNC_PREFIX = "sync/"
+_SYNC_LOCK = threading.Lock()
+_SYNC_DHD_SEEN = {}
+_SYNC_DHD_LOCK = threading.Lock()
+_SYNC_DHD_SESSION_GAP = 300
+_SYNC_TRIGGER_DEBOUNCE = 60
+
+
+def _sync_now_iso():
+    return _now_iso()
+
+
+def _sync_fail(status, step):
+    # Build 2's naming discipline (#173), applied to sync: every
+    # failure the card can show is a classified sentence — held
+    # offline, named auth, named rate with its wait.
+    if status == 0:
+        return {"kind": "offline", "state": "held",
+                "error": "Can't reach GitHub — " + step + " did not happen. The round is held; the next trigger retries it."}
+    if status in (401, 403, 429):
+        rate = github_rate_state() or {}
+        core = rate.get("core") if isinstance(rate, dict) else None
+        spent = status == 429 or (isinstance(core, dict)
+                                  and (core.get("remaining") or 0) == 0
+                                  and (core.get("reset") or 0) > time.time())
+        if spent:
+            wait = _gh_reset_phrase(core.get("reset")) if isinstance(core, dict) else ""
+            return {"kind": "rate", "state": "held",
+                    "error": "GitHub's rate limit is spent." + wait + " The round is held until the bucket refills — nothing was half-written."}
+        return {"kind": "auth", "state": "auth",
+                "error": "GitHub refused the Operator credential (HTTP " + str(status) + ") while sync tried to " + step + " — the sign-in may have expired or been revoked. Sign in again in Settings → GitHub & Backup."}
+    return {"kind": "error", "state": "held",
+            "error": "GitHub answered HTTP " + str(status) + " while sync tried to " + step + ". The round is held; this step wrote nothing."}
+
+
+def _sync_auth_error():
+    return {"ok": False, "state": "auth", "kind": "auth", "route": "Backup repo",
+            "error": "Not signed in to GitHub — Quick Sync moves your chats and cases through your backup repo, so it needs the Operator sign-in. The badge in its slot points at the account; the sign-in is the key."}
+
+
+def _sync_safe_rel(rel):
+    # A remote-supplied relative path is jailed by construction:
+    # no empty, dot, or parent parts, no backslashes, no NUL.
+    parts = str(rel or "").split("/")
+    if not parts:
+        return None
+    for p in parts:
+        if p in ("", ".", "..") or "\\" in p or "\x00" in p:
+            return None
+    return "/".join(parts)
+
+
+def _sync_case_files(slug):
+    # {rel: {"sha": hex, "mtime": epoch}} for one case folder, or
+    # None when the case is not on this machine.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None
+    out = {}
+    for base, dirs, names in os.walk(d):
+        dirs.sort()
+        for name in sorted(names):
+            full = os.path.join(base, name)
+            if not os.path.isfile(full):
+                continue
+            rel = os.path.relpath(full, d).replace(os.sep, "/")
+            try:
+                with open(full, "rb") as f:
+                    data = f.read()
+                out[rel] = {"sha": hashlib.sha256(data).hexdigest(),
+                            "mtime": os.path.getmtime(full)}
+            except Exception:
+                continue
+    return out
+
+
+def sync_collect():
+    # The local sync set as {path: bytes} plus the case index the
+    # convergence reads the other side by.
+    payload = chats_payload()
+    files = {}
+    files[SYNC_PREFIX + "chats.json"] = json.dumps(
+        {"chats": payload["chats"], "uploads": payload["uploads"],
+         "exportedAt": _sync_now_iso()}, indent=2).encode()
+    state = _sync_state_load()
+    files[SYNC_PREFIX + "tombstones.json"] = json.dumps(
+        _sync_tombstones_pruned(state.get("tombstones") or {}), indent=2).encode()
+    index = {}
+    cases_root = os.path.join(VAULT_DIR, "cases")
+    if os.path.isdir(cases_root):
+        for slug in sorted(os.listdir(cases_root)):
+            if not os.path.isdir(os.path.join(cases_root, slug)):
+                continue
+            entries = _sync_case_files(slug)
+            if entries is None:
+                continue
+            index[slug] = {"files": entries}
+            d = _case_dir(slug)
+            for rel in entries:
+                try:
+                    with open(os.path.join(d, *rel.split("/")), "rb") as f:
+                        files[SYNC_PREFIX + "cases/" + slug + "/" + rel] = f.read()
+                except Exception:
+                    continue
+    files[SYNC_PREFIX + "cases-index.json"] = json.dumps(index, indent=2).encode()
+    manifest = {"format": SYNC_FORMAT, "app": "Apex",
+                "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
+                "chats": len(payload["chats"]), "cases": len(index)}
+    files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
+    return files, manifest, index
+
+
+def _sync_repo(cfg):
+    # (auth, base) for the operator's backup repo, ensuring it
+    # exists — the same ensure github_run_backup performs. Returns
+    # (None, fail) on a classified failure.
+    auth = github_auth()
+    if not auth:
+        return None, None
+    s = github_settings(cfg)
+    login, token, repo = auth["login"], auth["token"], s["backup_repo"]
+    base = "https://api.github.com/repos/" + login + "/" + repo
+    st, _ = github_api("GET", base, token)
+    if st == 404:
+        st, created = github_api("POST", "https://api.github.com/user/repos", token, {
+            "name": repo, "private": s["backup_private"],
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards, chats).",
+            "auto_init": True})
+        if st not in (200, 201):
+            return None, _sync_fail(st, "create the backup repo")
+    elif st != 200:
+        return None, _sync_fail(st, "read the backup repo")
+    return (auth, base), None
+
+
+def sync_fetch(cfg):
+    # The remote sync set, through git trees/blobs like the backup
+    # import (so large evidence files still arrive whole). A repo
+    # with no sync/ tree yet is an EMPTY remote, not an error.
+    # Returns ({"files": {...}, "manifest": {...}|None}, None) or
+    # (None, fail).
+    got = _sync_repo(cfg)
+    if got[0] is None:
+        return None, got[1] or _sync_auth_error()
+    auth, base = got[0]
+    token = auth["token"]
+    st, repo_j = github_api("GET", base, token)
+    if st != 200 or not isinstance(repo_j, dict):
+        return None, _sync_fail(st, "read the backup repo")
+    branch = str(repo_j.get("default_branch") or "main")
+    st, tree = github_api("GET", base + "/git/trees/" + urllib.parse.quote(branch, safe="") + "?recursive=1", token)
+    if st != 200 or not isinstance(tree, dict):
+        return None, _sync_fail(st, "list the backup repo's files")
+    blobs = {}
+    for entry in tree.get("tree") or []:
+        if entry.get("type") == "blob" and str(entry.get("path") or "").startswith(SYNC_PREFIX):
+            blobs[str(entry["path"])] = entry.get("sha")
+    files = {}
+    for path, sha in blobs.items():
+        bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
+        if bst == 200 and isinstance(blob, dict) and blob.get("content"):
+            try:
+                files[path] = base64.b64decode(str(blob["content"]))
+            except Exception:
+                continue
+    manifest = None
+    if SYNC_PREFIX + "manifest.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "manifest.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict) and parsed.get("format") == SYNC_FORMAT:
+                manifest = parsed
+        except Exception:
+            manifest = None
+    return {"files": files, "manifest": manifest}, None
+
+
+def _sync_apply_tombstones(tombs, summary):
+    # Deletions land BEFORE anything converges in — and only over
+    # copies no newer than the deletion itself. Returns the set of
+    # tombstone keys that were SUPERSEDED by newer local work (the
+    # caller drops them from the stored set).
+    dropped = {"chats": set(), "cases": set(), "vault": set()}
+    local_chats = {str(c["id"]): c for c in chats_all()}
+    for cid, at in (tombs.get("chats") or {}).items():
+        rec = local_chats.get(str(cid))
+        if rec is None:
+            continue
+        if (rec.get("updatedAt") or 0) <= at:
+            if chat_delete(cid):
+                summary["removedChats"] += 1
+        else:
+            dropped["chats"].add(str(cid))
+    for slug, at in (tombs.get("cases") or {}).items():
+        entries = _sync_case_files(slug)
+        if entries is None:
+            continue
+        newest = max([e["mtime"] for e in entries.values()] or [0])
+        if newest <= at:
+            res, _err = case_delete(slug)
+            if res is not None:
+                summary["removedCases"] += 1
+        else:
+            dropped["cases"].add(str(slug))
+    for rel, at in (tombs.get("vault") or {}).items():
+        safe = _sync_safe_rel(rel)
+        if safe is None:
+            continue
+        # A stale local copy goes (case files included — and the
+        # converge below vetoes re-writing this same file from
+        # the remote copy it was deleted against); a file edited
+        # after the deletion is newer work and keeps its copy,
+        # dropping the tombstone.
+        full = vault_fs_path(safe)
+        try:
+            if os.path.isfile(full):
+                if os.path.getmtime(full) <= at:
+                    vault_delete_note(safe)
+                    summary["removedNotes"] += 1
+                else:
+                    dropped["vault"].add(safe)
+        except Exception:
+            continue
+    return dropped
+
+
+def _sync_apply_cases(fetched, tombs, summary):
+    files = fetched["files"]
+    remote_index = {}
+    if SYNC_PREFIX + "cases-index.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "cases-index.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                remote_index = parsed
+        except Exception:
+            remote_index = {}
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    vault_tombs = tombs.get("vault") or {}
+    for slug in sorted(remote_index):
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", str(slug)):
+            continue
+        if str(slug) in (tombs.get("cases") or {}):
+            continue  # tombstoned in the phase above; nothing lands
+        remote_files = (remote_index.get(slug) or {}).get("files") or {}
+        local_before = _sync_case_files(slug)
+        d = _case_dir(slug)
+        if d is None:
+            continue
+        wrote = 0
+        for rel in sorted(remote_files):
+            safe = _sync_safe_rel(rel)
+            if safe is None:
+                continue
+            meta = remote_files.get(rel) or {}
+            rsha = str(meta.get("sha") or "")
+            rmtime = float(meta.get("mtime") or 0)
+            veto = vault_tombs.get("cases/" + slug + "/" + safe)
+            if veto is not None and veto >= rmtime:
+                continue  # deleted here after that copy was made
+            data = files.get(SYNC_PREFIX + "cases/" + slug + "/" + safe)
+            if data is None:
+                continue
+            full = os.path.join(d, *safe.split("/"))
+            local_meta = (local_before or {}).get(safe)
+            if local_meta and local_meta["sha"] == rsha:
+                continue
+            if local_meta and local_meta["mtime"] > rmtime + 1:
+                continue  # this machine's copy is the newer work
+            if local_meta and rmtime <= local_meta["mtime"] + 1:
+                # Same-second divergence: park the remote copy as
+                # a dated sibling — both survive, the case is
+                # named to the operator's eyes.
+                sib = full + ".from-sync-" + day
+                try:
+                    with open(sib, "rb") as f:
+                        if f.read() == data:
+                            continue
+                except Exception:
+                    pass
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(sib, "wb") as f:
+                    f.write(data)
+                if slug not in summary["caseEyes"]:
+                    summary["caseEyes"].append(slug)
+                continue
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as f:
+                f.write(data)
+            try:
+                os.utime(full, (rmtime, rmtime))
+            except Exception:
+                pass
+            wrote += 1
+        if wrote:
+            if local_before is None:
+                summary["casesAdded"] += 1
+            else:
+                summary["casesUpdated"] += 1
+            summary["caseFilesPulled"] += wrote
+
+
+def sync_apply(cfg, fetched):
+    # Converge a fetched remote sync set into this machine:
+    # tombstones, then chats, then case files. Returns the round
+    # summary the card speaks.
+    summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
+               "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
+               "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
+               "eyes": [], "caseEyes": []}
+    files = fetched["files"]
+    remote_tombs = {}
+    if SYNC_PREFIX + "tombstones.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "tombstones.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                remote_tombs = parsed
+        except Exception:
+            remote_tombs = {}
+    state = _sync_state_load()
+    merged = _sync_merge_tombstones(state.get("tombstones") or {}, remote_tombs)
+    dropped = _sync_apply_tombstones(merged, summary)
+    remote_chats, remote_uploads = [], None
+    if SYNC_PREFIX + "chats.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "chats.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("chats"), list):
+                    remote_chats = parsed["chats"]
+                if isinstance(parsed.get("uploads"), list):
+                    remote_uploads = parsed["uploads"]
+        except Exception:
+            remote_chats, remote_uploads = [], None
+    # The tombstone's other half: a chat ABSENT here but present
+    # in the remote set is not an "add" when a tombstone covers
+    # it — it is the resurrection the tombstone exists to refuse.
+    # (The phase above only deletes copies that exist locally;
+    # without this filter, convergence would faithfully re-add
+    # every deleted thread from the other machine's store.) A
+    # remote copy stamped NEWER than the deletion is genuine
+    # later work: it converges in, and the tombstone drops.
+    chat_tombs = merged.get("chats") or {}
+    if chat_tombs:
+        kept = []
+        for raw in remote_chats:
+            rec = _chat_normalize(raw)
+            if rec is None:
+                continue
+            at = chat_tombs.get(str(rec["id"]))
+            if at is not None and (rec.get("updatedAt") or 0) <= at:
+                continue
+            if at is not None:
+                dropped["chats"].add(str(rec["id"]))
+            kept.append(raw)
+        remote_chats = kept
+    for kind in ("chats", "cases", "vault"):
+        for key in dropped[kind]:
+            merged[kind].pop(key, None)
+    state["tombstones"] = merged
+    _sync_state_save(state)
+    before_ids = {str(c["id"]) for c in chats_all()}
+    conv = chats_converge(remote_chats, remote_uploads)
+    summary["chatsAdded"] = conv["added"]
+    summary["chatsReplaced"] = conv["replaced"]
+    summary["chatsSiblings"] = conv["siblings"]
+    if conv["siblings"]:
+        for c in chats_all():
+            if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
+                summary["eyes"].append(str(c.get("title") or c["id"]))
+    _sync_apply_cases(fetched, merged, summary)
+    summary["changed"] = (summary["removedChats"] + summary["removedCases"]
+                          + summary["removedNotes"] + summary["chatsAdded"]
+                          + summary["chatsReplaced"] + summary["chatsSiblings"]
+                          + summary["casesAdded"] + summary["casesUpdated"])
+    return summary
+
+
+def _sync_push(cfg, base, token, files, fetched_files):
+    # Publish the converged local set. Files the remote already
+    # holds byte-identical are not rewritten. Returns the count
+    # of files actually written, or (None, fail).
+    written = 0
+    for path in sorted(files):
+        if fetched_files.get(path) == files[path]:
+            continue
+        url = base + "/contents/" + urllib.parse.quote(path, safe="/")
+        sha = None
+        gst, existing = github_api("GET", url, token)
+        if gst == 200 and isinstance(existing, dict):
+            sha = existing.get("sha")
+        elif gst not in (200, 404):
+            return None, _sync_fail(gst, "check " + path + " in the backup repo")
+        body = {"message": "Apex Quick Sync " + _sync_now_iso(),
+                "content": base64.b64encode(files[path]).decode()}
+        if sha:
+            body["sha"] = sha
+        pst, _resp = github_api("PUT", url, token, body)
+        if pst not in (200, 201):
+            return None, _sync_fail(pst, "write " + path + " to the backup repo")
+        written += 1
+    return written, None
+
+
+def _sync_record_result(state, trigger, result):
+    state["lastSyncAt"] = _sync_now_iso()
+    state["lastSyncEpoch"] = time.time()
+    state["lastTrigger"] = trigger
+    state["lastState"] = result.get("state") or ""
+    state["lastResult"] = result.get("message") or result.get("error") or ""
+    _sync_state_save(state)
+
+
+def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
+    eyes = list(summary["eyes"])
+    for slug in summary["caseEyes"]:
+        meta = _case_manifest(slug)
+        eyes.append("the case “" + str((meta or {}).get("title") or slug) + "”")
+    pulled_chats = summary["chatsAdded"] + summary["chatsReplaced"]
+    result = {
+        "ok": True,
+        "state": "eyes" if eyes else "synced",
+        "route": "Backup repo",
+        "pulledChats": pulled_chats,
+        "pushedFiles": pushed_files,
+        "caseFilesPulled": summary["caseFilesPulled"],
+        "removed": summary["removedChats"] + summary["removedCases"] + summary["removedNotes"],
+        "needsEyes": eyes,
+        "openIncluded": bool(open_chat_id) and str(open_chat_id) in collected_chats,
+    }
+    if eyes:
+        result["message"] = ("Synced — but " + str(len(eyes)) + " item"
+                             + ("s" if len(eyes) != 1 else "")
+                             + " parked both copies and need your eyes: "
+                             + "; ".join(eyes[:3]) + ".")
+    elif pulled_chats or summary["chatsSiblings"] or summary["changed"]:
+        result["message"] = "Synced — the machines converged."
+    else:
+        result["message"] = "Synced — already in step."
+    return result
+
+
+def sync_round(cfg, trigger="button", open_chat_id=""):
+    # The full round behind the Sync control: pull, converge,
+    # push. One round at a time, across every trigger — a second
+    # caller is held, never raced.
+    if not _SYNC_LOCK.acquire(False):
+        return {"ok": False, "state": "held", "kind": "busy", "route": "Backup repo",
+                "error": "A sync round is already running — this one is held, and the running round's verdict is the one that counts."}
+    try:
+        if not github_auth():
+            return _sync_auth_error()
+        fetched, fail = sync_fetch(cfg)
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            return out
+        summary = sync_apply(cfg, fetched)
+        got = _sync_repo(cfg)
+        if got[0] is None:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(got[1] or _sync_auth_error())
+            return out
+        auth, base = got[0]
+        local_files, _manifest, _index = sync_collect()
+        # What the push changes for the other side, counted in
+        # chats: local threads the remote does not hold, or holds
+        # older.
+        remote_chats = {}
+        if SYNC_PREFIX + "chats.json" in fetched["files"]:
+            try:
+                parsed = json.loads(fetched["files"][SYNC_PREFIX + "chats.json"].decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    for c in parsed.get("chats") or []:
+                        rec = _chat_normalize(c)
+                        if rec:
+                            remote_chats[str(rec["id"])] = rec
+            except Exception:
+                remote_chats = {}
+        pushed_chats = 0
+        local_ids = set()
+        for c in chats_payload()["chats"]:
+            cid = str(c["id"])
+            local_ids.add(cid)
+            rc = remote_chats.get(cid)
+            if rc is None or (c.get("updatedAt") or 0) > (rc.get("updatedAt") or 0) or _chat_msgs_key(c) != _chat_msgs_key(rc):
+                pushed_chats += 1
+        written, fail = _sync_push(cfg, base, auth["token"], local_files, fetched["files"])
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            return out
+        result = _sync_finish_summary(summary, written, open_chat_id, local_ids)
+        result["pushedChats"] = pushed_chats
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        return result
+    finally:
+        _SYNC_LOCK.release()
+
+
+def sync_pull_round(cfg, trigger):
+    # The trigger round: pull + converge, no push — the door
+    # opening refreshes the room; publishing stays the button's
+    # (and the next full round's) act. Quiet by design: verdicts
+    # land in the sync state, never in a popup.
+    if not _SYNC_LOCK.acquire(False):
+        return None
+    try:
+        if not github_auth():
+            return None
+        fetched, fail = sync_fetch(cfg)
+        if fail:
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, {"state": fail.get("state") or "held",
+                                                 "message": fail.get("error") or ""})
+            return None
+        summary = sync_apply(cfg, fetched)
+        result = _sync_finish_summary(summary, 0, "", set())
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        return result
+    except Exception:
+        return None
+    finally:
+        _SYNC_LOCK.release()
+
+
+def sync_state_payload():
+    auth = github_auth()
+    state = _sync_state_load()
+    return {
+        "signedIn": bool(auth),
+        "login": (auth or {}).get("login") or "",
+        "route": "Backup repo",
+        "lastSyncAt": state.get("lastSyncAt"),
+        "lastSyncEpoch": state.get("lastSyncEpoch") or 0,
+        "lastResult": state.get("lastResult") or "",
+        "lastState": state.get("lastState") or "",
+        "lastTrigger": state.get("lastTrigger") or "",
+    }
+
+
+def _sync_trigger_pull(trigger):
+    try:
+        cfg = load_config()
+        if github_auth():
+            sync_pull_round(cfg, trigger)
+    except Exception:
+        pass
+
+
+def sync_startup_pull():
+    # App start (the __main__ thread beside the backup loop):
+    # a short grace for the bridge to finish coming up, then the
+    # pull. Inert when signed out.
+    time.sleep(10)
+    _sync_trigger_pull("app-start")
+
+
+def sync_note_dhd_session(device_key):
+    # DHD session start: the proxy calls this for every accepted
+    # request; a device whose last accepted request is older than
+    # the session gap (or which has never been seen) counts as a
+    # session starting, and the room is refreshed — once, with a
+    # global debounce so a door in heavy use pulls at most every
+    # debounce window.
+    now = time.time()
+    key = str(device_key or "device")
+    with _SYNC_DHD_LOCK:
+        last = _SYNC_DHD_SEEN.get(key, 0)
+        any_recent = any(now - v < _SYNC_TRIGGER_DEBOUNCE for v in _SYNC_DHD_SEEN.values())
+        if now - last < _SYNC_DHD_SESSION_GAP or any_recent:
+            if now - last >= _SYNC_DHD_SESSION_GAP:
+                _SYNC_DHD_SEEN[key] = now
+            return
+        _SYNC_DHD_SEEN[key] = now
+    threading.Thread(target=_sync_trigger_pull, args=("dhd-session",), daemon=True).start()
 
 
 # --- Boot mode (0.1.9e Build 12, issue #142) -------------------------
@@ -15055,6 +15850,12 @@ def case_delete(slug):
         shutil.rmtree(d)
     except Exception as e:
         return None, "The case folder could not be removed: " + str(e)
+    # Build 3 (#177): the case's deletion is tombstoned (its tied
+    # chat's was recorded by chat_delete above), so convergence
+    # with another machine cannot resurrect the case — while the
+    # copies inside backups already taken stay untouched, as the
+    # paragraph above rules.
+    sync_record_tombstone("cases", slug)
     cfg = load_config()
     block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
     was_open = block.get("open") == slug
@@ -15681,6 +16482,11 @@ class Handler(BaseHTTPRequestHandler):
             # backup/import records. (Settings → GitHub & Backup reads
             # it; the GitHub section itself is the project pulse.)
             self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/sync":
+            # Build 3 (#176): the Sync card's resting state — when
+            # the last round ran and what it said, so reopening the
+            # card (or the app) shows the truth without a round.
+            self._send(200, sync_state_payload())
         elif self.path == "/api/github/issues":
             # The Issues tab: live open issues for the project repo.
             self._send(200, github_issues_payload())
@@ -17050,7 +17856,7 @@ class Handler(BaseHTTPRequestHandler):
                 # on disk, the operator hears about it in plain words.
                 self._send(200, {"ok": False, "error": "That note no longer exists — it may have been moved or deleted outside the app. The tree has been refreshed."})
             else:
-                os.remove(vault_fs_path(rel))
+                vault_delete_note(rel)
                 self._send(200, {"ok": True})
         elif self.path == "/api/vault/move":
             # Rename / drag-and-drop move. Never overwrites.
@@ -17083,12 +17889,7 @@ class Handler(BaseHTTPRequestHandler):
             if not rel:
                 self._send(200, {"ok": False, "error": "That folder path escapes the vault."})
             else:
-                full = vault_fs_path(rel)
-                count = 0
-                if os.path.isdir(full):
-                    for base, dirs, files in os.walk(full):
-                        count += len([f for f in files if f.lower().endswith(".md")])
-                    shutil.rmtree(full)
+                count = vault_delete_folder(rel)
                 self._send(200, {"ok": True, "deletedNotes": count})
         elif self.path == "/api/chips/save":
             # Chip Studio saving an edit: re-forge the chip file
@@ -18159,6 +18960,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/github/badge-sync/dismiss":
             data = self._body()
             self._send(200, badge_sync_dismiss(str(data.get("operationId") or "")))
+        elif self.path == "/api/sync/run":
+            # Build 3 (#176): the Sync control's round — pull,
+            # converge, push — riding the Operator identity. The
+            # open thread's id rides along so the card can say
+            # whether the thread on screen was in the round.
+            data = self._body()
+            self._send(200, sync_round(load_config(), "button", str(data.get("openChatId") or "")))
         elif self.path == "/api/github/backup":
             data = self._body()
             dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None
@@ -18440,6 +19248,10 @@ if __name__ == "__main__":
     # runs whether a backup is due on the operator's chosen interval,
     # and runs it when signed in. Daemon thread; dies with the bridge.
     threading.Thread(target=github_auto_backup_loop, daemon=True).start()
+    # Build 3 (#176): Quick Sync's app-start pull — the third
+    # trigger beside the Sync control and DHD session start. It
+    # only pulls and converges; publishing stays a deliberate act.
+    threading.Thread(target=sync_startup_pull, daemon=True).start()
     # Scheduled warm (Build 14, #157): checks runtime.warm_at once
     # a minute and, at the configured minute, starts + warms a
     # llamafile that is not answering. Daemon thread; dies with

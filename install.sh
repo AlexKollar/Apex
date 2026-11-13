@@ -214,6 +214,77 @@ bridge_pid_gone() {
   [ "$st" = "Z" ]
 }
 
+# --- The running window (0.2.0e Build 3, issue #174) ----------------
+# The field failure this closes: the detached apply stopped the
+# bridge but not the running window, then the shell rebuild copied
+# the new binary over the live one — "cp: cannot create regular
+# file '…/navi-apex-shell': Text file busy" — and the whole apply
+# exited 1. Two belts, both worn: the window is stopped with the
+# same care as the bridge (below), and the binary is installed by
+# temp-write + atomic rename (install_shell_binary), which a
+# running binary can never block — rename replaces the directory
+# entry, not the open file.
+shell_pids() {
+  # Pids whose executable IS <dir>/navi-apex-shell — matched on
+  # /proc/<pid>/exe, never on the command line (a text match also
+  # catches editors, greps, and this installer's own shell).
+  local target="$1/navi-apex-shell" pid exe
+  for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    [ "$pid" = "$$" ] && continue
+    exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+    exe="${exe% (deleted)}"
+    if [ "$exe" = "$target" ]; then
+      echo "$pid"
+    fi
+  done
+}
+
+stop_shell() {
+  local dir="$1" pids pid tries
+  pids="$(shell_pids "$dir" | tr '\n' ' ')"
+  pids="${pids% }"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+  echo "    stopping the running shell window (pid(s): $pids)..."
+  for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+  tries=0
+  while [ "$tries" -lt 50 ]; do
+    local alive=0
+    for pid in $pids; do
+      if ! bridge_pid_gone "$pid"; then alive=1; fi
+    done
+    [ "$alive" = "0" ] && return 0
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+  tries=0
+  while [ "$tries" -lt 25 ]; do
+    local alive2=0
+    for pid in $pids; do
+      if ! bridge_pid_gone "$pid"; then alive2=1; fi
+    done
+    [ "$alive2" = "0" ] && return 0
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  echo "  *** the running shell window (pid(s): $pids) did not stop; the new binary still lands by atomic rename, and the old window keeps running the old build until it is closed." >&2
+  return 0
+}
+
+install_shell_binary() {
+  # Write-to-temp + atomic rename: the destination is never opened
+  # for writing, so a still-running old binary cannot make this
+  # fail with Text file busy — ever (#174).
+  local src="$1" dest="$INSTALL_DIR/navi-apex-shell" tmp
+  tmp="$INSTALL_DIR/.navi-apex-shell.new.$$"
+  rm -f "$tmp"
+  cp "$src" "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod +x "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$dest"
+}
+
 # stop_bridge <dir>: stop the bridge belonging to <dir> and PROVE
 # it — every candidate dead and the port free. Sets STOPPED_BRIDGE=1
 # when a bridge was in fact stopped (the end of the install
@@ -360,6 +431,16 @@ DEPS_ARCH="base-devel pkgconf curl file python webkit2gtk-4.1 gtk3 librsvg libap
 PKG_SUDO=""
 if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
   PKG_SUDO="sudo"
+fi
+# Build 3 (#174): a detached apply (the Updater's helper, a DHD
+# session) has no terminal — sudo's password or fingerprint prompt
+# can never be answered there, and the field log showed the
+# attempt dying against PAM before the step degraded. Say it
+# plainly, once, and take the graceful-degrade path directly:
+# the system-package step is skipped, the core install continues.
+if [ -n "$PKG_SUDO" ] && [ ! -t 0 ] && ! sudo -n true 2>/dev/null; then
+  echo "    note: this install is running detached (no terminal), and a detached apply cannot answer a sudo prompt — the system-package step is being skipped; the core install continues without it."
+  PKG_SUDO=""
 fi
 
 # A failed dependency step never fails the install: it says what
@@ -614,7 +695,11 @@ fi
 # from the old install keeps the old dashboard's process alive and
 # can hold the single-instance lock, so the new build never becomes
 # the one actually running. Stop it before the new files land.
-pkill -f "$INSTALL_DIR/navi-apex-shell" 2>/dev/null || true
+# Build 3 (#174): this is a real stop now — TERM, wait, verify,
+# SIGKILL — not the bare pattern-kill it was: the field apply died
+# because the window survived it and the rebuild's copy hit the
+# live binary (Text file busy).
+stop_shell "$INSTALL_DIR"
 
 if [ -n "$FRESH" ]; then
   echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
@@ -1395,8 +1480,7 @@ elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
   mkdir -p "$BOX_BUILD_DIR"
   cp -r "$INSTALL_DIR/shell/." "$BOX_BUILD_DIR/"
   if distrobox enter "$BAZZITE_BOX" -- bash -c "sudo dnf install -y webkit2gtk4.1-devel gtk3-devel librsvg2-devel libappindicator-gtk3-devel openssl-devel gcc gcc-c++ make pkgconf-pkg-config curl file >/dev/null 2>&1; if ! command -v cargo >/dev/null 2>&1; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1; fi; export PATH=\$HOME/.cargo/bin:\$PATH; cd \"$BOX_BUILD_DIR\" && cargo build --release" >> "$INSTALL_DIR/shell/shell-build.log" 2>&1 && [ -x "$BOX_BUILD_DIR/target/release/navi-apex-shell" ]; then
-    cp "$BOX_BUILD_DIR/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"
-    chmod +x "$INSTALL_DIR/navi-apex-shell"
+    install_shell_binary "$BOX_BUILD_DIR/target/release/navi-apex-shell"
     if [ -n "$SHELL_HASH" ]; then
       echo "$SHELL_HASH" > "$INSTALL_DIR/navi-apex-shell.stamp" || true
       if [ "$(cat "$INSTALL_DIR/navi-apex-shell.stamp" 2>/dev/null || true)" = "$SHELL_HASH" ]; then
@@ -1415,8 +1499,7 @@ elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
   fi
 elif command -v cargo >/dev/null 2>&1; then
   if (cd "$INSTALL_DIR/shell" && cargo build --release >> "$INSTALL_DIR/shell/shell-build.log" 2>&1) && [ -x "$INSTALL_DIR/shell/target/release/navi-apex-shell" ]; then
-    cp "$INSTALL_DIR/shell/target/release/navi-apex-shell" "$INSTALL_DIR/navi-apex-shell"
-    chmod +x "$INSTALL_DIR/navi-apex-shell"
+    install_shell_binary "$INSTALL_DIR/shell/target/release/navi-apex-shell"
     # The stamp is what lets the next install skip this build and
     # what the launcher verifies before running the binary — so
     # the write is read back, not assumed. A stamp that did not
