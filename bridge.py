@@ -387,11 +387,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-12.01"
+BRIDGE_BUILD = "2026-11-13.02"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
-# Build 1. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 1
+# Build 2. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 2
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -572,6 +572,254 @@ def public_token(code):
     return hashlib.sha256(("navi-public:" + str(code)).encode()).hexdigest()
 
 
+# ---------------------------------------------------------------------
+# Trusted devices (0.2.0e Build 2, #173): the door stops handing a
+# full session to anyone who types the code. The code now ASKS:
+# a device presenting it becomes a pending device (with a name the
+# visitor gives it), and an already-trusted session approves or
+# denies it in Settings -> System -> Door. An approved device gets
+# its OWN session token — 30 days, sliding while it stays in use —
+# and the operator's device list (name, first/last seen, expiry)
+# carries a per-device revoke, so one lost phone stops meaning
+# "change the code and re-let everyone in".
+#
+# Bootstrap: while NO device is approved yet, the first device to
+# present the code approves ITSELF and receives its token on the
+# spot — a single-operator house is never locked out of its own
+# door waiting for an approver who does not exist yet. From the
+# first approval on, the shared-code cookie stops being accepted:
+# every device stands in the registry under its own name.
+#
+# The registry lives in the public_server block of the config,
+# beside the code it grew from. Session tokens are random, are
+# never shown in any payload (the Settings list carries names and
+# times only), and a device's cookie value IS its token.
+DOOR_DEVICE_TTL_SECONDS = 30 * 24 * 3600
+DOOR_PENDING_TTL_SECONDS = 30 * 60
+
+
+def door_devices(cfg):
+    ps = cfg.get("public_server") if isinstance(cfg, dict) else None
+    raw = ps.get("devices") if isinstance(ps, dict) else None
+    out = []
+    if isinstance(raw, list):
+        for d in raw:
+            if isinstance(d, dict) and d.get("id") and d.get("status") in ("pending", "approved", "denied"):
+                out.append(d)
+    return out
+
+
+def _door_save_devices(cfg, devices):
+    block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+    block = dict(block)
+    block["devices"] = devices
+    if "enabled" not in block:
+        block["enabled"] = False
+    cfg["public_server"] = block
+    save_config(cfg)
+
+
+def _door_prune(devices, now=None):
+    now = now or time.time()
+    kept = []
+    for d in devices:
+        if d.get("status") in ("pending", "denied") and now - float(d.get("created_at") or 0) > DOOR_PENDING_TTL_SECONDS:
+            continue
+        kept.append(d)
+    return kept
+
+
+def door_approved_devices(cfg):
+    return [d for d in door_devices(cfg) if d.get("status") == "approved"]
+
+
+def door_device_for_token(cfg, token):
+    if not token:
+        return None
+    now = time.time()
+    for d in door_approved_devices(cfg):
+        if d.get("token") and secrets.compare_digest(str(d["token"]), str(token)):
+            if float(d.get("expires_at") or 0) > now:
+                return d
+            return None
+    return None
+
+
+def door_cookie_value(cookie_header):
+    for part in (cookie_header or "").split(";"):
+        part = part.strip()
+        if part.startswith(PUBLIC_COOKIE + "="):
+            return part[len(PUBLIC_COOKIE) + 1:]
+    return ""
+
+
+def door_gate_acceptance(cfg, cookie_value):
+    # (accepted, device, legacy): a registered device token speaks
+    # for itself; the shared-code cookie is honored only while no
+    # device has ever been approved (pre-registry houses, and the
+    # bootstrap moment itself).
+    if cookie_value:
+        dev = door_device_for_token(cfg, cookie_value)
+        if dev is not None:
+            return True, dev, False
+        code = public_settings(cfg)["access_code"]
+        if code and not door_approved_devices(cfg) and secrets.compare_digest(cookie_value, public_token(code)):
+            return True, None, True
+    return False, None, False
+
+
+def door_touch_device(cfg, device):
+    # Last-seen, throttled, and the sliding renewal: a device in
+    # active use never hits its 30 days mid-shift — using it while
+    # valid renews it. Writes at most once an hour per device.
+    now = time.time()
+    if now - float(device.get("last_seen") or 0) < 3600:
+        return
+    devices = door_devices(cfg)
+    for d in devices:
+        if d.get("id") == device.get("id"):
+            d["last_seen"] = int(now)
+            if float(d.get("expires_at") or 0) - now < DOOR_DEVICE_TTL_SECONDS - 86400:
+                d["expires_at"] = int(now) + DOOR_DEVICE_TTL_SECONDS
+            break
+    _door_save_devices(cfg, _door_prune(devices, now))
+
+
+def _door_new_device(name, user_agent, status):
+    now = int(time.time())
+    return {
+        "id": secrets.token_hex(16),
+        "name": (str(name or "").strip()[:60] or "Unnamed device"),
+        "status": status,
+        "token": None,
+        "created_at": now,
+        "approved_at": None,
+        "first_seen": now,
+        "last_seen": now,
+        "expires_at": None,
+        "user_agent": str(user_agent or "")[:120],
+    }
+
+
+def door_create_approved(cfg, name, user_agent):
+    # The bootstrap act: mint an approved device with its own
+    # token, on the strength of the code alone.
+    devices = _door_prune(door_devices(cfg))
+    dev = _door_new_device(name, user_agent, "approved")
+    dev["token"] = secrets.token_urlsafe(32)
+    dev["approved_at"] = dev["created_at"]
+    dev["expires_at"] = dev["created_at"] + DOOR_DEVICE_TTL_SECONDS
+    devices.append(dev)
+    _door_save_devices(cfg, devices)
+    return dev
+
+
+def door_register_pending(cfg, name, user_agent):
+    devices = _door_prune(door_devices(cfg))
+    dev = _door_new_device(name, user_agent, "pending")
+    devices.append(dev)
+    _door_save_devices(cfg, devices)
+    return dev
+
+
+def door_gate_outcome(cfg, name, user_agent, cookie_value):
+    # The gate POST's decision, shared by both doors (the DHD
+    # proxy and the bridge's own public bind): ("session", device)
+    # when the visitor leaves with a token — a renewal, or the
+    # bootstrap — and ("pending", device) when the device must
+    # wait for an approval.
+    ok, dev, _legacy = door_gate_acceptance(cfg, cookie_value)
+    if ok and dev is not None:
+        return "session", dev
+    if not door_approved_devices(cfg):
+        return "session", door_create_approved(cfg, name, user_agent)
+    return "pending", door_register_pending(cfg, name, user_agent)
+
+
+def door_pending_poll(cfg, device_id):
+    # What a waiting device's poll learns: ("pending", None) while
+    # it waits; ("approved", device) once a trusted session has
+    # approved it — the device record carries the token the poll
+    # response sets as its cookie; ("denied", None); ("gone", None)
+    # when the wait expired or the record was revoked away.
+    now = time.time()
+    for d in door_devices(cfg):
+        if d.get("id") == device_id:
+            if d.get("status") == "approved" and float(d.get("expires_at") or 0) > now:
+                return "approved", d
+            if d.get("status") == "denied":
+                return "denied", None
+            if d.get("status") == "pending" and now - float(d.get("created_at") or 0) <= DOOR_PENDING_TTL_SECONDS:
+                return "pending", None
+            return "gone", None
+    return "gone", None
+
+
+def door_approve(cfg, device_id):
+    devices = door_devices(cfg)
+    now = int(time.time())
+    found = None
+    for d in devices:
+        if d.get("id") == device_id and d.get("status") == "pending":
+            d["status"] = "approved"
+            d["token"] = secrets.token_urlsafe(32)
+            d["approved_at"] = now
+            d["last_seen"] = now
+            d["expires_at"] = now + DOOR_DEVICE_TTL_SECONDS
+            found = d
+    if found is not None:
+        _door_save_devices(cfg, _door_prune(devices, now))
+    return found
+
+
+def door_deny(cfg, device_id):
+    devices = door_devices(cfg)
+    found = False
+    for d in devices:
+        if d.get("id") == device_id and d.get("status") == "pending":
+            d["status"] = "denied"
+            d["token"] = None
+            found = True
+    if found:
+        _door_save_devices(cfg, devices)
+    return found
+
+
+def door_revoke(cfg, device_id):
+    devices = door_devices(cfg)
+    kept = [d for d in devices if d.get("id") != device_id]
+    if len(kept) != len(devices):
+        _door_save_devices(cfg, kept)
+        return True
+    return False
+
+
+def door_cookie_header(token):
+    # A trusted device's cookie: its own token, for its own 30
+    # days — not the shared code's year.
+    return (PUBLIC_COOKIE + "=" + str(token)
+            + "; Max-Age=" + str(DOOR_DEVICE_TTL_SECONDS)
+            + "; Path=/; HttpOnly; SameSite=Lax")
+
+
+def door_devices_payload(cfg):
+    # The Settings -> Door list: names and times, never tokens.
+    now = time.time()
+    out = []
+    for d in _door_prune(door_devices(cfg), now):
+        out.append({
+            "id": d.get("id"),
+            "name": d.get("name") or "Unnamed device",
+            "status": d.get("status"),
+            "firstSeen": d.get("first_seen"),
+            "lastSeen": d.get("last_seen"),
+            "expiresAt": d.get("expires_at"),
+            "expired": d.get("status") == "approved" and float(d.get("expires_at") or 0) <= now,
+            "userAgent": d.get("user_agent") or "",
+        })
+    return out
+
+
 def lan_ipv4():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -664,6 +912,7 @@ def public_state_payload(cfg, for_loopback):
     ps = public_settings(cfg)
     active_public = ACTIVE_BIND_HOST == "0.0.0.0"
     ip = lan_ipv4()
+    devices = door_devices_payload(cfg)
     return {
         "enabled": ps["enabled"],
         "activePublic": active_public,
@@ -677,6 +926,13 @@ def public_state_payload(cfg, for_loopback):
             "step": ps["restart_step"],
             "message": ps["restart_message"],
         },
+        # Trusted devices (Build 2, #173): names and times only —
+        # a device's token never rides a payload. Present for
+        # loopback and gate-accepted callers alike, because
+        # approving a waiting phone from a trusted laptop over
+        # DHD is the flow this list exists for.
+        "devices": devices,
+        "pendingDevices": sum(1 for d in devices if d["status"] == "pending"),
     }
 
 
@@ -780,21 +1036,28 @@ _GATE_CSS = (
     ".err{margin:14px 0 0;padding:10px 12px;font-size:13px;line-height:1.5;text-align:center;color:#fca5a5;"
     "background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.4);border-radius:8px}"
     ".meta{margin:10px 0 0;text-align:center;font-size:12px;color:#f5b544}"
+    "input.name{letter-spacing:.02em;text-transform:none;text-align:left;font-size:15px;min-height:48px}"
+    "label.name{margin-top:14px}"
     "@media (max-width:380px){.card{padding:22px 16px 18px}.word{font-size:29px}}"
     "@media (prefers-reduced-motion:reduce){.door-dhd .ring,.door-dhd .core-glow,"
     ".door-node .core-glow,.shake{animation:none}}"
 )
 
 
-def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock_seconds=None):
+def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock_seconds=None, approval_mode=False):
     # ONE gate page for both doors (build .79, issue #64): the Apex
     # Node (LAN) door and the DHD (public) door render from this
     # single function, parameterized by door - there is no second
     # copy. Self-contained by design: inline CSS and SVG only, no
     # external asset, font, or script referenced, because the gate
     # serves nothing else before the code. No version string
-    # appears anywhere on the page. The form contract is unchanged:
-    # POST /__gate with the field named "code".
+    # appears anywhere on the page. The form contract: POST
+    # /__gate with the field named "code" — and, since Build 2
+    # (#173), a "device_name" field: the code no longer opens the
+    # door outright, it knocks. approval_mode says trusted devices
+    # already exist, so a correct code here makes this device a
+    # PENDING one that waits for an approval; without it, this is
+    # the bootstrap — the first device trusts itself with the code.
     is_dhd = door == "dhd"
     if not name:
         if is_dhd:
@@ -858,21 +1121,95 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
         + door_line
         + "</p>"
         + ("<p class='knock'>" + _gate_escape(name) + "</p>" if name else "")
-        + "<p class='hint'>Type the access code - you will find it on the DHD page, on the machine Apex runs on.</p>"
+        + "<p class='hint'>"
+        + (
+            "Type the access code - you will find it on the DHD page, on the machine Apex runs on. "
+            "Then name this device: the code knocks, it no longer opens. This device waits here "
+            "until a device that is already trusted approves it in Settings - System - Door."
+            if approval_mode
+            else "Type the access code - you will find it on the DHD page, on the machine Apex runs on. "
+            "Then name this device - the name is how it appears in the trusted-device list. "
+            "The first device at this door trusts itself with the code; every device after it "
+            "waits for an approval from one that is already in."
+        )
+        + "</p>"
         + err_html
         + "<form method='POST' action='/__gate'>"
         "<label for='gate-code'>Access code</label>"
         "<input id='gate-code' name='code' autocomplete='one-time-code' autocapitalize='characters' autofocus"
         + dis
         + ">"
+        "<label class='name' for='gate-device'>Name this device</label>"
+        "<input class='name' id='gate-device' name='device_name' autocomplete='off' maxlength='60' placeholder='e.g. Phone, work laptop'"
+        + dis
+        + ">"
         "<button type='submit'"
         + dis
         + ">"
-        + ("Locked" if locked else "Open Apex")
+        + ("Locked" if locked else "Knock")
         + "</button>"
         "</form>"
         + meta_html
         + "</main></body></html>"
+    )
+
+
+def gate_pending_html(device_id, device_name, door="node"):
+    # The waiting room (Build 2, #173): a device whose knock was
+    # accepted as PENDING lands here. Self-contained like the gate
+    # (inline everything; the one inline script polls the door's
+    # own pending endpoint — the pending id is the only credential
+    # it carries, a random handle shown to no one else). Approval
+    # sets this device's cookie on the poll's answer and the page
+    # walks itself through the door; denial and expiry are worded
+    # where they land.
+    is_dhd = door == "dhd"
+    door_line = (
+        "Dial-Home Device · you reached this Apex from the internet"
+        if is_dhd
+        else "Apex | Node · on this network"
+    )
+    return (
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Apex - waiting for approval</title><style>"
+        + _GATE_CSS
+        + "</style></head>"
+        "<body class='"
+        + ("door-dhd" if is_dhd else "door-node")
+        + "'>"
+        + _gate_stars_svg()
+        + "<main class='card'>"
+        "<div class='ring-wrap'>"
+        + _gate_ring_svg()
+        + "</div>"
+        "<h1 class='word'>APEX</h1>"
+        "<p class='powered'>Powered by Navi</p>"
+        "<p class='doorline'>"
+        + door_line
+        + "</p>"
+        "<p class='hint'>This device - <b>" + _gate_escape(device_name or "Unnamed device") + "</b> - is waiting at the door.</p>"
+        "<p class='hint'>On a device that is already trusted, open <b>Settings - System - Door</b> and approve it. "
+        "This page checks on its own and walks through the moment it is approved. "
+        "The wait lasts 30 minutes; after that, knock again.</p>"
+        "<p class='meta' id='wait-status' role='status'>Waiting for approval…</p>"
+        "</main>"
+        "<script>"
+        "var pid = " + json.dumps(str(device_id)) + ";"
+        "var st = document.getElementById('wait-status');"
+        "function poll(){"
+        "fetch('/__gate/pending?id=' + encodeURIComponent(pid), { credentials: 'same-origin' })"
+        ".then(function(r){ return r.json(); })"
+        ".then(function(j){"
+        "if (j.status === 'approved') { st.textContent = 'Approved - opening the door…'; location.replace('/'); }"
+        "else if (j.status === 'denied') { st.textContent = 'This device was not let in. If that was a mistake, knock again and have it approved.'; }"
+        "else if (j.status === 'gone') { st.textContent = 'The wait expired. Reload this page and knock again.'; }"
+        "else { setTimeout(poll, 4000); }"
+        "}).catch(function(){ setTimeout(poll, 6000); });"
+        "}"
+        "setTimeout(poll, 2500);"
+        "</script>"
+        "</body></html>"
     )
 
 
@@ -1226,16 +1563,21 @@ def dhd_gate_page(handler):
     # renderer with the door's throttle state surfaced: attempts
     # remaining before lockout, and - while locked - the form
     # disabled with the remaining lockout time. The throttle itself
-    # is unchanged; this only shows what it already knows.
+    # is unchanged; this only shows what it already knows. Build 2
+    # adds the approval_mode fact: whether any trusted device
+    # exists yet decides if a correct code here bootstraps or
+    # knocks.
     ip = handler._client_ip()
     fails, lock_until = dhd_throttle_state(ip)
     host = handler.headers.get("Host") or ""
+    approval = bool(door_approved_devices(load_config()))
     if lock_until > time.time():
         return gate_page_html(
             "Too many wrong codes - this door is locked.",
             door="dhd",
             name=host,
             lock_seconds=int(lock_until - time.time()),
+            approval_mode=approval,
         )
     if fails > 0:
         return gate_page_html(
@@ -1243,8 +1585,9 @@ def dhd_gate_page(handler):
             door="dhd",
             name=host,
             attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails),
+            approval_mode=approval,
         )
-    return gate_page_html("", door="dhd", name=host)
+    return gate_page_html("", door="dhd", name=host, approval_mode=approval)
 
 
 def dhd_throttle_state(ip):
@@ -1306,12 +1649,31 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return ""
 
     def _accepted(self):
-        code = public_settings(load_config())["access_code"]
-        if not code:
+        # Build 2 (#173): acceptance is the device registry's word
+        # — a trusted device's own token, or (only while no device
+        # has ever been approved) the shared-code cookie. An
+        # accepted device's last-seen and sliding renewal are
+        # touched here, throttled inside door_touch_device.
+        cfg = load_config()
+        if not public_settings(cfg)["access_code"]:
             return False
-        want = PUBLIC_COOKIE + "=" + public_token(code)
-        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
-        return want in parts
+        ok, dev, _legacy = door_gate_acceptance(cfg, door_cookie_value(self.headers.get("Cookie")))
+        if ok and dev is not None:
+            door_touch_device(cfg, dev)
+        return ok
+
+    def _pending_poll(self):
+        # A waiting device's poll, answered by the proxy itself
+        # (it lives in this same process): the pending id is the
+        # only credential, and approval is the moment the device's
+        # own cookie is set.
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        pid = (q.get("id") or [""])[0]
+        status, dev = door_pending_poll(load_config(), pid)
+        extra = None
+        if status == "approved" and dev is not None and dev.get("token"):
+            extra = {"Set-Cookie": door_cookie_header(dev["token"])}
+        self._send_raw(200, json.dumps({"status": status}), "application/json", extra=extra)
 
     def _serve_challenge(self, path):
         token = path.rsplit("/", 1)[-1]
@@ -1362,31 +1724,42 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
     def _gate_post(self):
         ip = self._client_ip()
         _fails, lock_until = dhd_throttle_state(ip)
+        approval = bool(door_approved_devices(load_config()))
         if lock_until > time.time():
             wait = int(lock_until - time.time())
-            self._send_raw(429, gate_page_html("Too many wrong codes - this door is locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=wait))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=wait, approval_mode=approval))
             return
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b""
         try:
             form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
             given = (form.get("code") or [""])[0].strip()
+            dev_name = (form.get("device_name") or [""])[0].strip()
         except Exception:
             given = ""
-        want = public_settings(load_config())["access_code"]
+            dev_name = ""
+        cfg = load_config()
+        want = public_settings(cfg)["access_code"]
         if want and given.upper() == want.upper():
             dhd_throttle_clear(ip)
-            cookie = PUBLIC_COOKIE + "=" + public_token(want) + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE) + "; Path=/; HttpOnly; SameSite=Lax"
-            self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": cookie})
+            # Build 2 (#173): a correct code knocks. The outcome
+            # is the registry's: a session with the device's OWN
+            # token (the bootstrap, or a renewal), or a pending
+            # device and its waiting room.
+            action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
+            if action == "session":
+                self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": door_cookie_header(dev["token"])})
+            else:
+                self._send_raw(200, gate_pending_html(dev["id"], dev["name"], door="dhd"))
             return
         fails = dhd_throttle_fail(ip)
         if fails >= DHD_LOCKOUT_FAILS:
-            self._send_raw(429, gate_page_html("Too many wrong codes - this door is now locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=DHD_LOCKOUT_SECONDS))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is now locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=DHD_LOCKOUT_SECONDS, approval_mode=approval))
             return
         # Progressive delay: each wrong code makes the next answer
         # slower (1s, 2s, 4s, capped at 8s).
         time.sleep(min(2 ** (fails - 1), 8))
-        self._send_raw(200, gate_page_html("That code did not open the door.", door="dhd", name=self.headers.get("Host") or "", attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails)))
+        self._send_raw(200, gate_page_html("That code did not open the door.", door="dhd", name=self.headers.get("Host") or "", attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails), approval_mode=approval))
 
     def _handle(self):
         path = self.path.split("?")[0]
@@ -1403,6 +1776,12 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/.well-known/acme-challenge/"):
             self._serve_challenge(path)
+            return
+        if path == "/__gate/pending" and self.command == "GET":
+            # A waiting device's poll: answered without acceptance
+            # (the pending id is its only credential) and never
+            # forwarded — the registry lives in this process.
+            self._pending_poll()
             return
         if path == "/__gate":
             if self.command == "POST":
@@ -5563,23 +5942,259 @@ GITHUB_HEADERS = {
     "User-Agent": "navi-apex-bridge",
 }
 
+# ---------------------------------------------------------------------
+# Sign-in Build 2 (0.2.0e, #173): failures with names, and the
+# reads' own credential.
+#
+# Every GitHub failure Apex surfaces is classified into one of
+# three named kinds — auth (the credential itself is refused),
+# rate (a bucket is spent; the reset time rides along), abuse
+# (GitHub's secondary/abuse safeguard; Retry-After rides along and
+# Apex stops — nothing anywhere retries on its own) — and worded
+# as a sentence. No surface ever shows a bare "HTTP 403" again:
+# that silence is what made the field 403s (#172) undiagnosable.
+#
+# And the app-runtime reads — the Updater's checks, the NUR's
+# topic searches and repo reads, downloads — ride the Apex
+# Runtime credential (a dedicated fine-grained PAT the operator
+# pastes into Settings → GitHub, stored beside the operator's own
+# auth file, used by nothing else) when one is configured. Before
+# this build those reads sent NO Authorization header at all, so
+# they shared the unauthenticated bucket — 60 requests/hour per
+# network address, 10/minute for search — with everything else
+# on the operator's network. The unauthenticated path remains as
+# the fallback, and its failures now name those limits out loud.
+
+
+class GithubHttpError(Exception):
+    """A GitHub HTTP failure with its evidence attached: status,
+    GitHub's own message, and the response headers (rate-limit and
+    Retry-After facts live there). .code mirrors HTTPError's, so
+    older callers that read it keep working."""
+
+    def __init__(self, status, message="", headers=None, url=""):
+        super().__init__("HTTP " + str(status) + ((": " + message) if message else ""))
+        self.status = status
+        self.code = status
+        self.message = message or ""
+        self.headers = headers
+        self.url = url
+
+
+def _gh_header(headers, name):
+    if headers is None:
+        return None
+    try:
+        v = headers.get(name)
+    except Exception:
+        return None
+    return str(v) if v is not None else None
+
+
+# The last rate-limit buckets GitHub actually reported, keyed by
+# resource ("core" / "search"). Filled in from response headers
+# wherever a GitHub response provides them; the Settings → GitHub
+# identity panel reads them back. None until a response lands.
+_GITHUB_RATE = {"core": None, "search": None}
+
+
+def _github_note_rate(headers, url=""):
+    try:
+        limit = _gh_header(headers, "x-ratelimit-limit")
+        if limit is None:
+            return
+        resource = (_gh_header(headers, "x-ratelimit-resource") or "").strip().lower()
+        if resource not in ("core", "search"):
+            resource = "search" if "/search/" in (url or "") else "core"
+        remaining = _gh_header(headers, "x-ratelimit-remaining")
+        reset = _gh_header(headers, "x-ratelimit-reset")
+        _GITHUB_RATE[resource] = {
+            "limit": int(limit),
+            "remaining": int(remaining) if remaining is not None else None,
+            "reset": int(reset) if reset is not None else None,
+            "at": int(time.time()),
+        }
+    except Exception:
+        pass
+
+
+def github_rate_state():
+    return {"core": _GITHUB_RATE.get("core"), "search": _GITHUB_RATE.get("search")}
+
+
+def _gh_reset_phrase(reset_epoch):
+    if not reset_epoch:
+        return ""
+    try:
+        when = time.strftime("%H:%M", time.localtime(int(reset_epoch)))
+    except Exception:
+        return ""
+    return " It resets at " + when + "."
+
+
+def github_classify_error(status, headers=None, message="", authed=True):
+    """Classify one GitHub failure and word it. Returns a dict:
+    kind ("auth" | "rate" | "abuse" | "error"), the HTTP status,
+    GitHub's own message where it sent one, the reset time and
+    Retry-After where the headers carry them, and `text` — the
+    full sentence a surface shows. `authed` says whether the
+    request carried a credential; an unauthenticated rate failure
+    names the unauthenticated limits explicitly, because that is
+    the fact that fixes it."""
+    msg = (message or "").strip()
+    ml = msg.lower()
+    retry_after = _gh_header(headers, "retry-after")
+    try:
+        retry_after_s = int(retry_after) if retry_after is not None else None
+    except Exception:
+        retry_after_s = None
+    reset_raw = _gh_header(headers, "x-ratelimit-reset")
+    try:
+        reset_at = int(reset_raw) if reset_raw is not None else None
+    except Exception:
+        reset_at = None
+    remaining = _gh_header(headers, "x-ratelimit-remaining")
+    kind = "error"
+    if status in (401,):
+        kind = "auth"
+    elif status == 429 or "secondary rate" in ml or "abuse detection" in ml or (status == 403 and retry_after_s is not None):
+        kind = "abuse"
+    elif status == 403 and (remaining == "0" or "rate limit" in ml):
+        kind = "rate"
+    elif status == 403:
+        kind = "auth"
+    if kind == "auth":
+        if status == 401:
+            text = ("GitHub refused the sign-in itself (HTTP 401) — the credential is missing, "
+                    "expired, or revoked. This is not a rate limit; waiting will not cure it.")
+        else:
+            text = ("GitHub answered 403 Forbidden, and it is not a rate limit — the credential "
+                    "lacks access to this, or GitHub is refusing it on sight. Waiting will not cure it.")
+    elif kind == "rate":
+        text = "GitHub's rate limit is used up (HTTP " + str(status) + ")." + _gh_reset_phrase(reset_at)
+        if not authed:
+            text += (" This request went out unauthenticated, so it shared the unauthenticated "
+                     "allowance — 60 requests per hour per network address (10 per minute for "
+                     "search). Add the Apex Runtime credential in Settings → GitHub and the app's "
+                     "own reads ride their own allowance instead.")
+    elif kind == "abuse":
+        text = ("GitHub's abuse safeguard tripped (HTTP " + str(status) + ") — automated-looking "
+                "traffic, in GitHub's judgment.")
+        if retry_after_s is not None:
+            text += " It asked Apex to wait " + str(retry_after_s) + " seconds."
+        text += " Apex stops here; nothing retries on its own."
+    elif status and status >= 500:
+        text = "GitHub itself is having trouble (HTTP " + str(status) + ") — the fault is on their side; try again later."
+    elif status == 404:
+        text = "GitHub answered 404 — what was asked for is not there (or is private to another account)."
+    else:
+        text = "GitHub answered HTTP " + str(status) + ((": " + msg) if msg else ".")
+    return {
+        "kind": kind, "status": status, "message": msg,
+        "resetAt": reset_at, "retryAfterSeconds": retry_after_s,
+        "unauthenticated": not authed, "text": text,
+    }
+
+
+def github_error_info(e, authed=True):
+    """The classification for a caught failure: GithubHttpError
+    and urllib's HTTPError both carry their evidence; anything
+    else (a socket that never connected) is worded as reach."""
+    if isinstance(e, GithubHttpError):
+        return github_classify_error(e.status, e.headers, e.message, authed=authed)
+    if isinstance(e, urllib.error.HTTPError):
+        msg = ""
+        try:
+            body = e.read()
+            if body:
+                parsed = json.loads(body.decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    msg = str(parsed.get("message") or "")
+        except Exception:
+            pass
+        return github_classify_error(e.code, getattr(e, "headers", None) or getattr(e, "hdrs", None), msg, authed=authed)
+    if isinstance(e, urllib.error.URLError):
+        return {"kind": "error", "status": None, "message": str(e),
+                "resetAt": None, "retryAfterSeconds": None, "unauthenticated": not authed,
+                "text": "GitHub could not be reached at all — no connection, or github.com is down."}
+    return {"kind": "error", "status": None, "message": str(e),
+            "resetAt": None, "retryAfterSeconds": None, "unauthenticated": not authed,
+            "text": "The GitHub request failed: " + str(e)}
+
+
+def github_error_text(e, authed=True):
+    return github_error_info(e, authed=authed)["text"]
+
 
 def _now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _github_read_headers(accept=None):
+    headers = dict(GITHUB_HEADERS)
+    if accept:
+        headers["Accept"] = accept
+    token = github_runtime_token()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers, bool(token)
+
+
+def _github_read(url, accept=None):
+    # One app-runtime read (Updater / NUR). Rides the Runtime
+    # credential when configured; failures raise GithubHttpError
+    # with the response's headers attached, so the caller can
+    # classify instead of guessing from a status code.
+    headers, _authed = _github_read_headers(accept)
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            _github_note_rate(resp.headers, url)
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
+        msg = ""
+        try:
+            body = e.read()
+            if body:
+                parsed = json.loads(body.decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    msg = str(parsed.get("message") or "")
+        except Exception:
+            pass
+        raise GithubHttpError(e.code, msg, e.headers, url)
+
+
 def github_json(url):
-    req = urllib.request.Request(url, headers=GITHUB_HEADERS)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode())
+    return json.loads(_github_read(url).decode())
 
 
 def github_text(url, accept):
-    headers = dict(GITHUB_HEADERS)
-    headers["Accept"] = accept
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+    return _github_read(url, accept).decode("utf-8", "replace")
+
+
+# Topic-search discipline (Build 2, #173): the NUR's two catalog
+# searches share one cache and one road — results are cached for
+# five minutes, and a second search waits for the one in flight
+# instead of doubling the Search bucket's spend (10/minute
+# unauthenticated is the tightest allowance Apex touches).
+_GITHUB_SEARCH_CACHE = {}
+_GITHUB_SEARCH_LOCK = threading.Lock()
+_GITHUB_SEARCH_TTL = 300
+
+
+def github_search_repositories(query):
+    now = time.time()
+    hit = _GITHUB_SEARCH_CACHE.get(query)
+    if hit and hit[0] > now:
+        return hit[1]
+    with _GITHUB_SEARCH_LOCK:
+        hit = _GITHUB_SEARCH_CACHE.get(query)
+        if hit and hit[0] > time.time():
+            return hit[1]
+        data = github_json("https://api.github.com/search/repositories?q=" + query + "&per_page=30&sort=updated")
+        _GITHUB_SEARCH_CACHE[query] = (time.time() + _GITHUB_SEARCH_TTL, data)
+        return data
 
 
 # ---------------------------------------------------------------------
@@ -5778,22 +6393,17 @@ def _release_build_seq(rel):
 
 
 def _update_error_text(e):
-    # A failed check, worded honestly: offline and rate-limited are
-    # different days, and the operator deserves to know which one
-    # it is.
-    if isinstance(e, urllib.error.HTTPError):
-        if e.code == 403:
-            return ("GitHub refused the check (HTTP 403) — its rate "
-                    "limit for this network is likely used up. Wait a "
-                    "while and check again.")
-        if e.code == 404:
-            return ("GitHub answered 404 — the project has no "
-                    "published release yet, so there is nothing to "
-                    "update to.")
-        return ("GitHub answered HTTP " + str(e.code)
-                + " — the check did not complete.")
-    return ("The check could not reach GitHub (" + type(e).__name__
-            + ") — this machine may be offline.")
+    # A failed check, worded honestly (Build 2, #173): the failure
+    # is classified and named — auth, rate (with its reset), abuse
+    # (with its wait) — never a bare status code and never a guess.
+    # The check rides the Runtime credential when one is
+    # configured; the classifier hears which, so an unauthenticated
+    # rate failure names the unauthenticated allowance out loud.
+    if isinstance(e, GithubHttpError) and e.status == 404:
+        return ("GitHub answered 404 — the project has no "
+                "published release yet, so there is nothing to "
+                "update to.")
+    return github_error_text(e, authed=bool(github_runtime_token()))
 
 
 def updater_channel_explicit(cfg=None):
@@ -7522,6 +8132,68 @@ GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows"
 GITHUB_CORE_BACKUP_ITEMS = ["soul", "memory", "settings"]
 _github_device = {}
 
+# The Apex Runtime credential (0.2.0e Build 2, #173): a dedicated
+# fine-grained PAT for the app's own reads — the Updater's checks,
+# the NUR's discovery and management reads, downloads. It lives in
+# its own file beside the operator's auth file, under the same
+# discipline (0600, deleted to clear), and it is a different
+# identity from the operator's device-flow sign-in: the operator's
+# token acts as the operator; this one only ever reads, and only
+# for the app. Nothing may write to GitHub with it, and the
+# operator's sign-in neither knows nor needs it.
+GITHUB_RUNTIME_PATH = os.path.join(ROOT, "config", "github-runtime.json")
+
+
+def github_runtime_auth():
+    try:
+        with open(GITHUB_RUNTIME_PATH) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("token"):
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def github_save_runtime(token):
+    token = str(token or "").strip()
+    if not token:
+        github_clear_runtime()
+        return None
+    os.makedirs(os.path.dirname(GITHUB_RUNTIME_PATH), exist_ok=True)
+    fd = os.open(GITHUB_RUNTIME_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"token": token, "saved_at": int(time.time())}, f)
+    try:
+        os.chmod(GITHUB_RUNTIME_PATH, 0o600)
+    except Exception:
+        pass
+    return github_runtime_auth()
+
+
+def github_clear_runtime():
+    try:
+        os.remove(GITHUB_RUNTIME_PATH)
+    except Exception:
+        pass
+
+
+def github_runtime_token():
+    data = github_runtime_auth()
+    return data.get("token") if data else None
+
+
+def github_runtime_state():
+    data = github_runtime_auth()
+    if not data:
+        return {"configured": False, "tokenHint": "", "savedAt": None}
+    token = str(data.get("token") or "")
+    return {
+        "configured": True,
+        "tokenHint": ("…" + token[-4:]) if len(token) >= 4 else "…",
+        "savedAt": data.get("saved_at"),
+    }
+
 
 def github_api(method, url, token=None, body=None, form=False):
     # One GitHub request; returns (status, parsed JSON or text) and
@@ -7543,12 +8215,14 @@ def github_api(method, url, token=None, body=None, form=False):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            _github_note_rate(resp.headers, url)
             raw = resp.read().decode("utf-8", "replace")
             try:
                 return resp.status, json.loads(raw)
             except Exception:
                 return resp.status, raw
     except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
         raw = e.read().decode("utf-8", "replace")
         try:
             return e.code, json.loads(raw)
@@ -7572,12 +8246,14 @@ def github_api_raw(method, url, token, data, content_type):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
+            _github_note_rate(resp.headers, url)
             raw = resp.read().decode("utf-8", "replace")
             try:
                 return resp.status, json.loads(raw)
             except Exception:
                 return resp.status, raw
     except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
         raw = e.read().decode("utf-8", "replace")
         try:
             return e.code, json.loads(raw)
@@ -7707,6 +8383,7 @@ def github_refresh_auth():
 def github_status_payload(cfg):
     s = github_settings(cfg)
     auth = github_auth()
+    runtime = github_runtime_state()
     return {
         "ok": True,
         "repoUrl": GITHUB_REPO_URL,
@@ -7724,23 +8401,55 @@ def github_status_payload(cfg):
         "lastBackupResult": s["last_backup_result"],
         "lastImportAt": s["last_import_at"],
         "lastImportResult": s["last_import_result"],
+        # The three identities, side by side (Build 2, #173).
+        # Operator: the human's device-flow sign-in — acts as the
+        # operator, used by backup/import. Runtime: the app's own
+        # read credential (above). Release Automation: deliberately
+        # NOT a credential Apex holds — publication runs on the
+        # operator's signed-in browser session and the local git
+        # remote, and the panel says so instead of implying a
+        # third token exists. Bucket readouts are the last limits
+        # GitHub actually reported to this bridge, or null.
+        "identities": {
+            "operator": {
+                "signedIn": auth is not None,
+                "login": auth["login"] if auth else "",
+                "scopesNote": "Acts as you. Used by backup and import — nothing else.",
+            },
+            "runtime": {
+                "configured": runtime["configured"],
+                "tokenHint": runtime["tokenHint"],
+                "savedAt": runtime["savedAt"],
+                "scopesNote": "The app's own read credential. Used by the Updater, the NUR, and the GitHub section's live reads — reads only, never writes.",
+                "buckets": github_rate_state(),
+            },
+            "automation": {
+                "note": "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design.",
+            },
+        },
     }
 
 
 def github_issues_payload():
     # The Issues tab inside the GitHub section: the repo's current
-    # open issues, live from the public GitHub API. No token — the
-    # repo is public and listing never requires sign-in. Pull
-    # requests ride the same endpoint and are filtered out.
+    # open issues, live from the public GitHub API. The repo is
+    # public and listing never requires sign-in; when the Runtime
+    # credential is configured the read rides it (Build 2, #173),
+    # so the section stops sharing the unauthenticated bucket
+    # whose exhaustion presented as this tab's bare 403s (#172).
+    # Pull requests ride the same endpoint and are filtered out.
+    _rt = github_runtime_token()
     st, resp = github_api(
         "GET",
         GITHUB_API_BASE + "/issues?state=open&per_page=100&sort=updated&direction=desc",
-        None,
+        _rt,
     )
     if st != 200 or not isinstance(resp, list):
+        _info = github_classify_error(st, None, github_err_text(resp), authed=bool(_rt))
         return {
             "ok": False,
-            "error": "GitHub issues fetch failed (HTTP " + str(st) + "): " + github_err_text(resp),
+            "error": _info["text"],
+            "githubError": _info,
             "issues": [],
             "fetchedAt": None,
             "repoUrl": GITHUB_REPO_URL,
@@ -7775,19 +8484,22 @@ def github_pulse_payload():
     # The GitHub section's Overview: the project's pulse — repo
     # description, stars/forks/watchers, latest release, recent
     # commits, open-issue count, last push — live from the public
-    # GitHub API, no token. Any failure is reported, never filled
-    # in with invented numbers.
-    st, repo = github_api("GET", GITHUB_API_BASE, None)
+    # GitHub API (on the Runtime credential when one is configured,
+    # Build 2). Any failure is reported, never filled in with
+    # invented numbers.
+    st, repo = github_api("GET", GITHUB_API_BASE, github_runtime_token())
     if st != 200 or not isinstance(repo, dict):
+        _info = github_classify_error(st, None, github_err_text(repo), authed=bool(github_runtime_token()))
         return {
             "ok": False,
-            "error": "GitHub pulse fetch failed (HTTP " + str(st) + "): " + github_err_text(repo),
+            "error": _info["text"],
+            "githubError": _info,
             "pulse": None,
             "fetchedAt": None,
             "repoUrl": GITHUB_REPO_URL,
         }
     latest_release = None
-    rst, rel = github_api("GET", GITHUB_API_BASE + "/releases/latest", None)
+    rst, rel = github_api("GET", GITHUB_API_BASE + "/releases/latest", github_runtime_token())
     if rst == 200 and isinstance(rel, dict):
         latest_release = {
             "tag": str(rel.get("tag_name") or ""),
@@ -7797,7 +8509,7 @@ def github_pulse_payload():
         }
     commits = []
     commit_count = None
-    cst, crows = github_api("GET", GITHUB_API_BASE + "/commits?per_page=100", None)
+    cst, crows = github_api("GET", GITHUB_API_BASE + "/commits?per_page=100", github_runtime_token())
     if cst == 200 and isinstance(crows, list):
         if len(crows) < 100:
             commit_count = len(crows)
@@ -7814,7 +8526,7 @@ def github_pulse_payload():
                 "url": str(c.get("html_url") or ""),
             })
     issues = []
-    ist, irows = github_api("GET", GITHUB_API_BASE + "/issues?state=open&per_page=8", None)
+    ist, irows = github_api("GET", GITHUB_API_BASE + "/issues?state=open&per_page=8", github_runtime_token())
     if ist == 200 and isinstance(irows, list):
         for i in irows:
             if not isinstance(i, dict) or "pull_request" in i:
@@ -7862,7 +8574,7 @@ def github_device_start(cfg):
         {"client_id": s["client_id"], "scope": "repo"}, form=True,
     )
     if st != 200 or not isinstance(resp, dict) or not resp.get("device_code"):
-        return {"ok": False, "error": "GitHub did not start a device sign-in (HTTP " + str(st) + "): " + github_err_text(resp)}
+        return {"ok": False, "error": "GitHub did not start a device sign-in. " + github_classify_error(st, None, github_err_text(resp), authed=False)["text"]}
     _github_device.clear()
     _github_device.update({
         "device_code": resp["device_code"],
@@ -7910,7 +8622,9 @@ def github_device_poll(cfg):
     if err == "slow_down":
         return {"ok": True, "status": "pending", "slowDown": True}
     _github_device.clear()
-    return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err or ("HTTP " + str(st))) + ") — start again to retry."}
+    if err:
+        return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err) + ") — start again to retry."}
+    return {"ok": False, "status": "failed", "error": "GitHub sign-in ended. " + github_classify_error(st, None, github_err_text(resp), authed=False)["text"] + " Start again to retry."}
 
 
 def _dashboard_image_field(value):
@@ -8561,7 +9275,7 @@ def fetch_repo_chip(full_name):
             "url": rel.get("html_url") or "",
             "publishedAt": rel.get("published_at") or "",
         }
-    except urllib.error.HTTPError as e:
+    except (urllib.error.HTTPError, GithubHttpError) as e:
         # 404 is the only answer that means "no releases yet" — a
         # rate limit or an outage must surface as a failed catalog,
         # never as a chip that looks release-less.
@@ -8622,7 +9336,12 @@ def chip_cartridge_filename(repo, rows):
 
 
 def github_download(url):
-    req = urllib.request.Request(url, headers=GITHUB_HEADERS)
+    # A runtime read like any other (Build 2): the Runtime
+    # credential rides along when configured. (Release-asset
+    # downloads themselves are unmetered by GitHub; the header
+    # costs nothing and keeps the read on the app's own identity.)
+    headers, _authed = _github_read_headers()
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read()
 
@@ -8784,28 +9503,31 @@ def chip_catalog_view():
     warning = None
     repos = []
     try:
-        data = github_json(
-            "https://api.github.com/search/repositories"
-            "?q=topic:navi-chips&per_page=30&sort=updated"
-        )
+        # Build 2 (#173): the search rides the Runtime credential
+        # when configured, is cached for five minutes, and runs
+        # one at a time (github_search_repositories); a failure is
+        # classified and named, never a bare status.
+        data = github_search_repositories("topic:navi-chips")
         failures = 0
+        last_err = None
         for item in data.get("items") or []:
             full = item.get("full_name")
             if not full:
                 continue
             try:
                 repos.append(fetch_repo_chip(full))
-            except Exception:
+            except Exception as fe:
                 failures += 1
+                last_err = fe
         if failures:
             warning = (
                 "GitHub could not be fully read for "
                 + str(failures)
-                + " of the chips (rate limit or outage) — the list "
-                "may be incomplete. Search again in a minute."
+                + " of the chips — the list may be incomplete. "
+                + github_error_text(last_err, authed=bool(github_runtime_token()))
             )
     except Exception as e:
-        error = "GitHub search failed: " + str(e)
+        error = "GitHub search failed. " + github_error_text(e, authed=bool(github_runtime_token()))
     installs = {row.get("full_name"): row for row in load_chip_installs()}
     # Issue #22: an entry also reads as installed when a chip with
     # the same slug is on this machine under another name — a
@@ -11930,28 +12652,30 @@ def rag_catalog_view():
     warning = None
     repos = []
     try:
-        data = github_json(
-            "https://api.github.com/search/repositories"
-            "?q=topic:navi-rag&per_page=30&sort=updated"
-        )
+        # Build 2 (#173): same discipline as the chips catalog —
+        # Runtime credential, five-minute cache, one search in
+        # flight, failures classified and named.
+        data = github_search_repositories("topic:navi-rag")
         failures = 0
+        last_err = None
         for item in data.get("items") or []:
             full = item.get("full_name")
             if not full:
                 continue
             try:
                 repos.append(fetch_repo_chip(full))
-            except Exception:
+            except Exception as fe:
                 failures += 1
+                last_err = fe
         if failures:
             warning = (
                 "GitHub could not be fully read for "
                 + str(failures)
-                + " of the packs (rate limit or outage) — the list "
-                "may be incomplete. Search again in a minute."
+                + " of the packs — the list may be incomplete. "
+                + github_error_text(last_err, authed=bool(github_runtime_token()))
             )
     except Exception as e:
-        error = "GitHub search failed: " + str(e)
+        error = "GitHub search failed. " + github_error_text(e, authed=bool(github_runtime_token()))
     installs = {row.get("full_name"): row for row in load_rag_installs()}
     # Issue #22, the pack half — the case from Alex's screenshot:
     # a pack forged in RAG Studio (its local/ record, folder named
@@ -14451,18 +15175,39 @@ class Handler(BaseHTTPRequestHandler):
     def _public_gate_blocks(self):
         # The gate exists only while the bridge is actually bound
         # publicly (public mode was ON at launch). Loopback callers
-        # are never gated. Everyone else needs the acceptance
-        # cookie whose value is a hash of the current access code.
+        # are never gated. Everyone else is judged by the device
+        # registry (Build 2, #173): a trusted device's own token
+        # opens; the shared-code cookie opens only while no device
+        # has ever been approved; everything else is blocked.
         if ACTIVE_BIND_HOST != "0.0.0.0":
             return False
         if self._client_is_loopback():
             return False
-        code = public_settings(load_config())["access_code"]
-        if not code:
+        cfg = load_config()
+        if not public_settings(cfg)["access_code"]:
             return True
-        want = PUBLIC_COOKIE + "=" + public_token(code)
-        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
-        return want not in parts
+        ok, dev, _legacy = door_gate_acceptance(cfg, door_cookie_value(self.headers.get("Cookie")))
+        if ok and dev is not None:
+            door_touch_device(cfg, dev)
+        return not ok
+
+    def _gate_pending_poll(self):
+        # The waiting device's poll on the bridge's own door (the
+        # DHD proxy answers its own; same registry, same words).
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        pid = (q.get("id") or [""])[0]
+        status, dev = door_pending_poll(load_config(), pid)
+        body = json.dumps({"status": status}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        if status == "approved" and dev is not None and dev.get("token"):
+            self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
 
     def do_DELETE(self):
         # The only DELETE on the dashboard surface: removing a
@@ -14491,7 +15236,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         _path = self.path.split("?")[0]
         if _path == "/__gate":
-            self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+            self._send(200, gate_page_html(approval_mode=bool(door_approved_devices(load_config()))).encode(), "text/html; charset=utf-8")
+            return
+        if _path == "/__gate/pending":
+            # A waiting device's poll — exempt from the gate block
+            # below by design: the pending id is its credential.
+            self._gate_pending_poll()
             return
         # Build .86: the node-facing Mesh endpoints (/mesh/status,
         # /mesh/borrow) are NOT served on this dashboard surface at
@@ -14503,7 +15253,7 @@ class Handler(BaseHTTPRequestHandler):
             if _path.startswith("/api/"):
                 self._send(403, {"error": "access code required"})
             else:
-                self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+                self._send(200, gate_page_html(approval_mode=bool(door_approved_devices(load_config()))).encode(), "text/html; charset=utf-8")
             return
         # Build 9 (#90): GET /mesh/card and /api/mesh/card — the
         # card as copyable text — are REMOVED. Pairing is the PNG
@@ -14962,32 +15712,35 @@ class Handler(BaseHTTPRequestHandler):
         cfg = load_config()
         if self.path.split("?")[0] == "/__gate":
             # The gate page's form: a remote visitor proving the
-            # code. Success sets the long-lived acceptance cookie
-            # (a hash of the code — regenerate the code and every
-            # cookie stops matching) and sends them to the door
-            # they asked for. Failure serves the gate page again
-            # with the reason, and nothing else.
+            # code. Since Build 2 (#173) the code knocks rather
+            # than opens: the registry decides — a session with the
+            # device's OWN 30-day token (the bootstrap first device,
+            # or a trusted device renewing), or a PENDING device
+            # and its waiting room, approved from a trusted session
+            # in Settings -> System -> Door. Failure serves the
+            # gate page again with the reason, and nothing else.
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
             form = urllib.parse.parse_qs(raw)
             given = (form.get("code") or [""])[0].strip().upper()
+            dev_name = (form.get("device_name") or [""])[0].strip()
             want = public_settings(cfg)["access_code"]
             if want and given == want.upper():
-                self.send_response(303)
-                self.send_header("Location", "/")
-                self.send_header(
-                    "Set-Cookie",
-                    PUBLIC_COOKIE + "=" + public_token(want)
-                    + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE)
-                    + "; Path=/; HttpOnly; SameSite=Lax",
-                )
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
+                if action == "session":
+                    self.send_response(303)
+                    self.send_header("Location", "/")
+                    self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self._send(200, gate_pending_html(dev["id"], dev["name"], door="node").encode(), "text/html; charset=utf-8")
             else:
                 self._send(
                     200,
                     gate_page_html(
-                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again."
+                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again.",
+                        approval_mode=bool(door_approved_devices(cfg)),
                     ).encode(),
                     "text/html; charset=utf-8",
                 )
@@ -15390,9 +16143,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
                 schedule_bridge_restart()
         elif self.path == "/api/settings/public/regenerate":
-            # A fresh code. Because the acceptance cookie is a
-            # hash of the code, this invalidates every client the
-            # old code let in — they will be asked again.
+            # A fresh code. The shared-code cookie stops matching
+            # at once, and no new knock can use the old code —
+            # but a device already approved keeps its OWN token
+            # (Build 2): trusted devices are revoked one by one in
+            # the Door list, not by changing the code under them.
             block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
             block = dict(block)
             block["access_code"] = generate_access_code()
@@ -15401,6 +16156,33 @@ class Handler(BaseHTTPRequestHandler):
             cfg["public_server"] = block
             save_config(cfg)
             self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/approve":
+            # Trusted-device approval (Build 2, #173): a pending
+            # device gets its own token and 30 days. Served to any
+            # session that is itself inside the door (loopback or
+            # gate-accepted — the gate above has already judged);
+            # a waiting device's poll picks the approval up.
+            data = self._body()
+            dev = door_approve(load_config(), str(data.get("id") or ""))
+            if dev is None:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore — its knock may have expired.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/deny":
+            data = self._body()
+            if door_deny(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/revoke":
+            # Per-device revoke: the record goes, and with it the
+            # token — that device is at the gate on its next knock,
+            # and no one else's session notices.
+            data = self._body()
+            if door_revoke(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not in the list.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
         elif self.path == "/api/shell":
             data = self._body()
             try:
@@ -17123,6 +17905,27 @@ class Handler(BaseHTTPRequestHandler):
             # none ships). It is not a secret — Device Flow has none.
             data = self._body()
             save_github_settings({"client_id": str(data.get("client_id") or "").strip()[:80]})
+            self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/github/runtime":
+            # The Apex Runtime credential (Build 2, #173): a secret,
+            # so unlike the client id it goes to the auth store
+            # (github-runtime.json, 0600), never to plain config, and
+            # the answer carries only its state — never the token.
+            data = self._body()
+            token = str(data.get("token") or "").strip()
+            if not token:
+                self._send(200, {"ok": False, "error": "Paste the runtime token first — a fine-grained personal access token with read access is all Apex needs.", "github": github_status_payload(load_config())})
+                return
+            if len(token) > 512 or any(c.isspace() for c in token):
+                self._send(200, {"ok": False, "error": "That does not look like a token — it has spaces or is far too long. Copy the token alone.", "github": github_status_payload(load_config())})
+                return
+            github_save_runtime(token)
+            self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/github/runtime/clear":
+            # Clearing deletes the token file; the app's reads fall
+            # back to the unauthenticated allowance, and their
+            # failures will say so.
+            github_clear_runtime()
             self._send(200, github_status_payload(load_config()))
         elif self.path == "/api/github/settings":
             data = self._body()

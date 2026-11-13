@@ -6,22 +6,32 @@ Everything is Apex's own work, assembled and managed by Apex itself. There is no
 
 - A **reverse proxy Apex runs itself** listens on ports 80 and 443 and forwards to the bridge on `127.0.0.1:8675`. In DHD mode the bridge never binds publicly — the proxy is the only public face.
 - **TLS from the first click.** With no domain, Apex generates a **self-signed certificate** and the door opens on it. With a domain, Apex's **built-in ACME client** obtains a real Let's Encrypt certificate and renews it on its own.
-- The **same access code** as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.
+- The **same access code** as the home-network door guards DHD — one code, both doors. Since 0.2.0e Build 2 the code **knocks** rather than opens: a device presenting it names itself and waits for an approval (the first device approves itself), and each approved device holds its own 30-day session — see *Trusted devices* below. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.
 
 DHD has its own page, reached from the menu's **Apex | Systems** group (its Node and DHD entries both open it), and the status column's **Servers** group shows it beside Llamafile and Apex | Node [local], each row with its own pulsing dot and its own dropdown of details. Directly under Navi's status, bracketed by separators, sits the update line: a green **Up to date**, or a yellow **Update available** when a check found one — that one line is the whole entry.
 
-The DHD page is the one house for Apex's server controls: the **Apex | Node** [local] controls — the home-network door's on/off choice, its live state, and the access code — sit on the DHD page under the DHD options, so both ways of reaching Apex are managed in one place. Settings → System keeps only a pointer to them. The relocation is display-only: same config keys, same API paths, same code and cookie.
+The DHD page is the one house for Apex's server controls: the **Apex | Node** [local] controls — the home-network door's on/off choice, its live state, and the access code — sit on the DHD page under the DHD options, so both ways of reaching Apex are managed in one place. Settings → System keeps only a pointer to them. The relocation is display-only: same config keys, same API paths, same code.
 
 ## Turning it on — one click
 
 1. Open the **DHD** page from the menu's Apex | Systems group.
 2. Flip the **master switch**. That is the click.
 3. Apex does the rest in order: it generates the certificate, brings its proxy up on 80/443 in front of the bridge, and runs a local reachability check — the proxy must answer on 443 from this machine ("answered on this machine"; it proves the local half only). The page then reports the live state, the LAN address under its own label, and the public address when there is one.
-4. Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the **access code** (shown on the DHD page, on this machine only), and you are in — a full session, Updater included: a remote session can run the one-click update end to end, exactly like sitting at the machine.
+4. Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the **access code** (shown on the DHD page, on this machine only) and name the device — the first device at the door lets itself in, and a device that knocks later waits on its own screen until you approve it from a trusted session — and you are in: a full session, Updater included. A remote session can run the one-click update end to end, exactly like sitting at the machine.
 
 If a step fails, the page names the step in plain words — the proxy could not take its ports, the certificate could not be prepared, the self-check did not answer — and the previous state is left completely untouched. Nothing ever half-opens.
 
 One Linux note: ports below 1024 are reserved, so if the proxy step names them, grant the bridge the low-port capability once (`sudo setcap 'cap_net_bind_service=+ep'` on the python3 binary it runs with) and flip the switch again.
+
+## Trusted devices — the code knocks (0.2.0e Build 2)
+
+**The flow.** A device that has never been let in opens either door, types the access code, and gives itself a name. If it is the **first device ever** at this door, it approves itself and walks in — the bootstrap is deliberate: a one-operator house must never be locked out of its own door waiting for an approver who does not exist yet. Every device after that becomes a **pending device**: its screen waits, and it appears under **Waiting at the door** in the Door list — in **Settings → System → Door** and on the **DHD page** — where any session that is already trusted can **Approve** or **Deny** it. Approval hands that device its own session token; the waiting page notices on its own and walks through. A wait lasts 30 minutes, then the knock expires and the device knocks again.
+
+**The session.** An approved device's session is its own — not a hash of the shared code: a random token, a **30-day** life, and a sliding renewal: using the door while the session is valid renews it, so a device in daily use never hits its 30 days mid-shift. The Door list shows every trusted device with its name, first seen, last seen, and expiry.
+
+**Revoke and regenerate are different tools now.** **Revoke** removes one device: its token dies at once and it is back at the gate on its next knock — nobody else's session notices. **Regenerating the access code** stops new knocks with the old code (and retires the old shared-code cookie), but devices already approved keep their own tokens; revoke those one by one if you want them out. Before Build 2, changing the code was the only way to shut anyone out, and it shut everyone out; that is the problem per-device sessions exist to end.
+
+**What did not change.** The public door still throttles wrong codes (a progressive delay; five in a row locks it for five minutes). DHD still forces the bridge onto loopback — the proxy stays the only public face. And no remote session, trusted device or not, can turn Mesh lending on: lending is armed in person, from the lending machine's own dashboard, exactly as before.
 
 ## Prerequisites, installs, and operation cards
 

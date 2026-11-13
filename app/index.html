@@ -1572,6 +1572,7 @@ var meshHealthMsg = "";      // the health check's own fetch failure, when the b
 var meshPngDrag = false;     // the drop zone is lit while a file drags over it (Build 7)
 var meshDetailsOpen = false;
 var dhdMsg = "";
+var doorMsg = "";            // the Door (trusted devices) card's own message (Build 2, #173)
 var dhdCodeShown = false;
 var dhdOperation = null;     // the page's current DHD operation card state
 var opPollTimers = {};       // operation id -> poll timer (chat + DHD page cards)
@@ -1668,8 +1669,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-12.01";
-var SHIPPED_BUILD_SEQ = 1;
+var BRIDGE_BUILD = "2026-11-13.02";
+var SHIPPED_BUILD_SEQ = 2;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2057,6 +2058,40 @@ function ghSaveClientId() {
   var id = inp ? inp.value.trim() : "";
   if (CONFIG.backend !== "live") { githubState.clientId = id; githubState.clientIdConfigured = !!id; mockGithubSave(); ghSetMsg(id ? "Client ID saved (simulated state — mock mode)." : "Client ID cleared.", false); render(); return; }
   ghPost("/api/github/client-id", { client_id: id }, function (j) { githubState = j; ghSetMsg(id ? "Client ID saved — sign-in can start now." : "Client ID cleared.", false); render(); });
+}
+function ghRuntimeSave() {
+  // Build 2 (#173): the Apex Runtime credential — a secret, so it
+  // posts to its own endpoint and the bridge stores it in the
+  // auth store (0600), never in config. The answer is the status
+  // payload: state and token hint only, never the token back.
+  var inp = document.getElementById("gh-runtime-token");
+  var token = inp ? inp.value.trim() : "";
+  if (!token) { ghSetMsg("Paste the runtime token first.", true); render(); return; }
+  if (CONFIG.backend !== "live") {
+    githubState.identities = githubState.identities || { operator: { signedIn: githubState.signedIn, login: githubState.login, scopesNote: "Acts as you. Used by backup and import — nothing else." }, runtime: { configured: false, tokenHint: "", savedAt: null, scopesNote: "The app's own read credential. Used by the Updater, the NUR, and the GitHub section's live reads — reads only, never writes.", buckets: { core: null, search: null } }, automation: { note: "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design." } };
+    githubState.identities.runtime.configured = true;
+    githubState.identities.runtime.tokenHint = "…" + token.slice(-4);
+    githubState.identities.runtime.savedAt = Math.floor(Date.now() / 1000);
+    mockGithubSave(); ghSetMsg("Runtime token saved (simulated state — mock mode).", false); render(); return;
+  }
+  ghPost("/api/github/runtime", { token: token }, function (j) {
+    if (j && j.ok === false) { ghSetMsg(j.error || "The runtime token was refused.", true); if (j.github) githubState = j.github; }
+    else { githubState = j; ghSetMsg("Runtime token saved — the app's own reads ride it from here.", false); }
+    render();
+  });
+}
+function ghRuntimeClear() {
+  if (CONFIG.backend !== "live") {
+    if (githubState.identities && githubState.identities.runtime) { githubState.identities.runtime.configured = false; githubState.identities.runtime.tokenHint = ""; githubState.identities.runtime.savedAt = null; }
+    mockGithubSave(); ghSetMsg("Runtime token removed (simulated state — mock mode). The app's reads fall back to the unauthenticated allowance.", false); render(); return;
+  }
+  ghPost("/api/github/runtime/clear", {}, function (j) { githubState = j; ghSetMsg("Runtime token removed — the file is deleted. The app's reads fall back to the unauthenticated allowance, and their failures will say so.", false); render(); });
+}
+function ghBucketLine(label, b) {
+  if (!b) return "<p class='mono' style='color:var(--dim);font-size:11px'>" + label + " — no GitHub response has reported limits yet</p>";
+  var rs = "";
+  if (b.reset) { var d = new Date(b.reset * 1000); rs = " · resets " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+  return "<p class='mono' style='color:var(--dim);font-size:11px'>" + label + " — " + (b.remaining === null || b.remaining === undefined ? "?" : b.remaining) + " of " + b.limit + " left" + rs + "</p>";
 }
 function ghSaveBackupSettings() {
   var repoEl = document.getElementById("gh-repo");
@@ -4190,14 +4225,19 @@ var DOC_PAGES = [
   "<p>Everything is Apex's own work, assembled and managed by Apex itself — no Tailscale, no tunnel or proxy service, no Certbot:</p><ul>" +
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
-  "<li>The <b>same access code</b> as the home-network door guards DHD — one code, the same acceptance cookie. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
+  "<li>The <b>same access code</b> as the home-network door guards DHD — one code, both doors. Since Build 2 the code <b>knocks</b> rather than opens: a device presenting it names itself and waits for an approval (the first device approves itself), and each approved device holds its own 30-day session — the <i>Trusted devices</i> section below has the whole flow. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
   "<p>DHD has its own page, reached from the menu's <b>Apex | Systems</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
   "<li>Apex does the rest in order: it generates the certificate, brings its proxy up on 80/443 in front of the bridge, and runs a local reachability check — the proxy must answer on 443 from this machine (answered on this machine; the local half only). The page then reports the live state, the LAN address under its own label, and the public address when there is one.</li>" +
-  "<li>Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the <b>access code</b> (shown on the DHD page, on this machine only), and you are in — a full session, Updater included: a remote session can run the one-click update end to end, exactly like sitting at the machine.</li></ol>" +
+  "<li>Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the <b>access code</b> (shown on the DHD page, on this machine only) and name the device — the first device at the door lets itself in, and a device that knocks later waits on its own screen until you approve it from a trusted session — and you are in: a full session, Updater included. A remote session can run the one-click update end to end, exactly like sitting at the machine.</li></ol>" +
   "<p>If a step fails, the page names the step in plain words — the proxy could not take its ports, the certificate could not be prepared, the self-check did not answer — and the previous state is left completely untouched. Nothing ever half-opens. One Linux note: ports below 1024 are reserved, so if the proxy step names them, grant the bridge the low-port capability once (<span class='mono'>sudo setcap 'cap_net_bind_service=+ep'</span> on the python3 binary it runs with) and flip the switch again.</p></div>" +
+    "<div class='doc-sec'><h4>Trusted devices — the code knocks (Build 2)</h4>" +
+  "<p><b>The flow.</b> A device that has never been let in opens either door, types the access code, and gives itself a name. If it is the <b>first device ever</b> at this door, it approves itself and walks in — this bootstrap is deliberate: a one-operator house must never be locked out of its own door waiting for an approver who does not exist yet. Every device after that becomes a <b>pending device</b>: its screen waits, and it appears under <b>Waiting at the door</b> in the Door list — in <b>Settings → System → Door</b> and on the <b>DHD page</b> — where any session that is already trusted can <b>Approve</b> or <b>Deny</b> it. Approval hands that device its own session token; the waiting page notices on its own and walks through. A wait lasts 30 minutes, then the knock expires and the device knocks again.</p>" +
+  "<p><b>The session.</b> An approved device's session is its own — not a hash of the shared code: a random token, a <b>30-day</b> life, and a sliding renewal: using the door while the session is valid renews it, so a device in daily use never hits its 30 days mid-shift. The Door list shows every trusted device with its name, first seen, last seen, and expiry.</p>" +
+  "<p><b>Revoke and regenerate are different tools now.</b> <b>Revoke</b> removes one device: its token dies at once and it is back at the gate on its next knock — nobody else's session notices. <b>Regenerating the access code</b> stops new knocks with the old code (and retires the old shared-code cookie), but devices already approved keep their own tokens; revoke those one by one if you want them out. Before Build 2, changing the code was the only way to shut anyone out, and it shut everyone out; that is the problem per-device sessions exist to end.</p>" +
+  "<p><b>What did not change.</b> The public door still throttles wrong codes (a progressive delay, five in a row locks it for five minutes). DHD still forces the bridge onto loopback — the proxy stays the only public face. And no remote session, trusted device or not, can turn Mesh lending on: lending is armed in person, from the lending machine's own dashboard, exactly as before.</p></div>" +
     "<div class='doc-sec'><h4>Addresses — domain, public IP, and LAN</h4>" +
   "<p>DHD works with <b>three different addresses</b>, and the page never mixes them up:</p><ul>" +
   "<li><b>Your domain</b> — the public address once it is live: set an <b>A record</b> for the name at your DNS host pointing at your home's public IP, forward <b>443 and 80</b> on your router to this machine, and Apex's ACME client issues the name's real certificate. Only then — name resolving to this machine, certificate live — does Apex say <b>outside reach verified</b>, and only then does the status dropdown say from anywhere.</li>" +
@@ -4325,8 +4365,8 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Apex | Node — Apex on your phone or tablet</h4>" +
   "<p>The <b>DHD page</b> holds the <b>Apex | Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex | Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
   "<p>If a restart ever fails, the row says so in plain words: it names the step that failed (the old bridge would not stop, the new bridge did not answer, or the answering bridge's bind does not match your choice), states the state that is <b>actually live</b> — the old bridge keeps serving its old setting, untouched, until a new one is confirmed — and offers the fallbacks: press <b>Restart bridge</b> to try again, or quit Apex fully and relaunch. A restart never leaves a half-state behind.</p>" +
-  "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits is asked for the code once; its browser is remembered after that. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: every phone let in with the old one is shut out and will be asked again.</p>" +
-  "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. The code is the only lock on that door. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
+  "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits knocks with the code and a name for itself: the first phone approves itself, and every phone after that waits in the Door list (Settings → System → Door, and the DHD page) until a trusted session approves it; an approved phone holds its own 30-day session, renewed while it stays in use. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: new knocks need the new code at once, while phones already approved keep their own sessions — the Door list revokes those one by one.</p>" +
+  "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can knock, and an approved device can use Apex in full — chat, the command line, and settings included. The code plus your approvals are the lock on that door — and the first device at a fresh door approves itself, so guard the code like the key it is. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
   { id: "github", title: "GitHub — the pulse, issues & backups", related: ["settings", "installing"], html:
     "<div class='doc-sec'><h4>The pulse — a peek into the project</h4>" +
   "<p>The <b>GitHub</b> item in the side menu is her window into the project itself: <span class='mono'>AlexKollar/Apex</span>, the repo this rebuild lives in (the original Navi she grew from stays at SaintsSec/Navi as the legacy archive). The section has four tabs:</p><ul>" +
@@ -4362,7 +4402,11 @@ var DOC_PAGES = [
   "<p>You pick how often: <b>every day, every 3 days, every 5 days, or every 7 days</b>. Navi checks the clock herself — when she starts, and while she is running — and when a backup is due and she is signed in, she runs it. That is the honest limit: <b>backups happen while Navi is running.</b> If the machine is off when one comes due, it simply runs at her next start. Settings → GitHub &amp; Backup shows the last backup's time and what it wrote, and the same for the last import — and the status column carries a <b>Backup</b> section with the last backup's time and result at a glance (or says plainly that no backup has run yet).</p>" +
   "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — call logs, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" +
     "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
-  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" },
+  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
+    "<div class='doc-sec'><h4>Three identities, and failures with names (Build 2)</h4>" +
+  "<p><b>Who Apex speaks as.</b> Since Build 2, Settings → GitHub &amp; Backup carries an <b>Identities</b> card, because Apex now keeps three GitHub identities apart. <b>Operator</b> is your own sign-in (the Device Flow above): it acts as you, and backup and import are all it is used for. <b>Apex Runtime</b> is the app's own credential — a dedicated fine-grained personal access token you paste into the same card — used only by the app's own reads: the Updater's checks, the NUR's catalog searches and repo reads, downloads, and this section's pulse and issues. <b>Release Automation</b> holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote, and the card says so rather than implying a third token exists.</p>" +
+  "<p><b>Why the Runtime token matters.</b> Before Build 2, those app reads sent <b>no credential at all</b> — they shared the unauthenticated allowance, 60 requests an hour per network address and 10 a minute for search, with everything else on your network, and when it ran dry the only answer anywhere was a bare HTTP 403 that could not be told apart from a refused sign-in. With a Runtime token configured, the reads ride their own allowance; without one, they still work, and their failures now name the unauthenticated limits they hit. The token is stored the way the sign-in token is stored — its own file (<span class='mono'>config/github-runtime.json</span>), readable only by you, never in the backup, never logged — and read-only access is all it needs.</p>" +
+  "<p><b>Failures have names.</b> Every GitHub failure Apex shows is classified and worded: <b>auth</b> — the credential itself is refused (missing, expired, revoked, or under-scoped; waiting will not cure it); <b>rate</b> — a rate-limit bucket is spent, and the sentence carries the reset time GitHub reported; <b>abuse</b> — GitHub's secondary/abuse safeguard tripped, and the sentence carries the wait GitHub asked for. When GitHub asks Apex to back off, Apex honors it and stops — nothing anywhere retries on its own. The Identities card also shows the last Core and Search bucket readouts GitHub reported to this machine. The NUR's two topic searches are additionally cached for five minutes and run one at a time, so an impatient refresh cannot spend the Search bucket twice.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
     "<div class='doc-sec'><h4>Apex without the window</h4>" +
   "<p>A server does not need a window. <span class='mono'>./start.sh --headless</span> starts exactly the services — the llamafile (check-first, as always: an answering server is left alone) and the bridge, supervised — and opens <b>no window</b>. It is safe over SSH, safe to run twice (a service already answering is adopted, never doubled), and it writes the same <span class='mono'>start.log</span> the desktop launch writes, so a headless start explains itself after the fact the same way. Run it after a reboot and Apex — with DHD, if DHD was left on — is simply back.</p>" +
@@ -5558,7 +5602,7 @@ function apexNodeCardHtml() {
       var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
       h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>";
       h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
-      h += "<p style='color:var(--am)'><b>Warning:</b> anyone on the network who has the access code can use Apex in full — chat, the command line, and settings included. Share the code like a house key.</p>";
+      h += "<p style='color:var(--am)'><b>Warning:</b> the access code is the knock on this door — a device that presents it still has to be approved (the first device approves itself), and an approved device can use Apex in full: chat, the command line, and settings included. Share the code like a house key.</p>";
       h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Apex | Node toggle'>" + (ps.enabled ? "Apex | Node: On" : "Apex | Node: Off") + "</button></p>";
       h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
       if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
@@ -5570,13 +5614,66 @@ function apexNodeCardHtml() {
       if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Apex | Node choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
       if (ps.enabled || rowLive) {
         h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Apex | Node access code'>Regenerate</button></p>";
-        h += "<p style='color:var(--dim)'>A phone visiting Apex is asked for this code once; its browser is remembered after that. Regenerating makes a new code and shuts out every phone the old one let in.</p>";
+        h += "<p style='color:var(--dim)'>A phone visiting Apex knocks with this code and a name for itself; the first phone approves itself, and every phone after that waits for an approval in the Door list. Regenerating makes a new code and stops new knocks with the old one — phones already approved keep their own sessions, and the Door list revokes them one by one.</p>";
         if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
         h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
       }
       if (publicMsg) h += "<p style='color:var(--dim)'>" + esc(publicMsg) + "</p>";
       h += "</div>";
   return h;
+}
+function doorWhen(epochSeconds) {
+  if (!epochSeconds) return "—";
+  var d = new Date(epochSeconds * 1000);
+  var mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()];
+  return mon + " " + d.getDate() + ", " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+}
+function doorDevicesCardHtml() {
+  // The Door — trusted devices (Build 2, #173). One renderer for
+  // both homes: the DHD page (where the door's controls live) and
+  // Settings → System → Door. Buttons carry the device id in a
+  // data attribute, so the two homes never fight over element ids.
+  var ps = publicState || CONFIG.publicServer || {};
+  var devices = ps.devices || [];
+  var pending = devices.filter(function (d) { return d.status === "pending"; });
+  var trusted = devices.filter(function (d) { return d.status === "approved"; });
+  var h = "<div class='card'><h3>The Door — trusted devices</h3>";
+  h += "<p style='color:var(--dim)'>The access code no longer opens Apex by itself — it <b>knocks</b>. A new device that enters the code and names itself waits here as a pending device until a session that is already trusted approves it. An approved device gets its <b>own</b> session — 30 days, renewed while it stays in use — and can be revoked on its own, without changing the code under everyone else. The very first device at a door approves <b>itself</b> with the code, so a one-operator house is never locked out waiting for an approver who doesn't exist yet; from then on, every device knocks.</p>";
+  if (doorMsg) h += "<p style='color:var(--dim)'>" + esc(doorMsg) + "</p>";
+  if (pending.length) {
+    h += "<p class='mono' style='color:var(--am);font-size:12px;margin-top:10px'>WAITING AT THE DOOR</p>";
+    pending.forEach(function (d) {
+      h += "<div style='border:1px solid var(--am);border-radius:8px;padding:10px 12px;margin-top:8px'><b>" + esc(d.name || "Unnamed device") + "</b> <span style='color:var(--dim);font-size:12px'>knocked " + esc(doorWhen(d.firstSeen)) + (d.userAgent ? " · " + esc(d.userAgent) : "") + "</span><div style='margin-top:8px'><button type='button' class='act' data-door-approve='" + esc(d.id) + "' style='min-height:44px'>Approve — let it in</button> <button type='button' class='ghost' data-door-deny='" + esc(d.id) + "' style='min-height:44px'>Deny</button></div></div>";
+    });
+  }
+  h += "<p class='mono' style='color:var(--dim);font-size:12px;margin-top:12px'>TRUSTED DEVICES</p>";
+  if (!trusted.length) h += "<p style='color:var(--dim)'>None yet. The first device to knock with the code lets itself in and appears here.</p>";
+  trusted.forEach(function (d) {
+    h += "<div style='border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px'><b>" + esc(d.name || "Unnamed device") + "</b>" + (d.expired ? " <span style='color:#f87171;font-size:12px'>EXPIRED</span>" : "") + "<div style='color:var(--dim);font-size:12px'>First seen " + esc(doorWhen(d.firstSeen)) + " · last seen " + esc(doorWhen(d.lastSeen)) + " · " + (d.expired ? "expired " : "expires ") + esc(doorWhen(d.expiresAt)) + "</div><div style='margin-top:8px'><button type='button' class='ghost' data-door-revoke='" + esc(d.id) + "' style='min-height:44px'>Revoke this device</button></div></div>";
+  });
+  h += "</div>";
+  return h;
+}
+function wireDoorDevices() {
+  var act = function (kind, id) {
+    if (CONFIG.backend !== "live") {
+      var ps = CONFIG.publicServer = CONFIG.publicServer || { devices: [] };
+      var list = ps.devices || [];
+      if (kind === "approve") list.forEach(function (d) { if (d.id === id) { d.status = "approved"; d.expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 3600; } });
+      if (kind === "deny" || kind === "revoke") ps.devices = list.filter(function (d) { return d.id !== id; });
+      publicState = ps;
+      doorMsg = "Simulated: the device was " + (kind === "approve" ? "approved" : kind === "deny" ? "denied" : "revoked") + " (mock mode).";
+      render();
+      return;
+    }
+    fetch("/api/settings/public/devices/" + kind, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.publicServer) publicState = j.publicServer; doorMsg = j && j.ok ? "Done — the list above is the door as it stands now." : ((j && j.error) || "The bridge refused that."); render(); })
+      .catch(function () { doorMsg = "The bridge did not answer — is it running?"; render(); });
+  };
+  document.querySelectorAll("[data-door-approve]").forEach(function (b) { b.onclick = function () { act("approve", b.getAttribute("data-door-approve")); }; });
+  document.querySelectorAll("[data-door-deny]").forEach(function (b) { b.onclick = function () { act("deny", b.getAttribute("data-door-deny")); }; });
+  document.querySelectorAll("[data-door-revoke]").forEach(function (b) { b.onclick = function () { act("revoke", b.getAttribute("data-door-revoke")); }; });
 }
 function dhdHtml() {
   var d = dhdViewState();
@@ -5599,11 +5696,12 @@ function dhdHtml() {
     "OUTSIDE REACH<br><span style='color:var(--text);font-size:14px'>" + (d.publicVerified ? "Verified - the domain resolves to this machine and its certificate is live." : d.active ? "Unverified - " + esc(d.nextStep || "Forward ports 443 and 80 on your router to this machine, or add your domain.") + (d.wanNote ? " " + esc(d.wanNote) : "") : "-") + "</span><br>" +
     "CERTIFICATE<br><span style='color:var(--text);font-size:14px'>" + (d.active ? (d.certPending ? "Domain saved - certificate pending (door answering on the self-signed certificate meanwhile)" : d.certExpiresAt ? "Expires " + esc(String(d.certExpiresAt).slice(0, 10)) + (d.certDaysLeft != null ? " - " + d.certDaysLeft + " days left" : "") + (d.mode === "domain" ? " - Apex renews it on its own at 30 days or less" : "") : "Self-signed, generated by Apex") : "-") + "</span><br>" +
     "THE DOOR ITSELF<br><span style='color:var(--text);font-size:14px'>Proxy on 80/443, forwarding to the bridge on 127.0.0.1:" + BRIDGE_PORT + ". In DHD mode the bridge never binds publicly - the proxy is the only public face, and it serves nothing before the code.</span></div></div>";
-  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex | Node and DHD use the same access code and the same acceptance cookie. It is shown only here, on the machine Apex runs on. Anyone who has the code can use Apex in full, from anywhere - share it like a house key. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
+  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex | Node and DHD use the same access code. It is shown only here, on the machine Apex runs on. Since Build 2 the code <b>knocks</b> rather than opens: a device that presents it waits for an approval in the Door list below (the very first device approves itself), and an approved device holds its own 30-day session. Share the code like a house key all the same - it is still the only way to knock. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
     "<div class='row'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:8px 12px;font-weight:700;letter-spacing:.2em;font-size:16px'>" + (code ? (dhdCodeShown ? esc(code) : "••••-••••") : "No code yet - it is generated when a door first opens") + "</span>" +
     "<button class='ghost' id='dhd-code-show' aria-label='" + (dhdCodeShown ? "Hide the access code" : "Show the access code") + "' style='min-height:40px'>" + (dhdCodeShown ? "Hide" : "Show") + "</button>" +
-    "<button class='ghost' id='dhd-code-regen' aria-label='Regenerate the access code - every accepted remote client is signed out' style='min-height:40px'>Regenerate</button></div>" +
-    "<p style='color:var(--dim);font-size:12px'>Regenerating signs out every accepted visitor at once - the cookie is a hash of the code.</p></div>";
+    "<button class='ghost' id='dhd-code-regen' aria-label='Regenerate the access code - new knocks need the new code; approved devices keep their own sessions' style='min-height:40px'>Regenerate</button></div>" +
+    "<p style='color:var(--dim);font-size:12px'>Regenerating stops new knocks with the old code at once. Devices already approved keep their own tokens — revoke those one by one in the Door list below.</p></div>";
+  h += doorDevicesCardHtml();
   h += "<div class='card'><b>Your domain - optional, any time</b><p style='color:var(--dim)'>DHD never needs a domain: without one it runs on the self-signed certificate and your browser shows a warning that is expected (the Docs page explains it). Add your own domain whenever you like and Apex obtains its real Let's Encrypt certificate with its own built-in ACME client - no Certbot - proving the domain over port 80, then renewing on its own. Your router still has to forward 80/443 to this machine; the guide walks through it.</p>" +
     "<div class='row'><input class='grow' id='dhd-domain' type='text' placeholder='e.g. apex.example.com - blank is fine' aria-label='Custom domain for DHD' value='" + esc(d.domain || "") + "' style='min-height:44px'><button class='act' id='dhd-domain-save' aria-label='Save the DHD domain' style='min-height:44px'>Save domain</button></div>" +
     (d.domain && d.certPending ? "<p style='margin-top:8px'><button class='act' id='dhd-cert' aria-label='Run the certificate step for the saved domain' style='min-height:40px'>Get " + esc(d.domain) + "'s certificate</button></p><p style='color:var(--dim);font-size:12px'>The certificate step: account key, order, HTTP-01 challenge served through the Apex proxy on port 80, finalize, install, proxy reloads with the real certificate.</p>" : "") +
@@ -5614,6 +5712,7 @@ function dhdHtml() {
 }
 function wireDhd() {
   wireOperationCards(document);
+  wireDoorDevices();
   wireApexNode();
   if (dhdOperation && (dhdOperation.state === "running" || dhdOperation.state === "waiting")) watchOperation(dhdOperation.id);
   var install = document.getElementById("dhd-install");
@@ -5681,7 +5780,7 @@ function wireDhd() {
     if (CONFIG.backend !== "live") { dhdMsg = "Simulated: the code is regenerated from Settings in mock mode."; render(); return; }
     fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
       .then(function (r) { return r.json(); })
-      .then(function (j) { if (j && j.publicServer) publicState = j.publicServer; dhdMsg = "New code saved - every visitor the old code let in is shut out and will be asked again."; render(); })
+      .then(function (j) { if (j && j.publicServer) publicState = j.publicServer; dhdMsg = "New code saved - new knocks need the new code. Devices already approved keep their own sessions; revoke them in the Door list if you want them out."; render(); })
       .catch(function () { dhdMsg = "The bridge did not answer."; render(); });
   };
   var save = document.getElementById("dhd-domain-save");
@@ -5817,11 +5916,11 @@ function wireApexNode() {
         CONFIG.publicServer = CONFIG.publicServer || { enabled: true, activePublic: false, bindHost: "127.0.0.1", pending: false, lanIp: "", lanUrl: "", accessCode: "" };
         CONFIG.publicServer.accessCode = "MOCK-" + Math.floor(1000 + Math.random() * 9000);
         saveCfg();
-        publicMsg = "New code (mock mode — simulated). Every phone the old code let in would be shut out.";
+        publicMsg = "New code (mock mode — simulated). New knocks need the new code; approved devices keep their own sessions.";
         render();
         return;
       }
-      fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "New code saved — every phone the old code let in is shut out and will be asked again."; render(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
+      fetch("/api/settings/public/regenerate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(function (r) { return r.json(); }).then(function (j) { publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; publicMsg = "New code saved — new knocks need the new code. Devices already approved keep their own sessions; revoke them in the Door list if you want them out."; render(); }).catch(function () { publicReportLive = false; publicMsg = "The bridge did not answer — is it running?"; render(); });
     };
     var pubLan = document.getElementById("pub-lan");
     if (pubLan) pubLan.onclick = function () {
@@ -7672,6 +7771,31 @@ function githubSettingsHtml() {
     h += "<button class='act' id='gh-signin'>Sign in with GitHub</button> <span class='mono' style='color:var(--dim);font-size:11px'>client id: " + esc(gh.clientId) + "</span> <button class='ghost' id='gh-client-clear'>Clear client ID</button>";
   }
   h += "</div>";
+  // Identities card (Build 2, #173): three identities, side by
+  // side — the operator's sign-in, the app's own Runtime read
+  // credential, and Release Automation, which holds no credential
+  // by design. Failures anywhere GitHub is read are named from
+  // here on: auth, rate (with its reset), or abuse (with its
+  // wait) — never a bare HTTP 403.
+  var ids = gh.identities || null;
+  var idOp = ids ? ids.operator : { signedIn: gh.signedIn, login: gh.login, scopesNote: "Acts as you. Used by backup and import — nothing else." };
+  var idRt = ids ? ids.runtime : { configured: false, tokenHint: "", savedAt: null, scopesNote: "The app's own read credential. Used by the Updater, the NUR, and the GitHub section's live reads — reads only, never writes.", buckets: { core: null, search: null } };
+  var idAu = ids ? ids.automation : { note: "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design." };
+  h += "<div class='card'><h3>Identities — who Apex speaks to GitHub as</h3><p style='color:var(--dim)'>Until now every part of Apex spoke to GitHub as <b>one</b> blurred identity — and some of the app's own reads went out with <b>no credential at all</b>, sharing the unauthenticated allowance of 60 requests an hour per network address (10 a minute for search) with everything else on your network. When that bucket ran dry, the answer was a bare “HTTP 403” and no way to tell a spent limit from a refused sign-in. Three identities, kept apart:</p>";
+  h += "<p style='margin-top:10px'><b>1 · Operator</b> — your sign-in above. <span style='color:var(--dim)'>" + esc(idOp.scopesNote || "") + "</span></p><p class='mono' style='font-size:12px;color:" + (idOp.signedIn ? "var(--green)" : "var(--dim)") + "'>" + (idOp.signedIn ? "Signed in as @" + esc(idOp.login) : "Not signed in") + "</p>";
+  h += "<p style='margin-top:10px'><b>2 · Apex Runtime</b> — the app's own credential. <span style='color:var(--dim)'>" + esc(idRt.scopesNote || "") + "</span></p>";
+  if (idRt.configured) {
+    h += "<p class='mono' style='font-size:12px;color:var(--green)'>Configured — token " + esc(idRt.tokenHint || "…") + (idRt.savedAt ? " · saved " + esc(ghWhen(new Date(idRt.savedAt * 1000).toISOString())) : "") + "</p>";
+    var bk = idRt.buckets || { core: null, search: null };
+    h += ghBucketLine("CORE", bk.core);
+    h += ghBucketLine("SEARCH", bk.search);
+    h += "<button class='ghost' id='gh-runtime-clear' style='min-height:44px'>Remove runtime token</button>";
+  } else {
+    h += "<p style='color:var(--dim)'>Not configured — the app's reads currently ride the unauthenticated allowance, and their failures will say so. Give Apex its own: on GitHub, make a <b>fine-grained personal access token</b> (Settings → Developer settings → Personal access tokens → Fine-grained tokens) with <b>read-only</b> access — no repository permissions are needed for public reads — and paste it here. It is stored only on this machine (config/github-runtime.json, readable only by you), never in the backup, never logged, and used by nothing but the app's own reads.</p>";
+    h += "<div class='row'><input class='grow mono' id='gh-runtime-token' type='password' placeholder='Fine-grained PAT — github_pat_…' aria-label='Apex Runtime token' style='min-height:44px'><button class='act' id='gh-runtime-save' style='min-height:44px'>Save runtime token</button></div>";
+  }
+  h += "<p style='margin-top:10px'><b>3 · Release Automation</b> — <span style='color:var(--dim)'>" + esc(idAu.note || "") + "</span></p>";
+  h += "<p style='color:var(--dim);font-size:12px'>And failures have names now: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the message carries its reset time), <b>abuse</b> (GitHub's secondary safeguard — the message carries the wait it asked for, and Apex stops rather than retrying). Wherever GitHub results are shown — the Updater, the NUR, this section — the name is what you will read.</p></div>";
   // Backup card.
   var unticked = GH_ITEMS.filter(function (it) { return gh.backupItems.indexOf(it.id) === -1; });
   h += "<div class='card'><h3>Backup — the ready-to-fly essentials</h3><p style='color:var(--dim)'>A backup carries <b>only what a fresh Navi needs to be fully herself</b>: fresh install + import = ready to fly. Chats ride on their own tick now — they live on the server (Build 12), and a restore <i>converges</i> them instead of overwriting: newest wins per thread, and a thread both machines moved on is kept whole as a dated sibling. Deliberately never backed up: call logs, caches and logs, the hardware profile (a new machine gets profiled fresh at its own install), and her voice model files (they reinstall — her voice <i>settings</i> are in the backup). Backups run while Navi is running: the bridge checks on launch and while she's up whether one is due, on your interval, and runs it when she's signed in. Nothing backs up while the machine is off.</p>";
@@ -8521,6 +8645,10 @@ function render() {
     if (settingsTab === "system") h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
       "<p style='color:var(--dim)'>The Apex | Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
       "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex | Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
+    // The Door (Build 2, #173): the trusted-device list lives
+    // here in Settings → System AND on the DHD page — one shared
+    // renderer (doorDevicesCardHtml), one registry behind it.
+    if (settingsTab === "system") h += doorDevicesCardHtml();
     // Navi Mesh (build .86): the full controls live on the
     // Mesh page now — Settings → System keeps only this summary
     // pointer, the way the Apex | Node pointer relates to the DHD
@@ -9834,6 +9962,8 @@ function wire() {
     bind("gh-complete", ghSignInCompleteMock);
     bind("gh-cancel", function () { ghStopPolling(); githubDevice = null; ghSetMsg("", false); render(); });
     bind("gh-signout", ghSignOut);
+    bind("gh-runtime-save", ghRuntimeSave);
+    bind("gh-runtime-clear", ghRuntimeClear);
     bind("gh-client-save", ghSaveClientId);
     bind("gh-client-clear", function () { var inp = document.getElementById("gh-client-id"); if (inp) inp.value = ""; if (CONFIG.backend !== "live") { githubState.clientId = ""; githubState.clientIdConfigured = false; mockGithubSave(); ghSetMsg("Client ID cleared.", false); render(); } else ghPost("/api/github/client-id", { client_id: "" }, function (j) { githubState = j; ghSetMsg("Client ID cleared.", false); render(); }); });
     bind("gh-settings-save", ghSaveBackupSettings);
@@ -9969,6 +10099,7 @@ function wire() {
     }
     var pubPointer = document.getElementById("pub-pointer");
     if (pubPointer) pubPointer.onclick = function () { view = "DHD"; dockOpen = false; render(); };
+    wireDoorDevices();
     var meshPointer = document.getElementById("mesh-pointer");
     if (meshPointer) meshPointer.onclick = function () { view = "Mesh"; dockOpen = false; render(); };
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
