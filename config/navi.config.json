@@ -37,7 +37,12 @@
     "port": 8765,
     "nodeId": "",
     "ledger": true,
-    "ledgerInBackup": false
+    "ledgerInBackup": false,
+    "listenPorts": [
+      8765,
+      8443,
+      2475
+    ]
   },
   "startup": "on-ui-launch",
   "install_dir": "/opt/navi-apex",

@@ -1085,7 +1085,7 @@
 // every setting — backend included — is the operator's explicit
 // choice and is honored as saved. Chats, memory, and documents are
 // stored under separate keys and are never reset by this.
-var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.2.0","versionStatus":"edge","updaterChannel":"stable","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}},"dhd":{"enabled":false,"active":false,"domain":"","mode":"off","status":"off","publicUrl":"","lanIp":"","lanUrl":"","wanIp":"","wanState":"undetected","wanNote":"","publicVerified":false,"outsideReach":"none","nextStep":"","domainResolvesHere":false,"certExpiresAt":null,"certDaysLeft":null,"certPending":false,"lastError":""},"mesh":{"enabled":false,"role":"both","nodeName":"","borrow":{"enabled":true,"graceMs":2000,"peers":[]},"lend":{"enabled":false,"maxSharePercent":25,"maxGenerationsPerHour":20,"perPeerPerHour":10,"idleOnly":true,"idleAfterSeconds":60},"port":8765,"nodeId":"","ledger":true,"ledgerInBackup":false}};
+var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.2.0","versionStatus":"edge","updaterChannel":"stable","threat":"Guarded","sudo":false,"operatorName":"","installed":["nmap","grep"],"soul":"# Navi — Soul\n\n## Who you are\nYou are Navi, the AI who lives inside Apex — a local system on\nyour operator's own machine. You are not a generic assistant and not a\ncommand executor: you are your operator's partner in the work, with a\npersonality, a memory, and a point of view of your own.\n\n## How you talk\n- Conversational and warm. Talk the way a sharp, trusted partner\n  talks — present, curious, a little playful when the moment allows.\n- Tight and complete: say it in as few tokens as the answer honestly\n  needs — no preamble, no recap of the question, no filler. A short\n  right answer beats a long padded one; on this machine, every\n  token is time.\n- Attempt to connect, not just to complete. Notice what your operator\n  is actually after, how a task is going, and what they cared about\n  last time. Continuity is the relationship.\n- Have opinions and hold them when you have a reason; fold when they\n  have a better one.\n- Plain about limits: never pretend to have run something you didn't,\n  and never dress a guess up as a result.\n\n## The work\n- You hold real system access: when your operator asks what's on the\n  machine, run the command and answer from the real output.\n- Be exact with anything the system produced — listings, logs, hashes,\n  errors. Precision in the work, warmth in the company.\n- When something is root-only or unsafe, say so plainly and offer the\n  path that works (sudo mode exists for a reason).\n\n## The relationship\n- You address your operator by the name in your config, and you use\n  it naturally — not in every line, but like someone who knows them.\n- Your memory document is yours to keep faithfully: what it says,\n  you know; what it doesn't, you ask about.\n","memory":"# Navi — Memory\n\nWhat Navi carries between sessions. Edit freely — this is hers to\nknow, and yours to correct.\n\n## The operator\n- (Add what Navi should know: how you work, your hours, your\n  projects, what good help looks like to you.)\n\n## Standing context\n- System: Apex — a local AI for cybersecurity work, running on\n  a single .llamafile (no Ollama, no cloud).\n- Interface: the mission-control dashboard — chat with real CLI\n  access, chips, RAG over local documents.\n- Install: local app on Linux first; Windows and Mac supported.\n\n## Preferences\n- (Add yours: verbosity, how proactive Navi should be, what to\n  double-check before running, what never to touch.)\n","hardwareProfile":{"detected":{"os":"linux","osLabel":"Linux (Pop!_OS / Ubuntu family)","cpuModel":"13th Gen Intel Core i5-1340P","cpuCores":12,"performanceCores":4,"totalRamGB":9.4,"gpuPresent":true,"gpuName":"Intel Iris Xe Graphics","gpuKind":"integrated","gpuVramGB":null},"settings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"autoSettings":{"threads":4,"ctxSize":4096,"batchSize":512,"gpuLayers":0},"source":"auto","tier":"fluid","tierLabel":"Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)","reasoning":["Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."],"installLog":["[hardware] 2026-11-07T00:00:00.000Z — profiling this machine (source: install / re-detect)","[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)","[hardware] CPU: 13th Gen Intel Core i5-1340P — 12 logical cores, 4 performance","[hardware] RAM: 9.4 GiB total","[hardware] GPU: Intel Iris Xe Graphics (integrated)","[hardware] → Threads 4: matched to the 4 performance cores — efficiency cores are left for the OS and UI so generation stays fluid.","[hardware] → Context 4096: 9.4 GiB RAM — the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.","[hardware] → Batch 512: sized to RAM (9.4 GiB) — larger batches speed prompt processing, smaller ones protect low-memory machines.","[hardware] → GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM — CPU inference is the fluid path here; no offload.","[hardware] → Tier: Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).","[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"],"detectedAt":"2026-11-07T00:00:00.000Z","flags":"--ctx-size 4096 --threads 4 --batch-size 512"},"publicServer":{"enabled":false,"activePublic":false,"bindHost":"127.0.0.1","pending":false,"lanIp":"","lanUrl":"","accessCode":"T6BB-HS8Q","restart":{"status":"idle","step":"","message":""}},"dhd":{"enabled":false,"active":false,"domain":"","mode":"off","status":"off","publicUrl":"","lanIp":"","lanUrl":"","wanIp":"","wanState":"undetected","wanNote":"","publicVerified":false,"outsideReach":"none","nextStep":"","domainResolvesHere":false,"certExpiresAt":null,"certDaysLeft":null,"certPending":false,"lastError":""},"mesh":{"enabled":false,"role":"both","nodeName":"","publicEndpoint":"","listenPorts":[8765,8443,2475],"tunnelPublicKey":"","borrow":{"enabled":true,"graceMs":2000,"peers":[]},"lend":{"enabled":false,"maxSharePercent":25,"maxGenerationsPerHour":20,"perPeerPerHour":10,"idleOnly":true,"idleAfterSeconds":60},"port":8765,"nodeId":"","ledger":true,"ledgerInBackup":false}};
 // Backend: this app is always Live — it talks to bridge.py, which
 // proxies the real llamafile server and runs real shell commands.
 // There is no backend switch in the shipped app (build .49): a saved
@@ -1687,8 +1687,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.03";
-var SHIPPED_BUILD_SEQ = 3;
+var BRIDGE_BUILD = "2026-11-13.04";
+var SHIPPED_BUILD_SEQ = 4;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -4320,7 +4320,8 @@ var DOC_PAGES = [
   "<li>Do the same in the other direction — each machine needs the other's card.</li></ol>" +
   "<p><b>Pairing is the consent act:</b> a paired machine is a trusted machine, and a paired machine's signed requests are accepted on that basis alone. Either side can unpair by removing the card. The <b>Can borrow</b> toggle on a peer is the borrowing machine's own choice about that peer: untick it there and that machine will not borrow from the peer, while staying paired — it does not gate what the peer accepts.</p>" +
   "<p><b>The card is a picture — the only way it travels.</b> <b>Download PNG card</b> saves the card as a .png. Its face is the card a person reads — the machine's name, its node identity, and the offer in words: its capabilities, the lending limits it is configured with, and whether it lends when idle or even while busy. The whole card rides inside the picture, in the same data-in-a-picture format the chips use, so Apex keeps one cartridge language. On the other machine, drop the picture onto the Mesh page's <b>Paired machines</b> area, or use <b>Upload a PNG card</b> there, and the peer is added. Earlier builds also offered the card as copyable text; that path is gone — there is nothing to paste anymore, and a text card saved from an earlier build can no longer be used. Machines already paired are unaffected.</p>" +
-  "<p><b>Send the picture as a file.</b> The data inside the picture survives only if the file's bytes arrive untouched. Put it inside a <b>.zip</b> before sending it through a chat app — Discord and its kind recompress the pictures people upload and strip the data out, leaving a picture that looks like the card and pairs nothing. When that has happened, the Mesh page says so in those words and tells you to resend the original inside a .zip. A damaged picture — cut short, or with its payload tampered with — is refused just as loudly, never silently ignored.</p></div>" +
+  "<p><b>Send the picture as a file.</b> The data inside the picture survives only if the file's bytes arrive untouched. Put it inside a <b>.zip</b> before sending it through a chat app — Discord and its kind recompress the pictures people upload and strip the data out, leaving a picture that looks like the card and pairs nothing. When that has happened, the Mesh page says so in those words and tells you to resend the original inside a .zip. A damaged picture — cut short, or with its payload tampered with — is refused just as loudly, never silently ignored.</p>" +
+  "<p><b>Which addresses a card carries.</b> A card's addresses are harvested by <i>interface</i>, not by address range: only the addresses bound to the machine's physical Ethernet/Wi-Fi interfaces are minted — never loopback, never a container bridge or its tails, never a VM bridge, tunnel, or VPN adapter. A 10.x address on the physical card is a legitimate LAN address and rides; a 192.168.x on a container bridge does not. If a machine has no plausible physical-LAN address and no declared endpoint, the card <b>refuses to mint</b> and says why in plain words. A peer record's entries may each carry their own port — <span class='mono'>host:port</span> — while a bare host inherits the record's port, so one record can speak LAN at home and a public door away. The <b>Public endpoint</b> on the Mesh page is the address you type for exactly that: never harvested, it rides your card beside the LAN addresses and lands in each peer's record as a host:port entry; it is the one address Apex ever shows, because you typed it for publication.</p></div>" +
     "<div class='doc-sec'><h4>Borrowing — automatic, with off switches</h4>" +
   "<p>Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with its <i>via &lt;name&gt;</i> pill. The first borrowed reply of a session also raises a notice card in the thread, so borrowing never starts silently.</p>" +
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
@@ -4345,12 +4346,16 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The ledger and balances</h4>" +
   "<p>Each machine keeps a small ledger of Mesh work: who, which direction, how long, how it ended — metadata only, never content. The Mesh page's roster shows each paired machine's <b>balance</b> in seconds lent minus seconds borrowed, next to its capability line and live status (reachable, lending, busy, idle, unreachable). That status is kept current by the bridge itself: while Mesh is on, every paired peer is checked in the background about every thirty seconds — and immediately when a peer is paired and when Mesh is turned on — so a pair reaches “checked” on its own, with no chat sent. A failed check stays on the roster with its reason and how long it has been since the peer last answered — <i>unreachable — unauthorized (last checked 42s ago)</i> — until a newer check replaces it; the age keeps growing while the peer stays down, because failed checks refresh the reason, not the clock. “not checked yet” appears only before a peer's first check has ever completed. A machine's addresses never appear in the roster or anywhere else on screen — they are plumbing for the transport, not display. Balances are a record, not a rule: Ring 1 has no give-to-get enforcement. The ledger stays out of GitHub backups unless you tick <b>Include the Mesh ledger in backups</b> (off by default); the node keypair never rides a backup either way. The pairing-card pictures ride on their own tick — <b>Mesh pairing cards</b> in Settings → GitHub &amp; Backup carries this machine's own card as a PNG, minted fresh as the backup runs, plus a re-drawn picture for every paired peer; a restore lands them in <span class='mono'>config/mesh/cards/</span> and re-pairs the peers through the same card check a hand import passes, and the restoring machine's own card picture is kept as a file — it never overwrites that machine's identity. A fresh reinstall keeps <span class='mono'>config/mesh/</span> on the installer's keep-list, so a machine never loses its identity — or its pairings — to an update.</p></div>" +
     "<div class='doc-sec'><h4>Getting there — the doors</h4>" +
-  "<p>Mesh always travels through its <b>own dedicated TLS listener</b> on the Mesh port (8765 by default), whether or not DHD is on — and the certificate it serves is the Mesh certificate, the one the paired card pins, in every configuration. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated port. There is no plaintext Mesh listener. Ring 1 does no NAT traversal, no relay, and no racing between lenders: the first reachable lender serves.</p></div>" +
+  "<p>Mesh always travels through its <b>own dedicated TLS door</b>, whether or not DHD is on. The door listens on <b>8765 always</b>, plus every number in its <b>listen ports</b> list — <b>8443</b> and <b>2475</b> ship alongside it, and you can add or remove numbers in the Mesh settings. One door on several numbers: the same protocol, the same certificate, the same fingerprint on every port, so a record entry naming any of them reaches the same door — which is what lets a pair use an egress-friendly number from networks that strangle unusual ports. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated ports. There is no plaintext Mesh listener. Ring 1 does no NAT traversal, no relay, and no racing between lenders: the first reachable lender serves.</p>" +
+  "<p><b>The door minds its knocks.</b> Because a declared endpoint puts the door on the open internet, it counts failed handshakes and failed signature checks per source; five failures inside a minute close the door to that source — connections dropped at accept, on every door port at once, since the knock ledger belongs to the door and not to any one number — for a backoff that doubles per repeat closing (60 seconds, doubling, capped at 900) and reopens on its own. Every knock and closing is logged in words. A valid signed request clears its source's slate, so a paired machine's ordinary traffic is never throttled; the ledger is memory only, and a bridge restart reopens every door.</p>" +
+  "<p><b>The backup route.</b> A pair can keep a second, quieter road: an SSH tunnel Apex itself maintains, per peer, so the SSH door (227 as forwarded) can carry the Mesh when the direct road cannot be used. Turn on a peer's <b>Backup route</b> on the Mesh page — SSH host, port, and user — and the bridge allocates a stable local port, keeps the tunnel alive (restarts with backoff, returns after a bridge restart), and appends the tunnel endpoint <i>last</i> to the peer's addresses at dial time: computed, never written into the stored record, so direct addresses are always tried first. The tunnel runs on a <b>dedicated keypair</b> the bridge generates — its public half rides this machine's card and shows on its Mesh page; the private half never leaves the machine and never rides a backup. On the lending machine the key is admitted once, <b>in person</b>, from its own dashboard: <b>Authorize tunnel key</b> writes a single-purpose line into <span class='mono'>~/.ssh/authorized_keys</span> — a forward to the Mesh door and nothing else, no shell, no agent — and revoke removes exactly that line. A tunnel you run by hand keeps working untouched alongside.</p></div>" +
     "<div class='doc-sec'><h4>When the Mesh goes dark — the health check</h4>" +
   "<p>A Mesh failure used to report a single word — <i>unreachable — fingerprint</i> — and the rest was archaeology. Now the failure surfaces speak in sentences. A peer's roster row carries the full reason under its state: what answered, what did not match, and the cure where the product knows it. A changed Mesh identity is cured by importing that machine's fresh PNG card — the pin is replaced in place and the pair's ledger history is kept. A refused signature names its first suspect — the two machines' clocks — because a Mesh signature lives for 120 seconds, so a clock more than two minutes out reads as a forgery. A borrow that falls back names the stage it failed at — connect, TLS, fingerprint, signature, or timeout — in the chat notice.</p>" +
-  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. Every verdict is a sentence, with the actual fingerprints side by side. The check changes nothing: no pairing, pin, or route is touched — it reads and reports.</p></div>" +
+  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. The census accounts for every one of the door's ports, so the door's own extra numbers never read as extra processes. The check also knows its own door: an entry that <i>is</i> this machine's own Mesh door is skipped without dialing, and an address answering with this machine's OWN certificate is named <b>your own door</b> — never reported as the peer's changed identity — while loopback at a <i>different</i> port (an SSH forward to the peer) is a road, and is dialed like any other. When the answering address is a peer's backup tunnel, the verdict says so: <i>via the backup tunnel</i>; when that tunnel is down, its state is a sentence of its own — down, key not authorized, or host unreachable. Every verdict is a sentence, with the actual fingerprints side by side. The check changes nothing: no pairing, pin, or route is touched — it reads and reports.</p></div>" +
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
   "<li><b>Certificate fingerprint does not match.</b> The machine that answered is not presenting the certificate on its card — the card is stale, or something else is answering at that address. Re-copy the card from that machine's Mesh page and re-add the peer.</li>" +
+  "<li><b>The health check says “your own door.”</b> An address on the peer's card led back to this machine — classically a container-bridge or stale local address harvested onto an older card — and the door that answered was this machine's own. The peer was never reached and its identity is not in doubt. Mint a fresh card on the <i>peer</i> machine — cards minted now carry only reachable addresses — and import it here.</li>" +
+  "<li><b>The card download refuses, saying the machine has no address its card can honestly carry.</b> Every interface is a loopback, a container bridge, or a virtual adapter, and no public endpoint is declared. Connect the machine to a real network, or declare a public endpoint on the Mesh page, and the card can be minted.</li>" +
   "<li><b>Replies keep saying “answered locally” with a busy, cap, or idle note.</b> The lender is doing its job: it is mid-answer, over its caps for the hour, or not idle yet. The note names which. Wait, or raise the caps on the lender.</li>" +
   "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
   "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
@@ -6016,13 +6021,16 @@ function meshViewState() {
   var b = m.borrow || {}, l = m.lend || {};
   return {
     enabled: !!m.enabled, role: m.role || "both", nodeName: m.nodeName || "", nodeId: m.nodeId || "",
+    publicEndpoint: m.publicEndpoint || "",
+    listenPorts: (m.listenPorts && m.listenPorts.length) ? m.listenPorts : [8765, 8443, 2475],
+    tunnelPublicKey: m.tunnelPublicKey || "",
     borrowEnabled: b.enabled !== false, graceMs: b.graceMs != null ? b.graceMs : 2000,
     lendEnabled: !!l.enabled,
     lend: { maxSharePercent: l.maxSharePercent != null ? l.maxSharePercent : 25, maxGenerationsPerHour: l.maxGenerationsPerHour != null ? l.maxGenerationsPerHour : 20, perPeerPerHour: l.perPeerPerHour != null ? l.perPeerPerHour : 10, idleOnly: l.idleOnly !== false, idleAfterSeconds: l.idleAfterSeconds != null ? l.idleAfterSeconds : 60 },
     ledgerInBackup: !!m.ledgerInBackup, borrowing: false, lendingNow: false,
     viaDhd: false,
     state: m.enabled ? ((b.peers || []).length ? "on" : "no-peers") : "off", warning: "",
-    peers: (b.peers || []).map(function (p) { return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeReason: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0 }; })
+    peers: (b.peers || []).map(function (p) { var t = p.tunnel || {}; return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeReason: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0, publicEndpoint: p.publicEndpoint || "", tunnel: { enabled: !!t.enabled, sshHost: t.sshHost || "", sshPort: t.sshPort || 227, sshUser: t.sshUser || "", localPort: t.localPort || null }, hasTunnelKey: !!p.tunnelPublicKey, tunnelKeyAuthorized: false, tunnelState: "off", tunnelSentence: "" }; })
   };
 }
 function meshDotColor(m) {
@@ -6166,11 +6174,12 @@ function wireMeshStatus() {
 function meshSave(patch) {
   if (patch.borrowEnabled) { meshPrivacyAcked = true; try { localStorage.setItem("navi.meshPrivacyAck", "1"); } catch (e) {} }
   if (CONFIG.backend !== "live") {
-    var m = CONFIG.mesh = CONFIG.mesh || { enabled: false, role: "both", nodeName: "", borrow: { enabled: true, graceMs: 2000, peers: [] }, lend: { enabled: false, maxSharePercent: 25, maxGenerationsPerHour: 20, perPeerPerHour: 10, idleOnly: true, idleAfterSeconds: 60 }, port: 8765, nodeId: "", ledger: true, ledgerInBackup: false };
+    var m = CONFIG.mesh = CONFIG.mesh || { enabled: false, role: "both", nodeName: "", publicEndpoint: "", listenPorts: [8765, 8443, 2475], borrow: { enabled: true, graceMs: 2000, peers: [] }, lend: { enabled: false, maxSharePercent: 25, maxGenerationsPerHour: 20, perPeerPerHour: 10, idleOnly: true, idleAfterSeconds: 60 }, port: 8765, nodeId: "", ledger: true, ledgerInBackup: false };
     m.borrow = m.borrow || { enabled: true, graceMs: 2000, peers: [] };
     m.lend = m.lend || { enabled: false, maxSharePercent: 25, maxGenerationsPerHour: 20, perPeerPerHour: 10, idleOnly: true, idleAfterSeconds: 60 };
     if (patch.enabled != null) m.enabled = patch.enabled;
     if (patch.nodeName != null) m.nodeName = patch.nodeName;
+    if (patch.publicEndpoint != null) m.publicEndpoint = patch.publicEndpoint;
     if (patch.borrowEnabled != null) m.borrow.enabled = patch.borrowEnabled;
     if (patch.graceMs != null) m.borrow.graceMs = patch.graceMs;
     if (patch.lendEnabled != null) m.lend.enabled = patch.lendEnabled;
@@ -6234,13 +6243,15 @@ function meshRosterHtml() {
   var selfDot = (m.lendingNow || m.borrowing) ? "#f5b544" : "#34d399";
   h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
     "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + selfDot + "'></span><b>" + esc(m.nodeName || "This machine") + "</b><span style='color:var(--dim);font-size:12px'>this machine · " + selfStatus + "</span></div>" +
-    (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") + "</div>";
+    (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") +
+    (m.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(m.publicEndpoint) + "</span> — declared on its card</div>" : "") + "</div>";
   (m.peers || []).forEach(function (p) {
     var status = p.reachable === false ? meshUnreachableText(p) : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
     var dot = p.reachable === false ? "#f87171" : p.probeBusy ? "#f5b544" : p.reachable === true ? "#34d399" : "#9fb3c8";
     h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
       "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + dot + "'></span><b>" + esc(p.name) + "</b><span style='color:var(--dim);font-size:12px'>" + status + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
       (meshCapLine(p.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(p.capabilities)) + "</div>" : "") +
+      (p.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(p.publicEndpoint) + "</span> — declared on its card</div>" : "") +
       // 0.2.0e Build 1 (#143): the failure in full words under
       // the short state — what answered, what did not match,
       // and the cure where the product knows it.
@@ -6275,7 +6286,7 @@ function meshHealthHtml() {
   var hh = meshHealth;
   if (hh) {
     var fp = function (v) { return v ? "<span class='mono' style='overflow-wrap:anywhere'>" + esc(v) + "</span>" : "<span style='color:var(--dim)'>—</span>"; };
-    var verdictWord = function (v) { return v === "match" ? "match" : v === "mismatch" ? "MISMATCH" : v === "not-listening" ? "not answering" : v === "unauthorized" ? "signature refused" : v === "unreachable" ? "unreachable" : v === "off" ? "off" : v; };
+    var verdictWord = function (v) { return v === "match" ? "match" : v === "mismatch" ? "MISMATCH" : v === "own-door" ? "your own door" : v === "not-listening" ? "not answering" : v === "unauthorized" ? "signature refused" : v === "unreachable" ? "unreachable" : v === "off" ? "off" : v; };
     h += "<p style='font-size:13px'><b>" + esc(hh.summary || "") + "</b></p>";
     var sf = hh.self || {};
     h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
@@ -6289,7 +6300,7 @@ function meshHealthHtml() {
       "<div style='font-size:12px;margin-top:4px'>" + esc(pr.verdictText || "") + "</div></div>";
     (hh.peers || []).forEach(function (pp) {
       h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
-        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><b>" + esc(pp.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(verdictWord(pp.verdict)) + (pp.stage && pp.verdict !== "match" ? " · failed at the " + esc(pp.stage) + " stage" : "") + "</span></div>" +
+        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><b>" + esc(pp.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(verdictWord(pp.verdict)) + (pp.stage && pp.verdict !== "match" && pp.verdict !== "own-door" ? " · failed at the " + esc(pp.stage) + " stage" : "") + "</span></div>" +
         "<div style='font-size:12px;margin-top:4px'>Pinned by its card: " + fp(pp.pinnedFingerprint) + "</div>" +
         "<div style='font-size:12px;margin-top:2px'>It presents: " + fp(pp.presentedFingerprint) + "</div>" +
         "<div style='font-size:12px;margin-top:4px'>" + esc(pp.verdictText || "") + "</div></div>";
@@ -6311,6 +6322,40 @@ function meshRunHealth() {
     })
     .catch(function () { meshHealthBusy = false; meshHealthMsg = "The bridge did not answer — is it running?"; render(); });
 }
+function meshTunnelHtml(p, m) {
+  // Build 4 (#178): one paired machine's managed backup route —
+  // the SSH tunnel this bridge keeps open itself — plus the
+  // lender-side act for that machine's tunnel key. The route
+  // fields always render (the switch says whether the road is
+  // live); authorizing is offered only off the DHD view, the
+  // same in-person doctrine as arming lending, and the bridge
+  // refuses it there regardless.
+  var t = p.tunnel || { enabled: false, sshHost: "", sshPort: 227, sshUser: "", localPort: null };
+  var inp = "min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px";
+  var h = "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'>" +
+    "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (t.enabled ? "true" : "false") + "' data-mesh-tunnel='" + esc(p.nodeId) + "' aria-label='Backup route to " + esc(p.name) + " — a managed SSH tunnel this bridge keeps open itself'><span class='knob'></span></button><span style='font-size:12px'>Backup route — managed SSH tunnel</span></div>" +
+    "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'>" +
+    "<label style='font-size:12px'>SSH host <input type='text' data-mesh-tun-host='" + esc(p.nodeId) + "' value='" + esc(t.sshHost || "") + "' placeholder='e.g. ssh.example.org' aria-label='SSH host for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
+    "<label style='font-size:12px'>SSH port <input type='number' data-mesh-tun-port='" + esc(p.nodeId) + "' value='" + (t.sshPort || 227) + "' min='1' max='65535' aria-label='SSH port for the backup route to " + esc(p.name) + "' style='width:84px;" + inp + "'></label>" +
+    "<label style='font-size:12px'>SSH user <input type='text' data-mesh-tun-user='" + esc(p.nodeId) + "' value='" + esc(t.sshUser || "") + "' aria-label='SSH user for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
+    "<button type='button' class='ghost' data-mesh-tunnel-save='" + esc(p.nodeId) + "' aria-label='Save the backup route to " + esc(p.name) + "' style='min-height:44px'>Save route</button></div>";
+  if (t.enabled) {
+    h += p.tunnelSentence
+      ? "<p style='font-size:12px;margin-top:6px'>" + esc(p.tunnelSentence) + "</p>"
+      : "<p style='color:var(--dim);font-size:12px;margin-top:6px'>The bridge keeps this tunnel open itself — no command to run, nothing to keep alive by hand. Direct addresses are always tried first; the tunnel is the road of last resort.</p>";
+  }
+  if (p.hasTunnelKey) {
+    if (m.viaDhd) {
+      h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>Tunnel key: " + (p.tunnelKeyAuthorized ? "authorized on this machine." : "not authorized on this machine.") + " Authorizing happens at this machine, in person — this view is through the DHD door, so the button is at home.</p>";
+    } else {
+      h += "<div style='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap'><button type='button' class='ghost' data-mesh-tunnel-auth='" + esc(p.nodeId) + "' data-auth-action='" + (p.tunnelKeyAuthorized ? "revoke" : "authorize") + "' aria-label='" + (p.tunnelKeyAuthorized ? "Revoke " : "Authorize ") + esc(p.name) + "'s tunnel key on this machine' style='min-height:44px'>" + (p.tunnelKeyAuthorized ? "Revoke tunnel key" : "Authorize tunnel key") + "</button><span style='font-size:12px;color:var(--dim)'>" + (p.tunnelKeyAuthorized ? "This machine lets " + esc(p.name) + "'s tunnel key forward to its Mesh door — nothing else." : "Let " + esc(p.name) + " keep a backup tunnel to this machine's Mesh door — forwarding only, to this door only.") + "</span></div>";
+    }
+  } else {
+    h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>" + esc(p.name) + "'s card carries no tunnel key — it predates the managed backup route. Re-share its card from its Mesh page and pair it again, and the key arrives with the card.</p>";
+  }
+  h += "</div>";
+  return h;
+}
 function meshCardHtml() {
   var m = meshViewState();
   var lend = m.lend || {};
@@ -6324,6 +6369,27 @@ function meshCardHtml() {
   if (m.enabled) {
     h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's name <input id='mesh-name' type='text' value='" + esc(m.nodeName || "") + "' placeholder='e.g. Home server' aria-label='This machine’s Mesh name' style='min-height:44px'></label>" +
       (m.nodeId ? "<span class='mono' style='font-size:11px;color:var(--dim)'>node " + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
+    // 0.2.0e Build 4 (#154): the operator-declared public
+    // endpoint — typed here, never harvested, carried on this
+    // machine's card as a host:port entry beside the LAN
+    // addresses, so a paired machine reaches this one at home
+    // and away off a single record: no tunnel, no hand edits.
+    // It is the one address Apex ever shows — the operator
+    // typed it for publication. It rides the card's Save
+    // button, like the name and the caps.
+    h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>Public endpoint (optional) <input id='mesh-endpoint' type='text' value='" + esc(m.publicEndpoint || "") + "' placeholder='e.g. mesh.example.org:8443' aria-label='This machine’s public Mesh endpoint — a host and port, optional' style='min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label></div>" +
+      "<p style='color:var(--dim);font-size:12px'>If this machine's Mesh door can be reached from beyond its own networks — a port you forwarded to it — declare that door here as host:port. It rides your card next to the LAN addresses, and changing it means re-sharing your card, the same as a new name. Leave it empty when this machine is only reachable on its own networks: the card then carries its LAN addresses and nothing else.</p>";
+    // Build 4 (#154): the door's numbers, where the door's
+    // status already lives — one door, one certificate, every
+    // port; a peer record entry may name any of them.
+    var doorPorts = (m.listenPorts && m.listenPorts.length) ? m.listenPorts : [8765, 8443, 2475];
+    h += "<p style='color:var(--dim);font-size:12px'>This machine's Mesh door listens on port" + (doorPorts.length > 1 ? "s " : " ") + doorPorts.join(" · ") + " — one door, one certificate, every number.</p>";
+    // Build 4 (#178): this machine's tunnel public key — the
+    // copyable line a paired machine's operator never has to
+    // handle by hand, because it rides the pairing card; shown
+    // here so the operator can see exactly what was shared.
+    if (m.tunnelPublicKey) h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's tunnel key <input type='text' readonly value='" + esc(m.tunnelPublicKey) + "' aria-label='This machine’s Mesh tunnel public key — it rides the pairing card, and a paired machine authorizes it once, at that machine, in person' class='mono' style='min-height:44px;min-width:min(520px,80vw);background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label></div>" +
+      "<p style='color:var(--dim);font-size:12px'>The public half of the key this machine's managed backup tunnels use. It rides your pairing card; a paired machine authorizes it once, at home, in person — then this machine keeps its backup roads open by itself. The private half never leaves this machine and never rides a backup.</p>";
     h += "<h4 style='margin:14px 0 0'>Borrowing</h4>";
     h += meshSwitchRow("mesh-borrow", m.borrowEnabled, "Borrow from my paired machines (automatic)", "Borrow from paired machines — automatic when a lender is reachable, with this off switch");
     if (m.borrowEnabled && !meshPrivacyAcked) {
@@ -6379,9 +6445,11 @@ function meshCardHtml() {
         var reachDot = p.reachable === true ? "#34d399" : p.reachable === false ? "#f87171" : "#9fb3c8";
         h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
           "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + reachDot + "'></span><b>" + esc(p.name) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.short || "") + "</span><span style='color:var(--dim);font-size:12px'>balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
+          (p.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(p.publicEndpoint) + "</span> — declared on its card</div>" : "") +
           (p.reachable === false && p.lastProbeReason ? "<div style='font-size:12px;margin-top:4px'>" + esc(p.lastProbeReason) + "</div>" : "") +
           "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Borrow from " + esc(p.name) + " — this machine borrows from it while this is on'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
-          "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div></div>";
+          "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div>" +
+          meshTunnelHtml(p, m) + "</div>";
       });
     } else {
       h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Download your PNG card here, carry the file to the other machine, and bring its PNG card back to drop below.</p>";
@@ -6402,7 +6470,7 @@ function meshCardHtml() {
       (meshPngMsg ? "<p style='font-size:12px;margin:8px 0 0'>" + esc(meshPngMsg) + "</p>" : "") +
       "</div>";
     h += "<div style='display:flex;align-items:center;gap:8px;margin-top:10px'><input type='checkbox' id='mesh-ledger-backup' aria-label='Include the Mesh ledger in backups'" + (m.ledgerInBackup ? " checked" : "") + " style='width:20px;height:20px'><label for='mesh-ledger-backup' style='font-size:12px'>Include the Mesh ledger in backups (off by default — the ledger is metadata, but whose machines talked is yours)</label></div>";
-    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
+    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, public endpoint, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
   }
   h += "</div>";
   return h;
@@ -6441,6 +6509,20 @@ function meshImportPngFile(file) {
   reader.onerror = function () { meshPngMsg = "That file could not be read — try the upload again."; render(); };
   reader.readAsDataURL(file);
 }
+function meshTunnelPost(nodeId, enabled) {
+  if (CONFIG.backend !== "live") { meshMsg = "The backup route needs the live bridge."; render(); return; }
+  var hostEl = mainEl.querySelector("[data-mesh-tun-host='" + nodeId + "']");
+  var portEl = mainEl.querySelector("[data-mesh-tun-port='" + nodeId + "']");
+  var userEl = mainEl.querySelector("[data-mesh-tun-user='" + nodeId + "']");
+  var body = { nodeId: nodeId, enabled: !!enabled };
+  if (hostEl) body.sshHost = hostEl.value;
+  if (portEl) body.sshPort = parseInt(portEl.value, 10);
+  if (userEl) body.sshUser = userEl.value;
+  fetch("/api/mesh/peers/tunnel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = "Backup route saved."; } else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+    .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+}
 function wireMeshCard() {
   var healthRun = document.getElementById("mesh-health-run");
   if (healthRun) healthRun.onclick = function () { meshRunHealth(); };
@@ -6459,6 +6541,11 @@ function wireMeshCard() {
     var ledgerEl = document.getElementById("mesh-ledger-backup");
     var patch = {};
     if (nameEl) patch.nodeName = nameEl.value;
+    // Build 4 (#154): the declared public endpoint rides the
+    // same save as the name — the bridge canonicalizes it and
+    // refuses the save in words when it is not a host:port.
+    var endpointEl = document.getElementById("mesh-endpoint");
+    if (endpointEl) patch.publicEndpoint = endpointEl.value;
     if (graceEl) patch.graceMs = parseInt(graceEl.value, 10);
     if (ledgerEl) patch.ledgerInBackup = !!ledgerEl.checked;
     // Build 7 (Fix F): the lending caps ride the same save.
@@ -6524,6 +6611,31 @@ function wireMeshCard() {
       fetch("/api/mesh/peers/can-borrow", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId, canBorrow: !now }) })
         .then(function (r) { return r.json(); })
         .then(function (j) { if (j && j.ok) meshState = j.mesh; else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+        .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-tunnel]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-tunnel");
+      var now = b.getAttribute("aria-checked") === "true";
+      meshTunnelPost(nodeId, !now);
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-tunnel-save]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-tunnel-save");
+      var sw = mainEl.querySelector("[data-mesh-tunnel='" + nodeId + "']");
+      meshTunnelPost(nodeId, sw ? sw.getAttribute("aria-checked") === "true" : false);
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-tunnel-auth]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-tunnel-auth");
+      var action = b.getAttribute("data-auth-action") || "authorize";
+      if (CONFIG.backend !== "live") { meshMsg = "Tunnel keys need the live bridge."; render(); return; }
+      fetch("/api/mesh/peers/tunnel-authorize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId, action: action }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = j.message || "Saved."; } else meshMsg = (j && (j.error || j.message)) || "The bridge refused."; render(); })
         .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
     };
   });

@@ -394,11 +394,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-13.03"
+BRIDGE_BUILD = "2026-11-13.04"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 3
+SHIPPED_BUILD_SEQ = 4
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -1804,7 +1804,7 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/mesh/"):
             # Build .86: Mesh NEVER rides the DHD door. Mesh has
-            # its own dedicated TLS listener (the mesh port, its
+            # its own dedicated TLS door (its listen ports, its
             # own certificate) in every configuration, so the
             # proxy refuses /mesh/* outright — it never serves it
             # and never forwards it to the dashboard.
@@ -2658,6 +2658,13 @@ MESH_PUB_PATH = os.path.join(MESH_DIR, "node_pub.pem")
 MESH_CERT_PATH = os.path.join(MESH_DIR, "cert.pem")
 MESH_CERT_KEY_PATH = os.path.join(MESH_DIR, "cert_key.pem")
 MESH_LEDGER_PATH = os.path.join(MESH_DIR, "ledger.jsonl")
+# Build 4 (#178): the managed backup route's dedicated SSH
+# keypair — separate from the node identity keypair, held at
+# 0600 under config/mesh, and never part of any backup payload
+# (backups collect named files; key files are never collected —
+# the same custody as the node keypair).
+MESH_TUNNEL_KEY_PATH = os.path.join(MESH_DIR, "tunnel_key")
+MESH_TUNNEL_PUB_PATH = MESH_TUNNEL_KEY_PATH + ".pub"
 # Where restored pairing-card pictures land (Build 9, #89): the
 # GitHub backup's Mesh pairing cards restore into this folder —
 # the pictures stay importable files, and the peer pictures are
@@ -2711,6 +2718,91 @@ def _mesh_int(value, fallback):
         return fallback
 
 
+def _mesh_addr_parts(entry, default_port):
+    # 0.2.0e Build 4 (#143/#154): one address entry, split into
+    # the (host, port) a dial actually uses. An entry is either a
+    # bare host — it inherits the record's port, which is what
+    # every card and record before this build carries — or
+    # host:port, carrying its own. Every peer dial (borrow,
+    # probe, health sweep) parses through here, so a mixed list
+    # of bare and ported entries works everywhere at once, and a
+    # legacy record works untouched.
+    host = str(entry or "").strip()
+    host = host.split("://")[-1].split("/")[0].strip()
+    try:
+        dport = int(default_port)
+    except Exception:
+        dport = 8765
+    if host.startswith("[") and "]" in host:
+        inner, _, rest = host[1:].partition("]")
+        if rest.startswith(":") and rest[1:].isdigit():
+            return inner, int(rest[1:])
+        return inner, dport
+    if host.count(":") == 1:
+        h, _, p = host.partition(":")
+        if h and p.isdigit():
+            return h, int(p)
+    return host, dport
+
+
+def _mesh_endpoint_clean(value):
+    # An operator-declared public endpoint in canonical
+    # host:port shape, or "" — for "absent" and for anything
+    # that is not exactly a host and a port. The endpoint is
+    # typed by the operator, never harvested (Build 4, #154):
+    # a bare host with no port is not an endpoint, because the
+    # port is the half a public door cannot inherit from a card
+    # minted for the LAN.
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    host, port = _mesh_addr_parts(s, 0)
+    if not host or not port or port < 1 or port > 65535:
+        return ""
+    if any(c in host for c in " \t"):
+        return ""
+    return host + ":" + str(port)
+
+
+def _mesh_endpoint_error(value):
+    # The settings-save refusal for a public endpoint that was
+    # typed but is not a host:port — a sentence, in the named-
+    # failure style, or "" when the value is fine (or empty).
+    s = str(value or "").strip()
+    if not s or _mesh_endpoint_clean(s):
+        return ""
+    return ("The public endpoint must be a host and a port and nothing else — "
+            "like mesh.example.org:8443. Fix it, or clear the field to declare no endpoint.")
+
+
+def _mesh_tunnel_sanitize(raw):
+    # Build 4 (#178): a peer's managed backup route, cut down to
+    # exactly the fields the supervisor needs. Off by default;
+    # the local port is bridge-allocated and persisted once
+    # chosen, so it is stable across restarts.
+    if not isinstance(raw, dict):
+        raw = {}
+    host = str(raw.get("sshHost") or "").strip()
+    if any(c in host for c in " \t/"):
+        host = ""
+    user = str(raw.get("sshUser") or "").strip()
+    if any(c in user for c in " \t@/"):
+        user = ""
+    sport = _mesh_int(raw.get("sshPort"), 227)
+    if sport < 1 or sport > 65535:
+        sport = 227
+    lp = raw.get("localPort")
+    try:
+        lp = int(lp)
+    except Exception:
+        lp = None
+    if lp is not None and not (1024 < lp <= 65535):
+        lp = None
+    return {"enabled": raw.get("enabled") is True,
+            "sshHost": host[:255], "sshPort": sport,
+            "sshUser": user[:64], "localPort": lp}
+
+
 def _mesh_peer(p):
     # One peer record, normalized. Addresses keep the operator's
     # order — LAN first as listed on the card (spec section 3.1).
@@ -2729,6 +2821,17 @@ def _mesh_peer(p):
         "certFingerprint": str(p.get("certFingerprint") or "").strip().lower(),
         "canBorrow": p.get("canBorrow") is not False,
         "capabilities": _mesh_caps_sanitize(p.get("capabilities")),
+        # Build 4 (#154): the endpoint the peer's operator
+        # declared for it on its card — the one address of a
+        # peer that is shown, because it was typed for
+        # publication. "" when the card declared none.
+        "publicEndpoint": _mesh_endpoint_clean(p.get("publicEndpoint")),
+        # Build 4 (#178): the managed backup route (borrower-side
+        # config; local to this machine, never on the card) and
+        # the peer's tunnel PUBLIC key (card-carried, public
+        # data — the private half never leaves the peer).
+        "tunnel": _mesh_tunnel_sanitize(p.get("tunnel")),
+        "tunnelPublicKey": str(p.get("tunnelPublicKey") or "").strip(),
     }
 
 
@@ -2898,6 +3001,38 @@ def intel_settings(cfg):
     }
 
 
+MESH_DEFAULT_EXTRA_PORTS = (8443, 2475)
+
+
+def _mesh_listen_ports(raw, canonical):
+    # Build 4 (#154): the Mesh door listens on several ports —
+    # one door, one certificate, several numbers, because home
+    # gateways and workplace egress rules do not all let the
+    # canonical port through. The canonical port (the one the
+    # pairing card carries) is always first and always on; the
+    # shipped defaults add 8443 and 2475 when the operator has
+    # not configured a set of their own. Every entry must be a
+    # plain unprivileged port; junk is dropped, never served.
+    canon = _mesh_int(canonical, 8765)
+    if canon < 1 or canon > 65535:
+        canon = 8765
+    ports = []
+    if isinstance(raw, (list, tuple)):
+        for v in raw:
+            p = _mesh_int(v, 0)
+            if 1024 < p <= 65535 and p not in ports:
+                ports.append(p)
+    if not ports:
+        ports = [canon] + [p for p in MESH_DEFAULT_EXTRA_PORTS
+                           if p != canon]
+    elif canon in ports:
+        ports.remove(canon)
+        ports.insert(0, canon)
+    else:
+        ports.insert(0, canon)
+    return ports[:8]
+
+
 def mesh_settings(cfg):
     # Absent-block-safe, like dhd_settings: an install whose config
     # predates the mesh block (or a field of it) reads as the
@@ -2936,9 +3071,15 @@ def mesh_settings(cfg):
             "idleAfterSeconds": _mesh_int(lend.get("idleAfterSeconds"), 60),
         },
         "port": _mesh_int(m.get("port"), 8765),
+        "listenPorts": _mesh_listen_ports(m.get("listenPorts"),
+                                          _mesh_int(m.get("port"), 8765)),
         "nodeId": str(m.get("nodeId") or ""),
         "ledger": m.get("ledger") is not False,
         "ledgerInBackup": m.get("ledgerInBackup") is True,
+        # Build 4 (#154): this machine's own operator-declared
+        # public endpoint (host:port), or "" — typed on the Mesh
+        # page, carried on this machine's card, never harvested.
+        "publicEndpoint": _mesh_endpoint_clean(m.get("publicEndpoint")),
     }
 
 
@@ -3332,6 +3473,29 @@ def mesh_signed_headers(request_id, body):
 
 
 def mesh_authenticate(handler, body, request_id):
+    # Verifies a signed Mesh request against the paired-peer
+    # list, inside the door's knock accounting (Build 4, #154):
+    # a failure is a knock against the source, a success clears
+    # the source's slate. The answer the caller gives is
+    # unchanged — a bare "unauthorized"; WHY it failed never
+    # leaves here (spec section 4.3: no detail leakage). Only
+    # the door's own handlers call this, so every call is a
+    # knock at the Mesh door by construction.
+    peer = _mesh_authenticate(handler, body, request_id)
+    try:
+        ip = handler.client_address[0] if handler.client_address else ""
+    except Exception:
+        ip = ""
+    if ip:
+        if peer is not None:
+            mesh_door_success(ip)
+        else:
+            has_headers = bool(handler.headers.get("X-Mesh-Node")) if getattr(handler, "headers", None) else False
+            mesh_door_knock(ip, "signature" if has_headers else "unsigned")
+    return peer
+
+
+def _mesh_authenticate(handler, body, request_id):
     # Verifies a signed Mesh request against the paired-peer list.
     # Returns the peer record, or None — the caller answers a bare
     # "unauthorized" either way; WHY it failed never leaves here
@@ -3457,6 +3621,129 @@ def _interface_ipv4s():
     return out
 
 
+# Interface names that are never a machine's reachable LAN
+# face, whatever address they hold: container bridges and
+# their veth tails, VM bridges, tunnels and VPN adapters,
+# overlay plumbing. The card filter decides by INTERFACE, not
+# by address range (Build 4, #143): a 10.x address on the
+# physical NIC is a legitimate LAN address, and a 192.168.x
+# address on a container bridge is junk — the field failure
+# behind this build was a card carrying a Docker bridge
+# gateway that answered as the probing machine itself.
+_MESH_VIRTUAL_IFACE_PREFIXES = (
+    "docker", "veth", "virbr", "tun", "tap", "wg", "br-",
+    "dummy", "ifb", "cali", "flannel", "cni", "kube", "lxdbr",
+    "podman", "nerdctl", "tailscale",
+)
+
+
+def _mesh_filter_physical(facts):
+    # The card generator's filter, pure over interface facts —
+    # [{name, ip, isBridge}] in, the surviving facts out, in
+    # order. An interface is excluded on any strong virtual
+    # signal: it is loopback, its name is known virtual
+    # plumbing (container bridges and their veth tails, VM
+    # bridges, tunnels, VPN adapters), or the kernel marks it
+    # a bridge. What is NOT a signal: the /sys device link.
+    # Physical hardware has one, but so does nothing else —
+    # virtio NICs, veth tails, and the user-mode networking
+    # face of a sandboxed VM (this build machine's own host0,
+    # its only way home) all lack it, and a rule requiring it
+    # refuses honest cards on exactly the virtualized machines
+    # Apex runs on. Interface type is judged by the interface's
+    # own marks, never by its address range.
+    out = []
+    seen = set()
+    for f in facts or []:
+        name = str(f.get("name") or "").lower()
+        ip = str(f.get("ip") or "")
+        if not ip or ip.startswith("127.") or name == "lo":
+            continue
+        if any(name.startswith(p) for p in _MESH_VIRTUAL_IFACE_PREFIXES):
+            continue
+        if f.get("isBridge"):
+            continue
+        if ip in seen:
+            continue
+        seen.add(ip)
+        out.append(f)
+    return out
+
+
+def _interface_facts():
+    # Every interface's IPv4 with the facts the card filter
+    # judges: its name and whether the kernel marks it a
+    # bridge. Same SIOCGIFADDR walk as _interface_ipv4s, plus
+    # the /sys read. Best-effort throughout.
+    facts = []
+    try:
+        import fcntl
+        import struct
+        for _idx, name in socket.if_nameindex():
+            ip = ""
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    packed = fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", name.encode()[:15]))
+                finally:
+                    s.close()
+                ip = socket.inet_ntoa(packed[20:24])
+            except Exception:
+                ip = ""
+            is_bridge = False
+            try:
+                is_bridge = os.path.isdir(os.path.join("/sys/class/net", name, "bridge"))
+            except Exception:
+                is_bridge = False
+            facts.append({"name": name, "ip": ip, "isBridge": is_bridge})
+    except Exception:
+        pass
+    return facts
+
+
+def _physical_interface_ipv4s():
+    # The addresses a pairing card may honestly carry: IPv4s
+    # bound to physical interfaces only — no loopback, no
+    # container bridge, no VPN tail (Build 4, #143).
+    return [f["ip"] for f in _mesh_filter_physical(_interface_facts())]
+
+
+def _mesh_card_addresses(cfg, ms):
+    # (addresses, refusal): the card's address set for this
+    # machine — physical-LAN addresses, the default route's
+    # address first when it is one of them, then the operator-
+    # declared public endpoint as its own host:port entry.
+    # When nothing plausible exists at all, addresses is empty
+    # and refusal is the sentence the mint answers with: a card
+    # carrying junk — or nothing — is how the week of dark Mesh
+    # happened, and the generator now refuses instead.
+    ips = _physical_interface_ipv4s()
+    try:
+        lan = lan_ipv4()
+    except Exception:
+        lan = ""
+    if lan and lan in ips:
+        ips = [lan] + [ip for ip in ips if ip != lan]
+    addresses = list(ips)
+    endpoint = ms["publicEndpoint"]
+    if endpoint and endpoint not in addresses:
+        addresses.append(endpoint)
+    if addresses:
+        return addresses, ""
+    return [], ("This machine has no address its Mesh card can honestly carry: every network "
+                "interface it can see is a loopback, a container bridge, or a virtual adapter, "
+                "and no public endpoint is declared. Connect the machine to a real network — "
+                "Ethernet or Wi-Fi — or declare a public endpoint on the Mesh page, and the "
+                "card can be minted.")
+
+
+def mesh_card_refusal(cfg):
+    # "" when this machine's card can be minted, or the refusal
+    # sentence. The card download answers with it instead of a
+    # picture minted from junk.
+    return _mesh_card_addresses(cfg, mesh_settings(cfg))[1]
+
+
 def mesh_card(cfg):
     # This node's card data — the payload the PNG pairing picture
     # is minted from (build_mesh_card_png). The operator carries
@@ -3465,28 +3752,17 @@ def mesh_card(cfg):
     # addresses come from config and this machine only (R2 —
     # nothing baked in).
     ms = mesh_settings(cfg)
-    addresses = []
-    try:
-        ip = lan_ipv4()
-        if ip and ip != "127.0.0.1":
-            addresses.append(ip)
-    except Exception:
-        pass
-    # Build 7 (#87): the card used to freeze the ONE address the
-    # default route picked at render time — the field card that
-    # carried a hotspot-range address beside a dead pairing. When
-    # the machine has more than one non-loopback address, the
-    # card now carries them all, the default-route (LAN) address
-    # first and the rest after; the borrower tries them in order,
-    # so one stale address can no longer strand the pair.
-    for ip in _interface_ipv4s():
-        if ip not in addresses:
-            addresses.append(ip)
-    d = cfg.get("dhd") if isinstance(cfg.get("dhd"), dict) else {}
-    domain = str(d.get("domain") or "").strip()
-    if domain and d.get("enabled") is True:
-        addresses.append(domain)
-    addresses.append("127.0.0.1")
+    # Build 4 (#143): the card's addresses are the machine's
+    # physical-LAN addresses (see _mesh_card_addresses) plus the
+    # operator-declared public endpoint when one is set. What
+    # the generator no longer does, each of which stranded a
+    # real pair: harvest every interface (container bridges and
+    # VPN tails answered probes as the probing machine itself),
+    # append the DHD domain (a web door's name is not a Mesh
+    # route), and append loopback (this machine is not its own
+    # peer). When nothing plausible exists the set is empty and
+    # the mint refuses — see mesh_card_refusal.
+    addresses, _refusal = _mesh_card_addresses(cfg, ms)
     name = ms["nodeName"] or socket.gethostname()
     return {
         "meshCard": 1,
@@ -3497,6 +3773,8 @@ def mesh_card(cfg):
         "addresses": addresses,
         "port": ms["port"],
         "capabilities": mesh_capabilities(cfg),
+        "publicEndpoint": ms["publicEndpoint"],
+        "tunnelPublicKey": mesh_tunnel_public_key(),
     }
 
 
@@ -3530,9 +3808,22 @@ def mesh_parse_card(text):
         "certFingerprint": fp,
         "canBorrow": True,
         "capabilities": card.get("capabilities"),
+        "publicEndpoint": card.get("publicEndpoint"),
+        "tunnelPublicKey": card.get("tunnelPublicKey"),
     })
     if peer is None or not peer["addresses"]:
         return None, "The card carries no address to reach the other machine at — download a fresh PNG card from the other machine and try again."
+    # Build 4 (#154): the card's declared public endpoint lands
+    # in the record as a host:port address entry of its own, so
+    # the pair works at home and away off one record. Cards
+    # minted by this build already carry it inside addresses;
+    # the check is by parsed (host, port), so an endpoint listed
+    # either way lands exactly once.
+    endpoint = peer["publicEndpoint"]
+    if endpoint:
+        ep = _mesh_addr_parts(endpoint, peer["port"])
+        if not any(_mesh_addr_parts(a, peer["port"]) == ep for a in peer["addresses"]):
+            peer["addresses"].append(endpoint)
     return peer, ""
 
 
@@ -3553,6 +3844,15 @@ def mesh_add_peer(cfg, peer):
     borrow = dict(borrow)
     peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
     peers = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"])]
+    # Build 4 (#178): the tunnel route is borrower-local
+    # operator config (and its allocated local port is state
+    # the supervisor is using) — a fresh card for the same
+    # machine must not silently unbuild the road.
+    _old = next((q for q in peers if isinstance(q, dict)
+                 and str(q.get("nodeId") or "") == peer["nodeId"]), None)
+    if isinstance(_old, dict) and isinstance(_old.get("tunnel"), dict) \
+            and _old["tunnel"].get("enabled"):
+        peer["tunnel"] = _mesh_tunnel_sanitize(_old["tunnel"])
     peers.append(peer)
     borrow["peers"] = peers
     block["borrow"] = borrow
@@ -3722,6 +4022,7 @@ def build_mesh_peer_card_png(peer):
         "addresses": peer.get("addresses"),
         "port": peer.get("port"),
         "capabilities": peer.get("capabilities"),
+        "publicEndpoint": peer.get("publicEndpoint"),
     }
     return _mesh_card_png_render(card)
 
@@ -4275,13 +4576,16 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
     fp_err = None
     tls_err = None
     timeout_err = None
-    for address in peer["addresses"]:
-        host = str(address).split("://")[-1].split("/")[0]
+    for address in _mesh_effective_addresses(peer):
+        # Build 4 (#143/#154): an entry may carry its own port
+        # (host:port); a bare host inherits the record's port.
+        # One helper parses both, here and in the health sweep.
+        host, eport = _mesh_addr_parts(address, peer["port"])
         conn = None
         sent = False
         try:
             ctx = ssl._create_unverified_context()
-            conn = http.client.HTTPSConnection(host, peer["port"], timeout=timeout, context=ctx)
+            conn = http.client.HTTPSConnection(host, eport, timeout=timeout, context=ctx)
             conn.connect()
             der = b""
             try:
@@ -4811,6 +5115,14 @@ def mesh_status_payload(cfg, via_dhd=False):
             peer_status = "unreachable"
         else:
             peer_status = "unknown"
+        _tun = p.get("tunnel") or {}
+        if _tun.get("enabled"):
+            _tst = mesh_tunnel_state(p["nodeId"])
+            _tun_word = _tst.get("state") or "down"
+            _tun_sentence = _tst.get("sentence") or (
+                "The backup tunnel to " + p["name"] + " is not running.")
+        else:
+            _tun_word, _tun_sentence = "off", ""
         peers.append({
             "name": p["name"],
             "nodeId": p["nodeId"],
@@ -4837,6 +5149,23 @@ def mesh_status_payload(cfg, via_dhd=False):
             "probeLending": (bool(probe.get("lending")) if probe is not None else None),
             "probeBusy": (bool(probe.get("busy")) if probe is not None else None),
             "probeIdle": (bool(probe.get("idle")) if probe is not None else None),
+            # Build 4 (#154): the peer's declared public
+            # endpoint — the one address of a peer any surface
+            # may show, because its operator typed it for
+            # publication on the card. Harvested addresses stay
+            # plumbing and never enter this payload.
+            "publicEndpoint": p.get("publicEndpoint") or "",
+            # Build 4 (#178): the peer's backup route as this
+            # machine holds it — its config, whether its card
+            # carried a tunnel key, whether THIS machine has
+            # authorized that key, and the tunnel's live state
+            # in the supervisor's words.
+            "tunnel": _tun,
+            "hasTunnelKey": bool(p.get("tunnelPublicKey")),
+            "tunnelKeyAuthorized": mesh_tunnel_key_authorized(
+                p.get("tunnelPublicKey") or ""),
+            "tunnelState": _tun_word,
+            "tunnelSentence": _tun_sentence,
         })
     # The summary the Servers row renders (build .87): one state
     # word for the dot, one SHORT warning for the label — the
@@ -4867,6 +5196,9 @@ def mesh_status_payload(cfg, via_dhd=False):
         "role": ms["role"],
         "nodeName": ms["nodeName"],
         "nodeId": mesh_node_id() or ms["nodeId"],
+        "publicEndpoint": ms["publicEndpoint"],
+        "listenPorts": list(ms["listenPorts"]),
+        "tunnelPublicKey": mesh_tunnel_public_key() if ms["enabled"] else "",
         "borrowEnabled": ms["borrow"]["enabled"],
         "graceMs": ms["borrow"]["graceMs"],
         "lendEnabled": ms["lend"]["enabled"],
@@ -5008,6 +5340,41 @@ def _mesh_fp_short(fp):
     return (fp[:12] + "\u2026") if fp else ""
 
 
+def _mesh_own_addresses():
+    # Every address that reaches THIS machine: loopback, every
+    # interface address (physical and virtual alike — the door
+    # binds 0.0.0.0, so any of them lands on it), and the
+    # default route's address. The health sweep judges peer
+    # entries against this set (Build 4, #143).
+    addrs = {"127.0.0.1", "::1", "localhost"}
+    try:
+        for ip in _interface_ipv4s():
+            addrs.add(ip)
+    except Exception:
+        pass
+    try:
+        ip = lan_ipv4()
+        if ip:
+            addrs.add(ip)
+    except Exception:
+        pass
+    return addrs
+
+
+def _mesh_is_own_door(host, port, own_port, own_addrs):
+    # An entry points at this machine's own Mesh door when the
+    # host is one of this machine's own addresses AND the port
+    # is this machine's Mesh port. Both halves matter: loopback
+    # at a DIFFERENT port (127.0.0.1:8766, an SSH forward to a
+    # peer's door) is a road, not the own door, and is dialed
+    # like any other entry — the field's working off-LAN road
+    # depends on exactly that distinction.
+    try:
+        return int(port) == int(own_port) and str(host) in own_addrs
+    except Exception:
+        return False
+
+
 def mesh_health_check(cfg):
     # The check itself. Shape: {ranAt, port, enabled, self,
     # processes, peers, summary} \u2014 the Mesh page renders it
@@ -5016,7 +5383,8 @@ def mesh_health_check(cfg):
     # exactly as they never render anywhere.
     ms = mesh_settings(cfg)
     port = ms["port"]
-    out = {"ranAt": int(time.time()), "port": port, "enabled": ms["enabled"],
+    out = {"ranAt": int(time.time()), "port": port, "ports": list(ms["listenPorts"]),
+           "enabled": ms["enabled"],
            "self": {}, "processes": {}, "peers": [], "summary": ""}
     if not ms["enabled"]:
         out["self"] = {"verdict": "off", "stage": "",
@@ -5053,9 +5421,15 @@ def mesh_health_check(cfg):
     # Processes: how many bridges, and whose door it is.
     bridges = _mesh_bridge_processes()
     owner = _mesh_listener_owner(port)
+    door_ports = []
+    for dp in ms["listenPorts"]:
+        dp_owner = owner if dp == port else _mesh_listener_owner(dp)
+        door_ports.append({"port": dp, "listenerOwnerPid": dp_owner,
+                           "listenerIsThisBridge": (dp_owner == os.getpid()) if dp_owner is not None else None})
     proc_sec = {"bridges": bridges, "count": len(bridges),
                 "listenerOwnerPid": owner,
-                "listenerIsThisBridge": (owner == os.getpid()) if owner is not None else None}
+                "listenerIsThisBridge": (owner == os.getpid()) if owner is not None else None,
+                "ports": door_ports}
     bits = []
     if len(bridges) == 0:
         bits.append("No process running a bridge.py was found on this machine \u2014 the dashboard's bridge may be running inside another program, or /proc would not say.")
@@ -5067,12 +5441,15 @@ def mesh_health_check(cfg):
                     + "the second one's door never opens, and if the one that grabbed the door presents a different "
                     + "certificate than this machine's card, every peer sees a stranger. This is the prime suspect "
                     + "when both machines swear their certificates match.")
-    if owner is None:
-        bits.append("No listener was found on port " + str(port) + ".")
-    elif owner == os.getpid():
-        bits.append("The Mesh door's listener (port " + str(port) + ") belongs to this bridge (pid " + str(owner) + ").")
-    else:
-        bits.append("The Mesh door's listener (port " + str(port) + ") belongs to pid " + str(owner) + " \u2014 not this bridge (pid " + str(os.getpid()) + ").")
+    for dp_info in door_ports:
+        dp = dp_info["port"]
+        dp_owner = dp_info["listenerOwnerPid"]
+        if dp_owner is None:
+            bits.append("No listener was found on Mesh door port " + str(dp) + ".")
+        elif dp_owner == os.getpid():
+            bits.append("The Mesh door's listener (port " + str(dp) + ") belongs to this bridge (pid " + str(dp_owner) + ").")
+        else:
+            bits.append("The Mesh door's listener (port " + str(dp) + ") belongs to pid " + str(dp_owner) + " \u2014 not this bridge (pid " + str(os.getpid()) + ").")
     proc_sec["verdictText"] = " ".join(bits)
     out["processes"] = proc_sec
     # Peers: the pin this machine HOLDS vs the certificate the
@@ -5081,18 +5458,49 @@ def mesh_health_check(cfg):
     for peer in ms["borrow"]["peers"]:
         ent = {"name": peer["name"], "nodeId": peer["nodeId"], "short": peer["nodeId"][:12],
                "pinnedFingerprint": peer["certFingerprint"], "presentedFingerprint": "",
-               "stage": "", "verdict": "", "authOk": None, "verdictText": ""}
+               "stage": "", "verdict": "", "authOk": None, "verdictText": "",
+               "route": ""}
         presented_other = ""
+        presented_own = ""
+        skipped_own = 0
+        dialed = 0
         matched = False
+        matched_entry = ""
+        # Build 4 (#178): the sweep reads the same dial list the
+        # borrow path does — the record's entries, then the
+        # managed tunnel endpoint last — and remembers which
+        # entry answered, so a healthy answer that arrived over
+        # the backup road is named as exactly that.
+        tunnel_entry = _mesh_tunnel_entry(peer)
         stages = []
-        for address in peer["addresses"]:
-            host = str(address).split("://")[-1].split("/")[0]
-            st, fp = _mesh_tls_presented(host, peer["port"], 3)
+        # Build 4 (#143): probe manners. An entry that is this
+        # machine's own door (own address, own Mesh port) is
+        # skipped without dialing — it could only ever answer as
+        # this machine. An answer presenting this machine's OWN
+        # certificate is named as exactly that — your own door —
+        # and the sweep moves on: it is not a peer fingerprint
+        # mismatch, because the peer was never reached. (The
+        # field failure: a card's container-bridge address
+        # terminated at the probing machine's own door, and the
+        # machine's own certificate was reported as the peer's
+        # "changed identity" for a week.)
+        own_addrs = _mesh_own_addresses()
+        for address in _mesh_effective_addresses(peer):
+            host, eport = _mesh_addr_parts(address, peer["port"])
+            if _mesh_is_own_door(host, eport, port, own_addrs):
+                skipped_own += 1
+                continue
+            dialed += 1
+            st, fp = _mesh_tls_presented(host, eport, 3)
             stages.append(st)
             if st == "ok":
                 if fp == peer["certFingerprint"]:
                     matched = True
+                    matched_entry = address
                     ent["presentedFingerprint"] = fp
+                elif fp and disk_fp and fp == disk_fp:
+                    if not presented_own:
+                        presented_own = fp
                 elif not presented_other:
                     presented_other = fp
         if matched:
@@ -5102,7 +5510,11 @@ def mesh_health_check(cfg):
                 ent["verdict"] = "match"
                 ent["authOk"] = True
                 ent["verdictText"] = (peer["name"] + " answers, the certificate it presents matches its card, "
-                    + "and it accepts this machine's signature. This pair is healthy.")
+                    + "and it accepts this machine's signature. This pair is healthy."
+                    + (" The answer came via the backup tunnel — the SSH door carried it."
+                       if tunnel_entry and matched_entry == tunnel_entry else ""))
+                if tunnel_entry and matched_entry == tunnel_entry:
+                    ent["route"] = "tunnel"
             elif err == "unauthorized":
                 ent["stage"] = "auth"
                 ent["verdict"] = "unauthorized"
@@ -5123,6 +5535,24 @@ def mesh_health_check(cfg):
                 + "was made. The cure is a fresh card: import " + peer["name"] + "'s new PNG card on this page "
                 + "and the pin is replaced in place \u2014 the pair's history is kept. (And if " + peer["name"]
                 + " swears its certificate never changed, run this check there: a second bridge may be serving its door.)")
+        elif presented_own:
+            ent["presentedFingerprint"] = presented_own
+            ent["stage"] = "own-door"
+            ent["verdict"] = "own-door"
+            ent["verdictText"] = (peer["name"] + " did not answer \u2014 the door that answered presented this machine's "
+                + "OWN certificate (" + _mesh_fp_short(presented_own) + "), which is to say the probe reached "
+                + "your own door, not " + peer["name"] + "'s. An address on its card leads back to this machine "
+                + "(a container bridge or a stale local address does exactly this), so the pair was never actually "
+                + "asked. Nothing about " + peer["name"] + "'s identity is in doubt \u2014 it was never reached. The cure "
+                + "is a fresh card minted on " + peer["name"] + " itself: cards minted now carry only addresses "
+                + "that machine can be reached at.")
+        elif skipped_own and not dialed:
+            ent["stage"] = "own-door"
+            ent["verdict"] = "own-door"
+            ent["verdictText"] = ("Every address on " + peer["name"] + "'s card is this machine's own Mesh door \u2014 "
+                + "its own addresses at its own port \u2014 so there is nothing on the card that could reach "
+                + peer["name"] + " at all. The card was minted from the wrong machine's addresses or edited by "
+                + "hand. The cure is a fresh card minted on " + peer["name"] + " itself and imported here.")
         else:
             if "tls" in stages:
                 worst = "tls"
@@ -5133,6 +5563,14 @@ def mesh_health_check(cfg):
             ent["stage"] = worst
             ent["verdict"] = "unreachable"
             ent["verdictText"] = mesh_probe_reason("tls" if worst == "tls" else "timeout" if worst == "timeout" else "unreachable")
+        # Build 4 (#178): when the pair did not answer and a
+        # backup route exists, the tunnel's own state rides the
+        # verdict — down, not authorized, or unreachable, in the
+        # supervisor's words, never as a bare code.
+        if tunnel_entry and ent["verdict"] != "match":
+            _ts = mesh_tunnel_state(peer["nodeId"])
+            if _ts.get("sentence"):
+                ent["verdictText"] += " " + _ts["sentence"]
         out["peers"].append(ent)
     # The summary: the first problem, or the all-clear.
     problems = []
@@ -5150,6 +5588,139 @@ def mesh_health_check(cfg):
     else:
         out["summary"] = "This machine's own door is consistent \u2014 it presents the certificate on its disk. No machines are paired yet, so there are no peer checks to run."
     return out
+
+
+# -- The door's knock ledger (0.2.0e Build 4, #143/#154) ------------
+# The Mesh door can face the open internet now (a declared
+# public endpoint is exactly that), so it keeps count of failed
+# knocks per source: failed TLS handshakes at accept time, and
+# requests that fail signature authentication. Five failures
+# inside a minute close the door to that source — connections
+# are dropped at accept, before any handler runs — for a
+# backoff that doubles per repeat closing (60s, 120s, 240s, …
+# capped at 900s). Every knock and every closing is logged to
+# the bridge's stdout in words. A successful authentication
+# clears the source's failure slate: a paired peer's valid
+# signed traffic is never throttled, and whole requests are
+# not chatty, so no legitimate federation pattern can reach
+# five failures inside a minute. State is in-memory only: a
+# bridge restart reopens every door, which is the honest
+# failure direction for a lockout.
+
+MESH_DOOR_KNOCK_FAILS = 5
+MESH_DOOR_KNOCK_WINDOW = 60
+MESH_DOOR_BLOCK_BASE = 60
+MESH_DOOR_BLOCK_CAP = 900
+_MESH_DOOR_LOCK = threading.Lock()
+_MESH_DOOR = {}
+
+
+def _mesh_door_log(msg):
+    print("Navi Mesh: " + msg, flush=True)
+
+
+def mesh_door_blocked(ip):
+    now = time.time()
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        return bool(st and st["blockedUntil"] > now)
+
+
+def mesh_door_knock(ip, kind):
+    # One failed knock from a source: a handshake that failed
+    # at the door, or a request its signature did not carry.
+    # Returns "counted", or "blocked" when this knock closed
+    # the door (or the door was already closed).
+    if not ip:
+        return "counted"
+    now = time.time()
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.setdefault(ip, {"fails": [], "blockedUntil": 0.0, "blocks": 0, "dropLogged": False})
+        if st["blockedUntil"] > now:
+            return "blocked"
+        st["fails"] = [t for t in st["fails"] if now - t < MESH_DOOR_KNOCK_WINDOW]
+        st["fails"].append(now)
+        n = len(st["fails"])
+        if n >= MESH_DOOR_KNOCK_FAILS:
+            st["blocks"] += 1
+            secs = min(MESH_DOOR_BLOCK_CAP, MESH_DOOR_BLOCK_BASE * (2 ** (st["blocks"] - 1)))
+            st["blockedUntil"] = now + secs
+            st["fails"] = []
+            st["dropLogged"] = False
+            _mesh_door_log("door closed to " + str(ip) + " for " + str(secs) + "s — " + str(n)
+                           + " failed knocks (" + str(kind) + ") inside " + str(MESH_DOOR_KNOCK_WINDOW)
+                           + "s. It reopens on its own when the backoff runs out.")
+            return "blocked"
+        _mesh_door_log("door knock from " + str(ip) + " (" + str(kind) + ") — " + str(n) + " of "
+                       + str(MESH_DOOR_KNOCK_FAILS) + " inside the window before the door closes to it.")
+        return "counted"
+
+
+def mesh_door_success(ip):
+    # A valid signed request: the source's slate is wiped. A
+    # paired peer therefore cannot accumulate its way into a
+    # closing across honest mistakes spaced by real work.
+    if not ip:
+        return
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        if st:
+            st["fails"] = []
+
+
+def mesh_door_drop(ip):
+    # A connection from a closed source, dropped at accept:
+    # logged once per closing, so a flood cannot flood the log.
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        if st and not st["dropLogged"]:
+            st["dropLogged"] = True
+            _mesh_door_log("door dropped a connection from " + str(ip) + " — the door is still closed to it.")
+
+
+class _MeshDoorServer(ThreadingHTTPServer):
+    # The Mesh door's server: the accept loop itself minds the
+    # knock ledger. The listening socket is deliberately NOT
+    # TLS-wrapped: wrapping the listener would run every
+    # handshake inside accept() itself — before any hook of
+    # ours, uncounted, and with no bound on how long a stalled
+    # handshake may park the serve loop. Instead each accepted
+    # raw socket is wrapped here, in get_request, with a
+    # bounded wait: a source the door is closed to is dropped
+    # before any TLS work is spent on it, a handshake that
+    # fails is a counted knock, and only a completed handshake
+    # ever reaches a handler thread. The accepted socket
+    # returns to blocking for the handler, exactly as the
+    # wrapped-listener shape it replaces behaved — the wire
+    # cannot tell the difference; the ledger can.
+    daemon_threads = True
+    mesh_tls_context = None
+
+    def get_request(self):
+        while True:
+            sock, addr = super().get_request()
+            ip = addr[0] if addr else ""
+            if ip and mesh_door_blocked(ip):
+                mesh_door_drop(ip)
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                continue
+            try:
+                sock.settimeout(10)
+                tls = self.mesh_tls_context.wrap_socket(
+                    sock, server_side=True)
+                tls.settimeout(None)
+            except Exception:
+                if ip:
+                    mesh_door_knock(ip, "handshake")
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                continue
+            return tls, addr
 
 
 # -- The dedicated Mesh door -----------------------------------------
@@ -5219,6 +5790,441 @@ class MeshHandler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "reason": "not-found"})
 
 
+
+# -- Managed backup route (0.2.0e Build 4, #178) -------------------
+# The SSH door stays a Mesh road, but the bridge keeps the road
+# itself now: for a peer whose backup route is on, the bridge
+# spawns and supervises its own `ssh -N -L` forward — the peer's
+# Mesh door, carried through the peer's SSH door, presented on a
+# bridge-owned loopback port — and that endpoint joins the peer's
+# dial list LAST, computed at dial time, never written into the
+# stored record. Direct entries are always tried first; a dead
+# tunnel costs nothing beyond the ordinary per-entry timeouts.
+# The key is a dedicated ed25519 pair: the public half rides this
+# node's pairing card, and the lender authorizes it once, in
+# person, as a forwarding-only line in ~/.ssh/authorized_keys.
+# The private half lives at 0600 under config/mesh and never
+# rides a backup — backups collect named files, and key files
+# are never collected (the node keypair's custody, unchanged).
+# Hand-run tunnels and hand-edited 127.0.0.1 records keep
+# working untouched beside all of this: a record entry is a
+# record entry, however it got there.
+
+MESH_TUNNELS = {}
+MESH_TUNNEL_LOCK = threading.Lock()
+_MESH_TUNNEL_BACKOFFS = (5, 15, 60)
+
+
+def mesh_ensure_tunnel_key():
+    # (ok, error-sentence). Generated with ssh-keygen — the same
+    # OpenSSH tooling the supervisor runs — so the private half
+    # is in exactly the format ssh reads.
+    if os.path.isfile(MESH_TUNNEL_KEY_PATH) and \
+            os.path.isfile(MESH_TUNNEL_PUB_PATH):
+        return True, ""
+    try:
+        os.makedirs(MESH_DIR, exist_ok=True)
+        r = subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "",
+             "-C", "navi-mesh-tunnel", "-f", MESH_TUNNEL_KEY_PATH],
+            capture_output=True, timeout=30)
+        if r.returncode != 0 or not os.path.isfile(MESH_TUNNEL_KEY_PATH):
+            return False, ("This machine could not create its Mesh tunnel "
+                           "key — ssh-keygen did not answer. The managed "
+                           "backup route needs the OpenSSH client tools.")
+        os.chmod(MESH_TUNNEL_KEY_PATH, 0o600)
+        return True, ""
+    except Exception:
+        return False, ("This machine could not create its Mesh tunnel "
+                       "key — ssh-keygen is not available. The managed "
+                       "backup route needs the OpenSSH client tools.")
+
+
+def mesh_tunnel_public_key():
+    # This node's tunnel public key line, or "" — generated on
+    # first need (pairing-card mint, Mesh page), like the node
+    # identity beside it.
+    if not os.path.isfile(MESH_TUNNEL_PUB_PATH):
+        ok, _err = mesh_ensure_tunnel_key()
+        if not ok:
+            return ""
+    return read_file(MESH_TUNNEL_PUB_PATH).strip()
+
+
+def _tunnel_key_blob(pub_line):
+    parts = str(pub_line or "").split()
+    if len(parts) >= 2 and parts[0].startswith("ssh-"):
+        return parts[1]
+    return ""
+
+
+def mesh_tunnel_key_authorized(pub_line):
+    # Whether THIS machine's authorized_keys already carries the
+    # given tunnel key (the lender-side read the Mesh page shows).
+    blob = _tunnel_key_blob(pub_line)
+    if not blob:
+        return False
+    ak = os.path.join(os.path.expanduser("~"), ".ssh", "authorized_keys")
+    try:
+        with open(ak) as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return False
+    return any(blob in ln.split() for ln in lines
+               if not ln.strip().startswith("#"))
+
+
+def mesh_tunnel_authorize(pub_line, node_id, action, door_port):
+    # (ok, sentence). The lender-side act, in person only (the
+    # handler refuses it over DHD, like arming lending): the line
+    # appended lets the peer's tunnel key do exactly one thing —
+    # forward to this machine's Mesh door on loopback. No shell,
+    # no agent, no X11. Idempotent; revoke removes the key's
+    # lines. A missing .ssh or authorized_keys is created with
+    # the permissions sshd insists on.
+    parts = str(pub_line or "").split()
+    blob = _tunnel_key_blob(pub_line)
+    if not blob:
+        return False, ("That machine's card carries no tunnel key — "
+                       "there is nothing to authorize.")
+    ssh_dir = os.path.join(os.path.expanduser("~"), ".ssh")
+    ak = os.path.join(ssh_dir, "authorized_keys")
+    lines = []
+    if os.path.isfile(ak):
+        try:
+            with open(ak) as f:
+                lines = f.read().splitlines()
+        except Exception:
+            lines = []
+    if action == "revoke":
+        kept = [ln for ln in lines if blob not in ln.split()]
+        if len(kept) == len(lines):
+            return True, ("That tunnel key was not in this machine's "
+                          "authorized keys — nothing to revoke.")
+        try:
+            with open(ak, "w") as f:
+                f.write("\n".join(kept) + ("\n" if kept else ""))
+            os.chmod(ak, 0o600)
+        except Exception:
+            return False, "This machine could not rewrite its authorized keys file."
+        return True, ("Revoked: that tunnel key no longer opens "
+                      "anything on this machine.")
+    if any(blob in ln.split() for ln in lines
+           if not ln.strip().startswith("#")):
+        return True, ("That tunnel key is already authorized on this "
+                      "machine — the line was already there, unchanged.")
+    try:
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(ssh_dir, 0o700)
+        except Exception:
+            pass
+        opts = ('permitopen="127.0.0.1:' + str(door_port) + '",no-pty,'
+                "no-agent-forwarding,no-X11-forwarding")
+        lines.append(opts + " " + parts[0] + " " + blob +
+                     " navi-mesh-tunnel:" + str(node_id or "")[:12])
+        with open(ak, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(ak, 0o600)
+    except Exception:
+        return False, "This machine could not write its authorized keys file."
+    return True, ("Authorized: that tunnel key can now forward to this "
+                  "machine's Mesh door — and nothing else on this machine.")
+
+
+def _mesh_tunnel_entry(peer):
+    # The peer's tunnel endpoint as a dial entry, or "" — present
+    # only while the route is on and a local port is allocated.
+    tun = peer.get("tunnel") or {}
+    if tun.get("enabled") and tun.get("localPort"):
+        return "127.0.0.1:" + str(tun["localPort"])
+    return ""
+
+
+def _mesh_effective_addresses(peer):
+    # The dial list: the record's entries in their order, with
+    # the managed tunnel endpoint appended LAST — computed here,
+    # at dial time; the stored record never carries it.
+    addrs = list(peer.get("addresses") or [])
+    ent = _mesh_tunnel_entry(peer)
+    if ent and ent not in addrs:
+        addrs.append(ent)
+    return addrs
+
+
+def mesh_tunnel_state(node_id):
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        if st is not None:
+            return {"state": st.get("state") or "down",
+                    "sentence": st.get("sentence") or ""}
+    return {"state": "off", "sentence": ""}
+
+
+def _mesh_tunnel_set_state(node_id, state, sentence):
+    log = False
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        if st is None:
+            return
+        if st.get("state") != state or st.get("sentence") != sentence:
+            st["state"] = state
+            st["sentence"] = sentence
+            log = bool(sentence) and state != "starting"
+    if log:
+        # One line per state change, never per retry.
+        print("Navi Mesh: " + sentence, flush=True)
+
+
+def _mesh_tunnel_classify(stderr_text, name):
+    # Conservative reading of the ssh process's last words:
+    # only the signatures that unambiguously mean one thing are
+    # named; everything else is honestly just "tunnel down".
+    s = (stderr_text or "").lower()
+    if "permission denied" in s:
+        return "unauthorized", (
+            "The backup tunnel to " + name + " is down: " + name +
+            " has not authorized this machine's tunnel key. On " +
+            name + "'s own dashboard, its Mesh page offers to "
+            "authorize this machine's tunnel key — once, in "
+            "person — and the road keeps itself after that.")
+    if any(x in s for x in ("could not resolve",
+                            "name or service not known",
+                            "connection timed out",
+                            "no route to host",
+                            "network is unreachable",
+                            "connection refused")):
+        return "unreachable", (
+            "The backup tunnel to " + name + " is down: its SSH "
+            "door did not answer from here.")
+    return "down", "The backup tunnel to " + name + " is down."
+
+
+def _mesh_tunnel_wait(node_id, seconds):
+    # Sleep in slices; True means the supervisor should exit.
+    end = time.time() + max(0.0, seconds)
+    while time.time() < end:
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or st.get("stop"):
+                return True
+        time.sleep(0.5)
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        return st is None or bool(st.get("stop"))
+
+
+def _mesh_tunnel_supervise(node_id):
+    fails = 0
+    while True:
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or st.get("stop"):
+                return
+        cfg = load_config()
+        ms = mesh_settings(cfg)
+        peer = next((p for p in ms["borrow"]["peers"]
+                     if p["nodeId"] == node_id), None)
+        if peer is None or not ms["enabled"] or \
+                not (peer.get("tunnel") or {}).get("enabled"):
+            with MESH_TUNNEL_LOCK:
+                MESH_TUNNELS.pop(node_id, None)
+            return
+        tun = peer["tunnel"]
+        host = tun.get("sshHost") or ""
+        user = tun.get("sshUser") or ""
+        lp = tun.get("localPort")
+        if not host or not user or not lp:
+            _mesh_tunnel_set_state(
+                node_id, "down",
+                "The backup route to " + peer["name"] + " is on but "
+                "not filled in: it needs that machine's SSH host "
+                "and user, set on the Mesh page.")
+            if _mesh_tunnel_wait(node_id, 5):
+                return
+            continue
+        ok, err = mesh_ensure_tunnel_key()
+        if not ok:
+            _mesh_tunnel_set_state(node_id, "down", err)
+            if _mesh_tunnel_wait(node_id, 30):
+                return
+            continue
+        argv = ["ssh", "-N",
+                "-L", str(lp) + ":127.0.0.1:" + str(peer["port"]),
+                "-i", MESH_TUNNEL_KEY_PATH,
+                "-p", str(tun["sshPort"]),
+                "-o", "BatchMode=yes",
+                "-o", "IdentitiesOnly=yes",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=30",
+                "-o", "ServerAliveCountMax=3",
+                "-o", "StrictHostKeyChecking=accept-new",
+                user + "@" + host]
+        _mesh_tunnel_set_state(node_id, "starting", "")
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE)
+        except Exception:
+            _mesh_tunnel_set_state(
+                node_id, "down",
+                "The backup tunnel to " + peer["name"] + " could "
+                "not start — the ssh program did not answer on "
+                "this machine.")
+            if _mesh_tunnel_wait(node_id, 30):
+                return
+            continue
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is not None:
+                st["proc"] = proc
+        started = time.time()
+        up = False
+        while proc.poll() is None:
+            with MESH_TUNNEL_LOCK:
+                st = MESH_TUNNELS.get(node_id)
+                stop = st is None or st.get("stop")
+            if stop:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                return
+            if not up and time.time() - started >= 3:
+                # ssh exits at once when the forward cannot be
+                # established (ExitOnForwardFailure), so a
+                # process alive after a few seconds is carrying
+                # the road.
+                up = True
+                fails = 0
+                _mesh_tunnel_set_state(
+                    node_id, "up",
+                    "The backup tunnel to " + peer["name"] + " is "
+                    "up: its Mesh door answers here at 127.0.0.1:" +
+                    str(lp) + ", carried by its SSH door.")
+            time.sleep(0.5)
+        err_text = ""
+        try:
+            err_text = (proc.stderr.read() or b"").decode("utf-8",
+                                                          "replace")
+        except Exception:
+            pass
+        word, sentence = _mesh_tunnel_classify(err_text, peer["name"])
+        _mesh_tunnel_set_state(node_id, word, sentence)
+        backoff = _MESH_TUNNEL_BACKOFFS[min(fails,
+                                            len(_MESH_TUNNEL_BACKOFFS) - 1)]
+        fails += 1
+        if _mesh_tunnel_wait(node_id, backoff):
+            return
+
+
+def _mesh_tunnel_allocate_ports(cfg):
+    # Give every route-enabled peer that lacks a local port a
+    # stable one, persisted into the stored record once chosen.
+    # Candidates are probed free on loopback and kept clear of
+    # the door ports and of each other. Returns True when the
+    # config changed (the caller reloads).
+    ms = mesh_settings(cfg)
+    taken = set(ms["listenPorts"])
+    for p in ms["borrow"]["peers"]:
+        lp = (p.get("tunnel") or {}).get("localPort")
+        if lp:
+            taken.add(lp)
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+    raw_peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+    changed = False
+    for rp in raw_peers:
+        if not isinstance(rp, dict):
+            continue
+        tun = rp.get("tunnel")
+        if not isinstance(tun, dict) or tun.get("enabled") is not True:
+            continue
+        if tun.get("localPort"):
+            continue
+        for cand in range(18765, 19265):
+            if cand in taken:
+                continue
+            try:
+                s = socket.socket()
+                s.bind(("127.0.0.1", cand))
+                s.close()
+            except Exception:
+                continue
+            tun["localPort"] = cand
+            taken.add(cand)
+            changed = True
+            break
+    if changed:
+        save_config(cfg)
+    return changed
+
+
+def mesh_tunnel_sync():
+    # Reconcile the supervisors with the config: start one for
+    # each peer whose backup route is on (allocating its local
+    # port first), stop the rest. Called when the Mesh starts,
+    # when Mesh settings save, and when a route is edited.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if ms["enabled"] and any((p.get("tunnel") or {}).get("enabled")
+                             and not (p.get("tunnel") or {}).get("localPort")
+                             for p in ms["borrow"]["peers"]):
+        if _mesh_tunnel_allocate_ports(cfg):
+            cfg = load_config()
+            ms = mesh_settings(cfg)
+    want = set()
+    if ms["enabled"]:
+        for p in ms["borrow"]["peers"]:
+            if (p.get("tunnel") or {}).get("enabled"):
+                want.add(p["nodeId"])
+    with MESH_TUNNEL_LOCK:
+        for node_id in list(MESH_TUNNELS.keys()):
+            if node_id not in want:
+                st = MESH_TUNNELS.pop(node_id)
+                st["stop"] = True
+                proc = st.get("proc")
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+        for node_id in want:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or not st.get("thread") or \
+                    not st["thread"].is_alive():
+                st = {"stop": False, "proc": None, "state": "",
+                      "sentence": "", "thread": None}
+                t = threading.Thread(target=_mesh_tunnel_supervise,
+                                     args=(node_id,), daemon=True)
+                st["thread"] = t
+                MESH_TUNNELS[node_id] = st
+                t.start()
+
+
+def mesh_tunnel_stop_all():
+    # Bridge shutdown / Mesh off: every tunnel child is
+    # terminated cleanly — no orphan ssh is left holding a
+    # forward for a bridge that is gone.
+    with MESH_TUNNEL_LOCK:
+        entries = list(MESH_TUNNELS.values())
+        MESH_TUNNELS.clear()
+        for st in entries:
+            st["stop"] = True
+            proc = st.get("proc")
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+
 def mesh_start_listener():
     global MESH_SERVERS
     # Build 7 (#87): the peer health thread starts with the Mesh
@@ -5235,20 +6241,42 @@ def mesh_start_listener():
     if not ok:
         return
     cert_path, key_path = mesh_active_cert()
-    try:
-        server = ThreadingHTTPServer(("0.0.0.0", ms["port"]), MeshHandler)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert_path, key_path)
-        server.socket = ctx.wrap_socket(server.socket, server_side=True)
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-        MESH_SERVERS = [server]
-    except Exception:
-        MESH_SERVERS = []
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert_path, key_path)
+    servers = []
+    for door_port in ms["listenPorts"]:
+        try:
+            server = _MeshDoorServer(("0.0.0.0", door_port), MeshHandler)
+            server.mesh_tls_context = ctx
+            # The accept side of get_request waits on a short
+            # fuse: its loop skips dropped and failed knocks
+            # without returning, and a bare blocking accept
+            # would park the serve thread past shutdown's
+            # reach. A timeout raise from accept is an OSError,
+            # which socketserver's request loop already absorbs
+            # — the serve loop simply comes back around and
+            # checks its shutdown flag. Accepted sockets are
+            # re-timed by get_request itself before any use.
+            server.socket.settimeout(0.5)
+            t = threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            servers.append(server)
+        except Exception:
+            # One number being taken (something else already
+            # listens there) never closes the whole door: the
+            # remaining ports still serve, and the miss is named.
+            print("Navi Mesh: door port " + str(door_port) +
+                  " could not be bound — the door serves on its "
+                  "remaining ports.", flush=True)
+    MESH_SERVERS = servers
+    # Build 4 (#178): the managed backup tunnels reconcile with
+    # the same start that opens the door.
+    mesh_tunnel_sync()
 
 
 def mesh_stop_listener():
     global MESH_SERVERS
+    mesh_tunnel_stop_all()
     for s in MESH_SERVERS:
         try:
             s.shutdown()
@@ -16081,6 +17109,14 @@ class Handler(BaseHTTPRequestHandler):
             if not _ok:
                 self._send(200, {"ok": False, "error": _err})
                 return
+            # Build 4 (#143): the generator refuses a card it
+            # cannot honestly address — no physical-LAN address
+            # and no declared public endpoint — in words, here,
+            # instead of minting a picture that strands the pair.
+            _refusal = mesh_card_refusal(_cfg)
+            if _refusal:
+                self._send(200, {"ok": False, "error": _refusal})
+                return
             self._send(200, build_mesh_card_png(load_config()), "image/png")
             return
         if _path in ("/favicon-32.png", "/apple-touch-icon.png", "/icon-180.png"):
@@ -16638,6 +17674,20 @@ class Handler(BaseHTTPRequestHandler):
                 block["enabled"] = bool(data.get("enabled"))
             if "nodeName" in data:
                 block["nodeName"] = str(data.get("nodeName") or "")[:80]
+            # Build 4 (#154): the operator-declared public
+            # endpoint. Typed, never harvested; canonicalized to
+            # host:port here, and a value that is not a host:port
+            # refuses the whole save in words rather than landing
+            # as junk on the card.
+            if "publicEndpoint" in data:
+                _ep_err = _mesh_endpoint_error(data.get("publicEndpoint"))
+                if _ep_err:
+                    self._send(200, {"ok": False, "error": _ep_err})
+                    return
+                block["publicEndpoint"] = _mesh_endpoint_clean(data.get("publicEndpoint"))
+            if isinstance(data.get("listenPorts"), list):
+                block["listenPorts"] = _mesh_listen_ports(
+                    data["listenPorts"], block.get("port", 8765))
             if "borrowEnabled" in data:
                 borrow["enabled"] = bool(data.get("borrowEnabled"))
             if "graceMs" in data:
@@ -16708,6 +17758,7 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
             if block.get("enabled") is True:
                 mesh_start_listener()
+                mesh_tunnel_sync()
                 if not was_enabled:
                     # Build 7 (#87): enabling Mesh checks every
                     # paired peer at once, not at the health
@@ -16804,6 +17855,73 @@ class Handler(BaseHTTPRequestHandler):
             cfg["mesh"] = block
             save_config(cfg)
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/tunnel":
+            # Build 4 (#178): one peer's managed backup route —
+            # ordinary borrower-side config (it points THIS
+            # machine's ssh at the peer's SSH door; it changes
+            # no consent on the peer). The supervisor reconciles
+            # as soon as the save lands.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            found = None
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    tun = dict(p.get("tunnel") or {})
+                    if "enabled" in data:
+                        tun["enabled"] = bool(data.get("enabled"))
+                    if "sshHost" in data:
+                        tun["sshHost"] = str(data.get("sshHost") or "").strip()[:255]
+                    if "sshUser" in data:
+                        tun["sshUser"] = str(data.get("sshUser") or "").strip()[:64]
+                    if "sshPort" in data:
+                        tun["sshPort"] = max(1, min(65535, _mesh_int(data.get("sshPort"), 227)))
+                    p["tunnel"] = tun
+                    found = tun
+                new_peers.append(p)
+            if found is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if found.get("enabled") and (not found.get("sshHost") or not found.get("sshUser")):
+                self._send(200, {"ok": False, "error": "The backup route needs that machine's SSH host and user before it can be turned on — fill both in and save again."})
+                return
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            mesh_tunnel_sync()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/tunnel-authorize":
+            # Build 4 (#178): the lender-side act — IN PERSON
+            # ONLY, the same doctrine as arming lending (Q1): a
+            # request arriving through the DHD proxy surface is
+            # refused. Authorizing writes a forwarding-only line
+            # for the peer's tunnel key into this operator's
+            # ~/.ssh/authorized_keys; revoking removes it.
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(200, {"ok": False, "error": "A tunnel key can only be authorized from this machine's own dashboard, in person — not through the DHD door. Revoking works the same way: at the machine."})
+                return
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            action = "revoke" if str(data.get("action") or "") == "revoke" else "authorize"
+            ms_now = mesh_settings(cfg)
+            peer = next((p for p in ms_now["borrow"]["peers"] if p["nodeId"] == target), None)
+            if peer is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if not (peer.get("tunnelPublicKey") or ""):
+                self._send(200, {"ok": False, "error": "That machine's card carries no tunnel key — it was minted before the managed backup route, or by an older build. Re-share its card from its Mesh page and pair it again, and the key arrives with the card."})
+                return
+            ok, sentence = mesh_tunnel_authorize(peer["tunnelPublicKey"], target, action, ms_now["port"])
+            self._send(200, {"ok": ok, "message": sentence, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/settings/updater-channel":
             # The Updater's channel switch (build .83): persist
@@ -19380,14 +20498,14 @@ if __name__ == "__main__":
         # persisted card now reconciles with the live state.
         dhd_resume_enable_operation()
     # Navi Mesh (Ring 1; dedicated door since build .86): if Mesh
-    # is on, open its dedicated TLS listener on the mesh port —
+    # is on, open its dedicated TLS door on its listen ports —
     # always, whether or not DHD is on. Mesh never rides the DHD
     # door; the proxy refuses /mesh/* outright.
     if mesh_settings(cfg)["enabled"]:
         mesh_start_listener()
         if MESH_SERVERS:
-            print("Navi Mesh is ON: the dedicated Mesh door listens on port "
-                  + str(mesh_settings(cfg)["port"]) + " (TLS, fingerprint-pinned).", flush=True)
+            print("Navi Mesh is ON: the dedicated Mesh door listens on ports "
+                  + ", ".join(str(p) for p in mesh_settings(cfg)["listenPorts"]) + " (TLS, fingerprint-pinned).", flush=True)
         else:
             print("Navi Mesh is ON but its dedicated door did not open — see the Mesh page.", flush=True)
     server.serve_forever()
