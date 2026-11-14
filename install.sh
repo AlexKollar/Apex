@@ -893,6 +893,58 @@ else
   echo "          will run, but the Center stays dark until Apex is installed from a copy"
   echo "          of the sources that carries intel.py (the release zip does)."
 fi
+# Awareness engines (0.2.0e Build 9, #192): the bridge imports
+# wire.py from beside itself — the news wire, the first family of
+# the awareness home — so the engine lands in the install root
+# next to bridge.py, the Guardian's way. Build 7 put the engine
+# in the package but never gave this installer its copy block, so
+# every install.sh install ran with the wire dark behind the
+# bridge's honest "missing from this install" sentence while the
+# zip it came from carried the file all along (#192, field-found).
+# A copy of the sources missing it must not abort the install:
+# say so in plain words and carry on; the bridge runs with the
+# wire dark (its inert fallback) until Apex is installed from a
+# tree that carries the engine.
+if [ -f wire.py ]; then
+  $SUDO cp wire.py "$INSTALL_DIR/wire.py"
+else
+  echo "    note: the news wire engine file (wire.py) is missing from this copy of the"
+  echo "          sources. The install continues without it — the bridge will run, but"
+  echo "          the news wire stays dark until Apex is installed from a copy of the"
+  echo "          sources that carries wire.py (the release zip does)."
+fi
+# The CTF board's engine (0.2.0e Build 9, #192): the bridge
+# imports ctf.py from beside itself, so the engine lands in the
+# install root next to bridge.py, the Guardian's way — the same
+# Build 7 hole as wire.py above, closed in the same pass. A copy
+# of the sources missing it must not abort the install: say so
+# in plain words and carry on; the bridge runs with the CTF
+# board dark (its inert fallback) until Apex is installed from
+# a tree that carries the engine.
+if [ -f ctf.py ]; then
+  $SUDO cp ctf.py "$INSTALL_DIR/ctf.py"
+else
+  echo "    note: the CTF board engine file (ctf.py) is missing from this copy of the"
+  echo "          sources. The install continues without it — the bridge will run, but"
+  echo "          the CTF board stays dark until Apex is installed from a copy of the"
+  echo "          sources that carries ctf.py (the release zip does)."
+fi
+# The bounty board's engine (0.2.0e Build 9, #192): the bridge
+# imports bounties.py from beside itself, so the engine lands
+# in the install root next to bridge.py, the Guardian's way —
+# the same Build 7 hole as wire.py above, closed in the same
+# pass. A copy of the sources missing it must not abort the
+# install: say so in plain words and carry on; the bridge runs
+# with the bounty board dark (its inert fallback) until Apex is
+# installed from a tree that carries the engine.
+if [ -f bounties.py ]; then
+  $SUDO cp bounties.py "$INSTALL_DIR/bounties.py"
+else
+  echo "    note: the bounty board engine file (bounties.py) is missing from this copy"
+  echo "          of the sources. The install continues without it — the bridge will run,"
+  echo "          but the bounty board stays dark until Apex is installed from a copy of"
+  echo "          the sources that carries bounties.py (the release zip does)."
+fi
 # The VERSION file is the app's single source of truth for its own
 # version — the bridge reads it on every /api/status and the Updater
 # compares it against the latest release. It is app code, not

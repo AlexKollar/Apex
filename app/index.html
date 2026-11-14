@@ -1405,7 +1405,12 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federati
 var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"], ["Federation", "Federation"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
-  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Threat Intelligence", "ThreatIntel"], ["CTF Board", "CTFBoard"], ["Vault", "Vault"]] },
+  // Build 9: the Threat Intelligence section wears a new display
+  // name — The Wire — and the CTF Board's separate menu entry is
+  // retired into the CTFs tab inside it (the board's home now).
+  // Display only: the view keys (ThreatIntel, CTFBoard) and every
+  // internal name stay exactly as they were; only the labels moved.
+  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["The Wire", "ThreatIntel"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
 };
 var NAV_FLAT = ["Chat"];
@@ -1698,8 +1703,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.08";
-var SHIPPED_BUILD_SEQ = 8;
+var BRIDGE_BUILD = "2026-11-13.09";
+var SHIPPED_BUILD_SEQ = 9;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2843,7 +2848,7 @@ function ticTabStrip() {
   return h + "</div>";
 }
 function threatIntelHtml() {
-  var h = "<h3>Threat Intelligence</h3>";
+  var h = "<h3>The Wire</h3>";
   h += "<p style='color:var(--dim)'>The awareness home: the news wire, the Center's CVE picture, the CTF board and the bounty board — each family on its own tab, each carrying the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
   if (CONFIG.backend !== "live") { h += "<div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
   h += ticTabStrip();
@@ -3085,7 +3090,7 @@ function ticCenterHtml(scope) {
   // included). The awareness shell above carries the head.
   var h = "";
   if (intelMsg) h += "<p style='font-size:13px'>" + esc(intelMsg) + "</p>";
-  if (CONFIG.backend !== "live") { h += "<div class='card'>The Threat Intelligence Center works through the live bridge — the store lives in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
+  if (CONFIG.backend !== "live") { h += "<div class='card'>The Wire works through the live bridge — the store lives in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
   if (!intelState) {
     if (!intelFetching) refreshIntel();
     return h + "<div class='card'>Gathering the picture…</div>";
@@ -4515,9 +4520,9 @@ var DOC_PAGES = [
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
     "<div class='doc-sec'><h4>The report export</h4>" +
   "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
-  { id: "threat-intelligence", title: "Threat Intelligence — the Center", related: ["case-files", "mesh"], html:
+  { id: "threat-intelligence", title: "The Wire — the Center", related: ["case-files", "mesh"], html:
     "<div class='doc-sec'><h4>What the Center is</h4>" +
-  "<p><b>Threat Intelligence</b> (in the menu's <b>Apex | Apps</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
+  "<p><b>The Wire</b> (in the menu's <b>Apex | Apps</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
   "<p>The page is <b>freshness first</b>: a strip up top says who gathered the picture and how old every source is — <i>fresh</i> under 12 hours, <i>aging</i> under 48, <i>stale</i> beyond — because a stale picture presented as fresh is worse than none. Below it, the <b>triage queue</b> (your matches first, then what's newly exploited, then the loudest new disclosures), <b>the record</b> (one CVE in full: description, products, references, EPSS history), and <b>Navi's brief</b> — the same standing summary she carries into chat. On a phone the arrangement is its own: one column, brief first.</p></div>" +
     "<div class='doc-sec'><h4>Matching — declared, local, honest</h4>" +
   "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>words from your open cases</b>. A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case words are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
@@ -4531,7 +4536,7 @@ var DOC_PAGES = [
   "<p><b>Ask her “what's the sitch.”</b> The wire, the CTF board and the bounty board ride her chat context as one bounded briefing, staleness included. Asked for the situation, she gives the facts first — each with its source and date — and then, clearly separated under <b>“My take,”</b> her own assessment: what matters, what is noise, what she would watch. The take is opinion and reads as opinion, never dressed as reporting; and she carries uncertainty the same way — confirmed, unknown, and speculated are three different things.</p>" +
   "<p><b>Reading, in the app.</b> Tapping a headline tries the <b>in-app reader</b> first: the bridge fetches that one article (on demand, nothing prefetched in bulk, and only for links the wire itself is carrying) and extracts a readable view — the story's text, its furniture stripped — presented with the source, the date, and an <b>Open original</b> button always present. When extraction cannot honestly produce the article — a paywall, a script-built page, a non-article — the reader says which, and falls back: on desktop the original opens in a <b>new tab</b>; on mobile it opens the article proper. A failed extraction is never dressed up as the article.</p></div>" +
     "<div class='doc-sec'><h4>The CTF board, and the bounty board (Build 7)</h4>" +
-  "<p><b>CTFs</b> (its own tab, and the menu's <b>CTF Board</b> item lands there) pulls the <b>CTFtime API</b> into a local cache on an hourly cadence. Cards carry everything the listing gives — name, start and finish <b>in your timezone</b>, format (Jeopardy / Attack-Defense), online or on-site with its location, weight, restrictions, organizers, logo, description, prizes where listed, and the CTFtime link — split into <b>Running now</b> and <b>Upcoming</b>; past events fall off. Ask her what's on or what's worth playing and she answers from the board, citing the listing.</p>" +
+  "<p><b>CTFs</b> (its own tab in The Wire — the board's home since Build 9 retired its separate menu entry) pulls the <b>CTFtime API</b> into a local cache on an hourly cadence. Cards carry everything the listing gives — name, start and finish <b>in your timezone</b>, format (Jeopardy / Attack-Defense), online or on-site with its location, weight, restrictions, organizers, logo, description, prizes where listed, and the CTFtime link — split into <b>Running now</b> and <b>Upcoming</b>; past events fall off. Ask her what's on or what's worth playing and she answers from the board, citing the listing.</p>" +
   "<p><b>Bounties</b> lists public bug-bounty programs from <b>ProjectDiscovery's Chaos index</b> — the public, keyless JSON of public programs — cached locally and re-read every six hours: program name, platform, the program link, whether it <b>pays bounties</b>, and its <b>scope size</b> in the Chaos dataset. The index does not state safe-harbor terms, so the cards say exactly that rather than guessing. <b>Disclosed reports</b> ship as a named empty section: HackerOne's hacktivity has no keyless feed (it needs an account), so the tab says so instead of inventing rows. Same posture as everything on this page: outbound-only, local cache, named staleness, a dead source is a sentence. She can speak to bounties in chat from the store, same as CTFs.</p></div>"
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
@@ -4660,7 +4665,7 @@ var DOC_PAGES = [
   "<p>Everything that makes the node <i>itself</i> lives in one named volume, <span class='mono'>apex-data</span>, mounted at <span class='mono'>/opt/navi-apex</span>: the identity, the config, the chats and Case Files, the chips and knowledge packs, the model binary. Replacing the container never costs the node who it is — the installer's preservation law, in container form. Updates ride Apex's own updater, exactly as on bare metal.</p>" +
   "<p><b>The Docker card warning:</b> inside a container there is <b>no physical LAN interface to harvest</b> addresses from — the card generator reads plumbing, not truth (the same reason it refuses a bare-metal card when every interface is a dead end). So the <b>declared public endpoint is the honest address</b> for a container node: set it <b>before</b> minting cards for anyone — as the compose file's <span class='mono'>APEX_PUBLIC_ENDPOINT</span> (for example <span class='mono'>mesh.example.org:8443</span>), or later on the Mesh page, knowing a changed endpoint means re-sharing the card. An endpoint can name any of the door's numbers — 8443 is the face that travels best through other people's networks.</p></div>" +
     "<div class='doc-sec'><h4>What the container does not do</h4>" +
-  "<p>No desktop window and no voice engines in this image — it is a node, run headless and driven through DHD. GitHub sign-in, Quick Sync, chips, Guardian, the Threat Intelligence Center, and the Mesh (pairing, borrowing, lending, the backup route, and relay) work as they do on bare metal, because it is the same bridge throughout.</p></div>" },
+  "<p>No desktop window and no voice engines in this image — it is a node, run headless and driven through DHD. GitHub sign-in, Quick Sync, chips, Guardian, The Wire, and the Mesh (pairing, borrowing, lending, the backup route, and relay) work as they do on bare metal, because it is the same bridge throughout.</p></div>" },
   { id: "guardian", title: "Guardian — protecting Navi's headroom", related: ["mesh", "settings", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What the Guardian is</h4>" +
   "<p>The <b>Guardian</b> is Apex's system monitor: a quiet engine in the bridge that watches this machine's memory and Navi's own footprint, and protects the headroom she needs to answer well. A machine can have free RAM on paper and still starve her — another program balloons, a browser eats the reserve, a generation slows to a crawl — and the Guardian is the part of Apex that notices, keeps score, and acts before her replies pay for someone else's appetite.</p>" +
@@ -5567,10 +5572,10 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-Threat Intelligence", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD", Federation: "nav-child-systems-Federation" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD", Federation: "nav-child-systems-Federation" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-systems-Federation", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Threat Intelligence", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-systems-Federation", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";

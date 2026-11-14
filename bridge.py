@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-13.08"
+BRIDGE_BUILD = "2026-11-13.09"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 8
+SHIPPED_BUILD_SEQ = 9
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3400,7 +3400,7 @@ class _IntelUnavailable:
         pass
 
     def state(self):
-        return {"ok": False, "error": "intel.py is missing from this install — the Threat Intelligence Center is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
+        return {"ok": False, "error": "intel.py is missing from this install — The Wire is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
 
     def brief_block(self):
         return ""
@@ -3412,7 +3412,7 @@ class _IntelUnavailable:
         return ""
 
     def lookup(self, _query):
-        return "The Threat Intelligence Center is unavailable on this install (intel.py missing)."
+        return "The Wire is unavailable on this install (intel.py missing)."
 
     def build_digest(self):
         return {}
@@ -21654,7 +21654,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     _ireply = INTEL.lookup(_iquery)
                 except Exception:
-                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → Threat Intelligence) shows its state."
+                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → The Wire) shows its state."
                 payload = {
                     "reply": _ireply,
                     "exec": None,
@@ -23027,7 +23027,7 @@ class Handler(BaseHTTPRequestHandler):
                     "- **Known-exploited (CISA KEV):** " + ("yes — remediation due " + (item.get("kevDue") or "?") if item.get("kev") else "no"),
                     "- **Products (CPE):** " + (", ".join(item.get("products") or []) or "—"),
                     "",
-                    "Filed from the Threat Intelligence Center — " + cid
+                    "Filed from The Wire — " + cid
                     + ", per the intel digest generated " + (gen_at or "at an unstamped time")
                     + ((" by " + coll) if coll else "")
                     + ". Sources: NVD / CISA KEV / EPSS, as stamped in the Center.",
