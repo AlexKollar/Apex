@@ -1,0 +1,52 @@
+# Apex — the container node (0.2.0e Build 7).
+#
+#   docker compose up
+#
+# …then read the first-boot output: a boxed banner prints the
+# node's DHD access code exactly once. Browse to
+# https://<this computer's address> (the DHD door, port 443),
+# type the code, name your device, and you are in.
+#
+# The door is ON from the first boot — that is the container's
+# posture, chosen because a container has no desk to sit at.
+# On-by-default never means open: the code is still the only
+# key, and the trusted-device list is the roster of who got in.
+services:
+  apex:
+    # The published image (per release / Edge build). Until the
+    # first publish lands, `build:` below builds the same image
+    # from this tree — comment the image line out or leave it;
+    # compose prefers the local build when both are present and
+    # the image is absent.
+    image: ghcr.io/alexkollar/apex:latest
+    build: .
+    container_name: apex
+    restart: unless-stopped
+    environment:
+      # The node's declared public endpoint — the address its
+      # pairing card carries for machines beyond your networks,
+      # as host:port on any of the door's numbers (8443 travels
+      # best). A container has no physical LAN interface to
+      # harvest, so this is the honest address: set it BEFORE
+      # minting cards for anyone. Changeable later on the Mesh
+      # page, at the price of re-sharing the card.
+      APEX_PUBLIC_ENDPOINT: ""
+      # Optional: the node's Mesh display name. Settable later
+      # on the Mesh page.
+      APEX_NODE_NAME: ""
+    ports:
+      # The Mesh door — one door, one certificate, every number.
+      - "8765:8765"
+      - "8443:8443"
+      - "2475:2475"
+      # The DHD door, and its certificate machinery.
+      - "443:443"
+      - "80:80"
+    volumes:
+      # Everything that makes the node itself: identity, config,
+      # chats, chips, the model binary. Replacing the container
+      # never costs the node who it is.
+      - apex-data:/opt/navi-apex
+
+volumes:
+  apex-data:

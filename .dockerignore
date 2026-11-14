@@ -1,0 +1,16 @@
+# Build-context hygiene for the Apex image. The never-bake list
+# is structural, not conventional: a node's identity and its
+# door material must be minted on the machine that runs it, so
+# they are excluded from the context even if a working tree
+# happens to carry them.
+__pycache__/
+*.pyc
+*.log
+bridge.pid
+navi.llamafile
+updates/
+config/mesh/
+config/dhd/
+config/github-auth.json
+FIRST-BOOT.txt
+.git/

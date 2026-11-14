@@ -1398,7 +1398,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater"
 var NAV_GROUPS = {
   systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
-  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Threat Intelligence", "ThreatIntel"], ["Vault", "Vault"]] },
+  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Threat Intelligence", "ThreatIntel"], ["CTF Board", "CTFBoard"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
 };
 var NAV_FLAT = ["Chat"];
@@ -1688,8 +1688,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.05";
-var SHIPPED_BUILD_SEQ = 5;
+var BRIDGE_BUILD = "2026-11-13.07";
+var SHIPPED_BUILD_SEQ = 7;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -1889,7 +1889,7 @@ var githubApplied = null;    // last import apply answer
 function ghSetMsg(text, isError) { githubMsg = text || ""; githubError = !!isError; }
 var badgeSyncBusy = false;   // a badge-sync pull is in flight (Build 13, #136)
 function mockGithubLoad() {
-  var d = { repoUrl: NAVI_REPO_URL, issuesUrl: NAVI_REPO_URL + "/issues", clientId: "", clientIdConfigured: false, signedIn: false, login: "", backupRepo: "navi-backup", backupPrivate: true, backupItems: GH_ITEMS.map(function (i) { return i.id; }), intervalDays: 1, lastBackupAt: null, lastBackupFileCount: null, lastBackupResult: "", lastImportAt: null, lastImportResult: "", hasBackup: false };
+  var d = { repoUrl: NAVI_REPO_URL, issuesUrl: NAVI_REPO_URL + "/issues", clientId: "Ov23lijV9Q5ERi6nIAgG", clientIdConfigured: true, signedIn: false, login: "", backupRepo: "navi-backup", backupPrivate: true, backupItems: GH_ITEMS.map(function (i) { return i.id; }), intervalDays: 1, lastBackupAt: null, lastBackupFileCount: null, lastBackupResult: "", lastImportAt: null, lastImportResult: "", hasBackup: false };
   try { var raw = localStorage.getItem("navi.github"); if (raw) { var p = JSON.parse(raw); for (var k in d) if (p[k] !== undefined) d[k] = p[k]; } } catch (e) {}
   d.backupItems = ghWithCore(d.backupItems);
   return d;
@@ -2071,40 +2071,6 @@ function ghSignOut() {
   ghStopPolling(); githubDevice = null; githubPreview = null; githubApplied = null;
   if (CONFIG.backend !== "live") { githubState.signedIn = false; githubState.login = ""; mockGithubSave(); ghSetMsg("Signed out. Navi herself never needed the sign-in.", false); render(); return; }
   ghPost("/api/github/signout", {}, function () { githubState = null; ghSetMsg("Signed out — the token file is deleted. Navi herself never needed the sign-in.", false); fetchGithub(true); });
-}
-function ghSaveClientId() {
-  var inp = document.getElementById("gh-client-id");
-  var id = inp ? inp.value.trim() : "";
-  if (CONFIG.backend !== "live") { githubState.clientId = id; githubState.clientIdConfigured = !!id; mockGithubSave(); ghSetMsg(id ? "Client ID saved (simulated state — mock mode)." : "Client ID cleared.", false); render(); return; }
-  ghPost("/api/github/client-id", { client_id: id }, function (j) { githubState = j; ghSetMsg(id ? "Client ID saved — sign-in can start now." : "Client ID cleared.", false); render(); });
-}
-function ghRuntimeSave() {
-  // Build 2 (#173): the Apex Runtime credential — a secret, so it
-  // posts to its own endpoint and the bridge stores it in the
-  // auth store (0600), never in config. The answer is the status
-  // payload: state and token hint only, never the token back.
-  var inp = document.getElementById("gh-runtime-token");
-  var token = inp ? inp.value.trim() : "";
-  if (!token) { ghSetMsg("Paste the runtime token first.", true); render(); return; }
-  if (CONFIG.backend !== "live") {
-    githubState.identities = githubState.identities || { operator: { signedIn: githubState.signedIn, login: githubState.login, scopesNote: "Acts as you. Used by backup and import — nothing else." }, runtime: { configured: false, tokenHint: "", savedAt: null, scopesNote: "The app's own read credential. Used by the Updater, the NUR, and the GitHub section's live reads — reads only, never writes.", buckets: { core: null, search: null } }, automation: { note: "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design." } };
-    githubState.identities.runtime.configured = true;
-    githubState.identities.runtime.tokenHint = "…" + token.slice(-4);
-    githubState.identities.runtime.savedAt = Math.floor(Date.now() / 1000);
-    mockGithubSave(); ghSetMsg("Runtime token saved (simulated state — mock mode).", false); render(); return;
-  }
-  ghPost("/api/github/runtime", { token: token }, function (j) {
-    if (j && j.ok === false) { ghSetMsg(j.error || "The runtime token was refused.", true); if (j.github) githubState = j.github; }
-    else { githubState = j; ghSetMsg("Runtime token saved — the app's own reads ride it from here.", false); }
-    render();
-  });
-}
-function ghRuntimeClear() {
-  if (CONFIG.backend !== "live") {
-    if (githubState.identities && githubState.identities.runtime) { githubState.identities.runtime.configured = false; githubState.identities.runtime.tokenHint = ""; githubState.identities.runtime.savedAt = null; }
-    mockGithubSave(); ghSetMsg("Runtime token removed (simulated state — mock mode). The app's reads fall back to the unauthenticated allowance.", false); render(); return;
-  }
-  ghPost("/api/github/runtime/clear", {}, function (j) { githubState = j; ghSetMsg("Runtime token removed — the file is deleted. The app's reads fall back to the unauthenticated allowance, and their failures will say so.", false); render(); });
 }
 function ghBucketLine(label, b) {
   if (!b) return "<p class='mono' style='color:var(--dim);font-size:11px'>" + label + " — no GitHub response has reported limits yet</p>";
@@ -2817,9 +2783,297 @@ function intelItemHtml(it, sel) {
   if (it.published) meta += "· " + esc(String(it.published).slice(0, 10));
   return "<button class='ghost tic-qitem' data-ti-sel='" + esc(it.id) + "'" + (sel ? " style='border-color:var(--cy)'" : "") + "><b style='color:" + caseSevColor(intelSev(it.cvss)) + "'>" + esc(it.id) + "</b>" + badges + "<br><span style='font-size:13px'>" + esc(it.title || "") + "</span><br><span class='mono' style='color:var(--dim);font-size:11px'>" + esc(meta) + "</span></button>";
 }
+// ---------- Awareness home (0.2.0e Build 7: #188 / #189 / Add. 4 / Add. 5) ----------
+// The Threat Intelligence Center is the awareness home. Its
+// landing is a Dashboard — one glance card per family, each
+// with its freshness stamp, each opening its full view — and
+// every family gets its own tab carrying as much data as the
+// source gives: News (the wire), CVEs (the Center's records),
+// CTFs (the board), Bounties, and the Center itself. Articles
+// open in the in-app reader where extraction works; where it
+// cannot, the fallback is named, never faked.
+var intelTab = "dashboard";
+var wireState = null, wireFetching = false, wireMsg = "";
+var ctfState = null, ctfFetching = false, ctfMsg = "";
+var bountyState = null, bountyFetching = false, bountyMsg = "";
+var wireReader = null, wireReaderBusy = false;
+function refreshWire() {
+  if (wireFetching) return;
+  wireFetching = true;
+  fetch("/api/wire").then(function (r) { return r.json(); }).then(function (j) { wireState = j; wireFetching = false; if (view === "ThreatIntel" || view === "CTFBoard") render(); }).catch(function () { wireFetching = false; });
+}
+function refreshCtf() {
+  if (ctfFetching) return;
+  ctfFetching = true;
+  fetch("/api/ctf").then(function (r) { return r.json(); }).then(function (j) { ctfState = j; ctfFetching = false; if (view === "ThreatIntel" || view === "CTFBoard") render(); }).catch(function () { ctfFetching = false; });
+}
+function refreshBounties() {
+  if (bountyFetching) return;
+  bountyFetching = true;
+  fetch("/api/bounties").then(function (r) { return r.json(); }).then(function (j) { bountyState = j; bountyFetching = false; if (view === "ThreatIntel" || view === "CTFBoard") render(); }).catch(function () { bountyFetching = false; });
+}
+function ticFresh(ts) {
+  if (!ts) return "never fetched";
+  var ageMin = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  if (ageMin < 1) return "fetched under a minute ago";
+  if (ageMin < 90) return "fetched " + ageMin + " min ago";
+  return "fetched " + Math.round(ageMin / 6) / 10 + " h ago";
+}
+function ticLocal(ts) {
+  if (!ts) return "";
+  try { return new Date(ts * 1000).toLocaleString(); } catch (e) { return ""; }
+}
+var TIC_TABS = [["dashboard", "Dashboard"], ["news", "News"], ["cves", "CVEs"], ["ctfs", "CTFs"], ["bounties", "Bounties"], ["center", "Center"]];
+function ticTabStrip() {
+  var h = "<div class='row' style='gap:6px;flex-wrap:wrap;margin:10px 0'>";
+  TIC_TABS.forEach(function (pair) {
+    var on = intelTab === pair[0];
+    h += "<button class='" + (on ? "act" : "ghost") + "' data-tic-tab='" + pair[0] + "' style='min-height:40px'" + (on ? " aria-current='true'" : "") + ">" + pair[1] + "</button>";
+  });
+  return h + "</div>";
+}
 function threatIntelHtml() {
   var h = "<h3>Threat Intelligence</h3>";
-  h += "<p style='color:var(--dim)'>The picture Navi reasons with: known-exploited vulnerabilities, fresh disclosures scored by likelihood, matched against your declared stack and your open cases. Public feeds only, pulled on a cadence — and every number here carries the stamp of when its source last answered. She has the same brief in chat; ask her <span class='mono'>intel: &lt;product or CVE&gt;</span> any time.</p>";
+  h += "<p style='color:var(--dim)'>The awareness home: the news wire, the Center's CVE picture, the CTF board and the bounty board — each family on its own tab, each carrying the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
+  if (CONFIG.backend !== "live") { h += "<div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
+  h += ticTabStrip();
+  if (intelTab === "news") h += wireTabHtml();
+  else if (intelTab === "cves") h += ticCenterHtml("cves");
+  else if (intelTab === "ctfs") h += ctfTabHtml();
+  else if (intelTab === "bounties") h += bountiesTabHtml();
+  else if (intelTab === "center") h += ticCenterHtml("center");
+  else h += ticDashboardHtml();
+  if (wireReader) h += wireReaderHtml();
+  return h;
+}
+function ticDashboardHtml() {
+  var h = "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px'>";
+  // -- Top news (the wire)
+  h += "<div class='card'><h3 style='margin-top:0'>Top news</h3>";
+  if (!wireState) { if (!wireFetching) refreshWire(); h += "<p style='color:var(--dim)'>Gathering the wire…</p>"; }
+  else if (wireState.ok === false) h += "<p style='color:#f87171'>" + esc(wireState.error || "The wire is unavailable.") + "</p>";
+  else {
+    h += "<p class='mono' style='font-size:11px;color:var(--dim)'>" + esc(wireState.staleness || "") + "</p>";
+    var news = (wireState.items || []).filter(function (it) { return it.kind === "news"; }).slice(0, 4);
+    if (!news.length) h += "<p style='color:var(--dim)'>No headlines yet — the first fetch brings them.</p>";
+    news.forEach(function (it) { h += "<div style='margin-top:6px'><button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;min-height:40px'>" + esc(it.title) + "</button><div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + "</div></div>"; });
+  }
+  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='news' style='min-height:40px'>Open the wire</button></div></div>";
+  // -- Newest CVEs (the Center)
+  h += "<div class='card'><h3 style='margin-top:0'>Newest CVEs</h3>";
+  if (!intelState) { if (!intelFetching) refreshIntel(); h += "<p style='color:var(--dim)'>Gathering the picture…</p>"; }
+  else if (intelState.ok === false) h += "<p style='color:#f87171'>" + esc(intelState.error || "The Center is unavailable.") + "</p>";
+  else {
+    h += "<p class='mono' style='font-size:11px;color:var(--dim)'>" + esc(intelState.kevTotal || 0) + " known-exploited · " + esc(intelState.matchedCount || 0) + " matched to you</p>";
+    var q = (intelState.queue || []).slice(0, 4);
+    if (!q.length) h += "<p style='color:var(--dim)'>The queue is empty — pull from the CVEs tab, or let the cadence work.</p>";
+    q.forEach(function (it) { h += "<div style='margin-top:6px'><b style='color:" + caseSevColor(intelSev(it.cvss)) + "'>" + esc(it.id) + "</b> <span style='font-size:13px'>" + esc(it.title || "") + "</span></div>"; });
+  }
+  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='cves' style='min-height:40px'>Open the CVEs</button></div></div>";
+  // -- Next CTFs (the board)
+  h += "<div class='card'><h3 style='margin-top:0'>Next CTFs</h3>";
+  if (!ctfState) { if (!ctfFetching) refreshCtf(); h += "<p style='color:var(--dim)'>Gathering the board…</p>"; }
+  else if (ctfState.ok === false) h += "<p style='color:#f87171'>" + esc(ctfState.error || "The board is unavailable.") + "</p>";
+  else {
+    h += "<p class='mono' style='font-size:11px;color:var(--dim)'>" + esc(ctfState.staleness || "") + "</p>";
+    var evs = (ctfState.running || []).concat(ctfState.upcoming || []).slice(0, 3);
+    if (!evs.length) h += "<p style='color:var(--dim)'>Nothing on the board in the window.</p>";
+    evs.forEach(function (e) { h += "<div style='margin-top:6px'><b>" + esc(e.title) + "</b><div class='mono' style='font-size:11px;color:var(--dim)'>" + (e.start * 1000 <= Date.now() ? "running now · ends " + esc(ticLocal(e.finish)) : "starts " + esc(ticLocal(e.start))) + " · " + esc(e.format || "") + "</div></div>"; });
+  }
+  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='ctfs' style='min-height:40px'>Open the board</button></div></div>";
+  // -- Bounties
+  h += "<div class='card'><h3 style='margin-top:0'>Bounties</h3>";
+  if (!bountyState) { if (!bountyFetching) refreshBounties(); h += "<p style='color:var(--dim)'>Gathering the programs…</p>"; }
+  else if (bountyState.ok === false) h += "<p style='color:#f87171'>" + esc(bountyState.error || "The bounty board is unavailable.") + "</p>";
+  else {
+    h += "<p class='mono' style='font-size:11px;color:var(--dim)'>" + esc(bountyState.staleness || "") + "</p>";
+    h += "<p style='font-size:13px'>" + esc((bountyState.programs || []).length) + " public programs · " + esc(bountyState.payingCount || 0) + " bounty-paying (ProjectDiscovery Chaos).</p>";
+    (bountyState.programs || []).filter(function (p) { return p.isNew; }).slice(0, 3).forEach(function (p) { h += "<div style='margin-top:4px'><span class='mono' style='font-size:11px;color:#34d399'>NEW</span> <b>" + esc(p.name) + "</b> <span style='color:var(--dim);font-size:12px'>" + esc(p.platform || "") + "</span></div>"; });
+  }
+  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='bounties' style='min-height:40px'>Open the bounties</button></div></div>";
+  return h + "</div>";
+}
+function wireTabHtml() {
+  var h = "";
+  if (wireMsg) h += "<p style='font-size:13px'>" + esc(wireMsg) + "</p>";
+  if (!wireState) { if (!wireFetching) refreshWire(); return h + "<div class='card'>Gathering the wire…</div>"; }
+  var s = wireState;
+  if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The wire is unavailable.") + "</div>";
+  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>The wire</b><button class='act' id='wire-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching…" : "Fetch now") + "</button></div>";
+  h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
+  h += "<div class='tic-fresh'>";
+  (s.sources || []).forEach(function (src) {
+    h += "<span class='tic-chip'><span style='color:" + (src.error ? "#f87171" : "#34d399") + "'>●</span>&nbsp;" + esc(src.label) + " · " + (src.error ? "not answering" : ticFresh(src.lastOk)) + "</span>";
+  });
+  h += "</div>";
+  (s.sources || []).forEach(function (src) { if (src.error) h += "<p style='color:#f87171;font-size:12px;margin-top:6px'>" + esc(src.error) + "</p>"; });
+  h += "<div class='row' style='margin-top:8px;gap:14px;align-items:center;flex-wrap:wrap'><label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='wire-enabled'" + (s.enabled ? " checked" : "") + "> Wire enabled</label>";
+  h += "<label style='font-size:12px;color:var(--dim)'>Fetch every <select id='wire-interval' style='min-height:40px'>" + [15, 30, 60, 120].map(function (n) { return "<option value='" + n + "'" + (Number(s.intervalMinutes) === n ? " selected" : "") + ">" + n + " min</option>"; }).join("") + "</select></label>";
+  h += "<label style='font-size:12px;color:var(--dim)'>Keep <select id='wire-retention' style='min-height:40px'>" + [3, 7, 14, 30].map(function (n) { return "<option value='" + n + "'" + (Number(s.retentionDays) === n ? " selected" : "") + ">" + n + " days</option>"; }).join("") + "</select></label>";
+  h += "<button class='ghost' id='wire-save' style='min-height:40px'>Save wire settings</button></div></div>";
+  var items = s.items || [];
+  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>The wire is empty — the first fetch brings the headlines. A feed that does not answer is named above, never silently missing.</p></div>";
+  items.slice(0, 60).forEach(function (it) {
+    h += "<div class='card' style='margin-top:10px'>";
+    if (it.kind === "kev") h += "<span class='mono' style='font-size:11px;color:#f87171'>KEV ADDITION</span> ";
+    else if (it.kind === "cve") h += "<span class='mono' style='font-size:11px;color:#f5b544'>NEW CVE</span> ";
+    if (it.developing) h += "<span class='mono' style='font-size:11px;color:#34d399'>DEVELOPING</span> ";
+    h += "<button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(it.title) + "</b></button>";
+    h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + "</div>";
+    if (it.excerpt) h += "<p style='font-size:13px;margin-top:6px'>" + esc(it.excerpt) + "</p>";
+    h += "</div>";
+  });
+  return h;
+}
+function openWireReader(link) {
+  if (wireReaderBusy) return;
+  wireReaderBusy = true;
+  fetch("/api/wire/article?url=" + encodeURIComponent(link)).then(function (r) { return r.json(); }).then(function (j) {
+    wireReaderBusy = false;
+    if (j && j.ok) { wireReader = j; render(); return; }
+    // The named fallback (Addition 4): a failed extraction is
+    // never dressed as the article — desktop opens the
+    // original in a new tab; mobile opens the article proper.
+    var sentence = (j && j.sentence) || "The reader could not extract that article.";
+    if (window.innerWidth <= 760) { wireMsg = sentence; window.location.href = link; return; }
+    wireMsg = sentence + " Opened the original in a new tab instead.";
+    window.open(link, "_blank");
+    render();
+  }).catch(function () {
+    wireReaderBusy = false;
+    wireMsg = "The reader could not reach the bridge for that article.";
+    render();
+  });
+}
+function wireReaderHtml() {
+  var j = wireReader, it = j.item || {};
+  var h = "<div id='wire-reader-shade' style='position:fixed;inset:0;z-index:118;background:rgba(0,0,0,.45)'></div>";
+  h += "<div id='wire-reader' role='dialog' aria-label='Article reader' style='position:fixed;z-index:119;left:50%;top:50%;transform:translate(-50%,-50%);width:min(680px,calc(100vw - 24px));max-height:86vh;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.45);padding:18px 20px;transition:opacity var(--motion-med) var(--motion-ease),transform var(--motion-med) var(--motion-ease)'>";
+  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</div>";
+  h += "<h3 style='margin:8px 0'>" + esc(j.title || it.title || "Article") + "</h3>";
+  (j.paragraphs || []).forEach(function (p) { h += "<p style='font-size:14px;line-height:1.55;margin-top:8px'>" + esc(p) + "</p>"; });
+  h += "<div class='row' style='margin-top:14px;gap:8px'><a class='act' href='" + esc(it.link || "#") + "' target='_blank' rel='noopener' style='min-height:40px;text-decoration:none;display:inline-flex;align-items:center;padding:0 14px'>Open original</a><button class='ghost' id='wire-reader-close' style='min-height:40px'>Close</button></div>";
+  return h + "</div>";
+}
+function ctfEventHtml(e) {
+  var h = "<div class='card' style='margin-top:10px'><div style='display:flex;gap:12px;align-items:flex-start'>";
+  if (e.logo) h += "<img src='" + esc(e.logo) + "' alt='' style='width:44px;height:44px;object-fit:contain;border-radius:8px;background:var(--panel2)'>";
+  h += "<div style='flex:1'><b style='font-size:15px'>" + esc(e.title) + "</b>";
+  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(e.format || "format unlisted") + " · " + (e.onsite ? "on-site · " + esc(e.location || "") : "online") + (e.weight ? " · weight " + esc(e.weight) : "") + (e.restrictions ? " · " + esc(e.restrictions) : "") + "</div>";
+  h += "<div class='mono' style='font-size:12px;margin-top:2px'>" + esc(ticLocal(e.start)) + " → " + esc(ticLocal(e.finish)) + " <span style='color:var(--dim)'>(your timezone)</span></div>";
+  if (e.organizers && e.organizers.length) h += "<div style='font-size:12px;color:var(--dim);margin-top:2px'>by " + esc(e.organizers.join(", ")) + "</div>";
+  if (e.description) h += "<p style='font-size:13px;margin-top:6px'>" + esc(e.description) + "</p>";
+  if (e.prizes) h += "<p style='font-size:13px;margin-top:6px'><b>Prizes:</b> " + esc(e.prizes) + "</p>";
+  h += "<div class='row' style='margin-top:8px;gap:8px'>";
+  if (e.ctftimeUrl) h += "<a class='ghost' href='" + esc(e.ctftimeUrl) + "' target='_blank' rel='noopener' style='min-height:36px;text-decoration:none;display:inline-flex;align-items:center;padding:0 12px'>CTFtime listing</a>";
+  if (e.url) h += "<a class='ghost' href='" + esc(e.url) + "' target='_blank' rel='noopener' style='min-height:36px;text-decoration:none;display:inline-flex;align-items:center;padding:0 12px'>Event site</a>";
+  return h + "</div></div></div></div>";
+}
+function ctfTabHtml() {
+  var h = "";
+  if (ctfMsg) h += "<p style='font-size:13px'>" + esc(ctfMsg) + "</p>";
+  if (!ctfState) { if (!ctfFetching) refreshCtf(); return h + "<div class='card'>Gathering the board…</div>"; }
+  var s = ctfState;
+  if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The board is unavailable.") + "</div>";
+  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>The CTF board</b><button class='act' id='ctf-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching…" : "Fetch now") + "</button></div>";
+  h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
+  h += "<label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='ctf-enabled'" + (s.enabled ? " checked" : "") + "> Board enabled</label></div>";
+  h += "<h3>Running now</h3>";
+  if (!s.running || !s.running.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing is running right now.</p></div>";
+  (s.running || []).forEach(function (e) { h += ctfEventHtml(e); });
+  h += "<h3>Upcoming</h3>";
+  if (!s.upcoming || !s.upcoming.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing upcoming in the window the board carries.</p></div>";
+  (s.upcoming || []).slice(0, 30).forEach(function (e) { h += ctfEventHtml(e); });
+  return h;
+}
+function bountiesTabHtml() {
+  var h = "";
+  if (bountyMsg) h += "<p style='font-size:13px'>" + esc(bountyMsg) + "</p>";
+  if (!bountyState) { if (!bountyFetching) refreshBounties(); return h + "<div class='card'>Gathering the programs…</div>"; }
+  var s = bountyState;
+  if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The bounty board is unavailable.") + "</div>";
+  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>Bug bounties — public programs</b><button class='act' id='bounty-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching…" : "Fetch now") + "</button></div>";
+  h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
+  h += "<p style='font-size:13px'>" + esc((s.programs || []).length) + " programs in the Chaos index · " + esc(s.payingCount || 0) + " bounty-paying.</p>";
+  h += "<label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='bounty-enabled'" + (s.enabled ? " checked" : "") + "> Board enabled</label></div>";
+  (s.programs || []).slice(0, 120).forEach(function (p) {
+    h += "<div class='card' style='margin-top:10px'><b style='font-size:15px'>" + esc(p.name) + "</b> ";
+    if (p.isNew) h += "<span class='mono' style='font-size:11px;color:#34d399'>NEW</span> ";
+    h += "<span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.platform || "platform unlisted") + "</span>";
+    h += "<div style='font-size:13px;margin-top:4px'>" + (p.bounty ? "<span style='color:#34d399'>Pays bounties</span>" : "<span style='color:var(--dim)'>No bounty listed</span>")
+      + (p.scopeSize ? " · scope: " + esc(p.scopeSize) + " domains in the Chaos dataset" : "")
+      + " · Safe harbor: not stated by the index</div>";
+    if (p.lastUpdated) h += "<div class='mono' style='font-size:11px;color:var(--dim)'>index updated " + esc(String(p.lastUpdated).slice(0, 10)) + "</div>";
+    h += "<div class='row' style='margin-top:6px'><a class='ghost' href='" + esc(p.link) + "' target='_blank' rel='noopener' style='min-height:36px;text-decoration:none;display:inline-flex;align-items:center;padding:0 12px'>Program page</a></div></div>";
+  });
+  if ((s.programs || []).length > 120) h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>Showing the first 120 of " + esc(s.programs.length) + " — bounty-paying programs sort first.</p>";
+  h += "<div class='card' style='margin-top:12px'><h3 style='margin-top:0'>Disclosed reports</h3>";
+  if (s.reports && s.reports.length) {
+    s.reports.forEach(function (r) { h += "<div style='margin-top:6px'><a href='" + esc(r.link || "#") + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(r.title || "") + "</a> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(r.program || "") + (r.severity ? " · " + esc(r.severity) : "") + "</span></div>"; });
+  } else {
+    h += "<p style='color:var(--dim);font-size:13px'>" + esc(s.reportsSentence || "No disclosed-reports feed is wired.") + "</p>";
+  }
+  return h + "</div>";
+}
+function wireAwareness() {
+  if (view === "CTFBoard" && intelTab !== "ctfs") intelTab = "ctfs";
+  mainEl.querySelectorAll("[data-tic-tab]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-tab"); render(); }; });
+  mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-go"); render(); }; });
+  mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
+  var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
+  bind("wire-reader-close", function () { wireReader = null; render(); });
+  bind("wire-reader-shade", function () { wireReader = null; render(); });
+  bind("wire-pull", function () {
+    intelPost("/api/wire/refresh", {}, function (j) {
+      wireMsg = j && j.ok ? "Fetch started — the wire refreshes when the feeds answer." : ((j && j.error) || "The fetch could not start.");
+      render();
+      setTimeout(function () { refreshWire(); }, 2500);
+    });
+  });
+  bind("wire-save", function () {
+    var en = document.getElementById("wire-enabled");
+    var iv = document.getElementById("wire-interval");
+    var rt = document.getElementById("wire-retention");
+    intelPost("/api/wire/settings", { enabled: en ? en.checked : true, intervalMinutes: iv ? Number(iv.value) : 30, retentionDays: rt ? Number(rt.value) : 7 }, function (j) {
+      wireMsg = j && j.ok ? "Wire settings saved." : ((j && j.error) || "The settings could not be saved.");
+      wireState = null; refreshWire(); render();
+    });
+  });
+  bind("ctf-pull", function () {
+    intelPost("/api/ctf/refresh", {}, function (j) {
+      ctfMsg = j && j.ok ? "Fetch started — the board refreshes when CTFtime answers." : ((j && j.error) || "The fetch could not start.");
+      render();
+      setTimeout(function () { refreshCtf(); }, 2500);
+    });
+  });
+  var ctfEn = document.getElementById("ctf-enabled");
+  if (ctfEn) ctfEn.onchange = function () {
+    intelPost("/api/ctf/settings", { enabled: ctfEn.checked }, function (j) {
+      ctfMsg = j && j.ok ? "Board " + (ctfEn.checked ? "enabled." : "disabled — the board keeps its last fetch and stops polling.") : ((j && j.error) || "The setting could not be saved.");
+      ctfState = null; refreshCtf(); render();
+    });
+  };
+  bind("bounty-pull", function () {
+    intelPost("/api/bounties/refresh", {}, function (j) {
+      bountyMsg = j && j.ok ? "Fetch started — the board refreshes when the index answers." : ((j && j.error) || "The fetch could not start.");
+      render();
+      setTimeout(function () { refreshBounties(); }, 2500);
+    });
+  });
+  var bEn = document.getElementById("bounty-enabled");
+  if (bEn) bEn.onchange = function () {
+    intelPost("/api/bounties/settings", { enabled: bEn.checked }, function (j) {
+      bountyMsg = j && j.ok ? "Board " + (bEn.checked ? "enabled." : "disabled — the board keeps its last fetch and stops polling.") : ((j && j.error) || "The setting could not be saved.");
+      bountyState = null; refreshBounties(); render();
+    });
+  };
+}
+
+function ticCenterHtml(scope) {
+  // scope "cves" renders the CVE regions only (queue + record);
+  // scope "center" renders the whole Center (rail + advisories
+  // included). The awareness shell above carries the head.
+  var h = "";
   if (intelMsg) h += "<p style='font-size:13px'>" + esc(intelMsg) + "</p>";
   if (CONFIG.backend !== "live") { h += "<div class='card'>The Threat Intelligence Center works through the live bridge — the store lives in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
   if (!intelState) {
@@ -2880,6 +3134,7 @@ function threatIntelHtml() {
   } else h += "<p style='color:var(--dim)'>That record is not in the local store.</p>";
   h += "</div></div>";
   // -- the rail: brief, watchlist, collection
+  if (scope !== "cves") {
   h += "<div class='tic-rail'>";
   h += "<div class='card'><h3 style='margin-top:0'>Navi's brief</h3>";
   if (s.brief) h += "<div class='mono' style='font-size:12px;white-space:pre-wrap'>" + esc(s.brief) + "</div>";
@@ -2899,9 +3154,11 @@ function threatIntelHtml() {
   h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' id='ti-fallback'" + (s.fallbackLocal ? " checked" : "") + "> If the collector is unreachable, collect locally</label>";
   h += "<p style='color:var(--dim);font-size:12px'>One collector per Mesh is the design: the digest travels, every node matches locally. A receiver never polls the feeds itself unless the fallback says so.</p>";
   h += "<div class='row' style='margin-top:8px'><button class='act' id='ti-save' style='min-height:44px'>Save collection settings</button></div></div>";
-  h += "</div></div>";
+  h += "</div>";
+  }
+  h += "</div>";
   // -- advisories
-  if (s.advisories && s.advisories.length) {
+  if (scope !== "cves" && s.advisories && s.advisories.length) {
     h += "<div class='card' style='margin-top:12px'><h3 style='margin-top:0'>Latest advisories &amp; reporting</h3>";
     s.advisories.slice(0, 10).forEach(function (a) {
       h += "<div style='margin-top:6px'><a href='" + esc(a.link) + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(a.title) + "</a> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(a.source) + (a.published ? " · " + esc(String(a.published).slice(0, 16)) : "") + "</span></div>";
@@ -2912,6 +3169,7 @@ function threatIntelHtml() {
 }
 function wireThreatIntel() {
   if (!intelState && !intelFetching) refreshIntel();
+  wireAwareness();
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
   bind("ti-pull", function () {
     intelPost("/api/intel/refresh", {}, function (j) {
@@ -4256,7 +4514,16 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Navi's three depths of knowing</h4>" +
   "<p><b>The standing brief</b> rides her chat context on every turn — bounded (roughly 700 tokens), always carrying its freshness stamps, so she answers “what's the picture?” from the store and dates it when she does. <b>Deliberate lookup</b>: type <span class='mono'>intel: openssl</span>, or ask <i>“what do we know about CVE-2024-3094?”</i>, and the answer comes straight from the store without a model round-trip — including when the honest answer is “not in the store.” <b>The seam</b>: name a CVE ID or a watched product in ordinary chat and that record is pulled into her context for that reply only. In a <b>case chat</b>, the case's own matched records ride along — and from the Center's record view, a record can be <b>filed straight into the open case</b> as a finding, its citation (the CVE ID and the digest's stamp) written into the note so case exports carry it.</p></div>" +
     "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
-  "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" },
+  "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" +
+    "<div class='doc-sec'><h4>The awareness home — Dashboard, News, CVEs, CTFs, Bounties (Build 7)</h4>" +
+  "<p>The Center's page is now the <b>awareness home</b>. It opens on a <b>Dashboard</b>: one glance card per family — top news, the newest CVEs, the next CTFs, the bounty programs — each with its <b>freshness stamp</b>, each opening its full view. Every family then has its own <b>tab</b> carrying as much data as its source gives, and the Center itself keeps the last tab, whole. On a phone the tabs stack the same way, one column.</p>" +
+  "<p><b>News — the wire.</b> A bridge-side fetcher pulls a curated set of security news feeds (BleepingComputer, The Hacker News, Krebs on Security, Dark Reading, SecurityWeek, The Record, CISA advisories) plus the CVE sources — <b>NVD recent</b> and <b>CISA KEV additions</b> — on an interval you set (30 minutes by default), into a local store (<span class='mono'>config/wire/wire.json</span>). Stories dedupe by link; a story whose text changes after first sighting <b>updates in place and is marked DEVELOPING</b> — that is how she can say “this one is still moving” honestly. Retention is 7 days by default and yours to set. The wire is <b>outbound-only</b>: no accounts, no keys, nothing uploaded. A feed that stops answering is <b>named on the tab</b> with its failure, and the headlines it already gave stay up as last-good — never silent emptiness.</p>" +
+  "<p><b>Ask her “what's the sitch.”</b> The wire, the CTF board and the bounty board ride her chat context as one bounded briefing, staleness included. Asked for the situation, she gives the facts first — each with its source and date — and then, clearly separated under <b>“My take,”</b> her own assessment: what matters, what is noise, what she would watch. The take is opinion and reads as opinion, never dressed as reporting; and she carries uncertainty the same way — confirmed, unknown, and speculated are three different things.</p>" +
+  "<p><b>Reading, in the app.</b> Tapping a headline tries the <b>in-app reader</b> first: the bridge fetches that one article (on demand, nothing prefetched in bulk, and only for links the wire itself is carrying) and extracts a readable view — the story's text, its furniture stripped — presented with the source, the date, and an <b>Open original</b> button always present. When extraction cannot honestly produce the article — a paywall, a script-built page, a non-article — the reader says which, and falls back: on desktop the original opens in a <b>new tab</b>; on mobile it opens the article proper. A failed extraction is never dressed up as the article.</p></div>" +
+    "<div class='doc-sec'><h4>The CTF board, and the bounty board (Build 7)</h4>" +
+  "<p><b>CTFs</b> (its own tab, and the menu's <b>CTF Board</b> item lands there) pulls the <b>CTFtime API</b> into a local cache on an hourly cadence. Cards carry everything the listing gives — name, start and finish <b>in your timezone</b>, format (Jeopardy / Attack-Defense), online or on-site with its location, weight, restrictions, organizers, logo, description, prizes where listed, and the CTFtime link — split into <b>Running now</b> and <b>Upcoming</b>; past events fall off. Ask her what's on or what's worth playing and she answers from the board, citing the listing.</p>" +
+  "<p><b>Bounties</b> lists public bug-bounty programs from <b>ProjectDiscovery's Chaos index</b> — the public, keyless JSON of public programs — cached locally and re-read every six hours: program name, platform, the program link, whether it <b>pays bounties</b>, and its <b>scope size</b> in the Chaos dataset. The index does not state safe-harbor terms, so the cards say exactly that rather than guessing. <b>Disclosed reports</b> ship as a named empty section: HackerOne's hacktivity has no keyless feed (it needs an account), so the tab says so instead of inventing rows. Same posture as everything on this page: outbound-only, local cache, named staleness, a dead source is a sentence. She can speak to bounties in chat from the store, same as CTFs.</p></div>"
+ },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -4347,12 +4614,12 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The ledger and balances</h4>" +
   "<p>Each machine keeps a small ledger of Mesh work: who, which direction, how long, how it ended — metadata only, never content. The Mesh page's roster shows each paired machine's <b>balance</b> in seconds lent minus seconds borrowed, next to its capability line and live status (reachable, lending, busy, idle, unreachable). That status is kept current by the bridge itself: while Mesh is on, every paired peer is checked in the background about every thirty seconds — and immediately when a peer is paired and when Mesh is turned on — so a pair reaches “checked” on its own, with no chat sent. A failed check stays on the roster with its reason and how long it has been since the peer last answered — <i>unreachable — unauthorized (last checked 42s ago)</i> — until a newer check replaces it; the age keeps growing while the peer stays down, because failed checks refresh the reason, not the clock. “not checked yet” appears only before a peer's first check has ever completed. A machine's addresses never appear in the roster or anywhere else on screen — they are plumbing for the transport, not display. Balances are a record, not a rule: Ring 1 has no give-to-get enforcement. The ledger stays out of GitHub backups unless you tick <b>Include the Mesh ledger in backups</b> (off by default); the node keypair never rides a backup either way. The pairing-card pictures ride on their own tick — <b>Mesh pairing cards</b> in Settings → GitHub &amp; Backup carries this machine's own card as a PNG, minted fresh as the backup runs, plus a re-drawn picture for every paired peer; a restore lands them in <span class='mono'>config/mesh/cards/</span> and re-pairs the peers through the same card check a hand import passes, and the restoring machine's own card picture is kept as a file — it never overwrites that machine's identity. A fresh reinstall keeps <span class='mono'>config/mesh/</span> on the installer's keep-list, so a machine never loses its identity — or its pairings — to an update.</p></div>" +
     "<div class='doc-sec'><h4>Getting there — the doors</h4>" +
-  "<p>Mesh always travels through its <b>own dedicated TLS door</b>, whether or not DHD is on. The door listens on <b>8765 always</b>, plus every number in its <b>listen ports</b> list — <b>8443</b> and <b>2475</b> ship alongside it, and you can add or remove numbers in the Mesh settings. One door on several numbers: the same protocol, the same certificate, the same fingerprint on every port, so a record entry naming any of them reaches the same door — which is what lets a pair use an egress-friendly number from networks that strangle unusual ports. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated ports. There is no plaintext Mesh listener. Ring 1 does no NAT traversal, no relay, and no racing between lenders: the first reachable lender serves.</p>" +
+  "<p>Mesh always travels through its <b>own dedicated TLS door</b>, whether or not DHD is on. The door listens on <b>8765 always</b>, plus every number in its <b>listen ports</b> list — <b>8443</b> and <b>2475</b> ship alongside it, and you can add or remove numbers in the Mesh settings. One door on several numbers: the same protocol, the same certificate, the same fingerprint on every port, so a record entry naming any of them reaches the same door — which is what lets a pair use an egress-friendly number from networks that strangle unusual ports. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated ports. There is no plaintext Mesh listener. There is no NAT traversal and no racing between lenders: the first reachable lender serves.</p>" +
   "<p><b>The door minds its knocks.</b> Because a declared endpoint puts the door on the open internet, it counts failed handshakes and failed signature checks per source; five failures inside a minute close the door to that source — connections dropped at accept, on every door port at once, since the knock ledger belongs to the door and not to any one number — for a backoff that doubles per repeat closing (60 seconds, doubling, capped at 900) and reopens on its own. Every knock and closing is logged in words. A valid signed request clears its source's slate, so a paired machine's ordinary traffic is never throttled; the ledger is memory only, and a bridge restart reopens every door.</p>" +
-  "<p><b>The backup route.</b> A pair can keep a second, quieter road: an SSH tunnel Apex itself maintains, per peer, so the SSH door (227 as forwarded) can carry the Mesh when the direct road cannot be used. Turn on a peer's <b>Backup route</b> on the Mesh page — SSH host, port, and user — and the bridge allocates a stable local port, keeps the tunnel alive (restarts with backoff, returns after a bridge restart), and appends the tunnel endpoint <i>last</i> to the peer's addresses at dial time: computed, never written into the stored record, so direct addresses are always tried first. The tunnel runs on a <b>dedicated keypair</b> the bridge generates — its public half rides this machine's card and shows on its Mesh page; the private half never leaves the machine and never rides a backup. On the lending machine the key is admitted once, <b>in person</b>, from its own dashboard: <b>Authorize tunnel key</b> writes a single-purpose line into <span class='mono'>~/.ssh/authorized_keys</span> — a forward to the Mesh door and nothing else, no shell, no agent — and revoke removes exactly that line. A tunnel you run by hand keeps working untouched alongside.</p></div>" +
+  "<p><b>The backup route.</b> A pair can keep a second, quieter road: an SSH tunnel Apex itself maintains, per peer, so the SSH door (227 as forwarded) can carry the Mesh when the direct road cannot be used. Turn on a peer's <b>Backup route</b> on the Mesh page — SSH host, port, and user — and the bridge allocates a stable local port, keeps the tunnel alive (restarts with backoff, returns after a bridge restart), and appends the tunnel endpoint <i>last</i> to the peer's addresses at dial time: computed, never written into the stored record, so direct addresses are always tried first. The tunnel runs on a <b>dedicated keypair</b> the bridge generates — its public half rides this machine's card and shows on its Mesh page; the private half never leaves the machine and never rides a backup. On the lending machine the key is admitted once, <b>in person</b>, from its own dashboard: <b>Authorize tunnel key</b> writes a single-purpose line into <span class='mono'>~/.ssh/authorized_keys</span> — a forward to the Mesh door and nothing else, no shell, no agent — and revoke removes exactly that line. A tunnel you run by hand keeps working untouched alongside.</p><p><b>Relay — the third road.</b> Roads fail in threes: the direct addresses, the declared public endpoint, the backup tunnel — and sometimes all three are dark while a third paired machine can see both ends. That machine can <b>carry</b> the ask. The borrow is wrapped, exactly as signed for the lender, in a second signed envelope addressed to the carrier; the carrier checks three consents, forwards the inner request byte-for-byte to the lender's door, and returns the sealed answer the same way. It sees envelope metadata only — who asks, who is asked, how many bytes, what stage it ended at — and its ledger records exactly that and nothing more. Consent is <b>three ticks, one on each machine</b>, each given on that machine's own dashboard in the <b>Relay</b> section of the carrier's peer card: the asker ticks that the carrier may carry its envelopes to the lender; the carrier ticks that it will carry between the pair; the lender ticks that the carrier may carry envelopes to it from the asker. Any missing tick refuses the carriage <b>by name</b> — the refusal says which machine has not consented — and unticking any one stops the next carriage, because every machine re-reads its consent on every request. Consent is given in person, like lending: through the DHD door a tick can be unticked from anywhere, but never ticked on. The road is <b>one hop, hard</b>: a relayed envelope is never re-relayed. Direct is always tried first — the relay is the road of last resort — and only chat answers ride it; sync and every other class stay direct-only. When an answer comes back carried, the reply's pill names the machine that <b>answered</b> and a line under it names the road: <i>via relay &lt;machine&gt;</i>. When the relay road fails, the local fallback keeps the stage's name — <i>no-consent</i>, <i>relay-dark</i>, <i>dest-dark</i>, <i>dest-refused</i> — in the same sentence style as every other failure.</p></div>" +
     "<div class='doc-sec'><h4>When the Mesh goes dark — the health check</h4>" +
   "<p>A Mesh failure used to report a single word — <i>unreachable — fingerprint</i> — and the rest was archaeology. Now the failure surfaces speak in sentences. A peer's roster row carries the full reason under its state: what answered, what did not match, and the cure where the product knows it. A changed Mesh identity is cured by importing that machine's fresh PNG card — the pin is replaced in place and the pair's ledger history is kept. A refused signature names its first suspect — the two machines' clocks — because a Mesh signature lives for 120 seconds, so a clock more than two minutes out reads as a forgery. A borrow that falls back names the stage it failed at — connect, TLS, fingerprint, signature, or timeout — in the chat notice.</p>" +
-  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. The census accounts for every one of the door's ports, so the door's own extra numbers never read as extra processes. The check also knows its own door: an entry that <i>is</i> this machine's own Mesh door is skipped without dialing, and an address answering with this machine's OWN certificate is named <b>your own door</b> — never reported as the peer's changed identity — while loopback at a <i>different</i> port (an SSH forward to the peer) is a road, and is dialed like any other. When the answering address is a peer's backup tunnel, the verdict says so: <i>via the backup tunnel</i>; when that tunnel is down, its state is a sentence of its own — down, key not authorized, or host unreachable. Every verdict is a sentence, with the actual fingerprints side by side. The check changes nothing: no pairing, pin, or route is touched — it reads and reports.</p></div>" +
+  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. The census accounts for every one of the door's ports, so the door's own extra numbers never read as extra processes. The check also knows its own door: an entry that <i>is</i> this machine's own Mesh door is skipped without dialing, and an address answering with this machine's OWN certificate is named <b>your own door</b> — never reported as the peer's changed identity — while loopback at a <i>different</i> port (an SSH forward to the peer) is a road, and is dialed like any other. When the answering address is a peer's backup tunnel, the verdict says so: <i>via the backup tunnel</i>; when that tunnel is down, its state is a sentence of its own — down, key not authorized, or host unreachable. Every verdict is a sentence, with the actual fingerprints side by side. The check itself changes nothing — it reads and reports. What Build 6 adds is the heal, offered in place: when a peer's record holds only dead-end addresses — loopback, a container bridge's gateway, the harvest mistakes of older cards — the card names them as junk and offers the repair on the spot: import a fresh card minted on that machine, or clear the dead addresses now and import when you can, the pairing, its pin, and its history kept either way. The same build walks the backup route: the route card prefills the SSH host from the endpoint the peer declared on its card, and says plainly that authorizing a tunnel key happens in person, on the lender's own dashboard — never from over the wire. And the first time you pair, the Mesh page says the quiet part before any trust is pinned: the door's certificate is self-signed, no authority vouches for it, and the card you were handed is the trust — importing it is what pins it.</p><p>For every relay road this machine has consented to, the check adds a <b>relay verdict</b>: it asks the carrier, with a signed probe that carries nothing, whether the carrier's own tick for the pair is in place and whether the destination is paired there at all. The verdict names what it found — consented, the carrier's tick missing, the carrier not paired with the destination, or the carrier dark at the first hop — and it is honest about the one end no probe can read: the destination's own acceptance is proven when it answers a carriage.</p></div>" +
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
   "<li><b>Certificate fingerprint does not match.</b> The machine that answered is not presenting the certificate on its card — the card is stale, or something else is answering at that address. Re-copy the card from that machine's Mesh page and re-add the peer.</li>" +
   "<li><b>The health check says “your own door.”</b> An address on the peer's card led back to this machine — classically a container-bridge or stale local address harvested onto an older card — and the door that answered was this machine's own. The peer was never reached and its identity is not in doubt. Mint a fresh card on the <i>peer</i> machine — cards minted now carry only reachable addresses — and import it here.</li>" +
@@ -4361,6 +4628,20 @@ var DOC_PAGES = [
   "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
   "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
   "<li><b>“This image has no readable Mesh card data.”</b> The PNG card arrived without its payload — almost always because a chat app recompressed it on the way. Resend the original card file inside a .zip, or by any channel that moves files untouched, and import that.</li></ul></div>" },
+  { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
+    "<div class='doc-sec'><h4>The container node</h4>" +
+  "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
+  "<p><b>The model binary is not baked in either.</b> On first run the container downloads <span class='mono'>navi.llamafile</span> once — the installer's own pattern — and keeps it in the data volume, so the image stays small and the model persists across container replacements. One binary serves both architectures: the image is built for <b>amd64 and arm64</b>.</p></div>" +
+    "<div class='doc-sec'><h4>Up in one breath — DHD first</h4>" +
+  "<p><span class='mono'>docker compose up</span>, then read the <b>first-boot output</b> (the container's logs): a boxed banner prints your node's <b>DHD access code</b>, once, next to the node's name and Mesh fingerprint. Then browse to <span class='mono'>https://&lt;this computer's address&gt;</span> — the DHD door, published on port <b>443</b> by the shipped compose file — type the code, name your device, and you are in: the first device at the door trusts itself with the code, and every device after it waits for an approval from one that is already trusted, exactly as on bare metal. <b>Write the code down or take a photo of the banner.</b> It is the only key to the DHD door; it is printed in the logs that one time only. The same banner is kept in a file named <span class='mono'>FIRST-BOOT.txt</span> in the data volume, for the operator who missed the scroll.</p>" +
+  "<p><b>The LAN-trust sentence, plainly:</b> in the container, DHD is <b>on from the first boot</b> — the door answers on your local network from the moment the node starts. That is the container's posture, chosen because a container has no desk to sit at; a bare-metal install keeps DHD off until its operator turns it on. On-by-default never means open: anyone on the network still needs the code to knock, and the trusted-device list in Settings — System — Door is the roster of who got in, each with its own token you can revoke.</p>" +
+  "<p><b>If you lose the code</b>, it is a designed path, not a lockout — you need access to the computer the container runs on. Re-print the current code: <span class='mono'>docker exec &lt;container&gt; python3 /opt/navi-apex/bridge.py --dhd-code</span>. Or mint a new one (the old code stops knocking at once; devices already trusted keep their own tokens): <span class='mono'>docker exec &lt;container&gt; python3 /opt/navi-apex/bridge.py --dhd-code-reset</span>.</p></div>" +
+    "<div class='doc-sec'><h4>Ports, volumes, and the card warning</h4>" +
+  "<p>The shipped compose file publishes the <b>Mesh door — 8765, 8443, 2475</b> (one door, one certificate, every number) and the <b>DHD door — 443, plus 80 for its certificate machinery</b>. The bridge itself keeps its standing loopback binding inside the container; the DHD proxy fronts it on the container's network face — the same architecture as bare metal, composed. Publish the Mesh ports onward (router forwards) only if the node should be reachable from beyond your network, and know that the Mesh door minds its knocks either way.</p>" +
+  "<p>Everything that makes the node <i>itself</i> lives in one named volume, <span class='mono'>apex-data</span>, mounted at <span class='mono'>/opt/navi-apex</span>: the identity, the config, the chats and Case Files, the chips and knowledge packs, the model binary. Replacing the container never costs the node who it is — the installer's preservation law, in container form. Updates ride Apex's own updater, exactly as on bare metal.</p>" +
+  "<p><b>The Docker card warning:</b> inside a container there is <b>no physical LAN interface to harvest</b> addresses from — the card generator reads plumbing, not truth (the same reason it refuses a bare-metal card when every interface is a dead end). So the <b>declared public endpoint is the honest address</b> for a container node: set it <b>before</b> minting cards for anyone — as the compose file's <span class='mono'>APEX_PUBLIC_ENDPOINT</span> (for example <span class='mono'>mesh.example.org:8443</span>), or later on the Mesh page, knowing a changed endpoint means re-sharing the card. An endpoint can name any of the door's numbers — 8443 is the face that travels best through other people's networks.</p></div>" +
+    "<div class='doc-sec'><h4>What the container does not do</h4>" +
+  "<p>No desktop window and no voice engines in this image — it is a node, run headless and driven through DHD. GitHub sign-in, Quick Sync, chips, Guardian, the Threat Intelligence Center, and the Mesh (pairing, borrowing, lending, the backup route, and relay) work as they do on bare metal, because it is the same bridge throughout.</p></div>" },
   { id: "guardian", title: "Guardian — protecting Navi's headroom", related: ["mesh", "settings", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What the Guardian is</h4>" +
   "<p>The <b>Guardian</b> is Apex's system monitor: a quiet engine in the bridge that watches this machine's memory and Navi's own footprint, and protects the headroom she needs to answer well. A machine can have free RAM on paper and still starve her — another program balloons, a browser eats the reserve, a generation slows to a crawl — and the Guardian is the part of Apex that notices, keeps score, and acts before her replies pay for someone else's appetite.</p>" +
@@ -4435,7 +4716,7 @@ var DOC_PAGES = [
   "<li><b>Taking part</b> in the GitHub section's live issues, roadmap, and discussions — looking never needed an account; joining in does.</li></ul>" +
   "<p>None of it is required: <b>Export for GitHub</b> is always available, signed in or not — sign-in only adds the upload route; it never gates exporting or publishing by hand.</p>" +
   "<p>Sign-in uses GitHub's <b>Device Flow</b> — the way made for apps like hers. Press <b>Sign in with GitHub</b> and you get a short code. Open <span class='mono'>github.com/login/device</span> in your browser, type the code, and say yes. GitHub tells Navi you're in. Your password is never typed into Navi, and there is no secret key hidden inside the app. The token GitHub hands back is kept in one file on your own machine (<span class='mono'>config/github-auth.json</span>, readable only by you). It is <b>never</b> written into a backup and never logged.</p>" +
-  "<p>One thing has to exist before sign-in can work: a <b>client ID</b>. That is a short public label for the app, made by registering an “OAuth App” on GitHub — and it has to be registered under the project owner's own GitHub account, so Navi does not ship with one filled in. If Settings → GitHub &amp; Backup says no client ID is configured, it shows the three short steps to make one and the box to paste it into. Until then, everything else — the GitHub section's pulse and Issues included — works as always.</p></div>" +
+  "<p>One thing has to exist before sign-in can work: a <b>client ID</b> — a short public label for the app, not a secret. Since Build 6, Apex ships with the project's registered client ID in <span class='mono'>config/github-signin.json</span>, so sign-in works out of the box: no OAuth App to register, no token to create and paste. (Running a fork? Put your own OAuth App's client ID in that file — it needs Device Flow enabled.) And since Build 6 the sign-in is the <b>only</b> GitHub credential Apex holds: the app's own reads — the Updater, the NUR, this section's pulse and issues — ride it too. The separate <b>Apex Runtime</b> token earlier builds asked you to paste is retired; if an old <span class='mono'>config/github-runtime.json</span> is still on disk, it is simply ignored. Signed out, the reads go unauthenticated and their failures say so in words; everything local works regardless.</p></div>" +
     "<div class='doc-sec'><h4>Backups — the ready-to-fly essentials</h4>" +
   "<p>A backup is a copy of Navi, kept in a <b>repository</b> (a project's folder on GitHub) under <b>your own account</b> — the name is yours to pick; <span class='mono'>navi-backup</span> is the starter suggestion. It is made <b>private</b> unless you choose otherwise, and the page warns you plainly if you pick public: a public backup puts her Soul and Memory on the open internet.</p>" +
   "<p>The backup carries <b>only the essentials</b> — the things a fresh Navi needs to be fully herself. Fresh install + import = <b>ready to fly</b>:</p><ul>" +
@@ -4454,15 +4735,13 @@ var DOC_PAGES = [
   "<p>You pick how often: <b>every day, every 3 days, every 5 days, or every 7 days</b>. Navi checks the clock herself — when she starts, and while she is running — and when a backup is due and she is signed in, she runs it. That is the honest limit: <b>backups happen while Navi is running.</b> If the machine is off when one comes due, it simply runs at her next start. Settings → GitHub &amp; Backup shows the last backup's time and what it wrote, and the same for the last import — and the status column carries a <b>Backup</b> section with the last backup's time and result at a glance (or says plainly that no backup has run yet).</p>" +
   "<p><b>Import</b> (in Settings → GitHub &amp; Backup) is how a backup becomes a Navi again — on a fresh install, or any time you want to roll back to the backed-up her. Press <b>Preview what would change</b> first: it lists, essential by essential, what the backup holds and what restoring it would replace. Nothing is overwritten until you press <b>Confirm import</b>. What was never backed up — call logs, the old machine's hardware numbers, voice models — starts fresh, which is exactly what a new home should do.</p></div>" +
     "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
-  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
+  "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. Since Build 6 the badge itself also travels <b>as its own plain file</b> — <span class='mono'>cards/operator-badge.png</span> in the backup repo, exactly the card's bytes, no archive — so the card can be listed and fetched on its own, one card at a time, on the phone over DHD, without opening the whole backup; a restore takes the card from that file, byte for byte. The Mesh node keypair is never in any file a backup writes — the card is the operator's picture and profile, nothing of the node's keys. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
     "<div class='doc-sec'><h4>Quick Sync — one tap, both ways (Build 3)</h4>" +
-  "<p>The badge round above is the deliberate ceremony; <b>Quick Sync</b> is the everyday gesture it grew from. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so work started on the laptop is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — in this build, the <b>backup repo</b> — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it.</p>" +
-  "<p>What rides is the living work: the <b>chat store</b> and <b>Case Files</b> — case chats, findings, evidence, report state. Settings, Soul/Memory, chips and knowledge packs stay with the full backup (chips and packs keep themselves current through their own channels). The round rides the <b>Operator</b> identity — never the read-only Runtime credential — and the badge in its slot stays what it has always been: a pointer and a trigger, not a key. Signed out, the round is refused and the card names it, with the sign-in one tap away. Pulls also happen on their own at <b>app start</b> and when a <b>DHD session starts</b> — refresh on arrival; publishing stays the button's act. There is no polling daemon.</p>" +
+  "<p>The badge round above is the deliberate ceremony; <b>Quick Sync</b> is the everyday gesture it grew from. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so work started on the laptop is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — since Build 6, the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it.</p>" +
+  "<p>What rides is the living work: the <b>chat store</b> and <b>Case Files</b> — case chats, findings, evidence, report state. Settings, Soul/Memory, chips and knowledge packs stay with the full backup (chips and packs keep themselves current through their own channels). Over the Mesh, the round rides the pairing itself — a whole signed Mesh request carries the set out and the peer's set back, and one answered door settles both machines; the repo route rides the <b>Operator</b> sign-in, and the badge in its slot stays what it has always been: a pointer and a trigger, not a key. Signed out with no Mesh road lit, the round is refused and the card names it, with the sign-in one tap away. One refusal is absolute on the Mesh route: if the two machines' operators are <i>different</i> GitHub accounts, nothing crosses — the sets are different people's work. Pulls also happen on their own at <b>app start</b> and when a <b>DHD session starts</b> — refresh on arrival; publishing stays the button's act. There is no polling daemon.</p>" +
   "<p>Convergence is the badge round's: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs, so the other machine's older copy cannot resurrect it — while a copy genuinely edited <i>after</i> the deletion counts as newer work and survives. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth.</p></div>" +
-    "<div class='doc-sec'><h4>Three identities, and failures with names (Build 2)</h4>" +
-  "<p><b>Who Apex speaks as.</b> Since Build 2, Settings → GitHub &amp; Backup carries an <b>Identities</b> card, because Apex now keeps three GitHub identities apart. <b>Operator</b> is your own sign-in (the Device Flow above): it acts as you, and backup and import are all it is used for. <b>Apex Runtime</b> is the app's own credential — a dedicated fine-grained personal access token you paste into the same card — used only by the app's own reads: the Updater's checks, the NUR's catalog searches and repo reads, downloads, and this section's pulse and issues. <b>Release Automation</b> holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote, and the card says so rather than implying a third token exists.</p>" +
-  "<p><b>Why the Runtime token matters.</b> Before Build 2, those app reads sent <b>no credential at all</b> — they shared the unauthenticated allowance, 60 requests an hour per network address and 10 a minute for search, with everything else on your network, and when it ran dry the only answer anywhere was a bare HTTP 403 that could not be told apart from a refused sign-in. With a Runtime token configured, the reads ride their own allowance; without one, they still work, and their failures now name the unauthenticated limits they hit. The token is stored the way the sign-in token is stored — its own file (<span class='mono'>config/github-runtime.json</span>), readable only by you, never in the backup, never logged — and read-only access is all it needs.</p>" +
-  "<p><b>Failures have names.</b> Every GitHub failure Apex shows is classified and worded: <b>auth</b> — the credential itself is refused (missing, expired, revoked, or under-scoped; waiting will not cure it); <b>rate</b> — a rate-limit bucket is spent, and the sentence carries the reset time GitHub reported; <b>abuse</b> — GitHub's secondary/abuse safeguard tripped, and the sentence carries the wait GitHub asked for. When GitHub asks Apex to back off, Apex honors it and stops — nothing anywhere retries on its own. The Identities card also shows the last Core and Search bucket readouts GitHub reported to this machine. The NUR's two topic searches are additionally cached for five minutes and run one at a time, so an impatient refresh cannot spend the Search bucket twice.</p></div>" },
+    "<div class='doc-sec'><h4>One sign-in, and failures with names (Build 2, completed in Build 6)</h4>" +
+  "<p><b>Who Apex speaks as.</b> Build 2 taught Apex to keep its GitHub identities apart — your sign-in for backup and import, a separate pasted token for the app's own reads — and Build 6 finished the thought by collapsing them to <b>one</b>: your GitHub account sign-in, and nothing else. There is no token to create, paste, or rotate; the Updater's checks, the NUR's catalog searches, downloads, sync's repo transport, backup and import all ride the one sign-in, which lives in <span class='mono'>config/github-auth.json</span> (readable only by you, never backed up, deleted by signing out). <b>Release Automation</b> still holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote. And failures keep their names everywhere GitHub is read: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the sentence carries its reset), <b>abuse</b> (GitHub's secondary safeguard — the sentence carries the wait it asked for, and Apex stops rather than retrying). No surface shows a bare “HTTP 403”.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
     "<div class='doc-sec'><h4>Apex without the window</h4>" +
   "<p>A server does not need a window. <span class='mono'>./start.sh --headless</span> starts exactly the services — the llamafile (check-first, as always: an answering server is left alone) and the bridge, supervised — and opens <b>no window</b>. It is safe over SSH, safe to run twice (a service already answering is adopted, never doubled), and it writes the same <span class='mono'>start.log</span> the desktop launch writes, so a headless start explains itself after the fact the same way. Run it after a reboot and Apex — with DHD, if DHD was left on — is simply back.</p>" +
@@ -6028,10 +6307,10 @@ function meshViewState() {
     borrowEnabled: b.enabled !== false, graceMs: b.graceMs != null ? b.graceMs : 2000,
     lendEnabled: !!l.enabled,
     lend: { maxSharePercent: l.maxSharePercent != null ? l.maxSharePercent : 25, maxGenerationsPerHour: l.maxGenerationsPerHour != null ? l.maxGenerationsPerHour : 20, perPeerPerHour: l.perPeerPerHour != null ? l.perPeerPerHour : 10, idleOnly: l.idleOnly !== false, idleAfterSeconds: l.idleAfterSeconds != null ? l.idleAfterSeconds : 60 },
-    ledgerInBackup: !!m.ledgerInBackup, borrowing: false, lendingNow: false,
+    ledgerInBackup: !!m.ledgerInBackup, certNoticeSeen: !!m.certNoticeSeen, borrowing: false, lendingNow: false,
     viaDhd: false,
     state: m.enabled ? ((b.peers || []).length ? "on" : "no-peers") : "off", warning: "",
-    peers: (b.peers || []).map(function (p) { var t = p.tunnel || {}; return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeReason: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0, publicEndpoint: p.publicEndpoint || "", tunnel: { enabled: !!t.enabled, sshHost: t.sshHost || "", sshPort: t.sshPort || 227, sshUser: t.sshUser || "", localPort: t.localPort || null }, hasTunnelKey: !!p.tunnelPublicKey, tunnelKeyAuthorized: false, tunnelState: "off", tunnelSentence: "" }; })
+    peers: (b.peers || []).map(function (p) { var t = p.tunnel || {}; return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeReason: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0, publicEndpoint: p.publicEndpoint || "", tunnel: { enabled: !!t.enabled, sshHost: t.sshHost || "", sshPort: t.sshPort || 227, sshUser: t.sshUser || "", localPort: t.localPort || null }, hasTunnelKey: !!p.tunnelPublicKey, tunnelKeyAuthorized: false, tunnelState: "off", tunnelSentence: "", tunnelSuggestion: p.tunnelSuggestion || { sshHost: "" }, relayCarryTo: p.relayCarryTo || [], relayAcceptFrom: p.relayAcceptFrom || [], relayWillCarryTo: p.relayWillCarryTo || [] }; })
   };
 }
 function meshDotColor(m) {
@@ -6110,8 +6389,30 @@ function meshLineHtml(mesh) {
   // dropped or busy lender is a notice, not an attribution, and
   // local replies carry nothing at all — absence means local.
   if (!mesh) return "";
-  if (mesh.servedBy === "mesh") return "";
+  if (mesh.servedBy === "mesh") {
+    // 0.2.0e Build 7 (#154): the pill names the machine that
+    // ANSWERED; the road it took gets its own quiet line.
+    if (mesh.viaRelay) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>via relay " + esc(mesh.viaRelay) + "</div>";
+    return "";
+  }
   if (mesh.notice) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(mesh.notice) + "</div>";
+  if (mesh.fellBack && mesh.path === "relay") {
+    // 0.2.0e Build 7 (#154): the relay road was tried and the
+    // failure keeps its stage's name — never a bare code.
+    var bn = mesh.node || "The paired machine";
+    var rn = mesh.viaRelay || "the relay";
+    var line = mesh.reason === "no-consent"
+      ? (mesh.missing === "asker" ? "This machine's own relay consent for the road to " + bn + " is not ticked"
+        : mesh.missing === "lender" ? bn + " has not ticked that it accepts relayed envelopes from " + rn
+        : rn + " has not ticked that it will carry between this machine and " + bn)
+      : mesh.reason === "relay-dark" ? rn + " could not be reached to carry the envelope"
+      : mesh.reason === "dest-dark" ? bn + " could not be reached through " + rn
+      : mesh.reason === "dest-refused" ? bn + " refused the relayed envelope — " + rn + "'s road to it did not check out"
+      : mesh.reason === "dest-unknown" ? rn + " is not paired with " + bn + ", so it cannot carry there"
+      : mesh.reason === "hop-limit" ? "The envelope could not be carried — a relayed envelope is never re-relayed"
+      : "";
+    if (line) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(line + " — answered locally") + "</div>";
+  }
   if (mesh.fellBack) {
     var why = mesh.reason === "busy" ? " was busy"
       : mesh.reason === "cap" ? " is at its lending cap for the hour"
@@ -6281,7 +6582,7 @@ function meshHealthHtml() {
     h += "<p style='color:var(--dim)'>Mesh is off — the check reads the live Mesh door, so turn Mesh on above first.</p></div>";
     return h;
   }
-  h += "<p style='color:var(--dim)'>When a pair goes dark and the roster's word is not enough: this check compares the certificate on this machine's disk with the one its Mesh door actually presents, holds every paired machine's pinned fingerprint up against the certificate it presents, counts the bridges running here, and names the process that owns the Mesh door. It changes nothing — it only reports.</p>";
+  h += "<p style='color:var(--dim)'>When a pair goes dark and the roster's word is not enough: this check compares the certificate on this machine's disk with the one its Mesh door actually presents, holds every paired machine's pinned fingerprint up against the certificate it presents, counts the bridges running here, and names the process that owns the Mesh door. The check itself changes nothing — and where a record can be healed in place, the heal is offered right on the card that names the problem.</p>";
   h += "<p><button type='button' class='act' id='mesh-health-run' aria-label='Run the Mesh health check' style='min-height:44px'" + (meshHealthBusy ? " disabled" : "") + ">" + (meshHealthBusy ? "Checking…" : "Run health check") + "</button></p>";
   if (meshHealthMsg) h += "<p style='font-size:12px'>" + esc(meshHealthMsg) + "</p>";
   var hh = meshHealth;
@@ -6304,7 +6605,13 @@ function meshHealthHtml() {
         "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><b>" + esc(pp.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(verdictWord(pp.verdict)) + (pp.stage && pp.verdict !== "match" && pp.verdict !== "own-door" ? " · failed at the " + esc(pp.stage) + " stage" : "") + "</span></div>" +
         "<div style='font-size:12px;margin-top:4px'>Pinned by its card: " + fp(pp.pinnedFingerprint) + "</div>" +
         "<div style='font-size:12px;margin-top:2px'>It presents: " + fp(pp.presentedFingerprint) + "</div>" +
-        "<div style='font-size:12px;margin-top:4px'>" + esc(pp.verdictText || "") + "</div></div>";
+        "<div style='font-size:12px;margin-top:4px'>" + esc(pp.verdictText || "") + "</div>" +
+        (pp.repair ? "<div style='font-size:12px;margin-top:6px;border-top:1px dashed var(--line);padding-top:6px'>" + esc(pp.repair.sentence) + "</div><div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:6px'><button type='button' class='act' data-mesh-repair-import='" + esc(pp.nodeId) + "' aria-label='Import a fresh card for " + esc(pp.name) + "' style='min-height:44px'>Import a fresh card</button><button type='button' class='ghost' data-mesh-repair-clear='" + esc(pp.nodeId) + "' aria-label='Clear the dead addresses from " + esc(pp.name) + "'s record' style='min-height:44px'>Clear the dead addresses</button></div>" : "") + "</div>";
+    });
+    (hh.relay || []).forEach(function (rr) {
+      h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
+        "<div style='font-size:12px;letter-spacing:.06em;color:var(--dim)'>RELAY — TO " + esc(String(rr.toName || "").toUpperCase()) + " VIA " + esc(String(rr.viaName || "").toUpperCase()) + "</div>" +
+        "<div style='font-size:12px;margin-top:4px'>" + esc(rr.verdictText || "") + "</div></div>";
     });
   }
   h += "</div>";
@@ -6332,15 +6639,19 @@ function meshTunnelHtml(p, m) {
   // same in-person doctrine as arming lending, and the bridge
   // refuses it there regardless.
   var t = p.tunnel || { enabled: false, sshHost: "", sshPort: 227, sshUser: "", localPort: null };
+  var sug = (p.tunnelSuggestion && p.tunnelSuggestion.sshHost) || "";
   var armed = !t.enabled && !!meshTunnelArmed[p.nodeId];
   var inp = "min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px";
   var h = "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'>" +
     "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (t.enabled || armed ? "true" : "false") + "' data-mesh-tunnel='" + esc(p.nodeId) + "' aria-label='Backup route to " + esc(p.name) + " — a managed SSH tunnel this bridge keeps open itself'><span class='knob'></span></button><span style='font-size:12px'>Backup route — managed SSH tunnel</span></div>" +
     "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'>" +
-    "<label style='font-size:12px'>SSH host <input type='text' data-mesh-tun-host='" + esc(p.nodeId) + "' value='" + esc(t.sshHost || "") + "' placeholder='e.g. ssh.example.org' aria-label='SSH host for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
+    "<label style='font-size:12px'>SSH host <input type='text' data-mesh-tun-host='" + esc(p.nodeId) + "' value='" + esc(t.sshHost || sug) + "' placeholder='e.g. ssh.example.org' aria-label='SSH host for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
     "<label style='font-size:12px'>SSH port <input type='number' data-mesh-tun-port='" + esc(p.nodeId) + "' value='" + (t.sshPort || 227) + "' min='1' max='65535' aria-label='SSH port for the backup route to " + esc(p.name) + "' style='width:84px;" + inp + "'></label>" +
     "<label style='font-size:12px'>SSH user <input type='text' data-mesh-tun-user='" + esc(p.nodeId) + "' value='" + esc(t.sshUser || "") + "' aria-label='SSH user for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
     "<button type='button' class='ghost' data-mesh-tunnel-save='" + esc(p.nodeId) + "' aria-label='Save the backup route to " + esc(p.name) + "' style='min-height:44px'>Save route</button></div>";
+  if (!t.enabled && !armed) {
+    h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>The walked path, three presses: flip the switch to arm the route" + (sug ? " — the SSH host is already filled in from the public endpoint " + esc(p.name) + " declared on its card" : "") + ", fill whichever field is still blank, then Save route, and the bridge keeps the tunnel open by itself. One step no button here can take: " + esc(p.name) + " must authorize this machine's tunnel key on its own dashboard, in person, before the tunnel can open — authorization is never given from over the wire.</p>";
+  }
   if (armed) {
     h += "<p style='font-size:12px;margin-top:6px;color:var(--accent)'>The route is armed, not on: it still needs that machine's SSH host and user. Fill in whichever is blank above and press Save route — the bridge keeps the tunnel from there.</p>";
   }
@@ -6358,6 +6669,40 @@ function meshTunnelHtml(p, m) {
   } else {
     h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>" + esc(p.name) + "'s card carries no tunnel key — it predates the managed backup route. Re-share its card from its Mesh page and pair it again, and the key arrives with the card.</p>";
   }
+  h += "</div>";
+  return h;
+}
+function meshRelayHtml(p, m) {
+  // 0.2.0e Build 7 (#154): one paired machine's relay consent —
+  // the third road. When the direct road to a lender is dark, a
+  // paired third machine can carry the sealed envelope; the
+  // carrier sees envelope metadata only, never the words. Three
+  // consents meet for every carriage, and each lives on its own
+  // machine: this machine's two ticks render here on the
+  // carrier's card (may carry mine out; may carry to me), and
+  // the carrier's own tick renders here too, on the ASKER's
+  // card (I will carry theirs) — the section reads the stored
+  // lists from the payload, so the switches, the saved config,
+  // and a reload all show the same truth. Nothing renders at
+  // all until a third machine is paired: a relay needs three.
+  var peers = (m && m.peers) || [];
+  if (peers.length < 2) return "";
+  var others = peers.filter(function (q) { return q.nodeId !== p.nodeId; });
+  if (!others.length) return "";
+  var row = function (kind, list, q, label) {
+    var on = (list || []).indexOf(q.nodeId) >= 0;
+    return "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (on ? "true" : "false") + "' data-mesh-relay='" + kind + "' data-peer='" + esc(p.nodeId) + "' data-other='" + esc(q.nodeId) + "' aria-label='" + esc(label) + "'><span class='knob'></span></button><span style='font-size:12px'>" + esc(q.name) + "</span></div>";
+  };
+  var h = "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'>" +
+    "<div style='font-size:12px'><b>Relay</b> — sealed carriage when a direct road is dark</div>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>If this machine cannot reach another paired machine directly, a third machine can carry the envelope — sealed on both hops; the carrier sees who asks, who is asked, and how many bytes, never the words. A carriage needs all three machines' consent for the pair, each ticked on its own machine; unticking any one stops the next carriage.</p>";
+  h += "<div style='font-size:12px;margin-top:8px'>" + esc(p.name) + " may carry <b>my</b> envelopes to:</div>";
+  others.forEach(function (q) { h += row("carryTo", p.relayCarryTo, q, p.name + " may carry my envelopes to " + q.name); });
+  h += "<div style='font-size:12px;margin-top:8px'>" + esc(p.name) + " may carry envelopes <b>to me</b> from:</div>";
+  others.forEach(function (q) { h += row("acceptFrom", p.relayAcceptFrom, q, p.name + " may carry envelopes to me from " + q.name); });
+  h += "<div style='font-size:12px;margin-top:8px'><b>I</b> will carry " + esc(p.name) + "'s envelopes to:</div>";
+  others.forEach(function (q) { h += row("willCarryTo", p.relayWillCarryTo, q, "I will carry " + p.name + "'s envelopes to " + q.name); });
+  if (m.viaDhd) h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>You are viewing through the DHD door: these ticks can be unticked from here, but consent itself is given at this machine, in person — a tick flipped on here will be refused, and the refusal will say so.</p>";
   h += "</div>";
   return h;
 }
@@ -6454,7 +6799,7 @@ function meshCardHtml() {
           (p.reachable === false && p.lastProbeReason ? "<div style='font-size:12px;margin-top:4px'>" + esc(p.lastProbeReason) + "</div>" : "") +
           "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Borrow from " + esc(p.name) + " — this machine borrows from it while this is on'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
           "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div>" +
-          meshTunnelHtml(p, m) + "</div>";
+          meshTunnelHtml(p, m) + meshRelayHtml(p, m) + "</div>";
       });
     } else {
       h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Download your PNG card here, carry the file to the other machine, and bring its PNG card back to drop below.</p>";
@@ -6467,6 +6812,7 @@ function meshCardHtml() {
     // path; the upload button is the path that works everywhere,
     // phones included: a 44px target, and the zone wraps its
     // words instead of widening the page at 360-430px.
+    if (!m.certNoticeSeen) h += "<p style='color:var(--am);font-size:12px;margin-top:10px'>First pairing — one thing worth knowing before any trust is pinned: a Mesh door's certificate is <b>self-signed</b>. No authority vouches for it, and none should: the card you were handed <i>is</i> the trust. Importing it pins that machine's certificate fingerprint on this machine, and from then on this machine accepts that door only when it presents exactly that certificate — a different one is named, never quietly trusted.</p>";
     h += "<div id='mesh-png-zone' style='margin-top:12px;border:1.5px dashed " + (meshPngDrag ? "var(--accent)" : "var(--line)") + ";border-radius:6px;padding:12px;text-align:center'>" +
       "<p style='font-size:12px;margin:0'>Pair by picture — drop the other machine's PNG card here</p>" +
       "<p style='margin:8px 0 0'><label for='mesh-png-file' class='act' style='display:inline-flex;align-items:center;min-height:44px;padding:0 14px;cursor:pointer'>Upload a PNG card</label>" +
@@ -6619,6 +6965,25 @@ function wireMeshCard() {
         .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
     };
   });
+  mainEl.querySelectorAll("[data-mesh-relay]").forEach(function (b) {
+    b.onclick = function () {
+      var peer = b.getAttribute("data-peer");
+      var other = b.getAttribute("data-other");
+      var kind = b.getAttribute("data-mesh-relay");
+      var now = b.getAttribute("aria-checked") === "true";
+      if (CONFIG.backend !== "live") { meshMsg = "Relay consent needs the live bridge."; render(); return; }
+      // The switch gate: the flip posts, and the page re-renders
+      // from the bridge's returned payload — stored truth, never
+      // the click's hope. A refusal (consent ticked from the DHD
+      // door) lands in meshMsg at the head of this same card and
+      // the re-render restores the switch to the stored state:
+      // no snap-back without its reason, no reason stranded.
+      fetch("/api/mesh/peers/relay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: peer, kind: kind, other: other, on: !now }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) meshState = j.mesh; else meshMsg = (j && j.error) || "The bridge refused."; render(); })
+        .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
   mainEl.querySelectorAll("[data-mesh-tunnel]").forEach(function (b) {
     b.onclick = function () {
       var nodeId = b.getAttribute("data-mesh-tunnel");
@@ -6672,6 +7037,23 @@ function wireMeshCard() {
         .then(function (r) { return r.json(); })
         .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = j.message || "Saved."; } else meshMsg = (j && (j.error || j.message)) || "The bridge refused."; render(); })
         .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-repair-clear]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-repair-clear");
+      if (CONFIG.backend !== "live") { meshHealthMsg = "The repair needs the live bridge."; render(); return; }
+      fetch("/api/mesh/peers/repair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshHealth = j.health; meshHealthMsg = j.message || "Repaired."; } else meshHealthMsg = (j && j.error) || "The bridge refused the repair."; render(); })
+        .catch(function () { meshHealthMsg = "The bridge did not answer — is it running?"; render(); });
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-repair-import]").forEach(function (b) {
+    b.onclick = function () {
+      meshPngMsg = "Import the fresh card here — it replaces the dead addresses on the old record; the pairing, its pin, and its history are kept.";
+      var zone = document.getElementById("mesh-png-zone");
+      if (zone) { try { zone.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { try { zone.scrollIntoView(); } catch (e2) {} } }
     };
   });
   mainEl.querySelectorAll("[data-mesh-remove]").forEach(function (b) {
@@ -8121,38 +8503,32 @@ function githubSettingsHtml() {
     h += "<button class='ghost' id='gh-cancel'>Cancel</button>";
     if (CONFIG.backend !== "live") h += "<p style='color:var(--dim);font-size:12px'>Simulated: the button stands in for GitHub's answer. The live bridge polls GitHub itself until it confirms, the code expires, or you cancel.</p>";
   } else if (!gh.clientIdConfigured) {
-    h += "<div class='card' style='border-color:var(--am);color:var(--am)'>No GitHub OAuth client id is configured yet, so sign-in can't start. A live client id has to be registered under the project owner's GitHub account — that's why the app doesn't ship with one filled in. The GitHub section's pulse and Issues tabs work regardless.</div>";
-    h += "<ol style='color:var(--dim);margin:6px 0 6px 18px'><li>On GitHub, go to Settings → Developer settings → OAuth Apps → New OAuth App. Name it anything (e.g. “Apex”); the homepage and callback URLs aren't used by the Device Flow.</li><li>Open the app you created and tick <b>Enable Device Flow</b>.</li><li>Copy its <b>Client ID</b> — it is not a secret — and paste it here.</li></ol>";
-    h += "<div class='row'><input class='grow mono' id='gh-client-id' type='text' placeholder='OAuth App client id — e.g. Iv1.…' aria-label='GitHub OAuth App client ID'><button class='act' id='gh-client-save'>Save client ID</button></div>";
+    h += "<div class='card' style='border-color:var(--am);color:var(--am)'>No GitHub OAuth client id is configured, so sign-in can't start. Apex ships with the project's client id in <span class='mono'>config/github-signin.json</span> — if that file is missing or its client_id is blank, set one there (an OAuth App with Device Flow enabled; the client id is a public identifier, not a secret). The GitHub section's pulse and Issues tabs work regardless.</div>";
   } else {
-    h += "<button class='act' id='gh-signin'>Sign in with GitHub</button> <span class='mono' style='color:var(--dim);font-size:11px'>client id: " + esc(gh.clientId) + "</span> <button class='ghost' id='gh-client-clear'>Clear client ID</button>";
+    h += "<button class='act' id='gh-signin'>Sign in with GitHub</button> <span class='mono' style='color:var(--dim);font-size:11px'>one sign-in for the whole product — no tokens to create or paste · client id: " + esc(gh.clientId) + "</span>";
   }
   h += "</div>";
-  // Identities card (Build 2, #173): three identities, side by
-  // side — the operator's sign-in, the app's own Runtime read
-  // credential, and Release Automation, which holds no credential
-  // by design. Failures anywhere GitHub is read are named from
-  // here on: auth, rate (with its reset), or abuse (with its
-  // wait) — never a bare HTTP 403.
+  // Identities card (Build 2, #173; Build 6, #173 phase 3):
+  // ONE credential now — the operator's own GitHub sign-in.
+  // Build 2 split the app's reads onto a separate Runtime PAT
+  // the operator had to create and paste; Build 6 retired it:
+  // sign in once, with your account, and the reads ride the same
+  // token as backup and import. Release Automation still holds
+  // no credential in Apex, by design. Failures anywhere GitHub
+  // is read keep their names: auth, rate (with its reset), or
+  // abuse (with its wait) — never a bare HTTP 403.
   var ids = gh.identities || null;
-  var idOp = ids ? ids.operator : { signedIn: gh.signedIn, login: gh.login, scopesNote: "Acts as you. Used by backup and import — nothing else." };
-  var idRt = ids ? ids.runtime : { configured: false, tokenHint: "", savedAt: null, scopesNote: "The app's own read credential. Used by the Updater, the NUR, and the GitHub section's live reads — reads only, never writes.", buckets: { core: null, search: null } };
+  var idOp = ids ? ids.operator : { signedIn: gh.signedIn, login: gh.login, scopesNote: "Acts as you — the only GitHub credential Apex holds. Used by backup and import, and by the app's own reads (Updater, NUR, the GitHub section).", buckets: { core: null, search: null } };
   var idAu = ids ? ids.automation : { note: "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design." };
-  h += "<div class='card'><h3>Identities — who Apex speaks to GitHub as</h3><p style='color:var(--dim)'>Until now every part of Apex spoke to GitHub as <b>one</b> blurred identity — and some of the app's own reads went out with <b>no credential at all</b>, sharing the unauthenticated allowance of 60 requests an hour per network address (10 a minute for search) with everything else on your network. When that bucket ran dry, the answer was a bare “HTTP 403” and no way to tell a spent limit from a refused sign-in. Three identities, kept apart:</p>";
-  h += "<p style='margin-top:10px'><b>1 · Operator</b> — your sign-in above. <span style='color:var(--dim)'>" + esc(idOp.scopesNote || "") + "</span></p><p class='mono' style='font-size:12px;color:" + (idOp.signedIn ? "var(--green)" : "var(--dim)") + "'>" + (idOp.signedIn ? "Signed in as @" + esc(idOp.login) : "Not signed in") + "</p>";
-  h += "<p style='margin-top:10px'><b>2 · Apex Runtime</b> — the app's own credential. <span style='color:var(--dim)'>" + esc(idRt.scopesNote || "") + "</span></p>";
-  if (idRt.configured) {
-    h += "<p class='mono' style='font-size:12px;color:var(--green)'>Configured — token " + esc(idRt.tokenHint || "…") + (idRt.savedAt ? " · saved " + esc(ghWhen(new Date(idRt.savedAt * 1000).toISOString())) : "") + "</p>";
-    var bk = idRt.buckets || { core: null, search: null };
+  h += "<div class='card'><h3>Identities — who Apex speaks to GitHub as</h3><p style='color:var(--dim)'>One credential, honestly labelled. Earlier builds split Apex's speech three ways — and asked you to create and paste a separate token for the app's own reads. That token is retired: <b>your sign-in above is the only GitHub credential Apex holds</b>, and everything rides it. Signed out, the app's reads go unauthenticated and share the small public allowance (60 requests an hour per network address, 10 a minute for search) — and their failures say so, in words.</p>";
+  h += "<p style='margin-top:10px'><b>1 · Operator</b> — your sign-in. <span style='color:var(--dim)'>" + esc(idOp.scopesNote || "") + "</span></p><p class='mono' style='font-size:12px;color:" + (idOp.signedIn ? "var(--green)" : "var(--dim)") + "'>" + (idOp.signedIn ? "Signed in as @" + esc(idOp.login) : "Not signed in — GitHub-backed actions will ask you to sign in; everything local works regardless") + "</p>";
+  if (idOp.signedIn) {
+    var bk = idOp.buckets || { core: null, search: null };
     h += ghBucketLine("CORE", bk.core);
     h += ghBucketLine("SEARCH", bk.search);
-    h += "<button class='ghost' id='gh-runtime-clear' style='min-height:44px'>Remove runtime token</button>";
-  } else {
-    h += "<p style='color:var(--dim)'>Not configured — the app's reads currently ride the unauthenticated allowance, and their failures will say so. Give Apex its own: on GitHub, make a <b>fine-grained personal access token</b> (Settings → Developer settings → Personal access tokens → Fine-grained tokens) with <b>read-only</b> access — no repository permissions are needed for public reads — and paste it here. It is stored only on this machine (config/github-runtime.json, readable only by you), never in the backup, never logged, and used by nothing but the app's own reads.</p>";
-    h += "<div class='row'><input class='grow mono' id='gh-runtime-token' type='password' placeholder='Fine-grained PAT — github_pat_…' aria-label='Apex Runtime token' style='min-height:44px'><button class='act' id='gh-runtime-save' style='min-height:44px'>Save runtime token</button></div>";
   }
-  h += "<p style='margin-top:10px'><b>3 · Release Automation</b> — <span style='color:var(--dim)'>" + esc(idAu.note || "") + "</span></p>";
-  h += "<p style='color:var(--dim);font-size:12px'>And failures have names now: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the message carries its reset time), <b>abuse</b> (GitHub's secondary safeguard — the message carries the wait it asked for, and Apex stops rather than retrying). Wherever GitHub results are shown — the Updater, the NUR, this section — the name is what you will read.</p></div>";
+  h += "<p style='margin-top:10px'><b>2 · Release Automation</b> — <span style='color:var(--dim)'>" + esc(idAu.note || "") + "</span></p>";
+  h += "<p style='color:var(--dim);font-size:12px'>And failures have names: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the message carries its reset time), <b>abuse</b> (GitHub's secondary safeguard — the message carries the wait it asked for, and Apex stops rather than retrying). Wherever GitHub results are shown — the Updater, the NUR, this section — the name is what you will read.</p></div>";
   // Backup card.
   var unticked = GH_ITEMS.filter(function (it) { return gh.backupItems.indexOf(it.id) === -1; });
   h += "<div class='card'><h3>Backup — the ready-to-fly essentials</h3><p style='color:var(--dim)'>A backup carries <b>only what a fresh Navi needs to be fully herself</b>: fresh install + import = ready to fly. Chats ride on their own tick now — they live on the server (Build 12), and a restore <i>converges</i> them instead of overwriting: newest wins per thread, and a thread both machines moved on is kept whole as a dated sibling. Deliberately never backed up: call logs, caches and logs, the hardware profile (a new machine gets profiled fresh at its own install), and her voice model files (they reinstall — her voice <i>settings</i> are in the backup). Backups run while Navi is running: the bridge checks on launch and while she's up whether one is due, on your interval, and runs it when she's signed in. Nothing backs up while the machine is off.</p>";
@@ -8841,6 +9217,8 @@ function render() {
   } else if (view === "CaseFiles") {
     h += caseFilesHtml();
   } else if (view === "ThreatIntel") {
+    h += threatIntelHtml();
+  } else if (view === "CTFBoard") {
     h += threatIntelHtml();
   } else if (view === "DHD") {
     h += dhdHtml();
@@ -9961,6 +10339,8 @@ function wire() {
     wireCaseFiles();
   } else if (view === "ThreatIntel") {
     wireThreatIntel();
+  } else if (view === "CTFBoard") {
+    wireThreatIntel();
   } else if (view === "DHD") {
     wireDhd();
   } else if (view === "Mesh") {
@@ -10319,10 +10699,6 @@ function wire() {
     bind("gh-complete", ghSignInCompleteMock);
     bind("gh-cancel", function () { ghStopPolling(); githubDevice = null; ghSetMsg("", false); render(); });
     bind("gh-signout", ghSignOut);
-    bind("gh-runtime-save", ghRuntimeSave);
-    bind("gh-runtime-clear", ghRuntimeClear);
-    bind("gh-client-save", ghSaveClientId);
-    bind("gh-client-clear", function () { var inp = document.getElementById("gh-client-id"); if (inp) inp.value = ""; if (CONFIG.backend !== "live") { githubState.clientId = ""; githubState.clientIdConfigured = false; mockGithubSave(); ghSetMsg("Client ID cleared.", false); render(); } else ghPost("/api/github/client-id", { client_id: "" }, function (j) { githubState = j; ghSetMsg("Client ID cleared.", false); render(); }); });
     bind("gh-settings-save", ghSaveBackupSettings);
     bind("gh-backup", ghBackupNow);
     bind("gh-preview", ghImportPreview);
