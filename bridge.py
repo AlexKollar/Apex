@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.10"
+BRIDGE_BUILD = "2026-11-14.11"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 10
+SHIPPED_BUILD_SEQ = 11
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -9815,10 +9815,27 @@ def _github_read_headers(accept=None):
 
 
 def _github_read(url, accept=None):
-    # One app-runtime read (Updater / NUR). Rides the Runtime
-    # credential when configured; failures raise GithubHttpError
-    # with the response's headers attached, so the caller can
-    # classify instead of guessing from a status code.
+    # One app-runtime read (Updater / NUR), behind Build 11's
+    # renewal wrapper (#197): the stored token is renewed
+    # BEFORE the call when its recorded expiry says it is dead
+    # or nearly so, and a 401 that still comes back earns
+    # exactly one renewal + one retry. A 401 surviving that
+    # raises the same GithubHttpError it always did — the
+    # named auth sentence, once.
+    _auth, _attempted = github_ensure_fresh_token()
+    try:
+        return _github_read_once(url, accept)
+    except GithubHttpError as e:
+        if e.code == 401 and not _attempted and github_refresh_auth():
+            return _github_read_once(url, accept)
+        raise
+
+
+def _github_read_once(url, accept=None):
+    # The single attempt. Rides the operator's sign-in token;
+    # failures raise GithubHttpError with the response's
+    # headers attached, so the caller can classify instead of
+    # guessing from a status code.
     headers, _authed = _github_read_headers(accept)
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -11041,6 +11058,32 @@ def main():
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
 
+    # 0.2.0e Build 11 (#198): the homecoming adoption. When the
+    # installer migrated Apex to its new home, it left a machine
+    # marker in this (now parked) tree naming the new home. When
+    # the new home verifiably holds THIS job's target build,
+    # everything from here — the landed classification below,
+    # the wedge clear, the relaunch, the confirmation, and the
+    # record itself — follows the install to its new home
+    # instead of reading the parked tree's old witnesses.
+    try:
+        with open(os.path.join(root, ".apex-migration.json")) as _mf:
+            _mig = json.load(_mf)
+        _new_root = str(_mig.get("to") or "")
+        if (_new_root and _new_root != root
+                and os.path.isfile(os.path.join(_new_root, "bridge.py"))
+                and read_installed_build_seq(_new_root)
+                == job.get("targetBuildSeq")):
+            trace("migration-adopted",
+                  "the installer moved Apex to " + _new_root
+                  + " — relaunch, confirmation and the record follow it there")
+            root = _new_root
+            STATE["result_path"] = os.path.join(
+                root, "config", "update-result.json")
+            env["NAVI_HOME"] = root
+    except Exception:
+        pass
+
     tail_failure = ""
     if code != 0:
         # Issue #104 (Build 6): a nonzero exit is not the whole
@@ -11868,6 +11911,33 @@ def github_read_token():
 
 
 def github_api(method, url, token=None, body=None, form=False):
+    # Build 11 (#197): the shared authenticated-call wrapper.
+    # When the call rides the operator's STORED token (the only
+    # token any authenticated consumer passes), the token is
+    # renewed BEFORE the call when its recorded expiry says it
+    # is dead or nearly so, and a 401 that still comes back
+    # earns exactly one renewal and one retry — one renewal
+    # per call, never a loop. Calls carrying any other token
+    # (the device flow's just-minted token, a token=None OAuth
+    # exchange) pass straight through: renewal is a property
+    # of the stored sign-in, not of the wire.
+    stored = github_auth()
+    if token and stored and token == stored.get("token"):
+        fresh, _attempted = github_ensure_fresh_token()
+        if fresh and fresh.get("token") and fresh["token"] != token:
+            token = fresh["token"]
+        status, resp = _github_api_once(method, url, token, body, form)
+        if status == 401 and not _attempted:
+            renewed_auth = github_refresh_auth()
+            if (renewed_auth and renewed_auth.get("token")
+                    and renewed_auth["token"] != token):
+                status, resp = _github_api_once(
+                    method, url, renewed_auth["token"], body, form)
+        return status, resp
+    return _github_api_once(method, url, token, body, form)
+
+
+def _github_api_once(method, url, token=None, body=None, form=False):
     # One GitHub request; returns (status, parsed JSON or text) and
     # never raises for an HTTP error — the caller words the failure.
     headers = {
@@ -11905,6 +11975,26 @@ def github_api(method, url, token=None, body=None, form=False):
 
 
 def github_api_raw(method, url, token, data, content_type):
+    # Build 11 (#197): the raw sibling rides the same renewal
+    # wrapper as github_api — stored token, pre-emptive renewal,
+    # one renewal + one retry on a 401, never a loop.
+    stored = github_auth()
+    if token and stored and token == stored.get("token"):
+        fresh, _attempted = github_ensure_fresh_token()
+        if fresh and fresh.get("token") and fresh["token"] != token:
+            token = fresh["token"]
+        status, resp = _github_api_raw_once(method, url, token, data, content_type)
+        if status == 401 and not _attempted:
+            renewed_auth = github_refresh_auth()
+            if (renewed_auth and renewed_auth.get("token")
+                    and renewed_auth["token"] != token):
+                status, resp = _github_api_raw_once(
+                    method, url, renewed_auth["token"], data, content_type)
+        return status, resp
+    return _github_api_raw_once(method, url, token, data, content_type)
+
+
+def _github_api_raw_once(method, url, token, data, content_type):
     # github_api's sibling for binary bodies (release assets ride
     # the uploads host as raw bytes, not JSON). Same contract:
     # (status, parsed JSON or text), never raises for HTTP errors.
@@ -11991,6 +12081,7 @@ def github_auth():
                 "login": str(data.get("login") or ""),
                 "refresh_token": str(data.get("refresh_token") or ""),
                 "expires_in": data.get("expires_in"),
+                "expires_at": data.get("expires_at"),
             }
     except Exception:
         pass
@@ -12009,6 +12100,15 @@ def github_save_auth(token, login, refresh_token=None, expires_in=None):
         data["refresh_token"] = str(refresh_token)
     if expires_in:
         data["expires_in"] = expires_in
+        # Build 11 (#197): the ABSOLUTE expiry, persisted beside
+        # the lifetime — until this build nothing ever read
+        # expires_in back, so no consumer could know the token
+        # had died until GitHub's 401 said so, once per call,
+        # forever. github_ensure_fresh_token reads this.
+        try:
+            data["expires_at"] = int(time.time()) + int(expires_in)
+        except Exception:
+            pass
     os.makedirs(os.path.dirname(GITHUB_TOKEN_PATH), exist_ok=True)
     fd = os.open(GITHUB_TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -12050,6 +12150,38 @@ def github_refresh_auth():
         )
         return github_auth()
     return None
+
+
+def github_ensure_fresh_token():
+    # Build 11 (#197): pre-emptive renewal. When the stored
+    # sign-in carries an absolute expiry (persisted by
+    # github_save_auth since this build) and the token is
+    # expired or inside the renewal margin, renew BEFORE the
+    # first authenticated call instead of discovering the death
+    # as a 401 on every surface, every morning. Returns
+    # (auth, attempted): the auth dict to ride — the fresh one
+    # when renewal worked, the stored one otherwise — and
+    # whether a renewal was ATTEMPTED at all. The wrappers
+    # spend a call's one renewal here or on a 401, never both:
+    # a dead refresh token earns exactly one attempt per call,
+    # not one per layer. When no expiry was ever stored
+    # (sign-ins from before this build), nothing is guessed:
+    # the 401 path in the wrappers covers it, and the first
+    # successful renewal starts the clock for every later call.
+    auth = github_auth()
+    if not auth or not auth.get("refresh_token"):
+        return auth, False
+    exp = auth.get("expires_at")
+    if exp is None:
+        return auth, False
+    try:
+        exp = float(exp)
+    except Exception:
+        return auth, False
+    if time.time() < exp - 300:
+        return auth, False
+    fresh = github_refresh_auth()
+    return (fresh or auth), True
 
 
 def github_status_payload(cfg):
@@ -13068,10 +13200,25 @@ def chip_cartridge_filename(repo, rows):
 
 
 def github_download(url):
-    # A runtime read like any other (Build 2): the Runtime
-    # credential rides along when configured. (Release-asset
-    # downloads themselves are unmetered by GitHub; the header
-    # costs nothing and keeps the read on the app's own identity.)
+    # Build 11 (#197): downloads ride the renewal wrapper too —
+    # pre-emptive renewal when the stored expiry says so, and
+    # one renewal + one retry on a 401 (an expired token used
+    # to fail the Updater's asset download outright, every
+    # morning, until the operator signed in again by hand).
+    _auth, _attempted = github_ensure_fresh_token()
+    try:
+        return _github_download_once(url)
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and not _attempted and github_refresh_auth():
+            return _github_download_once(url)
+        raise
+
+
+def _github_download_once(url):
+    # A runtime read like any other (Build 2): the operator's
+    # sign-in token rides along. (Release-asset downloads
+    # themselves are unmetered by GitHub; the header costs
+    # nothing and keeps the read on the app's own identity.)
     headers, _authed = _github_read_headers()
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -15554,35 +15701,34 @@ def github_publish_files(repo_name, files, topic, description, release=None):
     if not auth:
         return {"ok": False, "error": "You are not signed in to GitHub. Sign in under Settings → GitHub & Backup, or use Export for GitHub and upload the ZIP yourself."}
     login, token = auth["login"], auth["token"]
-    # Every call below goes through pub(): it carries the current
-    # token, and on a 401 it renews the sign-in once from the
-    # stored refresh token and retries the call once (issue #14).
-    # A 401 that survives that — or arrives with no refresh token
-    # stored — means the saved sign-in is dead, and the operator
-    # hears that in plain words, never as a raw HTTP string.
-    state = {"token": token, "renewed": False}
+    # Every call below goes through pub(): it carries the
+    # current token. Renewal itself is the shared wrapper's
+    # job since Build 11 (#197) — github_api / github_api_raw
+    # renew the stored sign-in once on a 401 and retry once,
+    # the behavior this loop first grew for itself (issue
+    # #14); pub() only re-reads the stored token afterwards,
+    # because a renewal rotates it mid-publish. A 401 that
+    # survives the wrapper means the saved sign-in is dead,
+    # and the operator hears that in plain words, never as a
+    # raw HTTP string.
+    state = {"token": token}
 
     def reauth_error():
         return {"ok": False, "error": "GitHub rejected the sign-in Navi has saved — the token has expired or been revoked, and Navi could not renew it. Sign out and back in under Settings → GitHub & Backup, then publish again. Nothing was uploaded."}
 
+    def _resync_token():
+        now = github_auth()
+        if now and now.get("token"):
+            state["token"] = now["token"]
+
     def pub(method, url, body=None):
         st, resp = github_api(method, url, state["token"], body)
-        if st == 401 and not state["renewed"]:
-            state["renewed"] = True
-            fresh = github_refresh_auth()
-            if fresh:
-                state["token"] = fresh["token"]
-                st, resp = github_api(method, url, state["token"], body)
+        _resync_token()
         return st, resp
 
     def pub_raw(method, url, data, content_type):
         st, resp = github_api_raw(method, url, state["token"], data, content_type)
-        if st == 401 and not state["renewed"]:
-            state["renewed"] = True
-            fresh = github_refresh_auth()
-            if fresh:
-                state["token"] = fresh["token"]
-                st, resp = github_api_raw(method, url, state["token"], data, content_type)
+        _resync_token()
         return st, resp
 
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(repo_name or "")).strip("-.")[:100]
@@ -23339,6 +23485,65 @@ def run_self_check():
         except Exception as e:
             problems.append(mod + ".py does not import from this install ("
                             + type(e).__name__ + ")")
+    # 0.2.0e Build 11 (#198, the permissions doctrine): the
+    # ownership verdict over this tree — every file should be
+    # owned by the operator running the bridge and readable by
+    # them. A root-owned leftover (a past sudo repair's copies,
+    # a voice venv installed under sudo) is exactly how an
+    # install quietly rots until an update dies on it; the
+    # verdict names the offenders in the record instead. It
+    # does NOT fail the proofs above — the install stands on
+    # those — it is the product saying the rest out loud.
+    # Symlinks are skipped (their targets live outside the
+    # tree's ownership story), and so is updates/ (staged
+    # downloads, not the install itself).
+    ownership_offenders = []
+    ownership_count = 0
+    try:
+        _uid = os.getuid()
+
+        def _own_bad(p, is_dir):
+            try:
+                st = os.lstat(p)
+            except Exception:
+                return False
+            if st.st_uid != _uid:
+                return True
+            if not os.access(p, os.R_OK):
+                return True
+            if is_dir and not os.access(p, os.X_OK):
+                return True
+            return False
+
+        for _dp, _dns, _fns in os.walk(root):
+            _rel_dp = os.path.relpath(_dp, root)
+            _kept = []
+            for _d in _dns:
+                _p = os.path.join(_dp, _d)
+                if os.path.islink(_p):
+                    continue
+                if _rel_dp == "." and _d == "updates":
+                    continue
+                _kept.append(_d)
+                if _own_bad(_p, True):
+                    ownership_count += 1
+                    if len(ownership_offenders) < 50:
+                        ownership_offenders.append(
+                            os.path.relpath(_p, root))
+            _dns[:] = _kept
+            for _n in _fns:
+                _p = os.path.join(_dp, _n)
+                if os.path.islink(_p):
+                    continue
+                if _own_bad(_p, False):
+                    ownership_count += 1
+                    if len(ownership_offenders) < 50:
+                        ownership_offenders.append(
+                            os.path.relpath(_p, root))
+    except Exception:
+        ownership_offenders = []
+        ownership_count = 0
+    ownership_ok = ownership_count == 0
     ok = not problems
     if ok:
         body = ("the stamps agree (build " + BRIDGE_BUILD
@@ -23352,6 +23557,9 @@ def run_self_check():
     rec = {"ok": ok, "sentence": sentence, "build": BRIDGE_BUILD,
            "buildSeq": SHIPPED_BUILD_SEQ, "version": SHIPPED_VERSION,
            "payloadVerified": checked, "problems": problems,
+           "ownershipOk": ownership_ok,
+           "ownershipOffenders": ownership_offenders,
+           "ownershipOffenderCount": ownership_count,
            "at": int(time.time())}
     try:
         with open(os.path.join(root, "config", "install-self-check.json"), "w", encoding="utf-8") as f:
@@ -23359,6 +23567,17 @@ def run_self_check():
     except Exception:
         pass
     print(("SELF-CHECK OK: " if ok else "SELF-CHECK FAILED: ") + body, flush=True)
+    if ownership_ok:
+        print("SELF-CHECK OWNERSHIP: ok — every file in this tree is owned by "
+              "the operator running the bridge and readable by them.", flush=True)
+    else:
+        print("SELF-CHECK OWNERSHIP: " + str(ownership_count)
+              + " file(s) in this tree are not owned by the operator running "
+              "the bridge, or cannot be read by them: "
+              + ", ".join(ownership_offenders)
+              + ("…" if ownership_count > len(ownership_offenders) else "")
+              + " — the install stands, but repair ownership (sudo chown -R) "
+              "before the next update has to carry them.", flush=True)
     return 0 if ok else 1
 
 

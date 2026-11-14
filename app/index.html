@@ -346,11 +346,29 @@
      positioning anchors to the viewport on every door. Desktop:
      the centered popup, as it always was. Phone widths: a
      full-screen sheet above its scrim, its own scroll inside,
-     the page behind it locked. */
+     the page behind it locked.
+     Build 11 (#196 rider): the panel no longer scrolls as one
+     box with a sticky first child. The field screenshot showed
+     the headline's first line half-clipped at the sheet's top
+     edge, above the source/Close bar — the bar and the headline
+     shared one scroll box, so the bar's painted place at open
+     rode on the engine's sticky-vs-padding origin and the
+     panel's initial scroll origin. Now the panel is a flex
+     column that never scrolls: the bar is a fixed first child
+     and the article body scrolls in its own box below it, so
+     at open the headline stands fully below the bar and at no
+     scroll position can the bar overlap or clip a content
+     line — on either door, by construction. The desktop panel
+     also widens (680px was a newspaper column; the operator
+     asked for the page). */
   #wire-reader-shade { position:fixed; inset:0; z-index:118; background:rgba(0,0,0,.45); }
-  #wire-reader { position:fixed; z-index:119; left:50%; top:50%; transform:translate(-50%,-50%); width:min(680px,calc(100vw - 24px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:18px 20px; transition:opacity var(--motion-med) var(--motion-ease),transform var(--motion-med) var(--motion-ease); }
+  #wire-reader { position:fixed; z-index:119; left:50%; top:50%; transform:translate(-50%,-50%); width:min(1120px,calc(100vw - 48px)); max-height:86vh; overflow:hidden; display:flex; flex-direction:column; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:0; transition:opacity var(--motion-med) var(--motion-ease),transform var(--motion-med) var(--motion-ease); }
+  .wire-reader-head { flex:0 0 auto; background:var(--panel2); padding:20px 20px 8px; }
+  .wire-reader-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:0 20px 18px; }
   @media (max-width:800px) {
-    #wire-reader { left:0; top:0; right:0; bottom:0; transform:none; width:auto; max-height:none; height:100dvh; border:none; border-radius:0; box-shadow:none; padding:14px 16px calc(14px + env(safe-area-inset-bottom)); }
+    #wire-reader { left:0; top:0; right:0; bottom:0; transform:none; width:auto; max-height:none; height:100dvh; border:none; border-radius:0; box-shadow:none; padding:0; }
+    .wire-reader-head { padding:16px 16px 8px; }
+    .wire-reader-body { padding:0 16px calc(14px + env(safe-area-inset-bottom)); }
   }
   body.reader-open { overflow:hidden; }
   #view-root.chat-view > h3, #view-root.chat-view > .card { flex:0 0 auto; }
@@ -1714,8 +1732,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-14.10";
-var SHIPPED_BUILD_SEQ = 10;
+var BRIDGE_BUILD = "2026-11-14.11";
+var SHIPPED_BUILD_SEQ = 11;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2987,11 +3005,17 @@ function wireReaderHtml() {
   var j = wireReader, it = j.item || {};
   var h = "<div id='wire-reader-shade'></div>";
   h += "<div id='wire-reader' role='dialog' aria-modal='true' aria-label='Article reader'>";
-  h += "<div style='position:sticky;top:0;background:var(--panel2);padding:2px 0 8px;z-index:1'><div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</span><button class='ghost' id='wire-reader-close-top' aria-label='Close the article reader' style='min-height:40px;flex:0 0 auto'>Close</button></div></div>";
+  // Build 11 (#196 rider): the bar is its own flex child of the
+  // panel and the article scrolls in the .wire-reader-body box
+  // below it — no sticky header inside the scroll box, so the
+  // bar can never ride over or clip the headline (see the
+  // #wire-reader CSS note).
+  h += "<div class='wire-reader-head'><div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</span><button class='ghost' id='wire-reader-close-top' aria-label='Close the article reader' style='min-height:40px;flex:0 0 auto'>Close</button></div></div>";
+  h += "<div class='wire-reader-body'>";
   h += "<h3 style='margin:8px 0'>" + esc(j.title || it.title || "Article") + "</h3>";
   (j.paragraphs || []).forEach(function (p) { h += "<p style='font-size:14px;line-height:1.55;margin-top:8px'>" + esc(p) + "</p>"; });
   h += "<div class='row' style='margin-top:14px;gap:8px'><a class='act' href='" + esc(it.link || "#") + "' target='_blank' rel='noopener' style='min-height:40px;text-decoration:none;display:inline-flex;align-items:center;padding:0 14px'>Open original</a><button class='ghost' id='wire-reader-close' style='min-height:40px'>Close</button></div>";
-  return h + "</div>";
+  return h + "</div></div>";
 }
 function ctfEventHtml(e) {
   var h = "<div class='card' style='margin-top:10px'><div style='display:flex;gap:12px;align-items:flex-start'>";
@@ -4398,7 +4422,7 @@ var DOC_PAGES = [
   "<p>Nothing leaves the machine on its own — the only network calls the bridge makes are to GitHub: when you open the chip or pack catalogs, check something for updates, or, once you have signed in and set it up, run a backup. The <b>GitHub — issues &amp; backups</b> page in this wiki covers that whole side of her.</p>" +
   "<p>Two small details ride the frame: under the <b>APEX</b> wordmark sits her <b>tagline</b> — “Powered by Navi”, one static line; and at the top of the status column, her <b>presence line</b> starts at “Navi is here.” and cycles every few minutes through what she's up to — listening to the network breathe, arguing with a CAPTCHA, haunting Rockport's west end.</p></div>" +
     "<div class='doc-sec'><h4>Starting her up</h4>" +
-  "<p>On Linux she lives in <span class='mono'>/opt/navi-apex</span>. Launch her from the application menu or <span class='mono'>./start.sh</span>. Every launch is check-first: the launcher probes the model server, and if navi.llamafile is already running — from boot, an earlier launch, or started by hand — it leaves it alone and just runs the app; only when nothing answers does it start the server itself, with <span class='mono'>./navi.llamafile --server --v2</span> and the hardware-profile flags from <span class='mono'>config/navi.config.json</span>. The launcher starts the bridge, verifies the thing answering on port " + BRIDGE_PORT + " is really this build — naming whatever else it finds by its page title — and only then opens the dashboard. During install you chose when the model server starts: <b>on app launch</b> (the bridge starts navi.llamafile when you press Connect) or <b>at system boot</b>. Server output lands in <span class='mono'>navi.llamafile.log</span> beside the app.</p></div>" },
+  "<p>On Linux she lives in <span class='mono'>~/.local/share/navi-apex</span> — your own data home, where no corner of her tree needs root to exist. Launch her from the application menu or <span class='mono'>./start.sh</span>. Builds before the homecoming (Build 11) lived in <span class='mono'>/opt/navi-apex</span>: the first Build 11 install migrates such a tree to the new home — every piece of state carried, the Mesh identity byte-for-byte — and parks the old tree in place with a marker (<span class='mono'>MIGRATED.txt</span>) naming the new home and the one command that removes it when you are ready. Every launch is check-first: the launcher probes the model server, and if navi.llamafile is already running — from boot, an earlier launch, or started by hand — it leaves it alone and just runs the app; only when nothing answers does it start the server itself, with <span class='mono'>./navi.llamafile --server --v2</span> and the hardware-profile flags from <span class='mono'>config/navi.config.json</span>. The launcher starts the bridge, verifies the thing answering on port " + BRIDGE_PORT + " is really this build — naming whatever else it finds by its page title — and only then opens the dashboard. During install you chose when the model server starts: <b>on app launch</b> (the bridge starts navi.llamafile when you press Connect) or <b>at system boot</b>. Server output lands in <span class='mono'>navi.llamafile.log</span> beside the app.</p></div>" },
   { id: "chat-cli", title: "Chat & CLI mode", related: ["chips-guide", "voice"], html:
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
@@ -4861,7 +4885,8 @@ var DOC_PAGES = [
   "<li>It also offers her voice, and sets up the tool that builds her window, the same way — say no and she still works; she just cannot talk out loud yet.</li>" +
   "<li>It looks at your machine — the processor and its cores, how much memory, the graphics chip — and picks her thinking settings to fit it: how many threads, how big a context, how much she reads at once, and whether the graphics chip helps. A modest machine gets the gentle, proven numbers; a strong one gets more. It writes what it found and why into <span class='mono'>hardware-profile.log</span>, and you can see or change the result later in Settings.</li>" +
   "<li>Open <b>Apex</b> from your app menu. Her own window opens — no web browser. That window is the app.</li></ol>" +
-  "<p>On Linux she installs into <span class='mono'>/opt/navi-apex</span>. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, the Vault, the DHD certificate home (<span class='mono'>config/dhd/</span> — a real certificate there is never wiped by a reinstall), her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
+  "<p>On Linux she installs into <span class='mono'>~/.local/share/navi-apex</span>, your own data home. Her window talks to a small helper program (the <b>bridge</b>) at port " + BRIDGE_PORT + ", and the bridge talks to her model at port 8080. <b>Your things are safe:</b> updating, reinstalling, and even a fresh install (<span class='mono'>--fresh</span>) keep what is yours — her model file, installed chips and knowledge packs, the Vault, the DHD certificate home (<span class='mono'>config/dhd/</span> — a real certificate there is never wiped by a reinstall), her Soul and Memory pages, her voice and its models. A first install is the only true blank start.</p>" +
+  "<p><b>Permissions are audited, not discovered.</b> Before an update or a migration stops or carries anything, the installer audits the whole source tree in one pass for files you cannot read — the leftovers of a past <span class='mono'>sudo</span> repair are the usual suspects — and handles each by its class. <b>Bytecode</b> (<span class='mono'>__pycache__</span>, <span class='mono'>.pyc</span>) is simply never carried; it rebuilds itself. A <b>re-issuable credential</b> she cannot read — the GitHub sign-in file — is left behind, and the install's completion output and record name the casualty and the fix (sign in again from Identities). <b>Irreplaceable state</b> she cannot read — the Mesh identity, cards, chats, Case Files, Soul and Memory, the rest of config — refuses the install up front, naming <i>every</i> offending file with the one <span class='mono'>sudo chown</span> command that repairs them all: never one file per attempt. After the install, her self-check adds an <b>ownership verdict</b> over the new tree, so a file that somehow lands root-owned is named by the product itself. An unprivileged installer cannot repair another user's ownership — the doctrine is that it never needs to, except for irreplaceable state, and there the stop comes first, complete, with its remedy attached.</p>" +
   "<p><b>One installer, every major Linux family.</b> The installer reads your distro from <span class='mono'>/etc/os-release</span> and says out loud which family it found. Only its dependency step changes with the family — the same development libraries and base tools, under each family's own package names:</p><ul>" +
   "<li><b>Debian family</b> (Debian, Ubuntu, Pop!_OS, Mint and their kin) — installed with <span class='mono'>apt</span>.</li>" +
   "<li><b>Fedora</b> and Fedora-based distros — installed with <span class='mono'>dnf</span>.</li>" +

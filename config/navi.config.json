@@ -45,7 +45,7 @@
     ]
   },
   "startup": "on-ui-launch",
-  "install_dir": "/opt/navi-apex",
+  "install_dir": "",
   "sudo_mode": false,
   "threat_level": "Guarded",
   "operator_name": "",

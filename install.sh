@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Apex installer — 0.2.0e Build 10 (#193): the manifest-driven,
-# stage-and-swap installer. Three laws, learned from eighteen
-# field incidents (files/installer-audit.md):
+# Apex installer — 0.2.0e Build 11 (#193, #198): the manifest-
+# driven, stage-and-swap installer, now with the homecoming
+# (the default home is the operator's ~/.local/share/navi-apex,
+# and a legacy /opt tree is migrated to it, state and Mesh
+# identity byte-for-byte, then parked in place) and the
+# permissions doctrine (law D below). Four laws, learned from
+# nineteen field incidents (files/installer-audit.md):
 #
 #   A) The payload is a CONTRACT, not a habit. MANIFEST.txt
 #      declares every file this package carries, its class and
@@ -27,6 +31,27 @@
 #      the product verifies ITSELF — stamps, manifest hashes,
 #      engine imports — and the install stands or rolls back on
 #      that verdict, not on a version proxy.
+#   D) Permissions are audited, not discovered (Build 11,
+#      #198). Before anything is stopped or carried, the
+#      source tree (the current tree on an upgrade, the legacy
+#      tree on a migration) is audited in ONE pass for files
+#      this operator cannot read, and every offender is
+#      handled by its class: REGENERABLE bytecode (__pycache__,
+#      *.pyc) is never carried and never blocks — the carry
+#      reads exclude it; RE-ISSUABLE credentials (the GitHub
+#      sign-in file and its retired sibling) are left behind
+#      when unreadable, and the completion output and the
+#      install record name the casualty and its remedy;
+#      IRREPLACEABLE state (Mesh identity, cards, chats, Case
+#      Files, Soul/Memory, all other config) refuses the
+#      install up front, naming EVERY offending file with the
+#      one remedy command — never one file per attempt. After
+#      the swap, the product's self-check adds an ownership
+#      verdict over the new tree. The honest boundary: an
+#      unprivileged installer cannot chown root's files; the
+#      doctrine is that it never needs to, except for
+#      irreplaceable state — and there the stop comes first,
+#      complete, with its remedy attached.
 #
 # What an install preserves, untouched as ever: the llamafile,
 # installed chips and RAG packs, the Vault, DHD certificates,
@@ -38,8 +63,8 @@ set -euo pipefail
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SRC_DIR"
 
-STAMP="2026-11-14.10"
-BUILD_STAMP="2026-11-14.10"
+STAMP="2026-11-14.11"
+BUILD_STAMP="2026-11-14.11"
 
 # --- Who is running this, and in whose name -------------------
 # SUDO in the old sense is GONE: placement runs unprivileged in
@@ -71,15 +96,40 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]
 fi
 
 # --- Where Apex lives ------------------------------------------
-INSTALL_DIR="/opt/navi-apex"
-OLD_DIR="$HOME/.local/share/navi"
+# Build 11 (#198, the homecoming): the default home is the
+# operator's XDG data home, ~/.local/share/navi-apex — resolved
+# from the installing operator's $HOME, with the passwd entry
+# as the fallback when $HOME is unset (a detached apply can
+# arrive with no HOME at all). /opt/navi-apex survives only as
+# the named legacy constant: the place installs lived before
+# the homecoming — detected, migrated, parked; never a default
+# again. (APEX_LEGACY_HOME overrides the legacy path for
+# benches and for operators who once installed elsewhere by
+# hand; the Docker image's internal /opt/navi-apex is a
+# different thing entirely — the container never runs this
+# resolution, its entrypoint seeds its volume directly.)
+OPERATOR_HOME="${HOME:-}"
+if [ -z "$OPERATOR_HOME" ]; then
+  OPERATOR_HOME="$(getent passwd "$OPERATOR" 2>/dev/null | cut -d: -f6 || true)"
+fi
+if [ -z "$OPERATOR_HOME" ]; then
+  OPERATOR_HOME="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)' 2>/dev/null || true)"
+fi
+if [ -n "$OPERATOR_HOME" ] && [ -z "${HOME:-}" ]; then
+  HOME="$OPERATOR_HOME"; export HOME
+fi
+DEFAULT_HOME="$OPERATOR_HOME/.local/share/navi-apex"
+LEGACY_DIR="${APEX_LEGACY_HOME:-/opt/navi-apex}"
+OLD_DIR="$OPERATOR_HOME/.local/share/navi"
+INSTALL_DIR=""
+INVOKED_DIR=""
 STARTUP=""
 VOICE=""
 FRESH=""
 NO_RELAUNCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dir) INSTALL_DIR="$2"; shift 2 ;;
+    --dir) INSTALL_DIR="$2"; INVOKED_DIR="$2"; shift 2 ;;
     --startup) STARTUP="$2"; shift 2 ;;
     --voice) VOICE="$2"; shift 2 ;;
     --fresh) FRESH=1; shift ;;
@@ -87,16 +137,71 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if [ -z "$INSTALL_DIR" ]; then INSTALL_DIR="$DEFAULT_HOME"; fi
 case "$INSTALL_DIR" in
   /*) ;;
   *) INSTALL_DIR="$PWD/$INSTALL_DIR" ;;
 esac
 while [ "$INSTALL_DIR" != "/" ] && [ "${INSTALL_DIR%/}" != "$INSTALL_DIR" ]; do INSTALL_DIR="${INSTALL_DIR%/}"; done
+case "$LEGACY_DIR" in
+  /*) ;;
+  *) LEGACY_DIR="$PWD/$LEGACY_DIR" ;;
+esac
+while [ "$LEGACY_DIR" != "/" ] && [ "${LEGACY_DIR%/}" != "$LEGACY_DIR" ]; do LEGACY_DIR="${LEGACY_DIR%/}"; done
+# The detached apply helper always passes its own root as
+# --dir; on a pre-homecoming machine that root IS the legacy
+# tree. An invocation aimed at the legacy tree is a migration
+# invocation: the target becomes the new home, and the legacy
+# tree becomes the source.
+if [ -n "$INVOKED_DIR" ]; then
+  _inv="$INVOKED_DIR"
+  case "$_inv" in
+    /*) ;;
+    *) _inv="$PWD/$_inv" ;;
+  esac
+  while [ "$_inv" != "/" ] && [ "${_inv%/}" != "$_inv" ]; do _inv="${_inv%/}"; done
+  if [ "$_inv" = "$LEGACY_DIR" ] && [ "$LEGACY_DIR" != "$DEFAULT_HOME" ]; then
+    INSTALL_DIR="$DEFAULT_HOME"
+  fi
+fi
 PARENT_DIR="$(dirname "$INSTALL_DIR")"
 STAGE_DIR="$PARENT_DIR/.apex-stage"
 PREV_DIR="$PARENT_DIR/.apex-prev"
 FAILED_DIR="$PARENT_DIR/.apex-failed-$STAMP"
 CARRY_DIR="$PARENT_DIR/.apex-carry"
+
+# --- The homecoming: legacy detection (#198) -------------------
+# Migration runs when this install's target is the default home
+# and a legacy tree stands at LEGACY_DIR. It runs at most once:
+# the new home records it (config/migration.json), and a later
+# run that finds the record treats the parked tree as expected
+# scenery — a plain same-home upgrade. If BOTH homes somehow
+# hold a live install and no migration was ever recorded, the
+# new home is canonical: nothing is carried, the situation is
+# named in the output, and the legacy tree is left untouched.
+# A custom --dir target never migrates — the homecoming
+# belongs to the default home alone.
+LEGACY_MIGRATION=""
+LEGACY_STATE_BOTH=""
+if [ "$INSTALL_DIR" = "$DEFAULT_HOME" ] && [ "$LEGACY_DIR" != "$INSTALL_DIR" ] \
+   && [ -f "$LEGACY_DIR/bridge.py" ]; then
+  if [ -f "$INSTALL_DIR/config/migration.json" ]; then
+    :
+  elif [ -f "$INSTALL_DIR/bridge.py" ]; then
+    LEGACY_STATE_BOTH=1
+  else
+    LEGACY_MIGRATION=1
+  fi
+fi
+# The tree this install carries state FROM: the install's own
+# tree on an upgrade, the legacy tree on a migration, nothing
+# on a true first install.
+FOUNDATION_SRC=""
+if [ -f "$INSTALL_DIR/bridge.py" ]; then
+  FOUNDATION_SRC="$INSTALL_DIR"
+elif [ -n "$LEGACY_MIGRATION" ]; then
+  FOUNDATION_SRC="$LEGACY_DIR"
+fi
 
 # A previous install killed between the two renames of its swap
 # heals here, before anything else reads the tree: the install
@@ -141,8 +246,166 @@ if [ ! -d "$INSTALL_DIR" ]; then
   }
 fi
 
+# --- The permissions audit (law D) ------------------------------
+# One pass over each tree this install carries state from,
+# classifying every file this operator cannot read — BEFORE
+# anything is stopped or carried, and exhaustively: every
+# offender is named in this one run, never one file per
+# attempt. (The field shape this answers, 2026-11-14: a manual
+# install died mid-assembly on an unreadable root-owned
+# config/github-auth.json and a root-owned .pyc — two different
+# classes, one entitled to a refusal, one to a shrug.)
+# Prints TSV lines: REGEN / CASUALTY / BLOCKER + relpath.
+# Symlinks are skipped (a carry archives a link as a link and
+# never opens its target), as are the subtrees the carry never
+# reads (updates/, shell/target/).
+audit_tree_unreadable() {
+  python3 - "$1" <<'PYEOF' 2>/dev/null || true
+import os, sys
+root = sys.argv[1]
+CASUAL = {"config/github-auth.json", "config/github-runtime.json"}
+
+def skipped(rel):
+    parts = rel.split("/")
+    return parts[0] == "updates" or parts[:2] == ["shell", "target"]
+
+walk_blockers = []
+
+def onerr(e):
+    fn = getattr(e, "filename", "") or root
+    rel = os.path.relpath(fn, root).replace(os.sep, "/")
+    if not skipped(rel):
+        walk_blockers.append(rel)
+
+for dp, dns, fns in os.walk(root, onerror=onerr):
+    rel_dp = os.path.relpath(dp, root).replace(os.sep, "/")
+    keep = []
+    for d in dns:
+        rel = d if rel_dp == "." else rel_dp + "/" + d
+        if skipped(rel):
+            continue
+        if d == "__pycache__":
+            probe = os.path.join(dp, d)
+            if not os.path.islink(probe) and not os.access(probe, os.R_OK | os.X_OK):
+                # An unreadable bytecode dir cannot be descended;
+                # its contents are regenerable by definition.
+                print("REGEN\t" + rel)
+                continue
+            # A readable one is descended like any other dir, so
+            # an unreadable .pyc inside it is still counted.
+            keep.append(d)
+            continue
+        keep.append(d)
+    dns[:] = keep
+    for n in fns:
+        rel = n if rel_dp == "." else rel_dp + "/" + n
+        if skipped(rel):
+            continue
+        p = os.path.join(dp, n)
+        if os.path.islink(p):
+            continue
+        if n.endswith(".pyc"):
+            if not os.access(p, os.R_OK):
+                print("REGEN\t" + rel)
+            continue
+        if not os.access(p, os.R_OK):
+            if rel in CASUAL:
+                print("CASUALTY\t" + rel)
+            else:
+                print("BLOCKER\t" + rel)
+for b in walk_blockers:
+    print("BLOCKER\t" + b)
+PYEOF
+}
+
+AUDIT_REGEN_COUNT=0
+AUDIT_CASUALTY_LIST=""
+AUDIT_BLOCKER_LIST=""
+audit_one_source() {
+  local src="$1" _cls="" _rel=""
+  [ -d "$src" ] || return 0
+  while IFS=$'\t' read -r _cls _rel; do
+    [ -n "$_cls" ] || continue
+    case "$_cls" in
+      REGEN) AUDIT_REGEN_COUNT=$((AUDIT_REGEN_COUNT + 1)) ;;
+      CASUALTY) AUDIT_CASUALTY_LIST="${AUDIT_CASUALTY_LIST}${src}/${_rel}
+" ;;
+      BLOCKER) AUDIT_BLOCKER_LIST="${AUDIT_BLOCKER_LIST}${src}/${_rel}
+" ;;
+    esac
+  done <<EOF_AUDIT
+$(audit_tree_unreadable "$src")
+EOF_AUDIT
+}
+# tar --exclude args for one source tree's audited casualties:
+# a credential the audit found unreadable must not be opened by
+# the carry at all — it is left behind, by name.
+casualty_excludes_for() {
+  local src="$1" _p=""
+  printf '%s' "$AUDIT_CASUALTY_LIST" | while IFS= read -r _p; do
+    case "$_p" in
+      "$src"/*)
+        # Both member-name forms: carries rooted at "." produce
+        # ./-prefixed members; carries of a named subtree do not.
+        printf -- "--exclude=./%s\n--exclude=%s\n" "${_p#$src/}" "${_p#$src/}"
+        ;;
+    esac
+  done
+}
+
+if [ -n "$FOUNDATION_SRC" ]; then audit_one_source "$FOUNDATION_SRC"; fi
+if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ] && [ "$OLD_DIR" != "$FOUNDATION_SRC" ]; then
+  audit_one_source "$OLD_DIR"
+fi
+if [ -n "$AUDIT_BLOCKER_LIST" ]; then
+  echo "ERROR: irreplaceable Apex state cannot be read by $OPERATOR — refusing before anything is stopped or carried." >&2
+  echo "       The audit names every offender in this one pass:" >&2
+  printf '%s' "$AUDIT_BLOCKER_LIST" | while IFS= read -r _f; do
+    [ -n "$_f" ] && echo "         $_f" >&2
+  done
+  echo "       An unprivileged installer cannot repair another user's ownership — and under this" >&2
+  echo "       doctrine it never has to guess: repair it once with exactly this command, then" >&2
+  echo "       run this installer again:" >&2
+  echo "         sudo chown $OPERATOR: $(printf '%s' "$AUDIT_BLOCKER_LIST" | tr '\n' ' ')" >&2
+  echo "       Nothing was stopped, carried, or changed." >&2
+  exit 1
+fi
+if [ "$AUDIT_REGEN_COUNT" -gt 0 ]; then
+  echo "    permissions audit: $AUDIT_REGEN_COUNT unreadable bytecode item(s) in the source tree will be left behind — bytecode is never carried and rebuilds itself."
+fi
+if [ -n "$LEGACY_STATE_BOTH" ]; then
+  echo "    note: both the legacy tree at $LEGACY_DIR and the new home at $INSTALL_DIR hold Apex installs."
+  echo "          The new home is canonical — nothing is carried from the legacy tree, and it is left parked, untouched."
+fi
+
+# --- Staging must be creatable before anything stops (#198) ---
+# The swap assembles the new tree BESIDE the live one and
+# renames it in — a parent directory this operator cannot
+# write makes that impossible, and Build 10 discovered it only
+# mid-run, after the update was already staged, because its
+# preflight checked the install dir and never the parent (the
+# stage dir wanted creating under a root-owned /opt). Prove
+# the staging ground now, before anything is stopped.
+if [ ! -d "$PARENT_DIR" ]; then
+  mkdir -p "$PARENT_DIR" 2>/dev/null || true
+fi
+_stage_probe=""
+_stage_probe="$(mktemp "$PARENT_DIR/.apex-preflight.XXXXXX" 2>/dev/null || true)"
+if [ -z "$_stage_probe" ]; then
+  echo "ERROR: this installer cannot create its staging area beside the install (in $PARENT_DIR) — refusing before anything is stopped." >&2
+  echo "       The new tree is assembled next to the live one and promoted by rename; a parent the operator" >&2
+  echo "       cannot write forbids that outright (the shape that stranded the Build 10 pull under /opt)." >&2
+  echo "       Repair it once:  sudo mkdir -p $PARENT_DIR && sudo chown $OPERATOR: $PARENT_DIR   — then run this installer again." >&2
+  exit 1
+fi
+rm -f "$_stage_probe"
+
 echo "== Apex installer — build $STAMP (manifest-driven, stage-and-swap)"
 echo "   Installing into: $INSTALL_DIR (as $OPERATOR; placement is unprivileged)"
+if [ -n "$LEGACY_MIGRATION" ]; then
+  echo "   Homecoming: the legacy install at $LEGACY_DIR is migrating to this home —"
+  echo "   all operator state carried, the Mesh identity byte-for-byte; the legacy tree is parked, never deleted."
+fi
 
 # With no --startup choice, an interactive run on a real terminal
 # asks; a detached run (the updater's apply helper, piped output)
@@ -152,12 +415,16 @@ HAVE_TTY=""
 if ( : < /dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
 if [ -z "$STARTUP" ]; then
   _cfg_mode=""
-  if [ -f "$INSTALL_DIR/config/navi.config.json" ]; then
+  _cfg_src="$INSTALL_DIR"
+  if [ ! -f "$_cfg_src/config/navi.config.json" ] && [ -n "$FOUNDATION_SRC" ]; then
+    _cfg_src="$FOUNDATION_SRC"
+  fi
+  if [ -f "$_cfg_src/config/navi.config.json" ]; then
     _cfg_mode="$(python3 -c "import json,sys
 try:
     print(json.load(open(sys.argv[1])).get('startup') or '')
 except Exception:
-    print('')" "$INSTALL_DIR/config/navi.config.json" 2>/dev/null || true)"
+    print('')" "$_cfg_src/config/navi.config.json" 2>/dev/null || true)"
   fi
   _units_on=""
   if [ -f "$HOME/.config/systemd/user/navi-bridge.service" ]; then _units_on=1; fi
@@ -741,6 +1008,31 @@ is_html_file() {
   [ -f "$1" ] && head -c 4096 "$1" 2>/dev/null | grep -qiE '<!doctype html|<html'
 }
 
+# --- Carry helpers (law D reads) --------------------------------
+# Every carry READ goes through these: tar with the doctrine's
+# exclusions — regenerable bytecode is never read at all (it
+# rebuilds itself), so an unreadable .pyc can never kill a
+# carry the way it killed the 2026-11-14 field install.
+carry_dir_filtered() {
+  # $1 = source dir, $2 = destination dir (created).
+  [ -d "$1" ] || return 0
+  mkdir -p "$2"
+  (cd "$1" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (cd "$2" && tar --no-same-owner -xf -) || true
+}
+carry_venv() {
+  # $1 = source venv dir, $2 = destination venv dir. Hardlinks
+  # where the filesystem allows (the standing optimization);
+  # a hardlink pass that fails for any reason falls back to a
+  # filtered tar copy.
+  [ -d "$1" ] || return 0
+  rm -rf "$2"
+  cp -al "$1" "$2" 2>/dev/null || {
+    rm -rf "$2"
+    mkdir -p "$2"
+    (cd "$1" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (cd "$2" && tar --no-same-owner -xf -) || true
+  }
+}
+
 # --- Migration: the pre-/opt location, carried not moved -------
 # The old location's state lands in the carry dir beside the
 # install; the stage assembly below consumes it. The old tree
@@ -765,11 +1057,42 @@ if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
     rm -f "$OLD_DIR/navi.llamafile"
   fi
   [ -f "$OLD_DIR/navi.llamafile" ] && mv "$OLD_DIR/navi.llamafile" "$CARRY_DIR/navi.llamafile" && echo "    navi.llamafile carried — no re-download"
-  for _d in config chips rag-packs; do
-    [ -d "$OLD_DIR/$_d" ] && cp -r "$OLD_DIR/$_d" "$CARRY_DIR/$_d"
+  # The config carries from the old tree's root, so the audit's
+  # casualty excludes (tree-relative paths) apply exactly.
+  if [ -d "$OLD_DIR/config" ]; then
+    mapfile -t _old_ex < <(casualty_excludes_for "$OLD_DIR")
+    (cd "$OLD_DIR" && tar --exclude='*/__pycache__' --exclude='*.pyc' "${_old_ex[@]}" -cf - config) | (cd "$CARRY_DIR" && tar --no-same-owner -xf -) || true
+  fi
+  for _d in chips rag-packs; do
+    [ -d "$OLD_DIR/$_d" ] && carry_dir_filtered "$OLD_DIR/$_d" "$CARRY_DIR/$_d"
   done
   [ -f "$OLD_DIR/voice/calls.json" ] && mkdir -p "$CARRY_DIR/voice" && cp "$OLD_DIR/voice/calls.json" "$CARRY_DIR/voice/calls.json"
   echo "    config, chips and packs carried from the old location"
+fi
+
+# --- The homecoming migration: the legacy tree goes quiet ------
+# Boot services pointing at the legacy tree are retired first
+# (they would resurrect its bridge mid-carry — Restart=on-
+# failure is doing exactly what it promises); this install
+# re-registers services against the new home after the swap.
+# Then the legacy bridge and window are stopped with the proven
+# machinery, so state is copied from a quiet tree, never raced.
+if [ -n "$LEGACY_MIGRATION" ]; then
+  echo "==> The homecoming: carrying the legacy install at $LEGACY_DIR into $INSTALL_DIR"
+  for _u in navi-bridge.service navi-llamafile.service; do
+    _uf="$HOME/.config/systemd/user/$_u"
+    if [ -f "$_uf" ] && grep -q "$LEGACY_DIR" "$_uf"; then
+      systemctl --user disable --now "$_u" 2>/dev/null || true
+      rm -f "$_uf"
+      echo "    boot service $_u (pointing at the legacy tree) retired — services are re-registered against the new home below"
+    fi
+  done
+  systemctl --user daemon-reload 2>/dev/null || true
+  if ! stop_bridge "$LEGACY_DIR"; then
+    echo "ERROR: the legacy install's bridge could not be stopped — aborting before anything is carried." >&2
+    exit 1
+  fi
+  stop_shell "$LEGACY_DIR" || true
 fi
 
 # --- Stage assembly (piece B) ----------------------------------
@@ -780,22 +1103,27 @@ echo "==> Assembling the new tree beside the live one"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 IS_UPDATE=""
-[ -f "$INSTALL_DIR/bridge.py" ] && IS_UPDATE=1
+[ -n "$FOUNDATION_SRC" ] && IS_UPDATE=1
 if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   # The whole previous tree is the stage's foundation — operator
   # state, runtime residue and all — minus the shell's build
-  # residue (regenerated by the build step). The llamafile and
-  # the voice venv are hardlinked where the filesystem allows:
-  # the bridge never writes the llamafile, and the venv is only
-  # ever replaced wholesale by the voice step.
-  (cd "$INSTALL_DIR" && tar --exclude='./shell/target' --exclude='./updates' -cf - .) | (cd "$STAGE_DIR" && tar --no-same-owner -xf -)
-  if [ -f "$INSTALL_DIR/navi.llamafile" ]; then
+  # residue (regenerated by the build step), minus update
+  # staging, and minus the doctrine's exclusions: regenerable
+  # bytecode is never READ (law D), and an audited casualty
+  # credential is never opened. On a migration the foundation
+  # is the LEGACY tree; on an upgrade it is this home's own.
+  # The llamafile and the voice venv are hardlinked where the
+  # filesystem allows: the bridge never writes the llamafile,
+  # and the venv is only ever replaced wholesale by the voice
+  # step.
+  mapfile -t _fnd_ex < <(casualty_excludes_for "$FOUNDATION_SRC")
+  (cd "$FOUNDATION_SRC" && tar --exclude='./shell/target' --exclude='./updates' --exclude='*/__pycache__' --exclude='*.pyc' "${_fnd_ex[@]}" -cf - .) | (cd "$STAGE_DIR" && tar --no-same-owner -xf -)
+  if [ -f "$FOUNDATION_SRC/navi.llamafile" ]; then
     rm -f "$STAGE_DIR/navi.llamafile"
-    ln "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"
+    ln "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile"
   fi
-  if [ -d "$INSTALL_DIR/voice/venv" ]; then
-    rm -rf "$STAGE_DIR/voice/venv"
-    cp -al "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv" 2>/dev/null || cp -r "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv"
+  if [ -d "$FOUNDATION_SRC/voice/venv" ]; then
+    carry_venv "$FOUNDATION_SRC/voice/venv" "$STAGE_DIR/voice/venv"
   fi
   # The stage starts from the OLD tree, so update staging the
   # updater left behind never rides into the new version.
@@ -804,26 +1132,26 @@ elif [ -n "$IS_UPDATE" ]; then
   echo "    fresh install: keeping the llamafile, chips, packs, the Vault, DHD and Mesh homes,"
   echo "    chats, config and the voice venv — everything else is rebuilt from the package"
   for _d in chips rag-packs; do
-    [ -d "$INSTALL_DIR/$_d" ] && cp -r "$INSTALL_DIR/$_d" "$STAGE_DIR/$_d"
+    [ -d "$FOUNDATION_SRC/$_d" ] && carry_dir_filtered "$FOUNDATION_SRC/$_d" "$STAGE_DIR/$_d"
   done
-  if [ -d "$INSTALL_DIR/config" ]; then
+  if [ -d "$FOUNDATION_SRC/config" ]; then
     mkdir -p "$STAGE_DIR/config"
     for _d in vault dhd mesh chats; do
-      [ -d "$INSTALL_DIR/config/$_d" ] && cp -r "$INSTALL_DIR/config/$_d" "$STAGE_DIR/config/$_d"
+      [ -d "$FOUNDATION_SRC/config/$_d" ] && carry_dir_filtered "$FOUNDATION_SRC/config/$_d" "$STAGE_DIR/config/$_d"
     done
     for _f in navi.config.json soul.md memory.md; do
-      [ -f "$INSTALL_DIR/config/$_f" ] && cp "$INSTALL_DIR/config/$_f" "$STAGE_DIR/config/$_f"
+      [ -f "$FOUNDATION_SRC/config/$_f" ] && cp "$FOUNDATION_SRC/config/$_f" "$STAGE_DIR/config/$_f"
     done
   fi
-  [ -f "$INSTALL_DIR/navi.llamafile" ] && { ln "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"; }
-  [ -d "$INSTALL_DIR/voice/models" ] && mkdir -p "$STAGE_DIR/voice" && cp -r "$INSTALL_DIR/voice/models" "$STAGE_DIR/voice/models"
-  [ -d "$INSTALL_DIR/voice/venv" ] && { cp -al "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv" 2>/dev/null || cp -r "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv"; }
-  [ -f "$INSTALL_DIR/voice/calls.json" ] && mkdir -p "$STAGE_DIR/voice" && cp "$INSTALL_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json"
+  [ -f "$FOUNDATION_SRC/navi.llamafile" ] && { ln "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile"; }
+  [ -d "$FOUNDATION_SRC/voice/models" ] && carry_dir_filtered "$FOUNDATION_SRC/voice/models" "$STAGE_DIR/voice/models"
+  [ -d "$FOUNDATION_SRC/voice/venv" ] && carry_venv "$FOUNDATION_SRC/voice/venv" "$STAGE_DIR/voice/venv"
+  [ -f "$FOUNDATION_SRC/voice/calls.json" ] && mkdir -p "$STAGE_DIR/voice" && cp "$FOUNDATION_SRC/voice/calls.json" "$STAGE_DIR/voice/calls.json"
 fi
 if [ -d "$CARRY_DIR" ]; then
   [ -f "$CARRY_DIR/navi.llamafile" ] && [ ! -f "$STAGE_DIR/navi.llamafile" ] && mv "$CARRY_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"
   for _d in config chips rag-packs; do
-    if [ -d "$CARRY_DIR/$_d" ] && [ ! -d "$STAGE_DIR/$_d" ]; then cp -r "$CARRY_DIR/$_d" "$STAGE_DIR/$_d"; fi
+    if [ -d "$CARRY_DIR/$_d" ] && [ ! -d "$STAGE_DIR/$_d" ]; then carry_dir_filtered "$CARRY_DIR/$_d" "$STAGE_DIR/$_d"; fi
   done
   if [ -f "$CARRY_DIR/voice/calls.json" ] && [ ! -f "$STAGE_DIR/voice/calls.json" ]; then
     mkdir -p "$STAGE_DIR/voice"; cp "$CARRY_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json"
@@ -1105,10 +1433,11 @@ if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   # copy's installer-owned fields are the OLD build's. Every
   # other config file — chats, Mesh and federation state, the
   # Vault, DHD certificates, Soul and Memory — refreshes.
-  (cd "$INSTALL_DIR/config" && tar --exclude='./navi.config.json' -cf - .) | (cd "$STAGE_DIR/config" && tar --no-same-owner -xf -) 2>/dev/null || true
-  [ -d "$INSTALL_DIR/chips" ] && (cd "$INSTALL_DIR/chips" && tar -cf - .) | (mkdir -p "$STAGE_DIR/chips" && cd "$STAGE_DIR/chips" && tar --no-same-owner -xf -) 2>/dev/null || true
-  [ -d "$INSTALL_DIR/rag-packs" ] && (cd "$INSTALL_DIR/rag-packs" && tar -cf - .) | (mkdir -p "$STAGE_DIR/rag-packs" && cd "$STAGE_DIR/rag-packs" && tar --no-same-owner -xf -) 2>/dev/null || true
-  [ -f "$INSTALL_DIR/voice/calls.json" ] && cp "$INSTALL_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json" 2>/dev/null || true
+  mapfile -t _ref_ex < <(casualty_excludes_for "$FOUNDATION_SRC")
+  (cd "$FOUNDATION_SRC/config" && tar --exclude='./navi.config.json' --exclude='*/__pycache__' --exclude='*.pyc' "${_ref_ex[@]}" -cf - .) | (cd "$STAGE_DIR/config" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -d "$FOUNDATION_SRC/chips" ] && (cd "$FOUNDATION_SRC/chips" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/chips" && cd "$STAGE_DIR/chips" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -d "$FOUNDATION_SRC/rag-packs" ] && (cd "$FOUNDATION_SRC/rag-packs" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/rag-packs" && cd "$STAGE_DIR/rag-packs" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -f "$FOUNDATION_SRC/voice/calls.json" ] && cp "$FOUNDATION_SRC/voice/calls.json" "$STAGE_DIR/voice/calls.json" 2>/dev/null || true
 fi
 
 echo "==> Promoting the staged tree — one act"
@@ -1651,12 +1980,74 @@ elif [ -n "${STOPPED_BRIDGE:-}" ] && [ -n "$NO_RELAUNCH" ]; then
   echo "==> --no-relaunch: the bridge this install stopped stays stopped, by your word."
 fi
 
+# The migration's record adoption: when this install was an
+# update APPLY (a helper in the old tree is mid-flight, its
+# record carried across with the config), the helper keeps
+# writing ITS record in the parked tree — but the panel is
+# served by the NEW bridge from THIS home, and its record here
+# would otherwise sit frozen at "working" until the watchdog
+# closed it as a failure it never was. The installer's own
+# relaunch verification above is the truth of this run, so the
+# record here is finished with it — done, and naming the move.
+# Only on a verified relaunch, and only for a record still
+# claiming work in flight.
+if [ -n "$LEGACY_MIGRATION" ] && [ -n "$RELAUNCH_OK" ] && [ -f "$INSTALL_DIR/config/update-result.json" ]; then
+  python3 - "$INSTALL_DIR/config/update-result.json" "$LEGACY_DIR" "$INSTALL_DIR" <<'PY' || true
+import json, sys, time
+path, legacy, home = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path) as f:
+        rec = json.load(f)
+except Exception:
+    rec = None
+if isinstance(rec, dict) and rec.get("state") == "working":
+    rec["state"] = "done"
+    rec["step"] = "done"
+    rec["migratedFrom"] = legacy
+    rec["migratedTo"] = home
+    rec["note"] = ("This update moved Apex to its new home at " + home
+                   + " — the legacy tree at " + legacy + " is parked in place."
+                   + " The apply helper's own record stays with the parked tree;"
+                   + " this record is the installer's verified account of the run.")
+    rec["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with open(path, "w") as f:
+        json.dump(rec, f, indent=1)
+PY
+fi
+
 # The success record — written only now, after the self-check
 # passed: an install whose record exists is an install the
-# product itself confirmed.
+# product itself confirmed. Build 11 extends it with the
+# doctrine's outcomes: any casualty the permissions audit left
+# behind, and the self-check's ownership verdict over the new
+# tree — merged in, best-effort, never a reason to fail here.
 printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed"}\n' \
   "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" "$(cat "$INSTALL_DIR/VERSION")" \
   > "$INSTALL_DIR/.apex-install-record"
+python3 - "$INSTALL_DIR/.apex-install-record" "$INSTALL_DIR/config/install-self-check.json" $AUDIT_CASUALTY_LIST <<'PY' || true
+import json, sys
+rec_path, sc_path = sys.argv[1], sys.argv[2]
+casualties = [p for p in sys.argv[3:] if p]
+try:
+    with open(rec_path) as f:
+        rec = json.load(f)
+except Exception:
+    raise SystemExit(0)
+if casualties:
+    rec["notCarried"] = casualties
+try:
+    with open(sc_path) as f:
+        sc = json.load(f)
+    if "ownershipOk" in sc:
+        rec["ownership"] = {
+            "ok": bool(sc.get("ownershipOk")),
+            "offenders": sc.get("ownershipOffenders") or [],
+        }
+except Exception:
+    pass
+with open(rec_path, "w") as f:
+    json.dump(rec, f)
+PY
 # The previous tree retires only after the new one is verified.
 # Best-effort by design: if it holds files this operator cannot
 # delete (root-owned leftovers of a past sudo repair, incident
@@ -1677,4 +2068,73 @@ if [ "$STARTUP" = "boot" ]; then
   echo "   Startup: at boot (systemd user services: navi-llamafile, navi-bridge)"
 else
   echo "   Startup: when you launch the app (the Apex entry in your app menu, or $INSTALL_DIR/start.sh)"
+fi
+
+# --- The park (migration only) ----------------------------------
+# The legacy tree stays exactly where it stood — never deleted,
+# never moved — with a marker naming the new home, the date,
+# and the one command that removes it when the operator is
+# ready. The new home records the migration (config/
+# migration.json) so no later run ever migrates twice.
+if [ -n "$LEGACY_MIGRATION" ]; then
+  python3 - "$INSTALL_DIR/config/migration.json" "$LEGACY_DIR" "$INSTALL_DIR" "$STAMP" <<'PY' || true
+import json, sys, time
+path, legacy, home, build = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+rec = {"from": legacy, "to": home, "build": build,
+       "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+with open(path, "w") as f:
+    json.dump(rec, f, indent=1)
+PY
+  if [ -w "$LEGACY_DIR" ]; then
+    cat > "$LEGACY_DIR/MIGRATED.txt" <<EOF_PARK
+Apex moved home.
+
+This tree at $LEGACY_DIR was Apex's install until build $STAMP
+migrated it — every piece of operator state, the Mesh identity
+byte-for-byte — to its new home:
+
+    $INSTALL_DIR
+
+This tree is PARKED: left in place, untouched, as the record
+of the old home and a fallback until you decide otherwise.
+Apex no longer runs from here.
+
+Remove it when you are ready, with exactly:
+
+    sudo rm -rf $LEGACY_DIR
+
+(sudo because deleting the directory takes write access to
+its parent, $(dirname "$LEGACY_DIR") — the installer never
+escalates, so it cannot remove the tree for you.)
+EOF_PARK
+    printf '{"from": "%s", "to": "%s", "build": "%s", "at": "%s"}\n' \
+      "$LEGACY_DIR" "$INSTALL_DIR" "$STAMP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      > "$LEGACY_DIR/.apex-migration.json" || true
+  fi
+  echo ""
+  echo "== The homecoming is complete: Apex lives at $INSTALL_DIR now."
+  echo "   The legacy tree is parked at $LEGACY_DIR — left in place, untouched, with a marker"
+  echo "   (MIGRATED.txt) saying the same. Remove it when you are ready with exactly:"
+  echo "     sudo rm -rf $LEGACY_DIR"
+  echo "   (sudo because deleting the directory takes write access to its parent,"
+  echo "   $(dirname "$LEGACY_DIR") — the installer never escalates, so it cannot remove it for you.)"
+fi
+
+# --- The casualties, named (law D) ------------------------------
+# A re-issuable credential the audit could not read was left
+# behind on purpose — never silent, never a stop. Each one is
+# named here, once, with what to do about it.
+if [ -n "$AUDIT_CASUALTY_LIST" ]; then
+  printf '%s' "$AUDIT_CASUALTY_LIST" | while IFS= read -r _cas; do
+    [ -n "$_cas" ] || continue
+    case "$_cas" in
+      */config/github-auth.json|*/config/github-runtime.json)
+        echo "NOTE: GitHub sign-in was not carried — sign in again from Identities ($_cas could not be read by $OPERATOR and was left behind)."
+        echo "      Sign in again from Identities (Settings → GitHub & Backup), or repair ownership with:  sudo chown $OPERATOR: $_cas   — then re-run this installer."
+        ;;
+      *)
+        echo "NOTE: $_cas could not be read by $OPERATOR and was not carried. Repair ownership with:  sudo chown $OPERATOR: $_cas   — then re-run this installer."
+        ;;
+    esac
+  done
 fi

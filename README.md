@@ -1,4 +1,3 @@
-# Apex — Powered by [Navi](https://github.com/SaintsSec/Navi)
 # Apex — local app package
 
 Project home: https://github.com/AlexKollar/Apex — the fresh repo for this rebuild. (Navi was born at SaintsSec/Navi; that repo stays as the legacy archive of the original.)
@@ -441,12 +440,24 @@ DATE warning in the status column whenever the process answering is
 not the build the page shipped with — if you ever see it, fully quit
 the app and relaunch.
 
-On Linux the app now installs to /opt/navi-apex. Installing over an
-earlier install under ~/.local/share/navi migrates it as a clean
-break: the old bridge and its boot service are stopped and disabled,
-the llamafile binary is moved into /opt (not re-downloaded), the
-config and persona documents are carried across, and the old files
-are removed.
+On Linux the app installs to ~/.local/share/navi-apex, the
+operator's own data home. Installing over an earlier install under
+~/.local/share/navi migrates it as a clean break: the old bridge and
+its boot service are stopped and disabled, the llamafile binary is
+moved (not re-downloaded), the config and persona documents are
+carried across, and the old files are removed. Installing Build 11
+over a pre-homecoming install under /opt/navi-apex performs the
+homecoming migration: every piece of operator state — chips, packs,
+the Vault, DHD certificates, the Mesh identity byte-for-byte, chats,
+config, the model, the voice venv — is carried to the new home, the
+services and launcher are re-registered against it, and the legacy
+tree is parked in place with a marker naming the new home and the
+one command that removes it. Before any install stops or carries
+anything, a permissions audit classifies every file the operator
+cannot read: bytecode is never carried, an unreadable GitHub
+sign-in file is left behind and named as a casualty in the result,
+and unreadable irreplaceable state refuses the run up front with
+every offender and its single remedy command named.
 
 ## If the page at localhost:8675 is not this dashboard
 
@@ -551,7 +562,7 @@ preserved.
 
 ## Layout after install
 
-    /opt/navi-apex/         (the Linux install root)
+    ~/.local/share/navi-apex/   (the Linux install root)
       navi.llamafile        the model (downloaded by the installer)
       app/index.html        the dashboard
       bridge.py             the local bridge
