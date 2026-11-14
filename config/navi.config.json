@@ -37,10 +37,15 @@
     "port": 8765,
     "nodeId": "",
     "ledger": true,
-    "ledgerInBackup": false
+    "ledgerInBackup": false,
+    "listenPorts": [
+      8765,
+      8443,
+      2475
+    ]
   },
   "startup": "on-ui-launch",
-  "install_dir": "/opt/navi-apex",
+  "install_dir": "",
   "sudo_mode": false,
   "threat_level": "Guarded",
   "operator_name": "",
@@ -143,7 +148,7 @@
     "last_import_at": null,
     "last_import_result": ""
   },
-  "version": "0.1.9",
+  "version": "0.2.0",
   "version_status": "stable",
   "updater": {
     "channel": "stable"

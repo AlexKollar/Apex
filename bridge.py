@@ -74,6 +74,13 @@ Stdlib only. Endpoints:
                       would change, per essential; writes nothing
   POST /api/github/import/apply -> restores the backup's essentials
                       (only ever called after a preview + confirm)
+  GET  /api/sync -> Quick Sync state: the Operator sign-in, the
+                      last round's verdict and when it ran (Build 3,
+                      issue #176)
+  POST /api/sync/run {openChatId} -> one full Quick Sync round:
+                      pull, converge, push — chats and Case Files
+                      both ways, over the backup repo, riding the
+                      Operator identity
   GET  /api/chips/catalog -> the Navi User Repo (NUR) list: a live
                       GitHub search for repos tagged navi-chips,
                       each with its latest release, merged with the
@@ -336,6 +343,7 @@ import socket
 import shutil
 import ssl
 import struct
+import uuid
 import subprocess
 import sys
 import tempfile
@@ -382,16 +390,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.1.9"
+SHIPPED_VERSION = "0.2.0"
 SHIPPED_VERSION_STATUS = "stable"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-12.915"
+BRIDGE_BUILD = "2026-11-14.12"
 # Edge build sequence (build .86): this package is its Edge
-# version's publication number SHIPPED_BUILD_SEQ — 0.1.9e
-# Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 15
+# version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
+# Build 2. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 12
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -572,6 +580,254 @@ def public_token(code):
     return hashlib.sha256(("navi-public:" + str(code)).encode()).hexdigest()
 
 
+# ---------------------------------------------------------------------
+# Trusted devices (0.2.0e Build 2, #173): the door stops handing a
+# full session to anyone who types the code. The code now ASKS:
+# a device presenting it becomes a pending device (with a name the
+# visitor gives it), and an already-trusted session approves or
+# denies it in Settings -> System -> Door. An approved device gets
+# its OWN session token — 30 days, sliding while it stays in use —
+# and the operator's device list (name, first/last seen, expiry)
+# carries a per-device revoke, so one lost phone stops meaning
+# "change the code and re-let everyone in".
+#
+# Bootstrap: while NO device is approved yet, the first device to
+# present the code approves ITSELF and receives its token on the
+# spot — a single-operator house is never locked out of its own
+# door waiting for an approver who does not exist yet. From the
+# first approval on, the shared-code cookie stops being accepted:
+# every device stands in the registry under its own name.
+#
+# The registry lives in the public_server block of the config,
+# beside the code it grew from. Session tokens are random, are
+# never shown in any payload (the Settings list carries names and
+# times only), and a device's cookie value IS its token.
+DOOR_DEVICE_TTL_SECONDS = 30 * 24 * 3600
+DOOR_PENDING_TTL_SECONDS = 30 * 60
+
+
+def door_devices(cfg):
+    ps = cfg.get("public_server") if isinstance(cfg, dict) else None
+    raw = ps.get("devices") if isinstance(ps, dict) else None
+    out = []
+    if isinstance(raw, list):
+        for d in raw:
+            if isinstance(d, dict) and d.get("id") and d.get("status") in ("pending", "approved", "denied"):
+                out.append(d)
+    return out
+
+
+def _door_save_devices(cfg, devices):
+    block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+    block = dict(block)
+    block["devices"] = devices
+    if "enabled" not in block:
+        block["enabled"] = False
+    cfg["public_server"] = block
+    save_config(cfg)
+
+
+def _door_prune(devices, now=None):
+    now = now or time.time()
+    kept = []
+    for d in devices:
+        if d.get("status") in ("pending", "denied") and now - float(d.get("created_at") or 0) > DOOR_PENDING_TTL_SECONDS:
+            continue
+        kept.append(d)
+    return kept
+
+
+def door_approved_devices(cfg):
+    return [d for d in door_devices(cfg) if d.get("status") == "approved"]
+
+
+def door_device_for_token(cfg, token):
+    if not token:
+        return None
+    now = time.time()
+    for d in door_approved_devices(cfg):
+        if d.get("token") and secrets.compare_digest(str(d["token"]), str(token)):
+            if float(d.get("expires_at") or 0) > now:
+                return d
+            return None
+    return None
+
+
+def door_cookie_value(cookie_header):
+    for part in (cookie_header or "").split(";"):
+        part = part.strip()
+        if part.startswith(PUBLIC_COOKIE + "="):
+            return part[len(PUBLIC_COOKIE) + 1:]
+    return ""
+
+
+def door_gate_acceptance(cfg, cookie_value):
+    # (accepted, device, legacy): a registered device token speaks
+    # for itself; the shared-code cookie is honored only while no
+    # device has ever been approved (pre-registry houses, and the
+    # bootstrap moment itself).
+    if cookie_value:
+        dev = door_device_for_token(cfg, cookie_value)
+        if dev is not None:
+            return True, dev, False
+        code = public_settings(cfg)["access_code"]
+        if code and not door_approved_devices(cfg) and secrets.compare_digest(cookie_value, public_token(code)):
+            return True, None, True
+    return False, None, False
+
+
+def door_touch_device(cfg, device):
+    # Last-seen, throttled, and the sliding renewal: a device in
+    # active use never hits its 30 days mid-shift — using it while
+    # valid renews it. Writes at most once an hour per device.
+    now = time.time()
+    if now - float(device.get("last_seen") or 0) < 3600:
+        return
+    devices = door_devices(cfg)
+    for d in devices:
+        if d.get("id") == device.get("id"):
+            d["last_seen"] = int(now)
+            if float(d.get("expires_at") or 0) - now < DOOR_DEVICE_TTL_SECONDS - 86400:
+                d["expires_at"] = int(now) + DOOR_DEVICE_TTL_SECONDS
+            break
+    _door_save_devices(cfg, _door_prune(devices, now))
+
+
+def _door_new_device(name, user_agent, status):
+    now = int(time.time())
+    return {
+        "id": secrets.token_hex(16),
+        "name": (str(name or "").strip()[:60] or "Unnamed device"),
+        "status": status,
+        "token": None,
+        "created_at": now,
+        "approved_at": None,
+        "first_seen": now,
+        "last_seen": now,
+        "expires_at": None,
+        "user_agent": str(user_agent or "")[:120],
+    }
+
+
+def door_create_approved(cfg, name, user_agent):
+    # The bootstrap act: mint an approved device with its own
+    # token, on the strength of the code alone.
+    devices = _door_prune(door_devices(cfg))
+    dev = _door_new_device(name, user_agent, "approved")
+    dev["token"] = secrets.token_urlsafe(32)
+    dev["approved_at"] = dev["created_at"]
+    dev["expires_at"] = dev["created_at"] + DOOR_DEVICE_TTL_SECONDS
+    devices.append(dev)
+    _door_save_devices(cfg, devices)
+    return dev
+
+
+def door_register_pending(cfg, name, user_agent):
+    devices = _door_prune(door_devices(cfg))
+    dev = _door_new_device(name, user_agent, "pending")
+    devices.append(dev)
+    _door_save_devices(cfg, devices)
+    return dev
+
+
+def door_gate_outcome(cfg, name, user_agent, cookie_value):
+    # The gate POST's decision, shared by both doors (the DHD
+    # proxy and the bridge's own public bind): ("session", device)
+    # when the visitor leaves with a token — a renewal, or the
+    # bootstrap — and ("pending", device) when the device must
+    # wait for an approval.
+    ok, dev, _legacy = door_gate_acceptance(cfg, cookie_value)
+    if ok and dev is not None:
+        return "session", dev
+    if not door_approved_devices(cfg):
+        return "session", door_create_approved(cfg, name, user_agent)
+    return "pending", door_register_pending(cfg, name, user_agent)
+
+
+def door_pending_poll(cfg, device_id):
+    # What a waiting device's poll learns: ("pending", None) while
+    # it waits; ("approved", device) once a trusted session has
+    # approved it — the device record carries the token the poll
+    # response sets as its cookie; ("denied", None); ("gone", None)
+    # when the wait expired or the record was revoked away.
+    now = time.time()
+    for d in door_devices(cfg):
+        if d.get("id") == device_id:
+            if d.get("status") == "approved" and float(d.get("expires_at") or 0) > now:
+                return "approved", d
+            if d.get("status") == "denied":
+                return "denied", None
+            if d.get("status") == "pending" and now - float(d.get("created_at") or 0) <= DOOR_PENDING_TTL_SECONDS:
+                return "pending", None
+            return "gone", None
+    return "gone", None
+
+
+def door_approve(cfg, device_id):
+    devices = door_devices(cfg)
+    now = int(time.time())
+    found = None
+    for d in devices:
+        if d.get("id") == device_id and d.get("status") == "pending":
+            d["status"] = "approved"
+            d["token"] = secrets.token_urlsafe(32)
+            d["approved_at"] = now
+            d["last_seen"] = now
+            d["expires_at"] = now + DOOR_DEVICE_TTL_SECONDS
+            found = d
+    if found is not None:
+        _door_save_devices(cfg, _door_prune(devices, now))
+    return found
+
+
+def door_deny(cfg, device_id):
+    devices = door_devices(cfg)
+    found = False
+    for d in devices:
+        if d.get("id") == device_id and d.get("status") == "pending":
+            d["status"] = "denied"
+            d["token"] = None
+            found = True
+    if found:
+        _door_save_devices(cfg, devices)
+    return found
+
+
+def door_revoke(cfg, device_id):
+    devices = door_devices(cfg)
+    kept = [d for d in devices if d.get("id") != device_id]
+    if len(kept) != len(devices):
+        _door_save_devices(cfg, kept)
+        return True
+    return False
+
+
+def door_cookie_header(token):
+    # A trusted device's cookie: its own token, for its own 30
+    # days — not the shared code's year.
+    return (PUBLIC_COOKIE + "=" + str(token)
+            + "; Max-Age=" + str(DOOR_DEVICE_TTL_SECONDS)
+            + "; Path=/; HttpOnly; SameSite=Lax")
+
+
+def door_devices_payload(cfg):
+    # The Settings -> Door list: names and times, never tokens.
+    now = time.time()
+    out = []
+    for d in _door_prune(door_devices(cfg), now):
+        out.append({
+            "id": d.get("id"),
+            "name": d.get("name") or "Unnamed device",
+            "status": d.get("status"),
+            "firstSeen": d.get("first_seen"),
+            "lastSeen": d.get("last_seen"),
+            "expiresAt": d.get("expires_at"),
+            "expired": d.get("status") == "approved" and float(d.get("expires_at") or 0) <= now,
+            "userAgent": d.get("user_agent") or "",
+        })
+    return out
+
+
 def lan_ipv4():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -664,6 +920,7 @@ def public_state_payload(cfg, for_loopback):
     ps = public_settings(cfg)
     active_public = ACTIVE_BIND_HOST == "0.0.0.0"
     ip = lan_ipv4()
+    devices = door_devices_payload(cfg)
     return {
         "enabled": ps["enabled"],
         "activePublic": active_public,
@@ -677,6 +934,13 @@ def public_state_payload(cfg, for_loopback):
             "step": ps["restart_step"],
             "message": ps["restart_message"],
         },
+        # Trusted devices (Build 2, #173): names and times only —
+        # a device's token never rides a payload. Present for
+        # loopback and gate-accepted callers alike, because
+        # approving a waiting phone from a trusted laptop over
+        # DHD is the flow this list exists for.
+        "devices": devices,
+        "pendingDevices": sum(1 for d in devices if d["status"] == "pending"),
     }
 
 
@@ -780,21 +1044,28 @@ _GATE_CSS = (
     ".err{margin:14px 0 0;padding:10px 12px;font-size:13px;line-height:1.5;text-align:center;color:#fca5a5;"
     "background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.4);border-radius:8px}"
     ".meta{margin:10px 0 0;text-align:center;font-size:12px;color:#f5b544}"
+    "input.name{letter-spacing:.02em;text-transform:none;text-align:left;font-size:15px;min-height:48px}"
+    "label.name{margin-top:14px}"
     "@media (max-width:380px){.card{padding:22px 16px 18px}.word{font-size:29px}}"
     "@media (prefers-reduced-motion:reduce){.door-dhd .ring,.door-dhd .core-glow,"
     ".door-node .core-glow,.shake{animation:none}}"
 )
 
 
-def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock_seconds=None):
+def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock_seconds=None, approval_mode=False):
     # ONE gate page for both doors (build .79, issue #64): the Apex
     # Node (LAN) door and the DHD (public) door render from this
     # single function, parameterized by door - there is no second
     # copy. Self-contained by design: inline CSS and SVG only, no
     # external asset, font, or script referenced, because the gate
     # serves nothing else before the code. No version string
-    # appears anywhere on the page. The form contract is unchanged:
-    # POST /__gate with the field named "code".
+    # appears anywhere on the page. The form contract: POST
+    # /__gate with the field named "code" — and, since Build 2
+    # (#173), a "device_name" field: the code no longer opens the
+    # door outright, it knocks. approval_mode says trusted devices
+    # already exist, so a correct code here makes this device a
+    # PENDING one that waits for an approval; without it, this is
+    # the bootstrap — the first device trusts itself with the code.
     is_dhd = door == "dhd"
     if not name:
         if is_dhd:
@@ -858,21 +1129,111 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
         + door_line
         + "</p>"
         + ("<p class='knock'>" + _gate_escape(name) + "</p>" if name else "")
-        + "<p class='hint'>Type the access code - you will find it on the DHD page, on the machine Apex runs on.</p>"
+        + "<p class='hint'>"
+        + (
+            "Type the access code - you will find it on the DHD page, on the machine Apex runs on. "
+            "Then name this device: the code knocks, it no longer opens. This device waits here "
+            "until a device that is already trusted approves it in Settings - System - Door."
+            if approval_mode
+            else "Type the access code - you will find it on the DHD page, on the machine Apex runs on. "
+            "Then name this device - the name is how it appears in the trusted-device list. "
+            "The first device at this door trusts itself with the code; every device after it "
+            "waits for an approval from one that is already in."
+        )
+        + "</p>"
+        + (
+            # 0.2.0e Build 7: a container node's one rescue line.
+            # While no device has ever been approved (the
+            # bootstrap shape above), a container operator who
+            # missed the first-boot output is told where the code
+            # lives. It reveals nothing — the code itself is never
+            # on this page — and it renders ONLY in a container
+            # (the entrypoint's env flag), so a bare-metal door
+            # reads exactly as it always has.
+            "<p class='hint'>This node runs in a container, and its code was printed "
+            "once, in the container's first-boot output, when the node first started "
+            "- check there.</p>"
+            if is_dhd and not approval_mode
+            and os.environ.get("APEX_CONTAINER") == "1"
+            else ""
+        )
         + err_html
         + "<form method='POST' action='/__gate'>"
         "<label for='gate-code'>Access code</label>"
         "<input id='gate-code' name='code' autocomplete='one-time-code' autocapitalize='characters' autofocus"
         + dis
         + ">"
+        "<label class='name' for='gate-device'>Name this device</label>"
+        "<input class='name' id='gate-device' name='device_name' autocomplete='off' maxlength='60' placeholder='e.g. Phone, work laptop'"
+        + dis
+        + ">"
         "<button type='submit'"
         + dis
         + ">"
-        + ("Locked" if locked else "Open Apex")
+        + ("Locked" if locked else "Knock")
         + "</button>"
         "</form>"
         + meta_html
         + "</main></body></html>"
+    )
+
+
+def gate_pending_html(device_id, device_name, door="node"):
+    # The waiting room (Build 2, #173): a device whose knock was
+    # accepted as PENDING lands here. Self-contained like the gate
+    # (inline everything; the one inline script polls the door's
+    # own pending endpoint — the pending id is the only credential
+    # it carries, a random handle shown to no one else). Approval
+    # sets this device's cookie on the poll's answer and the page
+    # walks itself through the door; denial and expiry are worded
+    # where they land.
+    is_dhd = door == "dhd"
+    door_line = (
+        "Dial-Home Device · you reached this Apex from the internet"
+        if is_dhd
+        else "Apex | Node · on this network"
+    )
+    return (
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Apex - waiting for approval</title><style>"
+        + _GATE_CSS
+        + "</style></head>"
+        "<body class='"
+        + ("door-dhd" if is_dhd else "door-node")
+        + "'>"
+        + _gate_stars_svg()
+        + "<main class='card'>"
+        "<div class='ring-wrap'>"
+        + _gate_ring_svg()
+        + "</div>"
+        "<h1 class='word'>APEX</h1>"
+        "<p class='powered'>Powered by Navi</p>"
+        "<p class='doorline'>"
+        + door_line
+        + "</p>"
+        "<p class='hint'>This device - <b>" + _gate_escape(device_name or "Unnamed device") + "</b> - is waiting at the door.</p>"
+        "<p class='hint'>On a device that is already trusted, open <b>Settings - System - Door</b> and approve it. "
+        "This page checks on its own and walks through the moment it is approved. "
+        "The wait lasts 30 minutes; after that, knock again.</p>"
+        "<p class='meta' id='wait-status' role='status'>Waiting for approval…</p>"
+        "</main>"
+        "<script>"
+        "var pid = " + json.dumps(str(device_id)) + ";"
+        "var st = document.getElementById('wait-status');"
+        "function poll(){"
+        "fetch('/__gate/pending?id=' + encodeURIComponent(pid), { credentials: 'same-origin' })"
+        ".then(function(r){ return r.json(); })"
+        ".then(function(j){"
+        "if (j.status === 'approved') { st.textContent = 'Approved - opening the door…'; location.replace('/'); }"
+        "else if (j.status === 'denied') { st.textContent = 'This device was not let in. If that was a mistake, knock again and have it approved.'; }"
+        "else if (j.status === 'gone') { st.textContent = 'The wait expired. Reload this page and knock again.'; }"
+        "else { setTimeout(poll, 4000); }"
+        "}).catch(function(){ setTimeout(poll, 6000); });"
+        "}"
+        "setTimeout(poll, 2500);"
+        "</script>"
+        "</body></html>"
     )
 
 
@@ -1226,16 +1587,21 @@ def dhd_gate_page(handler):
     # renderer with the door's throttle state surfaced: attempts
     # remaining before lockout, and - while locked - the form
     # disabled with the remaining lockout time. The throttle itself
-    # is unchanged; this only shows what it already knows.
+    # is unchanged; this only shows what it already knows. Build 2
+    # adds the approval_mode fact: whether any trusted device
+    # exists yet decides if a correct code here bootstraps or
+    # knocks.
     ip = handler._client_ip()
     fails, lock_until = dhd_throttle_state(ip)
     host = handler.headers.get("Host") or ""
+    approval = bool(door_approved_devices(load_config()))
     if lock_until > time.time():
         return gate_page_html(
             "Too many wrong codes - this door is locked.",
             door="dhd",
             name=host,
             lock_seconds=int(lock_until - time.time()),
+            approval_mode=approval,
         )
     if fails > 0:
         return gate_page_html(
@@ -1243,8 +1609,9 @@ def dhd_gate_page(handler):
             door="dhd",
             name=host,
             attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails),
+            approval_mode=approval,
         )
-    return gate_page_html("", door="dhd", name=host)
+    return gate_page_html("", door="dhd", name=host, approval_mode=approval)
 
 
 def dhd_throttle_state(ip):
@@ -1306,12 +1673,37 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return ""
 
     def _accepted(self):
-        code = public_settings(load_config())["access_code"]
-        if not code:
+        # Build 2 (#173): acceptance is the device registry's word
+        # — a trusted device's own token, or (only while no device
+        # has ever been approved) the shared-code cookie. An
+        # accepted device's last-seen and sliding renewal are
+        # touched here, throttled inside door_touch_device.
+        cfg = load_config()
+        if not public_settings(cfg)["access_code"]:
             return False
-        want = PUBLIC_COOKIE + "=" + public_token(code)
-        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
-        return want in parts
+        ok, dev, _legacy = door_gate_acceptance(cfg, door_cookie_value(self.headers.get("Cookie")))
+        if ok and dev is not None:
+            door_touch_device(cfg, dev)
+        if ok:
+            # Build 3 (#176): a DHD session starting is a pull
+            # trigger — the phone's arrival refreshes the room.
+            # The call is debounced inside; it fires at most one
+            # pull per session gap and never blocks the door.
+            sync_note_dhd_session((dev or {}).get("id") or "legacy")
+        return ok
+
+    def _pending_poll(self):
+        # A waiting device's poll, answered by the proxy itself
+        # (it lives in this same process): the pending id is the
+        # only credential, and approval is the moment the device's
+        # own cookie is set.
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        pid = (q.get("id") or [""])[0]
+        status, dev = door_pending_poll(load_config(), pid)
+        extra = None
+        if status == "approved" and dev is not None and dev.get("token"):
+            extra = {"Set-Cookie": door_cookie_header(dev["token"])}
+        self._send_raw(200, json.dumps({"status": status}), "application/json", extra=extra)
 
     def _serve_challenge(self, path):
         token = path.rsplit("/", 1)[-1]
@@ -1362,31 +1754,42 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
     def _gate_post(self):
         ip = self._client_ip()
         _fails, lock_until = dhd_throttle_state(ip)
+        approval = bool(door_approved_devices(load_config()))
         if lock_until > time.time():
             wait = int(lock_until - time.time())
-            self._send_raw(429, gate_page_html("Too many wrong codes - this door is locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=wait))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=wait, approval_mode=approval))
             return
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b""
         try:
             form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
             given = (form.get("code") or [""])[0].strip()
+            dev_name = (form.get("device_name") or [""])[0].strip()
         except Exception:
             given = ""
-        want = public_settings(load_config())["access_code"]
+            dev_name = ""
+        cfg = load_config()
+        want = public_settings(cfg)["access_code"]
         if want and given.upper() == want.upper():
             dhd_throttle_clear(ip)
-            cookie = PUBLIC_COOKIE + "=" + public_token(want) + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE) + "; Path=/; HttpOnly; SameSite=Lax"
-            self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": cookie})
+            # Build 2 (#173): a correct code knocks. The outcome
+            # is the registry's: a session with the device's OWN
+            # token (the bootstrap, or a renewal), or a pending
+            # device and its waiting room.
+            action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
+            if action == "session":
+                self._send_raw(302, "", "text/plain", extra={"Location": "/", "Set-Cookie": door_cookie_header(dev["token"])})
+            else:
+                self._send_raw(200, gate_pending_html(dev["id"], dev["name"], door="dhd"))
             return
         fails = dhd_throttle_fail(ip)
         if fails >= DHD_LOCKOUT_FAILS:
-            self._send_raw(429, gate_page_html("Too many wrong codes - this door is now locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=DHD_LOCKOUT_SECONDS))
+            self._send_raw(429, gate_page_html("Too many wrong codes - this door is now locked.", door="dhd", name=self.headers.get("Host") or "", lock_seconds=DHD_LOCKOUT_SECONDS, approval_mode=approval))
             return
         # Progressive delay: each wrong code makes the next answer
         # slower (1s, 2s, 4s, capped at 8s).
         time.sleep(min(2 ** (fails - 1), 8))
-        self._send_raw(200, gate_page_html("That code did not open the door.", door="dhd", name=self.headers.get("Host") or "", attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails)))
+        self._send_raw(200, gate_page_html("That code did not open the door.", door="dhd", name=self.headers.get("Host") or "", attempts_remaining=max(0, DHD_LOCKOUT_FAILS - fails), approval_mode=approval))
 
     def _handle(self):
         path = self.path.split("?")[0]
@@ -1404,6 +1807,12 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         if path.startswith("/.well-known/acme-challenge/"):
             self._serve_challenge(path)
             return
+        if path == "/__gate/pending" and self.command == "GET":
+            # A waiting device's poll: answered without acceptance
+            # (the pending id is its only credential) and never
+            # forwarded — the registry lives in this process.
+            self._pending_poll()
+            return
         if path == "/__gate":
             if self.command == "POST":
                 self._gate_post()
@@ -1412,7 +1821,7 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/mesh/"):
             # Build .86: Mesh NEVER rides the DHD door. Mesh has
-            # its own dedicated TLS listener (the mesh port, its
+            # its own dedicated TLS door (its listen ports, its
             # own certificate) in every configuration, so the
             # proxy refuses /mesh/* outright — it never serves it
             # and never forwards it to the dashboard.
@@ -2266,6 +2675,13 @@ MESH_PUB_PATH = os.path.join(MESH_DIR, "node_pub.pem")
 MESH_CERT_PATH = os.path.join(MESH_DIR, "cert.pem")
 MESH_CERT_KEY_PATH = os.path.join(MESH_DIR, "cert_key.pem")
 MESH_LEDGER_PATH = os.path.join(MESH_DIR, "ledger.jsonl")
+# Build 4 (#178): the managed backup route's dedicated SSH
+# keypair — separate from the node identity keypair, held at
+# 0600 under config/mesh, and never part of any backup payload
+# (backups collect named files; key files are never collected —
+# the same custody as the node keypair).
+MESH_TUNNEL_KEY_PATH = os.path.join(MESH_DIR, "tunnel_key")
+MESH_TUNNEL_PUB_PATH = MESH_TUNNEL_KEY_PATH + ".pub"
 # Where restored pairing-card pictures land (Build 9, #89): the
 # GitHub backup's Mesh pairing cards restore into this folder —
 # the pictures stay importable files, and the peer pictures are
@@ -2282,6 +2698,12 @@ MESH_STATE = {
     "borrowed_peer": "",
     "borrowed_started": 0.0,
     "lend_stop_stamp": 0.0,
+    # Federation (Build 8): the fedinet an in-flight federation
+    # borrow belongs to ("" for a pairwise borrow — those are
+    # never preempted), and the owner-preemption stamp, the
+    # preempt path's mirror of lend_stop_stamp.
+    "borrowed_fedinet": "",
+    "preempt_stamp": 0.0,
     # Local generations in flight on this machine (either role) —
     # the busy/idle signals admission and status read.
     "local_gen": 0,
@@ -2319,6 +2741,195 @@ def _mesh_int(value, fallback):
         return fallback
 
 
+def _mesh_addr_parts(entry, default_port):
+    # 0.2.0e Build 4 (#143/#154): one address entry, split into
+    # the (host, port) a dial actually uses. An entry is either a
+    # bare host — it inherits the record's port, which is what
+    # every card and record before this build carries — or
+    # host:port, carrying its own. Every peer dial (borrow,
+    # probe, health sweep) parses through here, so a mixed list
+    # of bare and ported entries works everywhere at once, and a
+    # legacy record works untouched.
+    host = str(entry or "").strip()
+    host = host.split("://")[-1].split("/")[0].strip()
+    try:
+        dport = int(default_port)
+    except Exception:
+        dport = 8765
+    if host.startswith("[") and "]" in host:
+        inner, _, rest = host[1:].partition("]")
+        if rest.startswith(":") and rest[1:].isdigit():
+            return inner, int(rest[1:])
+        return inner, dport
+    if host.count(":") == 1:
+        h, _, p = host.partition(":")
+        if h and p.isdigit():
+            return h, int(p)
+    return host, dport
+
+
+def _mesh_endpoint_clean(value):
+    # An operator-declared public endpoint in canonical
+    # host:port shape, or "" — for "absent" and for anything
+    # that is not exactly a host and a port. The endpoint is
+    # typed by the operator, never harvested (Build 4, #154):
+    # a bare host with no port is not an endpoint, because the
+    # port is the half a public door cannot inherit from a card
+    # minted for the LAN.
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    host, port = _mesh_addr_parts(s, 0)
+    if not host or not port or port < 1 or port > 65535:
+        return ""
+    if any(c in host for c in " \t"):
+        return ""
+    return host + ":" + str(port)
+
+
+def _mesh_endpoint_error(value):
+    # The settings-save refusal for a public endpoint that was
+    # typed but is not a host:port — a sentence, in the named-
+    # failure style, or "" when the value is fine (or empty).
+    s = str(value or "").strip()
+    if not s or _mesh_endpoint_clean(s):
+        return ""
+    return ("The public endpoint must be a host and a port and nothing else — "
+            "like mesh.example.org:8443. Fix it, or clear the field to declare no endpoint.")
+
+
+# -- Junk peer records + in-place repair (0.2.0e Build 6, #143) -----
+# The field failure that darkened the first road: a peer record
+# whose address list was harvested from the wrong machine —
+# loopback, a container bridge's gateway, ghosts — so every dial
+# terminated somewhere that was never the peer. Build 4 stopped
+# MINTING such lists; records already carrying them sat dark with
+# a verdict and homework. Build 6 names the junk and heals it in
+# place: an entry is junk when, as a way to reach ANOTHER machine,
+# it is a dead end by construction — loopback in any spelling,
+# the unspecified address, a link-local, or the default Docker
+# bridge gateway (172.17.0.1, the address that cost the field a
+# week). Private LAN addresses, public addresses, and hostnames
+# are never junk: they are somebody's real road.
+
+def _mesh_addr_is_junk(entry):
+    host, _port = _mesh_addr_parts(entry, 8765)
+    h = str(host or "").strip().lower()
+    if not h:
+        return True
+    if h in ("localhost", "::1", "0.0.0.0", "::"):
+        return True
+    if h.startswith("127."):
+        return True
+    if h == "172.17.0.1":
+        return True
+    try:
+        addr = ipaddress.ip_address(h)
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def mesh_record_repair(peer):
+    # The repair offer for one peer record, or None when the
+    # record's addresses could reach the peer. A repair exists
+    # when the record HAS addresses and EVERY one is junk: the
+    # record points nowhere, and no verdict about the peer's
+    # identity can be drawn from dialing it — the pair was never
+    # actually asked. (A record with no addresses at all is a
+    # different state — a fresh card is simply its whole cure,
+    # and the import path is already its affordance.)
+    addrs = list(peer.get("addresses") or [])
+    if not addrs:
+        return None
+    junk = [a for a in addrs if _mesh_addr_is_junk(a)]
+    if len(junk) != len(addrs):
+        return None
+    return {
+        "kind": "junk-addresses",
+        "junkCount": len(junk),
+        "sentence": ("Every address on " + peer["name"] + "'s card is a dead end — "
+                     "loopback or container-bridge entries that lead back to a local "
+                     "interface, never to " + peer["name"] + ". The record points "
+                     "nowhere, so this pair has never actually been asked. Heal it "
+                     "here: import a fresh card minted on " + peer["name"] + " itself, "
+                     "or clear the dead addresses now and import the fresh card when "
+                     "you have it — the pairing, its pin, and its history are kept "
+                     "either way."),
+    }
+
+
+def mesh_repair_peer_record(cfg, node_id):
+    # (ok, sentence): strip the junk entries from one peer's
+    # stored record, in place. The record itself — name, pin,
+    # tunnel route, history — is untouched; only the dead-end
+    # addresses go. A record with real addresses among the junk
+    # is refused: that is an edit, not a repair, and edits go
+    # through a fresh card.
+    ms = mesh_settings(cfg)
+    target = None
+    for p in ms["borrow"]["peers"]:
+        if p["nodeId"] == node_id:
+            target = p
+            break
+    if target is None:
+        return False, "No paired machine with that identity is on this machine."
+    rep = mesh_record_repair(target)
+    if rep is None:
+        return False, (target["name"] + "'s record holds at least one address that "
+                       "could reach it — there is nothing to repair. A fresh card "
+                       "is the cure for a record that needs changing.")
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    block = dict(block)
+    borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+    borrow = dict(borrow)
+    peers = []
+    for raw in borrow.get("peers") or []:
+        if isinstance(raw, dict) and str(raw.get("nodeId") or "") == node_id:
+            raw = dict(raw)
+            raw["addresses"] = [a for a in (raw.get("addresses") or [])
+                                if not _mesh_addr_is_junk(a)]
+        peers.append(raw)
+    borrow["peers"] = peers
+    block["borrow"] = borrow
+    cfg["mesh"] = block
+    save_config(cfg)
+    return True, ("Cleared — the dead addresses are gone from " + target["name"]
+                  + "'s record. The pairing and its history stand; import a fresh "
+                  "card minted on " + target["name"] + " itself and the road has "
+                  "somewhere to go again.")
+
+
+def _mesh_tunnel_sanitize(raw):
+    # Build 4 (#178): a peer's managed backup route, cut down to
+    # exactly the fields the supervisor needs. Off by default;
+    # the local port is bridge-allocated and persisted once
+    # chosen, so it is stable across restarts.
+    if not isinstance(raw, dict):
+        raw = {}
+    host = str(raw.get("sshHost") or "").strip()
+    if any(c in host for c in " \t/"):
+        host = ""
+    user = str(raw.get("sshUser") or "").strip()
+    if any(c in user for c in " \t@/"):
+        user = ""
+    sport = _mesh_int(raw.get("sshPort"), 227)
+    if sport < 1 or sport > 65535:
+        sport = 227
+    lp = raw.get("localPort")
+    try:
+        lp = int(lp)
+    except Exception:
+        lp = None
+    if lp is not None and not (1024 < lp <= 65535):
+        lp = None
+    return {"enabled": raw.get("enabled") is True,
+            "sshHost": host[:255], "sshPort": sport,
+            "sshUser": user[:64], "localPort": lp}
+
+
 def _mesh_peer(p):
     # One peer record, normalized. Addresses keep the operator's
     # order — LAN first as listed on the card (spec section 3.1).
@@ -2337,7 +2948,62 @@ def _mesh_peer(p):
         "certFingerprint": str(p.get("certFingerprint") or "").strip().lower(),
         "canBorrow": p.get("canBorrow") is not False,
         "capabilities": _mesh_caps_sanitize(p.get("capabilities")),
+        # Build 4 (#154): the endpoint the peer's operator
+        # declared for it on its card — the one address of a
+        # peer that is shown, because it was typed for
+        # publication. "" when the card declared none.
+        "publicEndpoint": _mesh_endpoint_clean(p.get("publicEndpoint")),
+        # Build 4 (#178): the managed backup route (borrower-side
+        # config; local to this machine, never on the card) and
+        # the peer's tunnel PUBLIC key (card-carried, public
+        # data — the private half never leaves the peer).
+        "tunnel": _mesh_tunnel_sanitize(p.get("tunnel")),
+        "tunnelPublicKey": str(p.get("tunnelPublicKey") or "").strip(),
+        # 0.2.0e Build 7 (#154): relay consent — three flat lists
+        # of node ids, LOCAL to this machine, never on the card,
+        # each ticked here by this machine's operator:
+        #   relayCarryTo     — "this peer (as relay) may carry MY
+        #                      envelopes to these destinations"
+        #                      (the asker's tick, on the relay's
+        #                      record)
+        #   relayAcceptFrom  — "this peer (as relay) may carry
+        #                      envelopes TO ME from these askers"
+        #                      (the lender's tick, on the relay's
+        #                      record)
+        #   relayWillCarryTo — "I will carry THIS peer's (the
+        #                      asker's) envelopes to these
+        #                      destinations" (the relay's own
+        #                      tick, on the asker's record)
+        # A carriage happens only when all three machines' ticks
+        # agree for the triple; any missing tick refuses the
+        # carriage by name.
+        "relayCarryTo": _mesh_id_list(p.get("relayCarryTo")),
+        "relayAcceptFrom": _mesh_id_list(p.get("relayAcceptFrom")),
+        "relayWillCarryTo": _mesh_id_list(p.get("relayWillCarryTo")),
+        # 0.2.0e Build 8 (#154): federation provenance — the
+        # fedinet whose roster made this record, when the
+        # federation made it. "" for a hand-made pairing (the
+        # operator's own ceremony, never the federation's to
+        # create, edit, or remove). autoPaired marks records the
+        # federation materialized from a signed roster, as
+        # opposed to the one introduction record an import makes.
+        "viaFedinet": str(p.get("viaFedinet") or "")[:64],
+        "autoPaired": p.get("autoPaired") is True,
     }
+
+
+def _mesh_id_list(raw):
+    # A consent list: node ids only, stripped, deduped, capped.
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for v in raw:
+        s = str(v or "").strip()
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= 64:
+            break
+    return out
 
 
 def _mesh_caps_sanitize(raw):
@@ -2433,7 +3099,7 @@ def mesh_capabilities(cfg):
         "ramGB": ram,
         "model": "navi",
         "speedClass": speed,
-        # Build 7 (Fix F2): the idle posture rides the same 
+        # Build 7 (Fix F2): the idle posture rides the same
         # self-report as the caps, so a peer's card and roster
         # line state it truthfully — "lends when idle" vs "lends
         # even while busy" — from this machine's own setting.
@@ -2506,6 +3172,77 @@ def intel_settings(cfg):
     }
 
 
+def wire_settings(cfg):
+    # The news wire (0.2.0e Build 7, #188): absent-block-safe
+    # like the rest. Defaults are the prep's: enabled, a
+    # 30-minute fetch interval, 7 days of retention.
+    b = cfg.get("wire") if isinstance(cfg, dict) else None
+    if not isinstance(b, dict):
+        b = {}
+    return {
+        "enabled": b.get("enabled") is not False,
+        "intervalMinutes": max(5, min(240, _mesh_int(b.get("intervalMinutes"), 30))),
+        "retentionDays": max(1, min(30, _mesh_int(b.get("retentionDays"), 7))),
+    }
+
+
+def ctf_settings(cfg):
+    # The CTF board (0.2.0e Build 7, #189): enabled by default,
+    # an hourly fetch.
+    b = cfg.get("ctf") if isinstance(cfg, dict) else None
+    if not isinstance(b, dict):
+        b = {}
+    return {
+        "enabled": b.get("enabled") is not False,
+        "intervalMinutes": max(10, min(720, _mesh_int(b.get("intervalMinutes"), 60))),
+    }
+
+
+def bounties_settings(cfg):
+    # The bounty board (0.2.0e Build 7, Scope Addition 5):
+    # enabled by default, the Chaos index re-read every 6
+    # hours - program lists move slowly.
+    b = cfg.get("bounties") if isinstance(cfg, dict) else None
+    if not isinstance(b, dict):
+        b = {}
+    return {
+        "enabled": b.get("enabled") is not False,
+        "intervalMinutes": max(30, min(2880, _mesh_int(b.get("intervalMinutes"), 360))),
+    }
+
+
+MESH_DEFAULT_EXTRA_PORTS = (8443, 2475)
+
+
+def _mesh_listen_ports(raw, canonical):
+    # Build 4 (#154): the Mesh door listens on several ports —
+    # one door, one certificate, several numbers, because home
+    # gateways and workplace egress rules do not all let the
+    # canonical port through. The canonical port (the one the
+    # pairing card carries) is always first and always on; the
+    # shipped defaults add 8443 and 2475 when the operator has
+    # not configured a set of their own. Every entry must be a
+    # plain unprivileged port; junk is dropped, never served.
+    canon = _mesh_int(canonical, 8765)
+    if canon < 1 or canon > 65535:
+        canon = 8765
+    ports = []
+    if isinstance(raw, (list, tuple)):
+        for v in raw:
+            p = _mesh_int(v, 0)
+            if 1024 < p <= 65535 and p not in ports:
+                ports.append(p)
+    if not ports:
+        ports = [canon] + [p for p in MESH_DEFAULT_EXTRA_PORTS
+                           if p != canon]
+    elif canon in ports:
+        ports.remove(canon)
+        ports.insert(0, canon)
+    else:
+        ports.insert(0, canon)
+    return ports[:8]
+
+
 def mesh_settings(cfg):
     # Absent-block-safe, like dhd_settings: an install whose config
     # predates the mesh block (or a field of it) reads as the
@@ -2544,9 +3281,20 @@ def mesh_settings(cfg):
             "idleAfterSeconds": _mesh_int(lend.get("idleAfterSeconds"), 60),
         },
         "port": _mesh_int(m.get("port"), 8765),
+        "listenPorts": _mesh_listen_ports(m.get("listenPorts"),
+                                          _mesh_int(m.get("port"), 8765)),
         "nodeId": str(m.get("nodeId") or ""),
         "ledger": m.get("ledger") is not False,
         "ledgerInBackup": m.get("ledgerInBackup") is True,
+        # Build 6 (#143 ask 3): whether the first-run certificate
+        # notice has been shown with a pairing on this machine.
+        # The notice is part of the pairing act itself (see
+        # mesh_mark_cert_notice), never a separate gate.
+        "certNoticeSeen": m.get("certNoticeSeen") is True,
+        # Build 4 (#154): this machine's own operator-declared
+        # public endpoint (host:port), or "" — typed on the Mesh
+        # page, carried on this machine's card, never harvested.
+        "publicEndpoint": _mesh_endpoint_clean(m.get("publicEndpoint")),
     }
 
 
@@ -2652,7 +3400,7 @@ class _IntelUnavailable:
         pass
 
     def state(self):
-        return {"ok": False, "error": "intel.py is missing from this install — the Threat Intelligence Center is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
+        return {"ok": False, "error": "intel.py is missing from this install — The Wire is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
 
     def brief_block(self):
         return ""
@@ -2664,7 +3412,7 @@ class _IntelUnavailable:
         return ""
 
     def lookup(self, _query):
-        return "The Threat Intelligence Center is unavailable on this install (intel.py missing)."
+        return "The Wire is unavailable on this install (intel.py missing)."
 
     def build_digest(self):
         return {}
@@ -2736,6 +3484,11 @@ def _intel_case_terms_all():
 
 
 def _intel_fetch_digest(peer_id):
+    # 0.2.0e Build 1 (#143): returns (digest, "") on success or
+    # (None, reason-in-words) \u2014 a refused or failed fetch names
+    # the check that refused it, and the Center records the
+    # reason on its Mesh source line instead of a bare
+    # "collector unreachable".
     cfg = load_config()
     peer = None
     for p in mesh_settings(cfg)["borrow"]["peers"]:
@@ -2743,18 +3496,30 @@ def _intel_fetch_digest(peer_id):
             peer = p
             break
     if not peer:
-        return None
+        return None, "the named collector is not a paired peer on this machine"
     try:
         code, raw = _mesh_request(peer, "GET", "/mesh/intel-digest", b"", "", 60)
+    except _MeshFpError:
+        return None, "the collector's certificate does not match its pairing card \u2014 its Mesh identity has changed; re-pair from a fresh card"
+    except _MeshTlsError:
+        return None, "the secure (TLS) handshake with the collector failed"
+    except _MeshTimeout:
+        return None, "the collector did not answer in time"
+    except _MeshUnreachable:
+        return None, "the collector could not be reached"
     except Exception:
-        return None
+        return None, "the collector could not be reached"
+    if code in (401, 403):
+        return None, "the collector refused this machine's signature \u2014 check the two machines' clocks (a Mesh signature lives for 120 seconds); if they agree, re-pair from fresh cards"
     if code != 200:
-        return None
+        return None, "the collector answered with HTTP " + str(code)
     try:
         parsed = json.loads(raw.decode("utf-8", "replace"))
     except Exception:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        return None, "the collector's answer was not a readable digest"
+    if not isinstance(parsed, dict):
+        return None, "the collector's answer was not a readable digest"
+    return parsed, ""
 
 
 if intel_mod is not None:
@@ -2770,6 +3535,102 @@ if intel_mod is not None:
     )
 else:
     INTEL = _IntelUnavailable()
+
+
+# -- Awareness engines (0.2.0e Build 7, #188 / #189 / Addition 5)
+# wire.py, ctf.py and bounties.py beside the bridge, imported
+# like intel.py: an install missing a module runs with that
+# family dark rather than failing to boot. The bridge owns
+# config and the chat seam; the engines own their stores.
+try:
+    import wire as wire_mod
+except Exception:
+    wire_mod = None
+try:
+    import ctf as ctf_mod
+except Exception:
+    ctf_mod = None
+try:
+    import bounties as bounties_mod
+except Exception:
+    bounties_mod = None
+
+
+class _WireUnavailable:
+    def start(self):
+        pass
+
+    def state(self):
+        return {"ok": False, "error": "wire.py is missing from this install — the news wire is unavailable.", "items": [], "sources": []}
+
+    def brief_block(self):
+        return ""
+
+    def refresh_now(self):
+        return {"ok": False, "error": "wire.py missing"}
+
+    def read_article(self, _link):
+        return {"ok": False, "reason": "unavailable", "sentence": "The reader is unavailable on this install (wire.py missing)."}
+
+
+class _CtfUnavailable:
+    def start(self):
+        pass
+
+    def state(self):
+        return {"ok": False, "error": "ctf.py is missing from this install — the CTF board is unavailable.", "running": [], "upcoming": []}
+
+    def brief_block(self):
+        return ""
+
+    def refresh_now(self):
+        return {"ok": False, "error": "ctf.py missing"}
+
+
+class _BountiesUnavailable:
+    def start(self):
+        pass
+
+    def state(self):
+        return {"ok": False, "error": "bounties.py is missing from this install — the bounty board is unavailable.", "programs": [], "reports": []}
+
+    def brief_block(self):
+        return ""
+
+    def refresh_now(self):
+        return {"ok": False, "error": "bounties.py missing"}
+
+
+if wire_mod is not None:
+    WIRE = wire_mod.Wire(ROOT, settings_getter=lambda: wire_settings(load_config()))
+else:
+    WIRE = _WireUnavailable()
+
+if ctf_mod is not None:
+    CTF = ctf_mod.Ctf(ROOT, settings_getter=lambda: ctf_settings(load_config()))
+else:
+    CTF = _CtfUnavailable()
+
+if bounties_mod is not None:
+    BOUNTIES = bounties_mod.Bounties(ROOT, settings_getter=lambda: bounties_settings(load_config()))
+else:
+    BOUNTIES = _BountiesUnavailable()
+
+
+def _awareness_brief_block():
+    # The composed situation briefing: the wire's sections, the
+    # CTF board, the bounty board — one block, so "what's the
+    # sitch" reads whole. Each engine's block carries its own
+    # staleness; a family with nothing contributes nothing.
+    parts = []
+    for engine in (WIRE, CTF, BOUNTIES):
+        try:
+            blk = engine.brief_block()
+        except Exception:
+            blk = ""
+        if blk:
+            parts.append(blk)
+    return "\n\n".join(parts)
 
 
 # -- Node identity (spec section 4.2) -------------------------------
@@ -2923,6 +3784,29 @@ def mesh_signed_headers(request_id, body):
 
 
 def mesh_authenticate(handler, body, request_id):
+    # Verifies a signed Mesh request against the paired-peer
+    # list, inside the door's knock accounting (Build 4, #154):
+    # a failure is a knock against the source, a success clears
+    # the source's slate. The answer the caller gives is
+    # unchanged — a bare "unauthorized"; WHY it failed never
+    # leaves here (spec section 4.3: no detail leakage). Only
+    # the door's own handlers call this, so every call is a
+    # knock at the Mesh door by construction.
+    peer = _mesh_authenticate(handler, body, request_id)
+    try:
+        ip = handler.client_address[0] if handler.client_address else ""
+    except Exception:
+        ip = ""
+    if ip:
+        if peer is not None:
+            mesh_door_success(ip)
+        else:
+            has_headers = bool(handler.headers.get("X-Mesh-Node")) if getattr(handler, "headers", None) else False
+            mesh_door_knock(ip, "signature" if has_headers else "unsigned")
+    return peer
+
+
+def _mesh_authenticate(handler, body, request_id):
     # Verifies a signed Mesh request against the paired-peer list.
     # Returns the peer record, or None — the caller answers a bare
     # "unauthorized" either way; WHY it failed never leaves here
@@ -3048,6 +3932,129 @@ def _interface_ipv4s():
     return out
 
 
+# Interface names that are never a machine's reachable LAN
+# face, whatever address they hold: container bridges and
+# their veth tails, VM bridges, tunnels and VPN adapters,
+# overlay plumbing. The card filter decides by INTERFACE, not
+# by address range (Build 4, #143): a 10.x address on the
+# physical NIC is a legitimate LAN address, and a 192.168.x
+# address on a container bridge is junk — the field failure
+# behind this build was a card carrying a Docker bridge
+# gateway that answered as the probing machine itself.
+_MESH_VIRTUAL_IFACE_PREFIXES = (
+    "docker", "veth", "virbr", "tun", "tap", "wg", "br-",
+    "dummy", "ifb", "cali", "flannel", "cni", "kube", "lxdbr",
+    "podman", "nerdctl", "tailscale",
+)
+
+
+def _mesh_filter_physical(facts):
+    # The card generator's filter, pure over interface facts —
+    # [{name, ip, isBridge}] in, the surviving facts out, in
+    # order. An interface is excluded on any strong virtual
+    # signal: it is loopback, its name is known virtual
+    # plumbing (container bridges and their veth tails, VM
+    # bridges, tunnels, VPN adapters), or the kernel marks it
+    # a bridge. What is NOT a signal: the /sys device link.
+    # Physical hardware has one, but so does nothing else —
+    # virtio NICs, veth tails, and the user-mode networking
+    # face of a sandboxed VM (this build machine's own host0,
+    # its only way home) all lack it, and a rule requiring it
+    # refuses honest cards on exactly the virtualized machines
+    # Apex runs on. Interface type is judged by the interface's
+    # own marks, never by its address range.
+    out = []
+    seen = set()
+    for f in facts or []:
+        name = str(f.get("name") or "").lower()
+        ip = str(f.get("ip") or "")
+        if not ip or ip.startswith("127.") or name == "lo":
+            continue
+        if any(name.startswith(p) for p in _MESH_VIRTUAL_IFACE_PREFIXES):
+            continue
+        if f.get("isBridge"):
+            continue
+        if ip in seen:
+            continue
+        seen.add(ip)
+        out.append(f)
+    return out
+
+
+def _interface_facts():
+    # Every interface's IPv4 with the facts the card filter
+    # judges: its name and whether the kernel marks it a
+    # bridge. Same SIOCGIFADDR walk as _interface_ipv4s, plus
+    # the /sys read. Best-effort throughout.
+    facts = []
+    try:
+        import fcntl
+        import struct
+        for _idx, name in socket.if_nameindex():
+            ip = ""
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    packed = fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", name.encode()[:15]))
+                finally:
+                    s.close()
+                ip = socket.inet_ntoa(packed[20:24])
+            except Exception:
+                ip = ""
+            is_bridge = False
+            try:
+                is_bridge = os.path.isdir(os.path.join("/sys/class/net", name, "bridge"))
+            except Exception:
+                is_bridge = False
+            facts.append({"name": name, "ip": ip, "isBridge": is_bridge})
+    except Exception:
+        pass
+    return facts
+
+
+def _physical_interface_ipv4s():
+    # The addresses a pairing card may honestly carry: IPv4s
+    # bound to physical interfaces only — no loopback, no
+    # container bridge, no VPN tail (Build 4, #143).
+    return [f["ip"] for f in _mesh_filter_physical(_interface_facts())]
+
+
+def _mesh_card_addresses(cfg, ms):
+    # (addresses, refusal): the card's address set for this
+    # machine — physical-LAN addresses, the default route's
+    # address first when it is one of them, then the operator-
+    # declared public endpoint as its own host:port entry.
+    # When nothing plausible exists at all, addresses is empty
+    # and refusal is the sentence the mint answers with: a card
+    # carrying junk — or nothing — is how the week of dark Mesh
+    # happened, and the generator now refuses instead.
+    ips = _physical_interface_ipv4s()
+    try:
+        lan = lan_ipv4()
+    except Exception:
+        lan = ""
+    if lan and lan in ips:
+        ips = [lan] + [ip for ip in ips if ip != lan]
+    addresses = list(ips)
+    endpoint = ms["publicEndpoint"]
+    if endpoint and endpoint not in addresses:
+        addresses.append(endpoint)
+    if addresses:
+        return addresses, ""
+    return [], ("This machine has no address its Mesh card can honestly carry: every network "
+                "interface it can see is a loopback, a container bridge, or a virtual adapter, "
+                "and no public endpoint is declared. Connect the machine to a real network — "
+                "Ethernet or Wi-Fi — or declare a public endpoint on the Mesh page, and the "
+                "card can be minted.")
+
+
+def mesh_card_refusal(cfg):
+    # "" when this machine's card can be minted, or the refusal
+    # sentence. The card download answers with it instead of a
+    # picture minted from junk.
+    return _mesh_card_addresses(cfg, mesh_settings(cfg))[1]
+
+
 def mesh_card(cfg):
     # This node's card data — the payload the PNG pairing picture
     # is minted from (build_mesh_card_png). The operator carries
@@ -3056,28 +4063,17 @@ def mesh_card(cfg):
     # addresses come from config and this machine only (R2 —
     # nothing baked in).
     ms = mesh_settings(cfg)
-    addresses = []
-    try:
-        ip = lan_ipv4()
-        if ip and ip != "127.0.0.1":
-            addresses.append(ip)
-    except Exception:
-        pass
-    # Build 7 (#87): the card used to freeze the ONE address the
-    # default route picked at render time — the field card that
-    # carried a hotspot-range address beside a dead pairing. When
-    # the machine has more than one non-loopback address, the
-    # card now carries them all, the default-route (LAN) address
-    # first and the rest after; the borrower tries them in order,
-    # so one stale address can no longer strand the pair.
-    for ip in _interface_ipv4s():
-        if ip not in addresses:
-            addresses.append(ip)
-    d = cfg.get("dhd") if isinstance(cfg.get("dhd"), dict) else {}
-    domain = str(d.get("domain") or "").strip()
-    if domain and d.get("enabled") is True:
-        addresses.append(domain)
-    addresses.append("127.0.0.1")
+    # Build 4 (#143): the card's addresses are the machine's
+    # physical-LAN addresses (see _mesh_card_addresses) plus the
+    # operator-declared public endpoint when one is set. What
+    # the generator no longer does, each of which stranded a
+    # real pair: harvest every interface (container bridges and
+    # VPN tails answered probes as the probing machine itself),
+    # append the DHD domain (a web door's name is not a Mesh
+    # route), and append loopback (this machine is not its own
+    # peer). When nothing plausible exists the set is empty and
+    # the mint refuses — see mesh_card_refusal.
+    addresses, _refusal = _mesh_card_addresses(cfg, ms)
     name = ms["nodeName"] or socket.gethostname()
     return {
         "meshCard": 1,
@@ -3088,6 +4084,8 @@ def mesh_card(cfg):
         "addresses": addresses,
         "port": ms["port"],
         "capabilities": mesh_capabilities(cfg),
+        "publicEndpoint": ms["publicEndpoint"],
+        "tunnelPublicKey": mesh_tunnel_public_key(),
     }
 
 
@@ -3121,9 +4119,22 @@ def mesh_parse_card(text):
         "certFingerprint": fp,
         "canBorrow": True,
         "capabilities": card.get("capabilities"),
+        "publicEndpoint": card.get("publicEndpoint"),
+        "tunnelPublicKey": card.get("tunnelPublicKey"),
     })
     if peer is None or not peer["addresses"]:
         return None, "The card carries no address to reach the other machine at — download a fresh PNG card from the other machine and try again."
+    # Build 4 (#154): the card's declared public endpoint lands
+    # in the record as a host:port address entry of its own, so
+    # the pair works at home and away off one record. Cards
+    # minted by this build already carry it inside addresses;
+    # the check is by parsed (host, port), so an endpoint listed
+    # either way lands exactly once.
+    endpoint = peer["publicEndpoint"]
+    if endpoint:
+        ep = _mesh_addr_parts(endpoint, peer["port"])
+        if not any(_mesh_addr_parts(a, peer["port"]) == ep for a in peer["addresses"]):
+            peer["addresses"].append(endpoint)
     return peer, ""
 
 
@@ -3144,12 +4155,37 @@ def mesh_add_peer(cfg, peer):
     borrow = dict(borrow)
     peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
     peers = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"])]
+    # Build 4 (#178): the tunnel route is borrower-local
+    # operator config (and its allocated local port is state
+    # the supervisor is using) — a fresh card for the same
+    # machine must not silently unbuild the road.
+    _old = next((q for q in peers if isinstance(q, dict)
+                 and str(q.get("nodeId") or "") == peer["nodeId"]), None)
+    if isinstance(_old, dict) and isinstance(_old.get("tunnel"), dict) \
+            and _old["tunnel"].get("enabled"):
+        peer["tunnel"] = _mesh_tunnel_sanitize(_old["tunnel"])
     peers.append(peer)
     borrow["peers"] = peers
     block["borrow"] = borrow
     cfg["mesh"] = block
     save_config(cfg)
     return ""
+
+
+def mesh_mark_cert_notice(cfg):
+    # The first-run certificate notice rode along with a pairing
+    # (Build 6, #143 ask 3): once any pairing has been made with
+    # the notice in view, it is not shown again on this machine.
+    try:
+        block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+        if block.get("certNoticeSeen") is True:
+            return
+        block = dict(block)
+        block["certNoticeSeen"] = True
+        cfg["mesh"] = block
+        save_config(cfg)
+    except Exception:
+        pass
 
 
 # -- The pairing card as a picture (Build 7, spec section 13) ----
@@ -3313,14 +4349,26 @@ def build_mesh_peer_card_png(peer):
         "addresses": peer.get("addresses"),
         "port": peer.get("port"),
         "capabilities": peer.get("capabilities"),
+        "publicEndpoint": peer.get("publicEndpoint"),
     }
     return _mesh_card_png_render(card)
 
 
-def _mesh_card_png_render(card):
+def _mesh_card_png_render(card, variant="pairing"):
     # Draws one pairing-card picture from a card dict: the face a
     # person reads above, the whole card as the tEXt payload.
-    caps = card.get("capabilities") if isinstance(card.get("capabilities"), dict) else {}
+    # 0.2.0e Build 8: the "gateway" variant draws the same face
+    # for a GATEWAY card payload — the fedinet's name in the big
+    # line, the gateway's own facts below it, a green accent in
+    # place of the Mesh blue, and the navi-gateway-card keyword
+    # on the payload chunk. Pairing output is byte-identical to
+    # before: variant defaults to "pairing" and face is card.
+    gateway = variant == "gateway"
+    face = card
+    if gateway:
+        gw = card.get("gateway") if isinstance(card.get("gateway"), dict) else {}
+        face = gw
+    caps = face.get("capabilities") if isinstance(face.get("capabilities"), dict) else {}
     cap_caps = caps.get("caps") if isinstance(caps.get("caps"), dict) else {}
     W, H = 720, 452
     BG = (10, 14, 18)
@@ -3329,7 +4377,11 @@ def _mesh_card_png_render(card):
     # distinct at a glance from the chips' coral red and the
     # knowledge packs' green. (It was a cyan until #117 ruled
     # color is family; cyan sat too close to the RAG green.)
-    ACCENT = (59, 130, 246)
+    # Build 8: a gateway card wears GREEN — the fedinet family's
+    # color, ruled with the card itself (2026-11-13): a pairing
+    # card in blue pairs one machine; the green one admits to a
+    # fedinet.
+    ACCENT = (34, 197, 94) if gateway else (59, 130, 246)
     INK = (230, 241, 245)
     DIM = (159, 179, 200)
     img = bytearray(bytes(BG) * (W * H))
@@ -3349,7 +4401,7 @@ def _mesh_card_png_render(card):
     MX = 36
     y = 30
     _mesh_face_draw(img, W, H, MX, y, "NAVI MESH", 3, ACCENT)
-    right = "PAIRING CARD"
+    right = "GATEWAY CARD" if gateway else "PAIRING CARD"
     _mesh_face_draw(img, W, H, W - MX - _mesh_face_text_w(right, 3), y, right, 3, DIM)
     y += 21 + 22
     name = _mesh_face_clean(card.get("name") or "This machine") or "THIS MACHINE"
@@ -3360,7 +4412,10 @@ def _mesh_card_png_render(card):
         name = name[: max(0, (W - 2 * MX) // (6 * scale) - 3)] + "..."
     _mesh_face_draw(img, W, H, MX, y, name, scale, INK)
     y += 7 * scale + 14
-    _mesh_face_draw(img, W, H, MX, y, "NODE " + str(card.get("nodeId") or "")[:12], 2, DIM)
+    if gateway:
+        _mesh_face_draw(img, W, H, MX, y, "GATEWAY " + (_mesh_face_clean(face.get("name") or "") or "THIS MACHINE"), 2, DIM)
+        y += 14 + 6
+    _mesh_face_draw(img, W, H, MX, y, "NODE " + str(face.get("nodeId") or "")[:12], 2, DIM)
     y += 14 + 16
     for x in range(MX, W - MX):
         px(x, y, ACCENT)
@@ -3400,6 +4455,8 @@ def _mesh_card_png_render(card):
         _mesh_face_draw(img, W, H, MX, y, line, 2, INK)
         y += 14 + 6
     foot = _mesh_face_wrap(
+        "THIS CARD ADMITS ITS BEARER TO AN INTRODUCTION - THE GATEWAY'S SIGNED ROSTER DOES THE REST. SEND THE FILE ITSELF - INSIDE A .ZIP FOR CHAT APPS, WHICH RECOMPRESS PICTURES AND STRIP THE DATA OUT."
+        if gateway else
         "THE PAIRING DATA RIDES INSIDE THIS PICTURE. SEND THE FILE ITSELF - "
         "INSIDE A .ZIP FOR CHAT APPS, WHICH RECOMPRESS PICTURES AND STRIP THE DATA OUT.",
         54,
@@ -3412,7 +4469,7 @@ def _mesh_card_png_render(card):
     for yy in range(H):
         raw.append(0)
         raw += img[yy * W * 3:(yy + 1) * W * 3]
-    text = b"navi-mesh-card\x00" + json.dumps(card).encode()
+    text = (b"navi-gateway-card\x00" if gateway else b"navi-mesh-card\x00") + json.dumps(card).encode()
     ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -3486,7 +4543,11 @@ def parse_mesh_card_png(data):
         return None, MESH_CARD_PNG_DAMAGED
     peer, _perr = mesh_parse_card(text)
     if peer is None:
-        return None, MESH_CARD_PNG_DAMAGED
+        # 0.2.0e Build 1 (#143): name the actual defect \u2014 a
+        # malformed fingerprint, a missing key \u2014 instead of
+        # the generic damage refusal; the validator already
+        # speaks in specifics.
+        return None, _perr or MESH_CARD_PNG_DAMAGED
     return peer, ""
 
 
@@ -3617,6 +4678,7 @@ def mesh_lender_generate(messages, endpoint, model):
             if MESH_STATE["borrowed_conn"] is conn:
                 MESH_STATE["borrowed_conn"] = None
                 MESH_STATE["borrowed_peer"] = ""
+                MESH_STATE["borrowed_fedinet"] = ""
                 MESH_STATE["borrowed_resp"] = None
             MESH_STATE["last_borrowed_done"] = time.time()
         try:
@@ -3687,6 +4749,35 @@ def mesh_handle_borrow(handler, body):
     messages = data.get("messages")
     if not isinstance(messages, list) or not messages:
         return 400, {"ok": False, "reason": "bad-request"}
+    # 0.2.0e Build 7 (#154): a relayed ask declares its carrier
+    # inside the signed body ("via"). The declaration can only
+    # ADD a check, never remove one — the asker is authenticated
+    # above exactly as on the direct road. When a carrier is
+    # declared, this machine's own consent governs: the carrier's
+    # record here must tick that it may carry envelopes to this
+    # machine from the authenticated asker, or the ask is refused
+    # by name before any work is done. Consent is read fresh from
+    # the loaded settings on every request, so an untick stops
+    # the next carriage, never a later one.
+    via = str(data.get("via") or "")
+    if via:
+        carrier = next((q for q in ms["borrow"]["peers"]
+                        if q["nodeId"] == via), None)
+        if carrier is None or peer["nodeId"] not in (carrier.get("relayAcceptFrom") or []):
+            return 200, {"ok": False, "reason": "no-consent", "missing": "lender"}
+    # 0.2.0e Build 8 (#154): a FEDERATION-made peer borrows under
+    # this node's federation posture, judged fresh on every ask —
+    # the toggle, the tick, the untrust list, the roster's
+    # freshness, the fedinet cap. A refusal names its why-word in
+    # "detail"; the pairing itself is untouched either way (a
+    # federation member refused here is still paired — it is
+    # pairing-only until the posture says otherwise). Hand-made
+    # pairings never reach this check.
+    fed_id = str(peer.get("viaFedinet") or "")
+    if fed_id:
+        _fed_ok, _fed_why = federation_lend_ok(cfg, peer)
+        if not _fed_ok:
+            return 200, {"ok": False, "reason": "federation", "detail": _fed_why}
     # Too large is refused whole, never truncated: the assembled
     # prompt must fit the lender's own context setting.
     ctx_limit = 4096
@@ -3722,7 +4813,9 @@ def mesh_handle_borrow(handler, body):
     model = cfg.get("live", {}).get("model_name") or "navi"
     with MESH_LOCK:
         MESH_STATE["borrowed_peer"] = peer["nodeId"]
+        MESH_STATE["borrowed_fedinet"] = fed_id
     stop_stamp = MESH_STATE["lend_stop_stamp"]
+    preempt_stamp = MESH_STATE["preempt_stamp"]
     started = time.time()
     try:
         reply, usage = mesh_lender_generate(messages, endpoint, model)
@@ -3734,6 +4827,15 @@ def mesh_handle_borrow(handler, body):
             # drops so its fusion fallback (R3) speaks.
             mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "aborted"})
             return "drop", None
+        if fed_id and MESH_STATE["preempt_stamp"] != preempt_stamp:
+            # Build 8: owner preemption landed mid-generation —
+            # the owner's own work took the machine. Unlike
+            # instant-off (a revocation), preemption ANSWERS: the
+            # borrower is told its ask was preempted, by name, so
+            # its fallback speaks the right sentence and a later
+            # ask can be served.
+            mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "preempted"})
+            return 200, {"ok": False, "reason": "preempted"}
         mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "error"})
         return 502, {"ok": False, "reason": "lender-error"}
     if MESH_STATE["lend_stop_stamp"] != stop_stamp:
@@ -3747,6 +4849,11 @@ def mesh_handle_borrow(handler, body):
         return "drop", None
     wall_ms = int((time.time() - started) * 1000)
     entry = {"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "ok"}
+    if via:
+        # The path is metadata: the carrier's node id only,
+        # never anything about the content it carried.
+        entry["via"] = via
+        entry["path"] = "relay"
     if isinstance(usage, dict):
         if usage.get("prompt_tokens") is not None:
             entry["promptTokens"] = usage.get("prompt_tokens")
@@ -3757,6 +4864,171 @@ def mesh_handle_borrow(handler, body):
     if isinstance(usage, dict):
         payload["usage"] = usage
     return 200, payload
+
+
+# -- Relay (0.2.0e Build 7, #154; ring-2 design section 5) ------------
+# Sealed carriage: when the direct road to a paired lender is
+# dark, a third paired machine may carry the ask. The wire shape
+# is an OUTER envelope (asker -> relay, signed like every Mesh
+# request) wrapping the INNER request — the asker's own signed
+# borrow for the lender, byte-identical, with one addition inside
+# the signed body: "via", naming the carrier, which is how the
+# lender checks its own consent. The relay holds no key that can
+# open the inner request's meaning — it is TLS-sealed to the
+# lender's pinned certificate on the second hop and the relay
+# sees envelope metadata only: who asks, who is asked, how many
+# bytes, what stage it ended at. Its ledger entry is metadata
+# only, under the same rule as every other entry.
+#
+# Consent is three ticks, one on each machine, each the local
+# operator's own: the asker ticks that the relay may carry its
+# envelopes to the lender; the relay ticks that it will carry
+# between the pair; the lender ticks that the relay may carry
+# envelopes to it from the asker. Any missing tick refuses the
+# carriage BY NAME (the refusal says which machine has not
+# consented). Consent is re-read fresh on every request on every
+# machine, so revoking any tick stops carriage at the next ask.
+# ONE HOP, hard: an envelope whose inner request is itself a
+# relay envelope, or whose inner body already declares a carrier,
+# is refused — a relayed envelope is never re-relayed.
+# First build scope: the "generate" class only — POST
+# /mesh/borrow. Sync and every other class stay direct-only.
+MESH_RELAY_OUTER_CAP = 512 * 1024
+MESH_RELAY_INNER_CAP = 256 * 1024
+
+
+def mesh_handle_relay(handler, body):
+    # POST /mesh/relay — verify consent + signature + size,
+    # forward verbatim, return the sealed answer verbatim
+    # (wrapped, base64, because the door speaks JSON). Returns
+    # (status, payload) for the door handler's JSON send.
+    if body is None or len(body) > MESH_RELAY_OUTER_CAP:
+        return 200, {"ok": False, "reason": "too-large"}
+    try:
+        data = json.loads(body.decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    request_id = str(data.get("requestId") or "")
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return 200, {"ok": False, "reason": "mesh-off"}
+    # The asker must be paired here; its signature covers the
+    # whole outer envelope, the consent declaration included.
+    peer = mesh_authenticate(handler, body, request_id)
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    to = str(data.get("to") or "")
+    dest = next((q for q in ms["borrow"]["peers"] if q["nodeId"] == to), None)
+    if data.get("probe") is True:
+        # The health check's question: is THIS machine's own
+        # carry tick in place for the (asker, destination) pair,
+        # and is the destination paired here at all? A probe
+        # carries nothing; it is answered from local state only.
+        will = bool(dest is not None
+                    and to in (peer.get("relayWillCarryTo") or []))
+        return 200, {"ok": True, "probe": True, "consent": will,
+                     "destPaired": dest is not None}
+    inner = data.get("inner")
+    if not isinstance(inner, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    inner_path = str(inner.get("path") or "")
+    inner_headers = inner.get("headers")
+    if not isinstance(inner_headers, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    fwd_headers = {}
+    for k in ("X-Mesh-Node", "X-Mesh-Ts", "X-Mesh-Sig"):
+        v = str(inner_headers.get(k) or "")
+        if not v:
+            return 400, {"ok": False, "reason": "bad-request"}
+        fwd_headers[k] = v
+    fwd_headers["Content-Type"] = "application/json"
+    try:
+        inner_body = base64.b64decode(str(inner.get("bodyB64") or ""),
+                                      validate=True)
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if len(inner_body) > MESH_RELAY_INNER_CAP:
+        return 200, {"ok": False, "reason": "too-large"}
+    # One hop, checked before consent: the inner request must
+    # declare THIS machine as its carrier — that declaration,
+    # inside the asker's signed body, is what makes this a first
+    # (and only) hop. An inner relay envelope (a hop asking to
+    # nest), an inner body naming a DIFFERENT carrier (a request
+    # already carried once, offered for a second carriage), and
+    # an inner body naming no carrier at all (a direct borrow
+    # wearing an envelope — it would reach the lender with the
+    # lender's relay consent never checked) are all refused the
+    # same way, whatever the ticks say.
+    if inner_path == "/mesh/relay":
+        return 200, {"ok": False, "reason": "hop-limit"}
+    try:
+        inner_data = json.loads(inner_body.decode("utf-8", "replace"))
+    except Exception:
+        inner_data = None
+    declared_via = ""
+    if isinstance(inner_data, dict):
+        declared_via = str(inner_data.get("via") or "")
+    own_id = str(ms.get("nodeId") or "") or (mesh_node_id() or "")
+    if inner_path in ("/mesh/borrow", "/mesh/roster") and declared_via != own_id:
+        return 200, {"ok": False, "reason": "hop-limit"}
+    if inner_path not in ("/mesh/borrow", "/mesh/roster"):
+        # Carriage scope: the generate class (Build 7) and the
+        # roster class (Build 8 — a fedinet's roster sync rides
+        # the same sealed carriage, on the same three ticks and
+        # the same one-hop rule; the roster door adds its own
+        # checks at the destination). Every other class answers
+        # on the direct road or not at all.
+        return 200, {"ok": False, "reason": "class-off"}
+    # The asker's own tick, declared inside its signed envelope —
+    # the asker enforces its tick by only ever declaring it when
+    # ticked; the declaration is the proof its software checks.
+    if data.get("askerConsent") is not True:
+        return 200, {"ok": False, "reason": "no-consent", "missing": "asker"}
+    # This machine's own tick, from its own record for the asker
+    # (the authenticated peer record IS that record).
+    if to not in (peer.get("relayWillCarryTo") or []):
+        return 200, {"ok": False, "reason": "no-consent", "missing": "relay"}
+    if dest is None:
+        return 200, {"ok": False, "reason": "dest-unknown"}
+    # Forward verbatim: the asker's headers, the asker's bytes,
+    # the destination pinned by THIS machine's record for it.
+    try:
+        _status, raw = _mesh_send_prepared(
+            dest, "POST", inner_path, fwd_headers, inner_body,
+            CHAT_TIMEOUT)
+    except _MeshFpError:
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
+                            "to": to, "bytesIn": len(inner_body),
+                            "bytesOut": 0, "outcome": "dest-refused"})
+        return 200, {"ok": False, "reason": "dest-refused",
+                     "detail": "fingerprint"}
+    except _MeshTlsError:
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
+                            "to": to, "bytesIn": len(inner_body),
+                            "bytesOut": 0, "outcome": "dest-refused"})
+        return 200, {"ok": False, "reason": "dest-refused",
+                     "detail": "tls"}
+    except _MeshDropped:
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
+                            "to": to, "bytesIn": len(inner_body),
+                            "bytesOut": 0, "outcome": "dest-dropped"})
+        return 200, {"ok": False, "reason": "dest-dropped"}
+    except Exception:
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
+                            "to": to, "bytesIn": len(inner_body),
+                            "bytesOut": 0, "outcome": "dest-dark"})
+        return 200, {"ok": False, "reason": "dest-dark"}
+    mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
+                        "to": to, "bytesIn": len(inner_body),
+                        "bytesOut": len(raw), "outcome": "ok"})
+    # Whatever the destination answered — a reply or a refusal in
+    # its own words — rides back sealed and verbatim; classifying
+    # it is the asker's job, from the destination's own payload.
+    return 200, {"ok": True, "relayed": True,
+                 "bodyB64": base64.b64encode(raw).decode("ascii")}
 
 
 def mesh_stop_lending(via_dhd=False):
@@ -3803,6 +5075,1609 @@ def mesh_stop_lending(via_dhd=False):
     return mesh_status_payload(load_config(), via_dhd)
 
 
+# -- Federation (0.2.0e Build 8, #154; rulings 2026-11-13) ------------
+# Ring 2's trust layer, as ruled the night it was designed:
+#
+# A FEDINET is a named set of nodes whose gateway keeps a SIGNED
+# ROSTER — member node ids, card fingerprints, join order (Node
+# numbers are roster facts, assigned by the gateway at admission).
+# A GATEWAY CARD — a pairing card's form, rendered GREEN, the
+# fedinet's name on its face, its payload riding a navi-gateway-card
+# PNG chunk — imports as ADMISSION + INTRODUCTION ONLY: the gateway
+# becomes a peer here and its roster becomes fetchable; no trust is
+# granted by the import itself.
+#
+# TRUST IS DEEP (Alex's ruling, 2026-11-13, taken over the shallow
+# recommendation with its threat model on the table): when an
+# operator's trust-by-default toggle for a fedinet is ON, that
+# fedinet's signed roster auto-pairs AND auto-lends on this node —
+# against the roster's signatures, never against a claim. The
+# per-member "lend to new members automatically" tick (default ON)
+# refines it: a member who joined after this node's trust baseline
+# is lent to only while the tick stands; unticked, new members are
+# pairing-only FOR THIS MEMBER until ticked. A per-member untrust
+# always wins over both. One flip of trust-by-default OFF ends all
+# auto-lending for the fedinet (pairings already made stay
+# pairings). A roster older than the freshness window (72 hours)
+# degrades the fedinet to pairing-only, with the sentence on the
+# Federation page saying so. Expulsion is a signed roster revision
+# — effective at the next sync; pairings made by hand outside the
+# fedinet are never touched by any of this.
+#
+# THE DOORS (DHD tiers, as amended by the crown-acts ruling, Alex
+# 2026-11-13 20:56 EST): read + revoke are open through the DHD
+# door always. Manage acts (imports, ticks, caps, admissions)
+# through DHD need the trusted-device session the door itself
+# provides PLUS the step-up. CROWN ACTS — enabling deep trust,
+# founding a fedinet, authorizing tunnel keys — run through DHD
+# too, under the full ceremony: trusted-device session + the
+# Operator Badge step-up + a named-action confirm (the act spelled
+# in words) + an audit entry. At the desk the same crown acts need
+# the same named confirm + audit; the Badge is the door's addition.
+#
+# THE BADGE FACTOR: the Operator Badge (the operator card of #173 /
+# #180) is presented as an image; the node stores only its SHA-256
+# fingerprint, enrolled IN PERSON at the desk (enrollment itself
+# never rides DHD). A presented badge whose hash differs is refused
+# by name; a node with no badge enrolled refuses DHD crown/manage
+# acts by name — the ceremony cannot run, and says so.
+#
+# Every trust-class act, through any door, lands in the audit log
+# (config/federation/audit.json — sentences, metadata only).
+#
+# Custody, unchanged from Ring 1: the node keypair never leaves the
+# node and is never backed up; the roster is signed with it. The
+# federation slice of config carries NO key material — rosters are
+# public-by-design facts (the same facts pairing cards carry).
+FED_DIR = os.path.join(ROOT, "config", "federation")
+FED_AUDIT_PATH = os.path.join(FED_DIR, "audit.json")
+FED_INVITATION_PATH = os.path.join(FED_DIR, "invitation.png")
+FED_ROSTER_STALE_HOURS = 72
+FED_ROSTER_FRESH_SECONDS = FED_ROSTER_STALE_HOURS * 3600
+ROCKPORT_FEDINET_NAME = "Rockport Mesh"
+
+# The named-action confirms: a crown act is confirmed by speaking
+# its name. The page shows the words; the operator types them; the
+# bridge compares them exactly. A refusal names the words, so the
+# ceremony is discoverable from its own refusal.
+def _fed_confirm_found(name):
+    return "found " + str(name or "")
+
+
+def _fed_confirm_trust(fed_name):
+    return "trust " + str(fed_name or "")
+
+
+def _fed_confirm_tunnel(peer_name):
+    return "authorize tunnel key for " + str(peer_name or "")
+
+
+def _federation_slice(cfg):
+    raw = cfg.get("federation") if isinstance(cfg.get("federation"), dict) else {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _fed_sanitize(raw):
+    # One fedinet record, cleaned. The roster is kept verbatim
+    # (its signature covers it — cleaning it would break the very
+    # thing that makes it trustworthy); everything else is
+    # clamped to shape.
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get("name") or "").strip()[:80]
+    if not name:
+        return None
+    fid = str(raw.get("id") or "")
+    if not fid:
+        fid = "fed_" + hashlib.sha256(
+            (str(raw.get("gatewayNodeId") or "") + "|" + name).encode()
+        ).hexdigest()[:16]
+    roster = raw.get("roster") if isinstance(raw.get("roster"), dict) else None
+    since = raw.get("memberSince") if isinstance(raw.get("memberSince"), dict) else {}
+    since = {str(k): _mesh_int(v, 0) for k, v in list(since.items())[:256]}
+    return {
+        "id": fid,
+        "name": name,
+        "role": "gateway" if raw.get("role") == "gateway" else "member",
+        "gatewayNodeId": str(raw.get("gatewayNodeId") or "")[:64],
+        "gatewayName": str(raw.get("gatewayName") or "")[:80],
+        "gatewayCard": raw.get("gatewayCard") if isinstance(raw.get("gatewayCard"), dict) else None,
+        "gatewayCardPayload": raw.get("gatewayCardPayload") if isinstance(raw.get("gatewayCardPayload"), dict) else None,
+        "roster": roster,
+        "rosterSyncedAt": _mesh_int(raw.get("rosterSyncedAt"), 0),
+        "trustByDefault": raw.get("trustByDefault") is True,
+        "lendToNew": raw.get("lendToNew") is not False,
+        "untrusted": _mesh_id_list(raw.get("untrusted")),
+        "lendOverrides": _mesh_id_list(raw.get("lendOverrides")),
+        "memberSince": since,
+        "trustBaselineVersion": _mesh_int(raw.get("trustBaselineVersion"), 0),
+        "borrowCap": max(0, min(100000, _mesh_int(raw.get("borrowCap"), 0))),
+        "pendingJoins": [p for p in (raw.get("pendingJoins") or [])
+                         if isinstance(p, dict)][:32] if isinstance(raw.get("pendingJoins"), list) else [],
+        "foundedAt": _mesh_int(raw.get("foundedAt"), 0),
+    }
+
+
+def federation_settings(cfg):
+    raw = _federation_slice(cfg)
+    out = []
+    seen = set()
+    feds = raw.get("fedinets") if isinstance(raw.get("fedinets"), list) else []
+    for item in feds:
+        fed = _fed_sanitize(item)
+        if fed is not None and fed["id"] not in seen:
+            seen.add(fed["id"])
+            out.append(fed)
+    return out
+
+
+def _federation_badge_sha(cfg):
+    raw = _federation_slice(cfg)
+    sha = str(raw.get("badgeSha256") or "")
+    return sha if re.fullmatch(r"[0-9a-f]{64}", sha or "") else ""
+
+
+def _federation_save(cfg, fedinets):
+    raw = dict(_federation_slice(cfg))
+    raw["fedinets"] = fedinets
+    cfg["federation"] = raw
+    save_config(cfg)
+
+
+def _fed_find(fedinets, fed_id):
+    for i, f in enumerate(fedinets):
+        if f["id"] == fed_id:
+            return i, f
+    return -1, None
+
+
+def _fed_canonical(roster):
+    body = {k: v for k, v in roster.items() if k != "sig"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _fed_roster_members(fed):
+    roster = (fed or {}).get("roster") or {}
+    members = roster.get("members") if isinstance(roster, dict) else None
+    return members if isinstance(members, list) else []
+
+
+def _fed_roster_version(fed):
+    roster = (fed or {}).get("roster") or {}
+    try:
+        return int(roster.get("version") or 0)
+    except Exception:
+        return 0
+
+
+def _fed_member(fed, node_id):
+    for m in _fed_roster_members(fed):
+        if isinstance(m, dict) and str(m.get("nodeId") or "") == node_id:
+            return m
+    return None
+
+
+def _fed_roster_fresh(fed):
+    # Freshness is about the last successful SYNC, not the
+    # roster's age on the gateway: a quiet fedinet whose roster
+    # has not changed in a month is still fresh the hour after
+    # this node last verified it. Past the window, trust degrades
+    # to pairing-only until a sync lands.
+    return fed.get("rosterSyncedAt", 0) > 0 and \
+        (time.time() - fed["rosterSyncedAt"]) <= FED_ROSTER_FRESH_SECONDS
+
+
+def _fed_roster_stale_sentence(fed):
+    return ("This fedinet's roster was last verified more than "
+            + str(FED_ROSTER_STALE_HOURS) + " hours ago, so its trust is "
+            "pairing-only until a roster sync lands — pairings hold, "
+            "auto-lending waits.")
+
+
+def federation_audit(action, fed_name, detail, via):
+    try:
+        os.makedirs(FED_DIR, exist_ok=True)
+        rows = []
+        if os.path.isfile(FED_AUDIT_PATH):
+            try:
+                rows = json.loads(read_file(FED_AUDIT_PATH) or "[]")
+            except Exception:
+                rows = []
+        if not isinstance(rows, list):
+            rows = []
+        rows.append({"ts": int(time.time()), "action": str(action)[:60],
+                     "fedinet": str(fed_name or "")[:80],
+                     "detail": str(detail or "")[:300],
+                     "via": "dhd" if via == "dhd" else "desk"})
+        rows = rows[-300:]
+        with open(FED_AUDIT_PATH, "w") as f:
+            json.dump(rows, f, indent=1)
+    except Exception:
+        pass
+
+
+def federation_audit_read():
+    try:
+        if os.path.isfile(FED_AUDIT_PATH):
+            rows = json.loads(read_file(FED_AUDIT_PATH) or "[]")
+            if isinstance(rows, list):
+                return rows[-60:]
+    except Exception:
+        pass
+    return []
+
+
+def _fed_badge_bytes(data):
+    # The presented Badge: a data:image URL or a bare base64 body,
+    # decoded through the dashboard's own image-field discipline.
+    field = data.get("badge") if isinstance(data, dict) else None
+    if not isinstance(field, str) or not field:
+        return None
+    if field.startswith("data:image/"):
+        return _dashboard_image_bytes(_dashboard_image_field(field))
+    try:
+        return base64.b64decode(field, validate=True)
+    except Exception:
+        return None
+
+
+def _fed_badge_ok(cfg, via_dhd, data):
+    # The step-up, door side: at the desk the operator's presence
+    # is the factor and nothing is asked. Through DHD the Badge
+    # must be presented and must match the fingerprint enrolled
+    # on THIS node — or the act refuses, by name.
+    if not via_dhd:
+        return True, ""
+    enrolled = _federation_badge_sha(cfg)
+    if not enrolled:
+        return False, ("No Operator Badge is enrolled on this node as the "
+                       "DHD step-up factor, so this act cannot ride the DHD "
+                       "door — enroll the Badge in person, on this node's "
+                       "Federation page, and the ceremony can run.")
+    presented = _fed_badge_bytes(data)
+    if presented is None:
+        return False, ("That act needs the Operator Badge step-up through "
+                       "the DHD door: present the Operator Badge picture "
+                       "with the request. Without the Badge, it stays an "
+                       "in-person act.")
+    digest = hashlib.sha256(presented).hexdigest()
+    if not secrets.compare_digest(digest, enrolled):
+        return False, ("The Badge presented does not match the one enrolled "
+                       "on this node — the act is refused.")
+    return True, ""
+
+
+def _fed_crown_ok(cfg, via_dhd, data, confirm_label):
+    # The crown ceremony: the named-action confirm at every door,
+    # the Badge step-up added by the DHD door. Returns
+    # (ok, refusal-sentence).
+    ok, err = _fed_badge_ok(cfg, via_dhd, data)
+    if not ok:
+        return False, err
+    if str((data or {}).get("confirm") or "") != confirm_label:
+        return False, ("That act needs its name spoken: confirm it with "
+                       "the words '" + confirm_label + "'.")
+    return True, ""
+
+
+# -- Gateway cards -----------------------------------------------------
+# A gateway card is a pairing card's form carrying a bigger fact:
+# not "pair with me" but "I keep the roster of this fedinet; here
+# is my card so you can reach me, and my signature over the claim."
+
+def _fed_gateway_payload(cfg, fed):
+    own = mesh_card(cfg)
+    payload = {
+        "gatewayCard": 1,
+        "fedinetId": fed["id"],
+        "name": fed["name"],
+        "gateway": own,
+        "rosterVersion": _fed_roster_version(fed),
+        "issuedAt": int(time.time()),
+    }
+    payload["sig"] = mesh_sign(_fed_canonical(payload))
+    return payload
+
+
+def build_gateway_card_png(cfg, fed):
+    payload = _fed_gateway_payload(cfg, fed)
+    return _mesh_card_png_render(payload, variant="gateway")
+
+
+def parse_gateway_card_png(data):
+    # The gateway-card mirror of parse_mesh_card_png: same PNG
+    # discipline (CRC-checked tEXt, named refusals), the
+    # navi-gateway-card keyword. Returns (payload, error).
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return None, MESH_CARD_PNG_NOT_PNG
+    data = bytes(data)
+    pos = 8
+    payload = None
+    saw_pairing = False
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            return None, MESH_CARD_PNG_DAMAGED
+        chunk_data = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                keyword = chunk_data[:nul]
+                if keyword == b"navi-gateway-card":
+                    (crc_stored,) = struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])
+                    if binascii.crc32(kind + chunk_data) & 0xFFFFFFFF != crc_stored:
+                        return None, MESH_CARD_PNG_DAMAGED
+                    payload = chunk_data[nul + 1:]
+                elif keyword == b"navi-mesh-card":
+                    saw_pairing = True
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    if payload is None:
+        if saw_pairing:
+            return None, ("That picture is a Mesh pairing card, not a gateway "
+                          "card — pairing cards pair one machine; gateway cards "
+                          "come from a fedinet gateway's Federation page.")
+        return None, MESH_CARD_PNG_NO_PAYLOAD
+    try:
+        card = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return None, MESH_CARD_PNG_DAMAGED
+    if not isinstance(card, dict) or card.get("gatewayCard") != 1:
+        return None, MESH_CARD_PNG_DAMAGED
+    return card, ""
+
+
+def _fed_verify_gateway_card(payload):
+    # The card's claim, checked: the embedded gateway card must
+    # validate as a pairing card, and the signature over the
+    # payload must verify against the gateway's own key — a card
+    # anyone can print, but only the gateway can sign.
+    gw = payload.get("gateway") if isinstance(payload.get("gateway"), dict) else None
+    if gw is None:
+        return None, "That gateway card carries no gateway — it is damaged."
+    peer, perr = mesh_parse_card(json.dumps(gw))
+    if peer is None:
+        return None, perr or "That gateway card's gateway does not validate."
+    sig = str(payload.get("sig") or "")
+    if not sig or not mesh_verify(str(gw.get("publicKeyPem") or ""),
+                                  _fed_canonical(payload), sig):
+        return None, ("That gateway card's signature does not verify against "
+                      "its gateway's key — the card was not signed by the "
+                      "gateway it names, so nothing was imported.")
+    return peer, ""
+
+
+def _fed_import_gateway_payload(cfg, payload, trust_default=False):
+    # Import = admission + introduction. Creates (or refreshes)
+    # the member-side fedinet record and the gateway's peer
+    # record — marked as federation-made, introduction only. No
+    # lending posture moves: trust starts OFF unless the caller
+    # is the container first boot's Rockport default (the ruled
+    # exception, and even then nothing lends until a signed
+    # roster syncs and says who the members are).
+    peer, err = _fed_verify_gateway_card(payload)
+    if peer is None:
+        return None, err
+    if peer["nodeId"] and peer["nodeId"] == (mesh_node_id() or ""):
+        return None, ("That gateway card is this node's own — a node does "
+                      "not join a fedinet it gateways; it is already the "
+                      "gateway, and its Founding Member.")
+    name = str(payload.get("name") or "").strip()[:80]
+    if not name:
+        return None, "That gateway card names no fedinet."
+    fed_id = str(payload.get("fedinetId") or "") or "fed_" + hashlib.sha256(
+        (peer["nodeId"] + "|" + name).encode()).hexdigest()[:16]
+    fedinets = federation_settings(cfg)
+    idx, fed = _fed_find(fedinets, fed_id)
+    created = fed is None
+    if created:
+        fed = _fed_sanitize({
+            "id": fed_id, "name": name, "role": "member",
+            "gatewayNodeId": peer["nodeId"], "gatewayName": peer["name"],
+            "gatewayCard": payload.get("gateway"),
+            "gatewayCardPayload": payload,
+            "trustByDefault": bool(trust_default),
+            "foundedAt": int(time.time()),
+        })
+        fedinets.append(fed)
+    else:
+        fed["gatewayCard"] = payload.get("gateway")
+        fed["gatewayCardPayload"] = payload
+        fed["gatewayName"] = peer["name"]
+    # The introduction: the gateway joins this node's peers as a
+    # federation-made record — paired, never hand-made, and (until
+    # trust + roster say otherwise) lending nothing.
+    ms = mesh_settings(cfg)
+    existing = next((p for p in ms["borrow"]["peers"] if p["nodeId"] == peer["nodeId"]), None)
+    if existing is None:
+        peer["viaFedinet"] = fed["id"]
+        peer["autoPaired"] = True
+        _cfg2 = load_config()
+        mesh_add_peer(_cfg2, peer)
+        cfg = _cfg2
+    _federation_save(cfg, fedinets)
+    return fed, ""
+
+
+# -- Rosters -----------------------------------------------------------
+# The roster is the gateway's signed word: who is in, in what
+# order, with the card facts every member needs to pair the
+# others. Versions only move forward; a rollback or a bad
+# signature is refused by name at the door.
+
+def _fed_member_entry(cfg, peer_like, n, joined_at):
+    caps = peer_like.get("capabilities")
+    entry = {
+        "n": int(n),
+        "nodeId": str(peer_like.get("nodeId") or ""),
+        "name": str(peer_like.get("name") or "")[:80],
+        "publicKeyPem": str(peer_like.get("publicKeyPem") or ""),
+        "certFingerprint": str(peer_like.get("certFingerprint") or ""),
+        "addresses": [str(a)[:120] for a in (peer_like.get("addresses") or [])][:8],
+        "port": _mesh_int(peer_like.get("port"), 8765),
+        "publicEndpoint": str(peer_like.get("publicEndpoint") or "")[:120],
+        "capabilities": caps if isinstance(caps, dict) else {},
+        "joinedAt": int(joined_at or 0),
+    }
+    if peer_like.get("founding"):
+        # The Founding Member mark is a roster fact like the Node
+        # number — it survives every rebuild of the entry.
+        entry["founding"] = True
+    return entry
+
+
+def _fed_sign_roster(cfg, fed):
+    roster = fed.get("roster") or {}
+    roster = dict(roster)
+    roster.pop("sig", None)
+    roster["fedinetId"] = fed["id"]
+    roster["name"] = fed["name"]
+    roster["gatewayNodeId"] = fed["gatewayNodeId"]
+    roster["updatedAt"] = int(time.time())
+    roster["sig"] = mesh_sign(_fed_canonical(roster))
+    fed["roster"] = roster
+    return roster
+
+
+def _fed_verify_roster(fed, roster):
+    if not isinstance(roster, dict):
+        return "bad-roster"
+    if str(roster.get("fedinetId") or "") != fed["id"]:
+        return "wrong-fedinet"
+    gw_card = fed.get("gatewayCard") or {}
+    pem = str(gw_card.get("publicKeyPem") or "")
+    sig = str(roster.get("sig") or "")
+    if not pem or not sig or not mesh_verify(pem, _fed_canonical(roster), sig):
+        return "roster-unverified"
+    return ""
+
+
+def _fed_gateway_locked(fed):
+    # This node IS the gateway: the stored roster is refreshed
+    # from this node's own peer records before it is published
+    # or signed onward (a member whose card facts changed here —
+    # a fresh import — must not ride a stale entry). Member-side
+    # copies never pass through here; for them the roster is the
+    # gateway's signed word exactly as received.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    out = []
+    for m in _fed_roster_members(fed):
+        if not isinstance(m, dict):
+            continue
+        nid = str(m.get("nodeId") or "")
+        if nid == own_id:
+            own = mesh_card(cfg)
+            entry = _fed_member_entry(cfg, own, m.get("n") or 1, m.get("joinedAt"))
+            if m.get("founding"):
+                entry["founding"] = True
+            out.append(entry)
+            continue
+        rec = next((p for p in ms["borrow"]["peers"] if p["nodeId"] == nid), None)
+        if rec is not None:
+            entry = _fed_member_entry(cfg, rec, m.get("n") or len(out) + 1, m.get("joinedAt"))
+            if m.get("founding"):
+                entry["founding"] = True
+            out.append(entry)
+        else:
+            out.append(m)
+    return out
+
+
+def _fed_gateway_publish(cfg, fedinets, fed):
+    # Gateway side: reconcile the roster this node SIGNS with
+    # the roster the caller intends, sign, persist. Called after
+    # every membership change (admit / expel) and before a roster
+    # is served to a member whose copy is behind.
+    #
+    # The change test reads the LAST SIGNED roster from disk —
+    # never the caller's in-memory copy, which admit/expel have
+    # already mutated (comparing the intent against itself made
+    # every membership change a "no-op" and left new members
+    # riding a stale signature). The intended member set is
+    # refreshed from this node's own records; when the refreshed
+    # intent equals the signed roster exactly, the publish is a
+    # no-op and the version stands — a member's routine sync
+    # poll never churns it.
+    fed = dict(fed)
+    disk_feds = federation_settings(load_config())
+    _di, disk_fed = _fed_find(disk_feds, fed["id"])
+    stored_members = _fed_roster_members(disk_fed) if disk_fed else []
+    stored_version = _fed_roster_version(disk_fed) if disk_fed else 0
+    members = _fed_gateway_locked(fed)
+    if disk_fed is not None and (disk_fed.get("roster") or {}).get("sig") \
+            and members == stored_members:
+        return disk_fed
+    fed["roster"] = dict(fed.get("roster") or {})
+    fed["roster"]["members"] = members
+    fed["roster"]["version"] = stored_version + 1
+    _fed_sign_roster(cfg, fed)
+    fed["rosterSyncedAt"] = int(time.time())
+    idx, _old = _fed_find(fedinets, fed["id"])
+    if idx < 0:
+        fedinets.append(fed)
+    else:
+        fedinets[idx] = fed
+    _federation_save(cfg, fedinets)
+    return fed
+
+
+def _fed_accept_roster(cfg, fedinets, fed, roster):
+    # Member side (and the gateway's own no-op): a roster is
+    # accepted only whole — right fedinet, gateway's signature,
+    # version strictly forward. Anything else is refused by name
+    # and the stored roster stands.
+    err = _fed_verify_roster(fed, roster)
+    if err:
+        return fed, err
+    if _fed_roster_version({"roster": roster}) <= _fed_roster_version(fed) and fed.get("roster"):
+        return fed, "roster-rollback"
+    fed = dict(fed)
+    fed["roster"] = roster
+    fed["rosterSyncedAt"] = int(time.time())
+    idx, _old = _fed_find(fedinets, fed["id"])
+    fedinets[idx] = fed
+    _federation_save(cfg, fedinets)
+    return fed, ""
+
+
+# -- What trust DOES ---------------------------------------------------
+# federation_apply is the materializer: after any roster or trust
+# change it reconciles this node's peer records with the signed
+# roster. It only ever touches records the federation itself made
+# (viaFedinet) — a hand-made pairing is the operator's and is
+# never created, edited, or removed here.
+
+def federation_apply(cfg):
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    fedinets = federation_settings(cfg)
+    changed = False
+    peers = list(ms["borrow"]["peers"])
+    for fed in fedinets:
+        members = [m for m in _fed_roster_members(fed) if isinstance(m, dict)]
+        member_ids = {str(m.get("nodeId") or "") for m in members}
+        active = fed["trustByDefault"] and _fed_roster_fresh(fed)
+        # Departures: records the federation OWNS for nodes no
+        # longer on the roster go away. A record that pre-dated
+        # the federation (hand-paired, then admitted — marked,
+        # never autoPaired) is only UNMARKED: the pairing itself
+        # was the operator's before the fedinet and stays the
+        # operator's after it. Pairing-only posture (a stale
+        # roster) sweeps nothing — they are still members; the
+        # roster merely went stale.
+        if fed.get("roster"):
+            kept = []
+            for p in peers:
+                if p.get("viaFedinet") == fed["id"] and p["nodeId"] not in member_ids \
+                        and p["nodeId"] != fed["gatewayNodeId"]:
+                    changed = True
+                    if p.get("autoPaired"):
+                        continue
+                    p = dict(p)
+                    p["viaFedinet"] = ""
+                kept.append(p)
+            peers = kept
+        if not active:
+            continue
+        for m in members:
+            nid = str(m.get("nodeId") or "")
+            if not nid or nid == own_id or nid in fed["untrusted"]:
+                continue
+            rec = next((p for p in peers if p["nodeId"] == nid), None)
+            entry = _fed_member_entry(cfg, m, m.get("n") or 0, m.get("joinedAt"))
+            peer, perr = mesh_parse_card(json.dumps({
+                "meshCard": 1, "name": entry["name"], "nodeId": nid,
+                "publicKeyPem": entry["publicKeyPem"],
+                "certFingerprint": entry["certFingerprint"],
+                "addresses": entry["addresses"], "port": entry["port"],
+                "publicEndpoint": entry["publicEndpoint"],
+                "capabilities": entry["capabilities"],
+            }))
+            if peer is None:
+                continue
+            if rec is None:
+                peer["viaFedinet"] = fed["id"]
+                peer["autoPaired"] = True
+                peers.append(peer)
+                changed = True
+            elif rec.get("viaFedinet") == fed["id"]:
+                # Refresh the federation-owned facts of a record
+                # the federation made (a member's new card facts
+                # ride the roster); operator facts on it — relay
+                # ticks, the tunnel route — are never the roster's
+                # to rewrite.
+                for k in ("name", "publicKeyPem", "certFingerprint",
+                          "addresses", "port", "publicEndpoint", "capabilities"):
+                    if rec.get(k) != peer.get(k):
+                        rec[k] = peer[k]
+                        changed = True
+    if changed:
+        cfg2 = load_config()
+        block = dict(cfg2.get("mesh") or {})
+        borrow = dict(block.get("borrow") or {})
+        borrow["peers"] = peers
+        block["borrow"] = borrow
+        cfg2["mesh"] = block
+        save_config(cfg2)
+    return changed
+
+
+def _fed_cap_hit(fed, member_ids):
+    cap = fed.get("borrowCap") or 0
+    if cap <= 0:
+        return False
+    cutoff = time.time() - 3600
+    total = 0
+    for r in mesh_ledger_read():
+        if r.get("direction") == "lent" and r.get("outcome") == "ok" \
+                and (r.get("ts") or 0) >= cutoff and r.get("peer") in member_ids:
+            total += 1
+    return total >= cap
+
+
+def federation_lend_ok(cfg, peer):
+    # The borrow door's federation question, answered with a
+    # why-word: may this federation-made peer borrow, right now,
+    # under this node's own posture? Pairwise (hand-made) peers
+    # never reach here — the door asks only for viaFedinet
+    # records. The checks are this node's OWN acts: its toggle,
+    # its tick, its untrust list, its cap. The lender's general
+    # caps in mesh_handle_borrow still apply after this returns.
+    fed_id = str(peer.get("viaFedinet") or "")
+    if not fed_id:
+        return True, "pairwise"
+    fedinets = federation_settings(cfg)
+    _idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None:
+        return False, "no-fedinet"
+    nid = str(peer.get("nodeId") or "")
+    if nid in fed["untrusted"]:
+        return False, "untrusted"
+    member = _fed_member(fed, nid)
+    if member is None and nid != fed["gatewayNodeId"]:
+        return False, "not-on-roster"
+    if not _fed_roster_fresh(fed):
+        # Staleness degrades EVERYTHING the federation lends to
+        # pairing-only — the prep's sentence, no exceptions for
+        # individual ticks: a stale roster cannot prove the
+        # member was not expelled an hour ago.
+        return False, "roster-stale"
+    if nid in (fed.get("lendOverrides") or []):
+        # An individual tick is the operator's own per-member
+        # act: it lends even while the fedinet's general toggle
+        # is off (it is not AUTO-lending; it is named lending),
+        # and untrust above still beats it.
+        return True, "member-tick"
+    if not fed["trustByDefault"]:
+        return False, "trust-off"
+    version = _fed_roster_version(fed)
+    since = (fed.get("memberSince") or {}).get(nid)
+    if since is None:
+        since = version if nid == fed["gatewayNodeId"] else 0
+    if since > fed.get("trustBaselineVersion", 0) and not fed["lendToNew"]:
+        return False, "new-member"
+    member_ids = {str(m.get("nodeId") or "") for m in _fed_roster_members(fed)}
+    if _fed_cap_hit(fed, member_ids):
+        return False, "cap"
+    return True, "member-tick" if since > fed.get("trustBaselineVersion", 0) else "trust-on"
+
+
+def mesh_preempt_borrowed():
+    # Owner preemption (the prep's rule: the owner's own work
+    # goes first): when local generation starts and the machine
+    # is mid-borrow for a FEDERATION-made peer, the borrowed
+    # generation is aborted and the borrow handler answers the
+    # borrower with the named outcome "preempted" — never dropped
+    # silently, and a pairwise borrow is never preempted.
+    with MESH_LOCK:
+        fed_id = MESH_STATE.get("borrowed_fedinet") or ""
+        conn = MESH_STATE["borrowed_conn"]
+        resp = MESH_STATE["borrowed_resp"]
+    if not fed_id or conn is None:
+        return False
+    with MESH_LOCK:
+        MESH_STATE["preempt_stamp"] = time.time()
+    try:
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
+    if resp is not None:
+        try:
+            resp.close()
+        except Exception:
+            pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return True
+
+
+# -- Roster traffic ------------------------------------------------------
+# Asks ride the Mesh door (POST /mesh/roster), signed like every
+# Mesh request. Authentication at the roster door is deliberately
+# wider than pairing: a fedinet member is known by the roster
+# itself — its key is a roster fact, signed by the gateway — so a
+# member this node has not paired with yet can still sync, knock,
+# and be answered. The gateway's signature over the roster is the
+# credential every answer stands on.
+
+def _fed_roster_auth(handler, body, fed_hint):
+    # Returns (asker_node_id, error_word). Accepts: a paired peer
+    # (mesh_authenticate), OR any current roster member's key, OR
+    # the pinned gateway key of the hinted fedinet.
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return "", "bad-request"
+    if not isinstance(data, dict):
+        return "", "bad-request"
+    peer = mesh_authenticate(handler, body, str(data.get("requestId") or ""))
+    if peer is not None:
+        return str(peer.get("nodeId") or ""), ""
+    node = str(handler.headers.get("X-Mesh-Node") or "")
+    ts_raw = str(handler.headers.get("X-Mesh-Ts") or "")
+    sig = str(handler.headers.get("X-Mesh-Sig") or "")
+    if not node or not sig:
+        return "", "unauthorized"
+    try:
+        ts = int(ts_raw)
+    except Exception:
+        return "", "unauthorized"
+    if abs(time.time() - ts) > 120:
+        return "", "unauthorized"
+    cfg = load_config()
+    candidates = {}
+    for fed in federation_settings(cfg):
+        if fed_hint and fed["id"] != fed_hint:
+            continue
+        gw = fed.get("gatewayCard") or {}
+        if gw.get("nodeId"):
+            candidates[str(gw["nodeId"])] = str(gw.get("publicKeyPem") or "")
+        for m in _fed_roster_members(fed):
+            if isinstance(m, dict) and m.get("nodeId"):
+                candidates[str(m["nodeId"])] = str(m.get("publicKeyPem") or "")
+        if fed["role"] == "gateway":
+            # A pending joiner may also authenticate — by the
+            # key its knock carried — so it can poll for the
+            # roster that admits it. Its card is in the pending
+            # list because its knock already proved the key.
+            for p in (fed.get("pendingJoins") or []):
+                if isinstance(p, dict) and isinstance(p.get("card"), dict):
+                    card = p["card"]
+                    if card.get("nodeId"):
+                        candidates[str(card["nodeId"])] = str(card.get("publicKeyPem") or "")
+    pem = candidates.get(node)
+    if not pem:
+        return "", "unauthorized"
+    payload = mesh_sig_payload(str(data.get("requestId") or ""), ts_raw, body)
+    if not mesh_verify(pem, payload, sig):
+        return "", "unauthorized"
+    return node, ""
+
+
+def _fed_roster_ask(peer, payload):
+    body = json.dumps(payload).encode()
+    try:
+        _code, raw = _mesh_request(peer, "POST", "/mesh/roster", body,
+                                   str(payload.get("requestId") or ""), 15)
+        data = json.loads(raw.decode("utf-8", "replace"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _fed_roster_sync(cfg, fed):
+    # One sync round for one member-side fedinet: ask the gateway
+    # (direct first, then via a consented relay — Build 8 admits
+    # the roster class to relay carriage on Build 7's consent and
+    # one-hop rules), accept a verified forward roster, then let
+    # the materializer reconcile pairings. Returns a sentence.
+    ms = mesh_settings(cfg)
+    gw_rec = next((p for p in ms["borrow"]["peers"]
+                   if p["nodeId"] == fed["gatewayNodeId"]), None)
+    if gw_rec is None:
+        return "The gateway is not paired on this node, so the roster cannot be fetched."
+    payload = {"action": "get", "fedinetId": fed["id"],
+               "version": _fed_roster_version(fed),
+               "requestId": secrets.token_hex(8)}
+    answer = _fed_roster_ask(gw_rec, payload)
+    if answer is None:
+        answer = _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload)
+    if answer is None:
+        return ("The gateway did not answer — the roster stands as it was. "
+                "Direct and relay roads were both tried.")
+    if not answer.get("ok"):
+        return "The gateway refused the roster ask (" + str(answer.get("reason") or "refused") + ")."
+    roster = answer.get("roster")
+    if roster is None:
+        fed2 = dict(fed)
+        fed2["rosterSyncedAt"] = int(time.time())
+        fedinets = federation_settings(cfg)
+        idx, _o = _fed_find(fedinets, fed["id"])
+        fedinets[idx] = fed2
+        _federation_save(cfg, fedinets)
+        return "The roster is current — the gateway's version matches this node's."
+    fedinets = federation_settings(cfg)
+    _i, cur = _fed_find(fedinets, fed["id"])
+    _fed, err = _fed_accept_roster(cfg, fedinets, cur, roster)
+    if err:
+        return "The roster the gateway sent was refused (" + err + ") — the stored roster stands."
+    federation_apply(load_config())
+    return "Roster synced — version " + str(_fed_roster_version(roster)) + " is this node's word now."
+
+
+def _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload):
+    # The roster ask, carried: the same signed ask, wrapped in
+    # Build 7's relay envelope — the inner body gains the "via"
+    # declaration the destination's consent check reads, and the
+    # destination's answer rides back sealed, exactly as a
+    # borrow's does.
+    ms = mesh_settings(cfg)
+    own_rec_hint = gw_rec
+    for relay in _mesh_relay_candidates(ms, own_rec_hint):
+        inner_payload = dict(payload)
+        inner_payload["via"] = relay["nodeId"]
+        inner_payload["requestId"] = secrets.token_hex(8)
+        inner_body = json.dumps(inner_payload).encode()
+        headers = mesh_signed_headers(str(inner_payload["requestId"]), inner_body)
+        outer = {
+            "requestId": secrets.token_hex(8),
+            "to": gw_rec["nodeId"],
+            "askerConsent": True,
+            "inner": {
+                "path": "/mesh/roster",
+                "headers": {k: headers[k] for k in
+                            ("X-Mesh-Node", "X-Mesh-Ts", "X-Mesh-Sig")},
+                "bodyB64": base64.b64encode(inner_body).decode("ascii"),
+            },
+        }
+        outer_body = json.dumps(outer).encode()
+        try:
+            _code, raw = _mesh_request(relay, "POST", "/mesh/relay", outer_body,
+                                       outer["requestId"], 20)
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if not isinstance(data, dict) or not data.get("ok") or not data.get("bodyB64"):
+            continue
+        try:
+            inner = json.loads(base64.b64decode(data["bodyB64"]).decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if isinstance(inner, dict):
+            return inner
+    return None
+
+
+def mesh_handle_roster(handler, body):
+    # POST /mesh/roster — join (a self-signed knock from a node
+    # holding the gateway card; admission is the gateway
+    # operator's act, never automatic), get (a member — or a
+    # pending joiner — asks for the current roster), roster (a
+    # member offers a newer roster it holds: gossip, so a
+    # fedinet heals around a dark gateway; the gateway's
+    # signature is the only credential an offered roster needs).
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return 200, {"ok": False, "reason": "mesh-off"}
+    action = str(data.get("action") or "")
+    fed_id = str(data.get("fedinetId") or "")
+    fedinets = federation_settings(cfg)
+    _idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None:
+        return 200, {"ok": False, "reason": "no-fedinet"}
+    if action == "join":
+        # A first knock is on NO roster yet, so roster auth
+        # cannot know it. The knock authenticates SELF-signed:
+        # the card inside the request names the key, and the
+        # request's signature must verify against that very key —
+        # the knocker proves it holds the key its card names, and
+        # the card itself is only a claim until the gateway's
+        # operator admits it.
+        card = data.get("card") if isinstance(data.get("card"), dict) else None
+        kpeer, kerr = (mesh_parse_card(json.dumps(card)) if card else (None, "no card"))
+        if kpeer is None:
+            return 200, {"ok": False, "reason": "bad-card",
+                         "detail": kerr or "the knock carries no valid card"}
+        node = str(handler.headers.get("X-Mesh-Node") or "")
+        ts_raw = str(handler.headers.get("X-Mesh-Ts") or "")
+        sig = str(handler.headers.get("X-Mesh-Sig") or "")
+        try:
+            ts_ok = abs(time.time() - int(ts_raw)) <= 120
+        except Exception:
+            ts_ok = False
+        if node != kpeer["nodeId"] or not ts_ok or not sig or not mesh_verify(
+                str(kpeer.get("publicKeyPem") or ""),
+                mesh_sig_payload(str(data.get("requestId") or ""), ts_raw, body), sig):
+            return 401, {"ok": False, "reason": "unauthorized"}
+        asker = kpeer["nodeId"]
+    else:
+        asker, aerr = _fed_roster_auth(handler, body, fed_id)
+        if aerr:
+            return 401, {"ok": False, "reason": aerr}
+    # A declared carrier adds a check, exactly as at the borrow
+    # door: this node's record for the carrier must tick that it
+    # may carry envelopes to this node from the authenticated
+    # asker, or the carried ask is refused by name.
+    via = str(data.get("via") or "")
+    if via:
+        carrier = next((q for q in ms["borrow"]["peers"]
+                        if q["nodeId"] == via), None)
+        if carrier is None or asker not in (carrier.get("relayAcceptFrom") or []):
+            return 200, {"ok": False, "reason": "no-consent", "missing": "lender"}
+    if action == "join":
+        if fed["role"] != "gateway":
+            return 200, {"ok": False, "reason": "not-gateway"}
+        card = data.get("card") if isinstance(data.get("card"), dict) else None
+        peer, perr = (mesh_parse_card(json.dumps(card)) if card else (None, "no card"))
+        if peer is None or peer["nodeId"] != asker:
+            return 200, {"ok": False, "reason": "bad-card",
+                         "detail": perr or "the knock carries no valid card"}
+        if _fed_member(fed, asker) is not None:
+            return 200, {"ok": True, "already": True,
+                         "roster": fed.get("roster")}
+        if asker == fed["gatewayNodeId"]:
+            return 200, {"ok": True, "already": True,
+                         "roster": fed.get("roster")}
+        pending = [p for p in (fed.get("pendingJoins") or [])
+                   if str(p.get("nodeId") or "") != asker]
+        pending.append({"nodeId": asker, "card": card, "ts": int(time.time())})
+        fed = dict(fed)
+        fed["pendingJoins"] = pending[-32:]
+        idx2, _o = _fed_find(fedinets, fed["id"])
+        fedinets[idx2] = fed
+        _federation_save(cfg, fedinets)
+        return 200, {"ok": True, "pending": True}
+    if action == "get":
+        if fed["role"] == "gateway":
+            fed = _fed_gateway_publish(cfg, fedinets, fed)
+            fedinets = federation_settings(cfg)
+            _i2, fed = _fed_find(fedinets, fed["id"])
+        known = _fed_member(fed, asker) is not None or asker == fed["gatewayNodeId"] \
+            or any(str(p.get("nodeId") or "") == asker for p in (fed.get("pendingJoins") or []))
+        if not known:
+            return 200, {"ok": False, "reason": "not-a-member"}
+        try:
+            theirs = int(data.get("version") or 0)
+        except Exception:
+            theirs = 0
+        if theirs >= _fed_roster_version(fed):
+            return 200, {"ok": True, "current": True, "roster": None,
+                         "version": _fed_roster_version(fed)}
+        return 200, {"ok": True, "roster": fed.get("roster"),
+                     "version": _fed_roster_version(fed)}
+    if action == "roster":
+        roster = data.get("roster")
+        fed2, err = _fed_accept_roster(cfg, fedinets, fed, roster)
+        if err:
+            return 200, {"ok": False, "reason": err}
+        federation_apply(load_config())
+        return 200, {"ok": True, "version": _fed_roster_version(fed2)}
+    return 400, {"ok": False, "reason": "bad-request"}
+
+
+def _fed_observe_members(fed):
+    # First sightings: a roster member this node has never seen
+    # is stamped with the roster version at which it was first
+    # seen — the fact the new-member tick reads. Existing stamps
+    # never move.
+    since = dict(fed.get("memberSince") or {})
+    version = _fed_roster_version(fed)
+    for m in _fed_roster_members(fed):
+        if isinstance(m, dict):
+            nid = str(m.get("nodeId") or "")
+            if nid and nid not in since:
+                since[nid] = version
+    fed["memberSince"] = since
+    return fed
+
+
+def federation_headline(cfg):
+    # The Mesh status headline, graduated (2026-11-13 ruling):
+    # when this node keeps any fedinet, the headline is the
+    # STATE — "Mesh Online" — not a census of pairs.
+    return "Mesh Online" if federation_settings(cfg) else ""
+
+
+def federation_payload(cfg, via_dhd=False):
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    fedinets = federation_settings(cfg)
+    out = []
+    for fed in fedinets:
+        members = []
+        for m in _fed_roster_members(fed):
+            if not isinstance(m, dict):
+                continue
+            nid = str(m.get("nodeId") or "")
+            if nid == own_id:
+                posture = "This node"
+                if fed["role"] == "gateway":
+                    posture += " — the gateway of this fedinet"
+                if m.get("founding"):
+                    posture += ", and its Founding Member"
+                posture += "."
+            elif nid in fed["untrusted"]:
+                posture = ("Untrusted by you — never lent to, whatever the "
+                           "roster or the ticks say.")
+            elif nid in (fed.get("lendOverrides") or []):
+                posture = "Ticked by you individually — this node lends to it."
+            elif not fed["trustByDefault"]:
+                posture = "Pairing only — trust-by-default is off for this fedinet."
+            elif not _fed_roster_fresh(fed):
+                posture = "Pairing only — the roster is past its freshness window."
+            elif (fed.get("memberSince") or {}).get(nid, 0) > fed.get("trustBaselineVersion", 0) \
+                    and not fed["lendToNew"]:
+                posture = ("New since your trust baseline, and your new-member "
+                           "tick is off — pairing only for now.")
+            else:
+                posture = "Auto-lent under trust-by-default."
+            members.append({
+                "n": m.get("n") or 0, "nodeId": nid,
+                "name": str(m.get("name") or ""), "short": nid[:12],
+                "posture": posture,
+                "untrusted": nid in fed["untrusted"],
+                "lendOverride": nid in (fed.get("lendOverrides") or []),
+                "founding": bool(m.get("founding")),
+                "gateway": nid == fed["gatewayNodeId"],
+            })
+        members.sort(key=lambda x: x["n"])
+        entry = {
+            "id": fed["id"], "name": fed["name"], "role": fed["role"],
+            "gatewayNodeId": fed["gatewayNodeId"],
+            "gatewayName": fed["gatewayName"],
+            "gatewayShort": fed["gatewayNodeId"][:12],
+            "rosterVersion": _fed_roster_version(fed),
+            "rosterFresh": _fed_roster_fresh(fed),
+            "rosterSyncedAt": fed.get("rosterSyncedAt") or 0,
+            "staleSentence": "" if _fed_roster_fresh(fed) else _fed_roster_stale_sentence(fed),
+            "trustByDefault": fed["trustByDefault"],
+            "lendToNew": fed["lendToNew"],
+            "borrowCap": fed.get("borrowCap") or 0,
+            "members": members,
+            "pendingJoins": [{"nodeId": str(p.get("nodeId") or ""),
+                              "name": str(((p.get("card") or {}).get("name")) or ""),
+                              "ts": p.get("ts") or 0}
+                             for p in (fed.get("pendingJoins") or []) if isinstance(p, dict)],
+            "ownNumber": next((m["n"] for m in members if m["nodeId"] == own_id), 0),
+        }
+        if fed["role"] == "gateway":
+            try:
+                entry["gatewayCardPng"] = base64.b64encode(
+                    build_gateway_card_png(cfg, fed)).decode("ascii")
+            except Exception:
+                entry["gatewayCardPng"] = ""
+        elif fed.get("gatewayCardPayload"):
+            # A member re-shares the card it imported — the
+            # gateway's own signed payload, re-drawn; nothing is
+            # re-signed and nothing new is claimed.
+            try:
+                entry["gatewayCardPng"] = base64.b64encode(_mesh_card_png_render(
+                    fed["gatewayCardPayload"], variant="gateway")).decode("ascii")
+            except Exception:
+                entry["gatewayCardPng"] = ""
+        out.append(entry)
+    return {
+        "ok": True,
+        "nodeId": own_id, "nodeName": ms["nodeName"],
+        "viaDhd": bool(via_dhd),
+        "badgeEnrolled": bool(_federation_badge_sha(cfg)),
+        "invitationWaiting": os.path.isfile(FED_INVITATION_PATH),
+        "knownDefault": {"name": ROCKPORT_FEDINET_NAME,
+                         "note": ("Rockport Mesh is the known fedinet — its "
+                                  "gateway card is the invitation. Import the "
+                                  "card and this node is admitted; the roster "
+                                  "itself lives on its gateway and is never "
+                                  "baked into an install.")},
+        "fedinets": out,
+        "audit": federation_audit_read(),
+    }
+
+
+def federation_import_invitation_file():
+    # The preload story, as a file contract: a gateway card
+    # waiting at config/federation/invitation.png — placed there
+    # by a container image's first boot, or by an operator's hand
+    # — is imported ADMISSION-ONLY at bridge start, once, and
+    # renamed aside so it never imports twice. Container first
+    # boots carry the ruled Rockport default (trust-by-default
+    # ON for the imported fedinet); a hand-dropped file on bare
+    # metal imports with trust OFF — enabling trust stays the
+    # operator's crown act either way, and nothing lends until a
+    # signed roster syncs.
+    if not os.path.isfile(FED_INVITATION_PATH):
+        return ""
+    try:
+        with open(FED_INVITATION_PATH, "rb") as f:
+            data = f.read()
+    except Exception:
+        return ""
+    payload, err = parse_gateway_card_png(data)
+    aside = os.path.join(FED_DIR, "invitation-refused.png")
+    if payload is None:
+        try:
+            os.replace(FED_INVITATION_PATH, aside)
+        except Exception:
+            pass
+        federation_audit("invitation", "", "The waiting invitation was refused: " + err, "desk")
+        return err
+    cfg = load_config()
+    trust_default = os.environ.get("APEX_CONTAINER") == "1"
+    fed, err = _fed_import_gateway_payload(cfg, payload, trust_default=trust_default)
+    try:
+        os.replace(FED_INVITATION_PATH,
+                   os.path.join(FED_DIR, "invitation-imported.png"))
+    except Exception:
+        pass
+    if fed is None:
+        federation_audit("invitation", "", "The waiting invitation was refused: " + err, "desk")
+        return err
+    federation_audit("invitation", fed["name"],
+                     "A waiting gateway card was imported at start — admission "
+                     "and introduction only"
+                     + ("; the container default set trust-by-default ON for "
+                        "this fedinet (it engages at the first signed roster "
+                        "sync)." if trust_default else "."),
+                     "desk")
+    return fed["name"]
+
+
+def federation_act(data, via_dhd=False):
+    # POST /api/federation — every Federation-page act, tiered
+    # per the DHD ruling. Read + revoke ride any door; manage
+    # acts through DHD need the Badge step-up; crown acts need
+    # the ceremony everywhere (Badge added by the door). Every
+    # act answers with the fresh state, so the page, the stored
+    # config, and a reload read one truth (the switch gate).
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "That request was not shaped like a Federation act."}
+    act = str(data.get("act") or "")
+    cfg = load_config()
+    fedinets = federation_settings(cfg)
+    via = "dhd" if via_dhd else "desk"
+
+    def state(**extra):
+        out = federation_payload(load_config(), via_dhd)
+        out.update(extra)
+        return out
+
+    def refuse(sentence):
+        out = state()
+        out["ok"] = False
+        out["error"] = sentence
+        return out
+
+    if act == "state":
+        return state()
+
+    if act in ("badge-enroll", "badge-clear"):
+        if via_dhd:
+            return refuse("The Badge step-up is enrolled in person, at the "
+                          "machine itself — the factor that guards the DHD "
+                          "door is never set through the DHD door.")
+        if act == "badge-enroll":
+            raw = _fed_badge_bytes(data)
+            if raw is None:
+                return refuse("No Badge picture rode that request — enrollment "
+                              "needs the Operator Badge image itself.")
+            rawcfg = dict(_federation_slice(cfg))
+            rawcfg["badgeSha256"] = hashlib.sha256(raw).hexdigest()
+            cfg["federation"] = rawcfg
+            save_config(cfg)
+            federation_audit("badge-enroll", "", "The Operator Badge was "
+                             "enrolled as the DHD step-up factor (fingerprint "
+                             "only; the picture never stays on this node).", via)
+            return state(sentence="The Operator Badge is enrolled — crown and "
+                                  "manage acts can now ride the DHD door under "
+                                  "its step-up.")
+        rawcfg = dict(_federation_slice(cfg))
+        rawcfg.pop("badgeSha256", None)
+        cfg["federation"] = rawcfg
+        save_config(cfg)
+        federation_audit("badge-clear", "", "The Operator Badge enrollment "
+                         "was cleared — DHD crown and manage acts are shut "
+                         "until a Badge is enrolled again.", via)
+        return state(sentence="The Badge enrollment is cleared.")
+
+    if act == "found":
+        name = str(data.get("name") or "").strip()[:80]
+        if not name:
+            return refuse("A fedinet needs a name — the name rides its "
+                          "gateway card's face and its roster's head.")
+        if any(f["name"].lower() == name.lower() for f in fedinets):
+            return refuse("This node already keeps a fedinet named '" + name + "'.")
+        ok, err = _fed_crown_ok(cfg, via_dhd, data, _fed_confirm_found(name))
+        if not ok:
+            return refuse(err)
+        ms = mesh_settings(cfg)
+        own_id = mesh_node_id() or ms["nodeId"]
+        if not own_id:
+            return refuse("This node's Mesh identity is not minted yet — "
+                          "enable the Mesh and let it mint its keypair first.")
+        own = mesh_card(cfg)
+        fed = _fed_sanitize({
+            "name": name, "role": "gateway",
+            "gatewayNodeId": own_id, "gatewayName": own.get("name"),
+            "gatewayCard": own, "foundedAt": int(time.time()),
+            "memberSince": {own_id: 1},
+        })
+        entry = _fed_member_entry(cfg, own, 1, int(time.time()))
+        entry["founding"] = True
+        fed["roster"] = {"version": 0, "members": [entry]}
+        fedinets.append(fed)
+        fed = _fed_gateway_publish(cfg, fedinets, fed)
+        federation_audit("found", name, "Founded the fedinet and signed "
+                         "roster v1 — this node is its gateway and its "
+                         "Founding Member (Node 1).", via)
+        return state(sentence="'" + name + "' is founded — this node is its "
+                              "gateway and its Founding Member. Its gateway "
+                              "card is on this page, ready to hand out.")
+
+    # Everything below names a fedinet.
+    fed_id = str(data.get("fedinetId") or "")
+    idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None and act not in ("import", "import-invitation"):
+        return refuse("That fedinet is not on this node.")
+
+    if act in ("import", "import-invitation"):
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        if act == "import-invitation":
+            if not os.path.isfile(FED_INVITATION_PATH):
+                return refuse("No invitation is waiting on this node.")
+            federation_import_invitation_file()
+            return state(sentence="The waiting invitation was imported — "
+                                  "admission and introduction only.")
+        raw = data.get("cardPngB64") or ""
+        try:
+            png = base64.b64decode(str(raw), validate=True)
+        except Exception:
+            return refuse("That file did not arrive whole — import the "
+                          "gateway card's PNG file itself.")
+        payload, perr = parse_gateway_card_png(png)
+        if payload is None:
+            return refuse(perr)
+        fed2, ierr = _fed_import_gateway_payload(load_config(), payload)
+        if fed2 is None:
+            return refuse(ierr)
+        federation_audit("import", fed2["name"], "Imported the gateway card "
+                         "of '" + fed2["name"] + "' — admission and "
+                         "introduction only; no trust was granted by the "
+                         "import.", via)
+        return state(sentence="'" + fed2["name"] + "' admitted this node — "
+                              "its gateway is paired as an introduction. "
+                              "Trust is a separate act, below.")
+
+    if act == "gateway-card":
+        if fed["role"] != "gateway":
+            return refuse("Only the gateway mints its fedinet's gateway card.")
+        try:
+            png = build_gateway_card_png(cfg, fed)
+        except Exception as e:
+            return refuse("The gateway card could not be drawn: " + str(e)[:120])
+        return state(cardPngB64=base64.b64encode(png).decode("ascii"),
+                     sentence="The gateway card for '" + fed["name"] + "' — "
+                              "green, and it admits whoever imports it to an "
+                              "introduction, nothing more.")
+
+    if act == "knock":
+        ms = mesh_settings(cfg)
+        gw = next((p for p in ms["borrow"]["peers"]
+                   if p["nodeId"] == fed["gatewayNodeId"]), None)
+        if gw is None:
+            return refuse("The gateway is not paired on this node — import "
+                          "its gateway card first.")
+        payload = {"action": "join", "fedinetId": fed["id"],
+                   "card": mesh_card(cfg), "requestId": secrets.token_hex(8)}
+        body = json.dumps(payload).encode()
+        try:
+            _code, raw = _mesh_request(gw, "POST", "/mesh/roster", body,
+                                       payload["requestId"], 15)
+            ans = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return refuse("The gateway did not answer the knock — the road "
+                          "is dark, or the gateway is off.")
+        if not isinstance(ans, dict) or not ans.get("ok"):
+            return refuse("The gateway refused the knock (" +
+                          str((ans or {}).get("reason") or "refused") + ").")
+        if ans.get("roster"):
+            fedinets2 = federation_settings(load_config())
+            _i, cur = _fed_find(fedinets2, fed["id"])
+            _f, aerr = _fed_accept_roster(load_config(), fedinets2, cur, ans["roster"])
+            if not aerr:
+                _fed_observe_members(_f)
+                fedinets3 = federation_settings(load_config())
+                _i3, cur3 = _fed_find(fedinets3, fed["id"])
+                cur3["memberSince"] = _f["memberSince"]
+                fedinets3[_i3] = cur3
+                _federation_save(load_config(), fedinets3)
+                federation_apply(load_config())
+        federation_audit("knock", fed["name"], "Knocked on the gateway's "
+                         "door — admission is the gateway operator's act.",
+                         via)
+        return state(sentence="The knock is sent — this node waits in the "
+                              "gateway's pending list until its operator "
+                              "admits it.")
+
+    if act == "sync":
+        if fed["role"] == "gateway":
+            fed = _fed_gateway_publish(cfg, fedinets, fed)
+            return state(sentence="This node IS the gateway — its roster is "
+                                  "the signed word, republished at version " +
+                                  str(_fed_roster_version(fed)) + ".")
+        sentence = _fed_roster_sync(load_config(), fed)
+        fedinets2 = federation_settings(load_config())
+        _i, cur = _fed_find(fedinets2, fed["id"])
+        if cur is not None:
+            _fed_observe_members(cur)
+            fedinets2[_i] = cur
+            _federation_save(load_config(), fedinets2)
+        federation_audit("sync", fed["name"], sentence, via)
+        return state(sentence=sentence)
+
+    if act in ("admit", "deny", "expel"):
+        if fed["role"] != "gateway":
+            return refuse("Only the gateway admits, denies, or expels — "
+                          "this node is a member of '" + fed["name"] + "'.")
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        nid = str(data.get("nodeId") or "")
+        if act == "deny":
+            fed = dict(fed)
+            fed["pendingJoins"] = [p for p in (fed.get("pendingJoins") or [])
+                                   if str(p.get("nodeId") or "") != nid]
+            fedinets[idx] = fed
+            _federation_save(cfg, fedinets)
+            federation_audit("deny", fed["name"], "Denied the pending knock "
+                             "from node " + nid[:12] + ".", via)
+            return state(sentence="The knock was denied.")
+        joiner = next((p for p in (fed.get("pendingJoins") or [])
+                       if str(p.get("nodeId") or "") == nid), None)
+        if act == "admit":
+            if joiner is None:
+                return refuse("That knock is no longer pending.")
+            peer, perr = mesh_parse_card(json.dumps(joiner.get("card") or {}))
+            if peer is None:
+                return refuse("The pending card no longer validates: " + (perr or ""))
+            cfg2 = load_config()
+            ms2 = mesh_settings(cfg2)
+            existing = next((p for p in ms2["borrow"]["peers"]
+                             if p["nodeId"] == peer["nodeId"]), None)
+            if existing is not None:
+                # Already paired here (by hand, before the knock):
+                # the record keeps its operator facts — relay
+                # ticks, the tunnel route — and gains only its
+                # federation provenance.
+                block = dict(cfg2.get("mesh") or {})
+                borrow = dict(block.get("borrow") or {})
+                new_peers = []
+                for p in borrow.get("peers") or []:
+                    if isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"]:
+                        p = dict(p)
+                        p["viaFedinet"] = fed["id"]
+                        # autoPaired stays as it was (False): the
+                        # federation marked this record, it did not
+                        # make it — an expulsion unmarks it again
+                        # rather than deleting the pairing.
+                    new_peers.append(p)
+                borrow["peers"] = new_peers
+                block["borrow"] = borrow
+                cfg2["mesh"] = block
+                save_config(cfg2)
+            else:
+                peer["viaFedinet"] = fed["id"]
+                peer["autoPaired"] = True
+                mesh_add_peer(cfg2, peer)
+            fed = dict(fed)
+            fed["pendingJoins"] = [p for p in (fed.get("pendingJoins") or [])
+                                   if str(p.get("nodeId") or "") != nid]
+            members = _fed_roster_members(fed)
+            nxt = max([int(m.get("n") or 0) for m in members if isinstance(m, dict)] + [0]) + 1
+            fed["roster"] = dict(fed.get("roster") or {})
+            fed["roster"]["members"] = members + [
+                _fed_member_entry(cfg2, peer, nxt, int(time.time()))]
+            fedinets[idx] = fed
+            # No save here: the publish reconciles this intent
+            # against the last SIGNED roster on disk and saves
+            # the whole slice (pending list included) itself.
+            fed = _fed_gateway_publish(load_config(), federation_settings(load_config()), fed)
+            _fed_observe_members(fed)
+            fedinets4 = federation_settings(load_config())
+            _i4, cur4 = _fed_find(fedinets4, fed["id"])
+            cur4["memberSince"] = fed["memberSince"]
+            fedinets4[_i4] = cur4
+            _federation_save(load_config(), fedinets4)
+            federation_audit("admit", fed["name"], "Admitted " +
+                             str(peer.get("name") or nid[:12]) + " as Node " +
+                             str(nxt) + " of the fedinet; roster republished.",
+                             via)
+            return state(sentence=str(peer.get("name") or "The node") +
+                                  " is Node " + str(nxt) + " of '" + fed["name"] +
+                                  "' — the signed roster carries it now.")
+        # expel
+        members = [m for m in _fed_roster_members(fed)
+                   if str((m or {}).get("nodeId") or "") != nid]
+        if len(members) == len(_fed_roster_members(fed)):
+            return refuse("That node is not on the roster.")
+        fed = dict(fed)
+        fed["roster"] = dict(fed.get("roster") or {})
+        fed["roster"]["members"] = members
+        fedinets[idx] = fed
+        fed = _fed_gateway_publish(load_config(), federation_settings(load_config()), fed)
+        federation_audit("expel", fed["name"], "Expelled node " + nid[:12] +
+                         " — a signed roster revision carries it at the "
+                         "next sync; hand-made pairings are untouched.", via)
+        return state(sentence="Node " + nid[:12] + " is off the roster — the "
+                              "expulsion rides the next signed revision.")
+
+    if act == "leave":
+        if fed["role"] == "gateway":
+            return refuse("A gateway cannot leave its own fedinet — it "
+                          "dissolves only when its operator retires the "
+                          "gateway itself.")
+        ms = mesh_settings(cfg)
+        keep = [p for p in ms["borrow"]["peers"] if p.get("viaFedinet") != fed["id"]]
+        if len(keep) != len(ms["borrow"]["peers"]):
+            cfg2 = load_config()
+            block = dict(cfg2.get("mesh") or {})
+            borrow = dict(block.get("borrow") or {})
+            borrow["peers"] = keep
+            block["borrow"] = borrow
+            cfg2["mesh"] = block
+            save_config(cfg2)
+        fedinets.pop(idx)
+        _federation_save(load_config(), fedinets)
+        federation_audit("leave", fed["name"], "Left the fedinet — its "
+                         "federation-made pairings went with it; hand-made "
+                         "pairings stand.", via)
+        return state(sentence="This node has left '" + fed["name"] + "'.")
+
+    if act == "trust":
+        want = data.get("on") is True
+        if want:
+            ok, err = _fed_crown_ok(cfg, via_dhd, data, _fed_confirm_trust(fed["name"]))
+            if not ok:
+                return refuse(err)
+            fed = dict(fed)
+            fed["trustByDefault"] = True
+            version = _fed_roster_version(fed)
+            if not fed.get("trustBaselineVersion"):
+                fed["trustBaselineVersion"] = version
+            _fed_observe_members(fed)
+            fedinets[idx] = fed
+            _federation_save(cfg, fedinets)
+            federation_apply(load_config())
+            federation_audit("trust", fed["name"], "Enabled DEEP trust — "
+                             "the signed roster now auto-pairs and auto-lends "
+                             "on this node (trust baseline: roster version " +
+                             str(fed["trustBaselineVersion"]) + ").", via)
+            return state(sentence="Deep trust is ON for '" + fed["name"] +
+                                  "' — its signed roster auto-pairs and "
+                                  "auto-lends on this node.")
+        fed = dict(fed)
+        fed["trustByDefault"] = False
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("trust", fed["name"], "Turned trust-by-default OFF "
+                         "— auto-lending ends now; pairings already made "
+                         "stay pairings.", via)
+        return state(sentence="Trust-by-default is OFF for '" + fed["name"] +
+                              "' — auto-lending ends; pairings stay.")
+
+    if act == "tick":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        fed = dict(fed)
+        fed["lendToNew"] = data.get("on") is True
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("tick", fed["name"], "Set 'lend to new members "
+                         "automatically' " + ("ON." if fed["lendToNew"] else
+                         "OFF — new members are pairing-only for this node "
+                         "until ticked."), via)
+        return state(sentence="The new-member tick is " +
+                              ("ON." if fed["lendToNew"] else "OFF."))
+
+    if act == "untrust":
+        nid = str(data.get("nodeId") or "")
+        want = data.get("on") is True
+        if not want:
+            ok, err = _fed_badge_ok(cfg, via_dhd, data)
+            if not ok:
+                return refuse(err)
+        fed = dict(fed)
+        untrusted = [u for u in fed["untrusted"] if u != nid]
+        if want:
+            untrusted.append(nid)
+        fed["untrusted"] = untrusted
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("untrust" if want else "retrust", fed["name"],
+                         ("Untrusted node " + nid[:12] + " — it is never "
+                          "lent to, whatever the roster or ticks say.")
+                         if want else
+                         ("Restored node " + nid[:12] + " to the fedinet's "
+                          "ordinary posture."), via)
+        return state(sentence="Node " + nid[:12] + " is " +
+                              ("untrusted." if want else "back under the "
+                               "fedinet's ordinary posture."))
+
+    if act == "lend":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        nid = str(data.get("nodeId") or "")
+        want = data.get("on") is True
+        fed = dict(fed)
+        overrides = [u for u in (fed.get("lendOverrides") or []) if u != nid]
+        if want:
+            overrides.append(nid)
+        fed["lendOverrides"] = overrides
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("lend", fed["name"], "Ticked node " + nid[:12] +
+                         " individually — this node lends to it."
+                         if want else
+                         "Removed the individual lend tick for node " +
+                         nid[:12] + ".", via)
+        return state(sentence="The individual lend tick for node " + nid[:12] +
+                              " is " + ("ON." if want else "OFF."))
+
+    if act == "cap":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        fed = dict(fed)
+        fed["borrowCap"] = max(0, min(100000, _mesh_int(data.get("cap"), 0)))
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("cap", fed["name"], "Set the fedinet borrow cap to " +
+                         (str(fed["borrowCap"]) + " generations an hour."
+                          if fed["borrowCap"] else "no cap."), via)
+        return state(sentence="The borrow cap for '" + fed["name"] + "' is " +
+                              (str(fed["borrowCap"]) + " generations an hour."
+                               if fed["borrowCap"] else "off."))
+
+    return refuse("That Federation act is not one this build knows.")
+
+
 # -- Borrower transport ----------------------------------------------
 # TLS with verification OFF and the peer card's fingerprint PINNED:
 # the borrower compares the presented certificate's DER hash
@@ -3821,6 +6696,20 @@ class _MeshUnreachable(Exception):
     pass
 
 
+class _MeshTlsError(Exception):
+    # 0.2.0e Build 1 (#143): an address answered, but the TLS
+    # handshake itself failed — whatever is listening there is
+    # not speaking the Mesh door's TLS. Its own kind so a failure
+    # can name its stage instead of collapsing into "unreachable".
+    pass
+
+
+class _MeshTimeout(Exception):
+    # 0.2.0e Build 1 (#143): no address answered inside the
+    # timeout — its own kind, for the same reason as above.
+    pass
+
+
 # Build .87 (gate 4, borrower half): the generous cap on a borrow
 # read, in seconds. Connection TERMINATION is the drop signal — a
 # lender that stops mid-generation hard-closes its socket and this
@@ -3834,21 +6723,48 @@ MESH_BORROW_READ_CAP = 330
 
 
 def _mesh_request(peer, method, path, body, request_id, timeout):
-    # One signed Mesh request, trying the peer's addresses in card
-    # order. Returns (status, raw-body). Raises _MeshFpError when
+    # One signed Mesh request: this node signs, _mesh_dial dials.
+    return _mesh_dial(peer, method, path, body, timeout,
+                      mesh_signed_headers(request_id, body or b""))
+
+
+def _mesh_send_prepared(peer, method, path, headers, body, timeout):
+    # One Mesh request carrying headers the CALLER prepared —
+    # 0.2.0e Build 7 (#154): the relay's onward leg. The inner
+    # request a relay forwards is the asker's own, byte-identical
+    # including its signature headers; the relay signs nothing of
+    # its own onto it. Same dial semantics as _mesh_request
+    # (addresses in card order, fingerprint pinned from THIS
+    # machine's record for the destination, same error kinds).
+    return _mesh_dial(peer, method, path, body, timeout, headers)
+
+
+def _mesh_dial(peer, method, path, body, timeout, headers):
+    # The shared dial: try the peer's addresses in card order,
+    # presenting `headers` verbatim. Returns (status, raw-body).
+    # Raises _MeshFpError when
     # an address answered but none presented the pinned
     # fingerprint, _MeshDropped when a connected request died
-    # mid-flight, _MeshUnreachable when no address could be
-    # connected at all.
+    # mid-flight, _MeshTlsError when an address answered but the
+    # TLS handshake failed, _MeshTimeout when nothing answered in
+    # time, _MeshUnreachable when no address could be connected
+    # at all. (0.2.0e Build 1, #143: the failure kinds name their
+    # stage — the classification is reporting only; which error
+    # a caller acts on, and how, is unchanged.)
     last_err = None
     fp_err = None
-    for address in peer["addresses"]:
-        host = str(address).split("://")[-1].split("/")[0]
+    tls_err = None
+    timeout_err = None
+    for address in _mesh_effective_addresses(peer):
+        # Build 4 (#143/#154): an entry may carry its own port
+        # (host:port); a bare host inherits the record's port.
+        # One helper parses both, here and in the health sweep.
+        host, eport = _mesh_addr_parts(address, peer["port"])
         conn = None
         sent = False
         try:
             ctx = ssl._create_unverified_context()
-            conn = http.client.HTTPSConnection(host, peer["port"], timeout=timeout, context=ctx)
+            conn = http.client.HTTPSConnection(host, eport, timeout=timeout, context=ctx)
             conn.connect()
             der = b""
             try:
@@ -3868,10 +6784,9 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
                 fp_err = "fingerprint mismatch"
                 last_err = _MeshFpError("fingerprint mismatch")
                 continue
-            headers = mesh_signed_headers(request_id, body or b"")
             conn.request(method, path, body=body, headers=headers)
             sent = True
-            if path == "/mesh/borrow":
+            if path in ("/mesh/borrow", "/mesh/relay"):
                 # Build .87 (gate 4, borrower half): bound the
                 # borrow read by MESH_BORROW_READ_CAP (see its
                 # comment). When the lender terminates the
@@ -3902,6 +6817,10 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
                 pass
             if sent:
                 raise _MeshDropped(str(e))
+            if isinstance(e, ssl.SSLError):
+                tls_err = str(e)
+            elif isinstance(e, (socket.timeout, TimeoutError)):
+                timeout_err = str(e)
             last_err = e
             continue
     # Build 7 (#87): something DID answer at one of the addresses
@@ -3909,6 +6828,10 @@ def _mesh_request(peer, method, path, body, request_id, timeout):
     # diagnosable failure, and it outranks a plain unreachable.
     if fp_err is not None:
         raise _MeshFpError(fp_err)
+    if tls_err is not None:
+        raise _MeshTlsError(tls_err)
+    if timeout_err is not None:
+        raise _MeshTimeout(timeout_err)
     raise _MeshUnreachable(str(last_err))
 
 
@@ -3934,6 +6857,10 @@ def mesh_probe_peer(peer, force=False):
             err = "unauthorized"
     except _MeshFpError:
         err = "fingerprint"
+    except _MeshTlsError:
+        err = "tls"
+    except _MeshTimeout:
+        err = "timeout"
     except Exception:
         err = "unreachable"
     # Build 7 gate repair: the cache carries a fourth element —
@@ -4061,6 +6988,10 @@ def _mesh_borrow_once(peer, messages):
         code, raw = _mesh_request(peer, "POST", "/mesh/borrow", body, request_id, CHAT_TIMEOUT)
     except _MeshFpError:
         return ("error", "fingerprint")
+    except _MeshTlsError:
+        return ("error", "tls")
+    except _MeshTimeout:
+        return ("error", "timeout")
     except _MeshDropped:
         # Build .87: remember the drop for the status payload —
         # the Servers row's Mesh warning ("<name> dropped") reads
@@ -4089,6 +7020,221 @@ def _mesh_borrow_once(peer, messages):
     return ("refusal", reason)
 
 
+_RELAY_SPEED_RANK = {"GPU-accelerated": 0, "Integrated graphics": 1, "CPU": 2}
+
+
+def _mesh_relay_candidates(ms, dest):
+    # This machine's consented carriers for one destination: the
+    # peers (other than the destination itself) whose record here
+    # ticks that they may carry this machine's envelopes to the
+    # destination. Card order; placement sorts them at ask time.
+    out = []
+    for p in ms["borrow"]["peers"]:
+        if p["nodeId"] == dest["nodeId"]:
+            continue
+        if dest["nodeId"] in (p.get("relayCarryTo") or []):
+            out.append(p)
+    return out
+
+
+def _mesh_borrow_via_relay(relay, dest, messages):
+    # One relayed borrow attempt. Builds the inner request
+    # exactly as _mesh_borrow_once does — the destination could
+    # not tell it from a direct ask but for the signed body's
+    # "via", naming the carrier — captures its signed headers,
+    # and wraps both in the outer envelope this machine signs to
+    # the relay. Outcomes mirror _mesh_borrow_once, plus the
+    # relay stages: ("stage", name, detail-dict) for a failure
+    # the relay named (no-consent / relay-dark / dest-dark /
+    # dest-refused / dest-unknown / hop-limit).
+    request_id = secrets.token_hex(8)
+    inner_body = json.dumps({
+        "requestId": request_id,
+        "messages": messages,
+        "model": "navi",
+        "maxTokens": CHAT_MAX_TOKENS,
+        "via": relay["nodeId"],
+    }).encode()
+    inner_headers = mesh_signed_headers(request_id, inner_body)
+    outer_id = secrets.token_hex(8)
+    outer = json.dumps({
+        "requestId": outer_id,
+        "to": dest["nodeId"],
+        "askerConsent": True,
+        "inner": {
+            "path": "/mesh/borrow",
+            "requestId": request_id,
+            "headers": inner_headers,
+            "bodyB64": base64.b64encode(inner_body).decode("ascii"),
+        },
+    }).encode()
+    started = time.time()
+    try:
+        code, raw = _mesh_request(relay, "POST", "/mesh/relay",
+                                  outer, outer_id, CHAT_TIMEOUT)
+    except _MeshFpError:
+        return ("error", "fingerprint")
+    except _MeshTlsError:
+        return ("error", "tls")
+    except _MeshTimeout:
+        return ("stage", "relay-dark", {})
+    except _MeshDropped:
+        return ("stage", "relay-dark", {})
+    except _MeshUnreachable:
+        return ("stage", "relay-dark", {})
+    except Exception:
+        return ("stage", "relay-dark", {})
+    if code in (401, 403):
+        return ("refusal", "unauthorized")
+    try:
+        data = json.loads(raw.decode())
+    except Exception:
+        return ("stage", "relay-dark", {})
+    if not isinstance(data, dict):
+        return ("stage", "relay-dark", {})
+    if data.get("ok") and data.get("relayed"):
+        # The destination's own answer, verbatim: classify it
+        # exactly as a direct answer is classified — its refusal
+        # words are its own, and a missing lender tick arrives as
+        # the no-consent stage it is.
+        try:
+            inner_raw = base64.b64decode(str(data.get("bodyB64") or ""),
+                                         validate=True)
+            ans = json.loads(inner_raw.decode())
+        except Exception:
+            return ("dropped", None)
+        if isinstance(ans, dict) and ans.get("ok"):
+            wall = ans.get("wallMs")
+            if not isinstance(wall, (int, float)):
+                wall = int((time.time() - started) * 1000)
+            return ("ok", str(ans.get("reply") or ""), int(wall))
+        reason = str((ans or {}).get("reason") or "lender-error") \
+            if isinstance(ans, dict) else "lender-error"
+        if reason == "no-consent":
+            return ("stage", "no-consent", {"missing": "lender"})
+        return ("refusal", reason)
+    reason = str(data.get("reason") or "")
+    if reason == "no-consent":
+        return ("stage", "no-consent",
+                {"missing": str(data.get("missing") or "relay")})
+    if reason in ("dest-dark", "dest-refused", "dest-unknown",
+                  "hop-limit", "class-off", "too-large", "mesh-off"):
+        return ("stage", reason, {"detail": str(data.get("detail") or "")})
+    if reason == "dest-dropped":
+        return ("dropped", None)
+    return ("stage", "relay-dark", {})
+
+
+def _mesh_relay_fallback(dest, messages, ms):
+    # The relay road for one dark destination. Returns
+    # mesh_try_borrow's own return shapes — (reply, payload) on a
+    # relayed answer, (None, payload) when the attempt settles it
+    # (the destination answered through the relay and refused, or
+    # dropped), and None when no consented carrier exists at all
+    # (the caller keeps its direct-road behavior, word for word).
+    candidates = _mesh_relay_candidates(ms, dest)
+    if not candidates:
+        return None
+    # Placement among carriers (ring-2 design section 9's open
+    # question, read capability-first as the prep recommends):
+    # a reachable carrier first, then the one not busy, then the
+    # faster class. Every candidate costs at most one short
+    # probe before it is asked; a dark carrier is one probe, not
+    # a timeout spiral.
+    probed = []
+    for idx, relay in enumerate(candidates):
+        status, _err = mesh_probe_peer(relay)
+        caps = relay.get("capabilities") or {}
+        if status is not None and status.get("capabilities"):
+            live = _mesh_caps_sanitize(status.get("capabilities"))
+            if live is not None:
+                caps = live
+        rank = _RELAY_SPEED_RANK.get(str(caps.get("speedClass") or ""), 3)
+        probed.append((status is None, bool(status and status.get("busy")),
+                       rank, idx, relay))
+    probed.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+    stages = []
+    for dark, _busy, _rank, _idx, relay in probed:
+        if dark:
+            stages.append(("relay-dark", relay, {}))
+            continue
+        outcome = _mesh_borrow_via_relay(relay, dest, messages)
+        if outcome[0] == "ok":
+            with MESH_LOCK:
+                MESH_STATE["peer_dropped"].pop(dest["nodeId"], None)
+            mesh_ledger_append({"peer": dest["nodeId"],
+                                "direction": "borrowed",
+                                "wallMs": outcome[2], "outcome": "ok",
+                                "via": relay["nodeId"], "path": "relay"})
+            return outcome[1], {"servedBy": "mesh", "node": dest["name"],
+                                "fellBack": False,
+                                "viaRelay": relay["name"], "path": "relay"}
+        if outcome[0] == "dropped":
+            return None, {
+                "servedBy": "local", "fellBack": True,
+                "reason": "lender-dropped", "node": dest["name"],
+                "viaRelay": relay["name"], "path": "relay",
+                "notice": dest["name"] + " dropped mid-answer \u2014 this reply was generated locally instead.",
+            }
+        if outcome[0] == "refusal":
+            # The destination answered through the carrier and its
+            # answer stands — in its own refusal words, with the
+            # path named beside them.
+            return None, {"servedBy": "local", "fellBack": True,
+                          "reason": outcome[1], "node": dest["name"],
+                          "viaRelay": relay["name"], "path": "relay"}
+        if outcome[0] == "error":
+            stages.append((outcome[1], relay, {}))
+            continue
+        stages.append((outcome[1], relay, outcome[2] or {}))
+    # Nothing carried. The named stage is the most actionable one
+    # the attempts produced: a missing consent an operator can
+    # tick outranks a refusal, which outranks a dark destination,
+    # which outranks a dark relay.
+    for want in ("no-consent", "hop-limit", "dest-refused",
+                 "dest-unknown", "dest-dark", "fingerprint", "tls",
+                 "class-off", "too-large", "mesh-off", "relay-dark"):
+        for stage, relay, detail in stages:
+            if stage == want:
+                payload = {"servedBy": "local", "fellBack": True,
+                           "reason": stage, "node": dest["name"],
+                           "viaRelay": relay["name"], "path": "relay"}
+                if detail.get("missing"):
+                    payload["missing"] = detail["missing"]
+                if detail.get("detail"):
+                    payload["detail"] = detail["detail"]
+                return None, payload
+    return None, {"servedBy": "local", "fellBack": True,
+                  "reason": "relay-dark", "node": dest["name"],
+                  "path": "relay"}
+
+
+def _mesh_relay_probe(relay, dest_id):
+    # The health check's relay question, asked over the wire: is
+    # the relay's own carry tick in place for (this asker, that
+    # destination), and is the destination paired there? Returns
+    # ("consent" | "no-consent" | "dark" | "unauthorized").
+    request_id = secrets.token_hex(8)
+    body = json.dumps({"requestId": request_id, "probe": True,
+                       "to": dest_id}).encode()
+    try:
+        code, raw = _mesh_request(relay, "POST", "/mesh/relay",
+                                  body, request_id, 3)
+    except Exception:
+        return "dark"
+    if code in (401, 403):
+        return "unauthorized"
+    try:
+        data = json.loads(raw.decode())
+    except Exception:
+        return "dark"
+    if not isinstance(data, dict) or not data.get("ok"):
+        return "dark"
+    if not data.get("destPaired"):
+        return "dest-unknown"
+    return "consent" if data.get("consent") else "no-consent"
+
+
 def mesh_try_borrow(messages, cfg, ms):
     # The borrower (spec section 2): first reachable peer only —
     # Ring 1 never races lenders. Returns (reply, mesh-payload) on
@@ -4106,6 +7252,7 @@ def mesh_try_borrow(messages, cfg, ms):
         MESH_STATE["borrow_out"] = True
     try:
         last_reason = "unreachable"
+        relay_target = None
         for peer in peers:
             # Build 7 (#87): canBorrow is enforced HERE, on the
             # borrowing side — this machine does not borrow from
@@ -4155,6 +7302,14 @@ def mesh_try_borrow(messages, cfg, ms):
                 # drop could read a warm failed cache, force one
                 # dark probe, and erase the record before the row
                 # ever showed it.)
+                if relay_target is None and (err or "unreachable") in ("unreachable", "timeout"):
+                    # 0.2.0e Build 7 (#154): the direct road to
+                    # this peer is dark at the first stage — it is
+                    # the relay road's candidate destination. The
+                    # relay is attempted only after the direct
+                    # loop settles (direct first, always), and
+                    # only when a consented carrier exists.
+                    relay_target = peer
                 last_reason = err or "unreachable"
                 continue
             name = peer["name"]
@@ -4196,6 +7351,15 @@ def mesh_try_borrow(messages, cfg, ms):
                     "notice": name + " dropped mid-answer \u2014 this reply was generated locally instead.",
                 }
             if outcome[0] == "error":
+                if outcome[1] in ("unreachable", "timeout"):
+                    # 0.2.0e Build 7 (#154): the road died between
+                    # the probe and the ask — dark is dark, and the
+                    # relay road gets its chance before the local
+                    # fallback speaks. Any other error kind keeps
+                    # today's behavior exactly.
+                    served = _mesh_relay_fallback(peer, messages, ms)
+                    if served is not None:
+                        return served
                 return None, {"servedBy": "local", "fellBack": True, "reason": outcome[1], "node": name}
             reason = outcome[1]
             if reason == "idle":
@@ -4260,11 +7424,35 @@ def mesh_try_borrow(messages, cfg, ms):
                         break
                 return None, {"servedBy": "local", "fellBack": True, "reason": "busy", "node": name}
             return None, {"servedBy": "local", "fellBack": True, "reason": reason, "node": name}
+        if relay_target is not None:
+            # 0.2.0e Build 7 (#154): every direct road settled
+            # dark — the relay road is tried last, and only for
+            # the first dark destination in card order (Ring 1
+            # never races lenders, on any road).
+            served = _mesh_relay_fallback(relay_target, messages, ms)
+            if served is not None:
+                return served
         return None, {"servedBy": "local", "fellBack": True, "reason": last_reason}
     finally:
         with MESH_LOCK:
             MESH_STATE["borrow_out"] = False
             MESH_STATE["borrow_peer"] = ""
+
+
+def mesh_probe_reason(kind):
+    # 0.2.0e Build 1 (#143): a probe/borrow failure kind in full
+    # words — what happened, and the cure where the product knows
+    # it. One source of truth: the Mesh page's peer rows render
+    # this under the short state word, and the health check
+    # speaks the same sentences. Short surfaces (the Servers
+    # row's warning) keep the bare kind by design.
+    return {
+        "fingerprint": "The machine answered, but the certificate it presented is not the one its pairing card pinned \u2014 its Mesh identity has changed since the card was made. The cure is a fresh card: import that machine's new PNG card on the Mesh page and the pin is replaced in place \u2014 the pair's history is kept.",
+        "unauthorized": "The machine answered and its certificate matches its card, but it refused this machine's signature. First suspect: the two machines' clocks disagree \u2014 a Mesh signature lives for 120 seconds, so a clock more than two minutes out reads as a forgery. Check the clock on both machines; if they agree, re-pair from fresh cards.",
+        "tls": "Something answered at the address, but the secure (TLS) handshake failed \u2014 whatever is listening there is not speaking the Mesh door's TLS, or the connection was cut mid-handshake.",
+        "timeout": "The machine did not answer in time \u2014 it may be asleep, off, or on another network.",
+        "unreachable": "Nothing answered at any address on its card \u2014 the machine is off, asleep, on another network, or its Mesh door is not listening.",
+    }.get(kind, "")
 
 
 def mesh_status_payload(cfg, via_dhd=False):
@@ -4346,6 +7534,14 @@ def mesh_status_payload(cfg, via_dhd=False):
             peer_status = "unreachable"
         else:
             peer_status = "unknown"
+        _tun = p.get("tunnel") or {}
+        if _tun.get("enabled"):
+            _tst = mesh_tunnel_state(p["nodeId"])
+            _tun_word = _tst.get("state") or "down"
+            _tun_sentence = _tst.get("sentence") or (
+                "The backup tunnel to " + p["name"] + " is not running.")
+        else:
+            _tun_word, _tun_sentence = "off", ""
         peers.append({
             "name": p["name"],
             "nodeId": p["nodeId"],
@@ -4354,6 +7550,10 @@ def mesh_status_payload(cfg, via_dhd=False):
             "reachable": reachable,
             "status": peer_status,
             "lastProbeError": probe_err if reachable is False else "",
+            # 0.2.0e Build 1 (#143): the same failure in full
+            # words, for the Mesh page's peer rows (see
+            # mesh_probe_reason).
+            "lastProbeReason": mesh_probe_reason(probe_err) if reachable is False else "",
             # Build 7 (#87): seconds since the peer was last
             # successfully checked — or since its first check
             # when it has never been reached — or null when it
@@ -4368,6 +7568,40 @@ def mesh_status_payload(cfg, via_dhd=False):
             "probeLending": (bool(probe.get("lending")) if probe is not None else None),
             "probeBusy": (bool(probe.get("busy")) if probe is not None else None),
             "probeIdle": (bool(probe.get("idle")) if probe is not None else None),
+            # Build 4 (#154): the peer's declared public
+            # endpoint — the one address of a peer any surface
+            # may show, because its operator typed it for
+            # publication on the card. Harvested addresses stay
+            # plumbing and never enter this payload.
+            "publicEndpoint": p.get("publicEndpoint") or "",
+            # Build 4 (#178): the peer's backup route as this
+            # machine holds it — its config, whether its card
+            # carried a tunnel key, whether THIS machine has
+            # authorized that key, and the tunnel's live state
+            # in the supervisor's words.
+            "tunnel": _tun,
+            "hasTunnelKey": bool(p.get("tunnelPublicKey")),
+            "tunnelKeyAuthorized": mesh_tunnel_key_authorized(
+                p.get("tunnelPublicKey") or ""),
+            "tunnelState": _tun_word,
+            "tunnelSentence": _tun_sentence,
+            # Build 6 (#143): the walked backup-route path's
+            # prefill — the SSH door this peer is KNOWN to have,
+            # derived from the endpoint its operator declared on
+            # its card (host, and its port when the endpoint's
+            # shape carries one a tunnel can use; the SSH port is
+            # otherwise the standing 227 the Mesh page's field
+            # already defaults to). The operator's own typed
+            # values always win; this only fills a blank.
+            "tunnelSuggestion": _mesh_tunnel_suggestion(p),
+            # 0.2.0e Build 7 (#154): this machine's relay consent
+            # ticks as stored on this peer's record — the three
+            # lists the peer card's Relay section renders its
+            # switches from, so the page, the saved config, and a
+            # reload all read the same truth.
+            "relayCarryTo": list(p.get("relayCarryTo") or []),
+            "relayAcceptFrom": list(p.get("relayAcceptFrom") or []),
+            "relayWillCarryTo": list(p.get("relayWillCarryTo") or []),
         })
     # The summary the Servers row renders (build .87): one state
     # word for the dot, one SHORT warning for the label — the
@@ -4398,19 +7632,589 @@ def mesh_status_payload(cfg, via_dhd=False):
         "role": ms["role"],
         "nodeName": ms["nodeName"],
         "nodeId": mesh_node_id() or ms["nodeId"],
+        "publicEndpoint": ms["publicEndpoint"],
+        "listenPorts": list(ms["listenPorts"]),
+        "tunnelPublicKey": mesh_tunnel_public_key() if ms["enabled"] else "",
         "borrowEnabled": ms["borrow"]["enabled"],
         "graceMs": ms["borrow"]["graceMs"],
         "lendEnabled": ms["lend"]["enabled"],
         "lend": ms["lend"],
         "ledgerInBackup": ms["ledgerInBackup"],
+        "certNoticeSeen": ms["certNoticeSeen"],
         "borrowing": bool(MESH_STATE["borrow_out"]),
         "lendingNow": MESH_STATE["borrowed_conn"] is not None,
         "state": state,
         "warning": warning,
+        # 0.2.0e Build 8 (#154; ruling 2026-11-13): the headline
+        # graduates from census to state — "Mesh Online" while
+        # this node keeps any fedinet; "" while it keeps none,
+        # and every surface keeps its census words.
+        "headline": federation_headline(cfg),
         "viaDhd": bool(via_dhd),
         "capabilities": mesh_capabilities(cfg),
         "peers": peers,
     }
+
+
+# -- Mesh health check (0.2.0e Build 1, #143) -----------------------
+# The field diagnosis of #143 prescribed two decisive reads, and
+# they were never run: both needed a terminal on two machines at
+# once. (1) Compare the fingerprint this node HOLDS for a peer
+# against the fingerprint that peer actually PRESENTS. (2) On a
+# node whose door answers as a stranger, find out WHAT is
+# serving the door. This check runs both, from inside the
+# product, on the operator's word from the Mesh page.
+# Diagnostics only: it pairs nothing, pins nothing, routes
+# nothing \u2014 it reads, compares, and reports in plain words,
+# with the actual fingerprints shown side by side.
+
+def _mesh_tls_presented(host, port, timeout):
+    # One TLS handshake with verification off (the pin is the
+    # authentication, and the CALLER compares it). Returns
+    # (stage, fingerprint): "ok" with the presented certificate's
+    # SHA-256, or the stage that failed \u2014 "connect", "tls",
+    # "timeout".
+    ctx = ssl._create_unverified_context()
+    try:
+        raw = socket.create_connection((host, int(port)), timeout=timeout)
+    except (socket.timeout, TimeoutError):
+        return "timeout", ""
+    except OSError:
+        return "connect", ""
+    try:
+        raw.settimeout(timeout)
+        tls = ctx.wrap_socket(raw, server_hostname=host)
+    except (socket.timeout, TimeoutError):
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return "timeout", ""
+    except Exception:
+        # ssl.SSLError, or the connection cut mid-handshake: the
+        # failure IS the handshake.
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return "tls", ""
+    try:
+        der = tls.getpeercert(binary_form=True) or b""
+    except Exception:
+        der = b""
+    try:
+        tls.close()
+    except Exception:
+        pass
+    if not der:
+        return "tls", ""
+    return "ok", hashlib.sha256(der).hexdigest()
+
+
+def _mesh_bridge_processes():
+    # Every process on this machine whose command line runs a
+    # bridge.py \u2014 pid, and whether it is THIS process. Linux
+    # /proc only; anything unreadable contributes nothing.
+    out = []
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return out
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/" + name + "/cmdline", "rb") as f:
+                raw = f.read()
+        except Exception:
+            continue
+        parts = [q.decode("utf-8", "replace") for q in raw.split(b"\x00") if q]
+        if any(q.endswith("bridge.py") for q in parts):
+            out.append({"pid": int(name), "self": int(name) == os.getpid()})
+    out.sort(key=lambda b: b["pid"])
+    return out
+
+
+def _mesh_listener_owner(port):
+    # The pid owning the LISTEN socket on the Mesh port, from
+    # /proc/net/tcp* socket inodes matched against /proc/*/fd.
+    # None when no listener is found, or /proc will not say.
+    inodes = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                lines = f.read().splitlines()[1:]
+        except Exception:
+            continue
+        for ln in lines:
+            f = ln.split()
+            if len(f) > 9 and f[3] == "0A":
+                try:
+                    if int(f[1].rsplit(":", 1)[1], 16) == int(port):
+                        inodes.add(f[9])
+                except Exception:
+                    pass
+    if not inodes:
+        return None
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        fd_dir = "/proc/" + name + "/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fd_dir, fd))
+            except Exception:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                return int(name)
+    return None
+
+
+def _mesh_fp_short(fp):
+    return (fp[:12] + "\u2026") if fp else ""
+
+
+def _mesh_own_addresses():
+    # Every address that reaches THIS machine: loopback, every
+    # interface address (physical and virtual alike — the door
+    # binds 0.0.0.0, so any of them lands on it), and the
+    # default route's address. The health sweep judges peer
+    # entries against this set (Build 4, #143).
+    addrs = {"127.0.0.1", "::1", "localhost"}
+    try:
+        for ip in _interface_ipv4s():
+            addrs.add(ip)
+    except Exception:
+        pass
+    try:
+        ip = lan_ipv4()
+        if ip:
+            addrs.add(ip)
+    except Exception:
+        pass
+    return addrs
+
+
+def _mesh_is_own_door(host, port, own_port, own_addrs):
+    # An entry points at this machine's own Mesh door when the
+    # host is one of this machine's own addresses AND the port
+    # is this machine's Mesh port. Both halves matter: loopback
+    # at a DIFFERENT port (127.0.0.1:8766, an SSH forward to a
+    # peer's door) is a road, not the own door, and is dialed
+    # like any other entry — the field's working off-LAN road
+    # depends on exactly that distinction.
+    try:
+        return int(port) == int(own_port) and str(host) in own_addrs
+    except Exception:
+        return False
+
+
+def mesh_health_check(cfg):
+    # The check itself. Shape: {ranAt, port, enabled, self,
+    # processes, peers, summary} \u2014 the Mesh page renders it
+    # nearly verbatim; every verdict carries its sentence, and a
+    # peer's addresses never enter the payload (stages only),
+    # exactly as they never render anywhere.
+    ms = mesh_settings(cfg)
+    port = ms["port"]
+    out = {"ranAt": int(time.time()), "port": port, "ports": list(ms["listenPorts"]),
+           "enabled": ms["enabled"],
+           "self": {}, "processes": {}, "peers": [], "summary": ""}
+    if not ms["enabled"]:
+        out["self"] = {"verdict": "off", "stage": "",
+                       "diskFingerprint": "", "presentedFingerprint": "",
+                       "verdictText": "Mesh is off on this machine \u2014 its door is closed by choice, so there is nothing to check. Turn Mesh on and run the check again."}
+        out["processes"] = {"bridges": [], "count": 0, "listenerOwnerPid": None,
+                            "listenerIsThisBridge": None, "verdictText": ""}
+        out["summary"] = "Mesh is off \u2014 the check has nothing to read."
+        out["relay"] = []
+        return out
+    # This machine: the disk certificate vs the one the door
+    # actually presents. A difference here is the duplicate-
+    # bridge signature: something else is serving the door.
+    disk_fp = mesh_cert_fingerprint()
+    stage, presented_fp = _mesh_tls_presented("127.0.0.1", port, 3)
+    self_sec = {"diskFingerprint": disk_fp, "presentedFingerprint": presented_fp,
+                "stage": stage}
+    if stage != "ok":
+        self_sec["verdict"] = "not-listening"
+        self_sec["verdictText"] = ("This machine's Mesh door did not answer at 127.0.0.1:" + str(port)
+            + " (the attempt failed at the " + stage + " stage). The bridge answering this dashboard "
+            + "is not serving the door \u2014 if another bridge owns it, the processes check below names the owner.")
+    elif presented_fp == disk_fp and disk_fp:
+        self_sec["verdict"] = "match"
+        self_sec["verdictText"] = ("The certificate this machine's Mesh door presents is the one on its disk "
+            + "\u2014 this machine is exactly who its pairing cards say it is.")
+    else:
+        self_sec["verdict"] = "mismatch"
+        self_sec["verdictText"] = ("The door answered with a DIFFERENT certificate than the one on this machine's disk "
+            + "(" + _mesh_fp_short(disk_fp) + " on disk, " + _mesh_fp_short(presented_fp) + " presented). Something else is "
+            + "serving this machine's Mesh door \u2014 most likely a second bridge running with a different identity. "
+            + "Every peer that paired this machine will refuse the door until the presenting certificate is the card's. "
+            + "The processes check below is the suspect list.")
+    out["self"] = self_sec
+    # Processes: how many bridges, and whose door it is.
+    bridges = _mesh_bridge_processes()
+    owner = _mesh_listener_owner(port)
+    door_ports = []
+    for dp in ms["listenPorts"]:
+        dp_owner = owner if dp == port else _mesh_listener_owner(dp)
+        door_ports.append({"port": dp, "listenerOwnerPid": dp_owner,
+                           "listenerIsThisBridge": (dp_owner == os.getpid()) if dp_owner is not None else None})
+    proc_sec = {"bridges": bridges, "count": len(bridges),
+                "listenerOwnerPid": owner,
+                "listenerIsThisBridge": (owner == os.getpid()) if owner is not None else None,
+                "ports": door_ports}
+    bits = []
+    if len(bridges) == 0:
+        bits.append("No process running a bridge.py was found on this machine \u2014 the dashboard's bridge may be running inside another program, or /proc would not say.")
+    elif len(bridges) == 1:
+        bits.append("One bridge process is running on this machine (pid " + str(bridges[0]["pid"]) + ").")
+    else:
+        bits.append(str(len(bridges)) + " bridge processes are running on this machine (pids "
+                    + ", ".join(str(b["pid"]) for b in bridges) + "). Two bridges cannot share the Mesh door: "
+                    + "the second one's door never opens, and if the one that grabbed the door presents a different "
+                    + "certificate than this machine's card, every peer sees a stranger. This is the prime suspect "
+                    + "when both machines swear their certificates match.")
+    for dp_info in door_ports:
+        dp = dp_info["port"]
+        dp_owner = dp_info["listenerOwnerPid"]
+        if dp_owner is None:
+            bits.append("No listener was found on Mesh door port " + str(dp) + ".")
+        elif dp_owner == os.getpid():
+            bits.append("The Mesh door's listener (port " + str(dp) + ") belongs to this bridge (pid " + str(dp_owner) + ").")
+        else:
+            bits.append("The Mesh door's listener (port " + str(dp) + ") belongs to pid " + str(dp_owner) + " \u2014 not this bridge (pid " + str(os.getpid()) + ").")
+    proc_sec["verdictText"] = " ".join(bits)
+    out["processes"] = proc_sec
+    # Peers: the pin this machine HOLDS vs the certificate the
+    # peer actually PRESENTS \u2014 then, when the identity matches,
+    # the signature stage.
+    for peer in ms["borrow"]["peers"]:
+        ent = {"name": peer["name"], "nodeId": peer["nodeId"], "short": peer["nodeId"][:12],
+               "pinnedFingerprint": peer["certFingerprint"], "presentedFingerprint": "",
+               "stage": "", "verdict": "", "authOk": None, "verdictText": "",
+               "route": "",
+               # Build 6 (#143): the in-place heal, when this
+               # record's addresses are all dead ends — offered
+               # on the same card that names the problem.
+               "repair": mesh_record_repair(peer)}
+        presented_other = ""
+        presented_own = ""
+        skipped_own = 0
+        dialed = 0
+        matched = False
+        matched_entry = ""
+        # Build 4 (#178): the sweep reads the same dial list the
+        # borrow path does — the record's entries, then the
+        # managed tunnel endpoint last — and remembers which
+        # entry answered, so a healthy answer that arrived over
+        # the backup road is named as exactly that.
+        tunnel_entry = _mesh_tunnel_entry(peer)
+        stages = []
+        # Build 4 (#143): probe manners. An entry that is this
+        # machine's own door (own address, own Mesh port) is
+        # skipped without dialing — it could only ever answer as
+        # this machine. An answer presenting this machine's OWN
+        # certificate is named as exactly that — your own door —
+        # and the sweep moves on: it is not a peer fingerprint
+        # mismatch, because the peer was never reached. (The
+        # field failure: a card's container-bridge address
+        # terminated at the probing machine's own door, and the
+        # machine's own certificate was reported as the peer's
+        # "changed identity" for a week.)
+        own_addrs = _mesh_own_addresses()
+        for address in _mesh_effective_addresses(peer):
+            host, eport = _mesh_addr_parts(address, peer["port"])
+            if _mesh_is_own_door(host, eport, port, own_addrs):
+                skipped_own += 1
+                continue
+            dialed += 1
+            st, fp = _mesh_tls_presented(host, eport, 3)
+            stages.append(st)
+            if st == "ok":
+                if fp == peer["certFingerprint"]:
+                    matched = True
+                    matched_entry = address
+                    ent["presentedFingerprint"] = fp
+                elif fp and disk_fp and fp == disk_fp:
+                    if not presented_own:
+                        presented_own = fp
+                elif not presented_other:
+                    presented_other = fp
+        if matched:
+            status, err = mesh_probe_peer(peer, force=True)
+            if status is not None:
+                ent["stage"] = "ok"
+                ent["verdict"] = "match"
+                ent["authOk"] = True
+                ent["verdictText"] = (peer["name"] + " answers, the certificate it presents matches its card, "
+                    + "and it accepts this machine's signature. This pair is healthy."
+                    + (" The answer came via the backup tunnel — the SSH door carried it."
+                       if tunnel_entry and matched_entry == tunnel_entry else ""))
+                if tunnel_entry and matched_entry == tunnel_entry:
+                    ent["route"] = "tunnel"
+            elif err == "unauthorized":
+                ent["stage"] = "auth"
+                ent["verdict"] = "unauthorized"
+                ent["authOk"] = False
+                ent["verdictText"] = mesh_probe_reason("unauthorized")
+            else:
+                ent["stage"] = err or "unreachable"
+                ent["verdict"] = err or "unreachable"
+                ent["verdictText"] = ("Its certificate matches its card, but the signed check failed: "
+                    + mesh_probe_reason(err or "unreachable"))
+        elif presented_other:
+            ent["presentedFingerprint"] = presented_other
+            ent["stage"] = "fingerprint"
+            ent["verdict"] = "mismatch"
+            ent["verdictText"] = (peer["name"] + " answered, but the certificate it presented ("
+                + _mesh_fp_short(presented_other) + ") is not the one its card pinned ("
+                + _mesh_fp_short(peer["certFingerprint"]) + ") \u2014 its Mesh identity has changed since the card "
+                + "was made. The cure is a fresh card: import " + peer["name"] + "'s new PNG card on this page "
+                + "and the pin is replaced in place \u2014 the pair's history is kept. (And if " + peer["name"]
+                + " swears its certificate never changed, run this check there: a second bridge may be serving its door.)")
+        elif presented_own:
+            ent["presentedFingerprint"] = presented_own
+            ent["stage"] = "own-door"
+            ent["verdict"] = "own-door"
+            ent["verdictText"] = (peer["name"] + " did not answer \u2014 the door that answered presented this machine's "
+                + "OWN certificate (" + _mesh_fp_short(presented_own) + "), which is to say the probe reached "
+                + "your own door, not " + peer["name"] + "'s. An address on its card leads back to this machine "
+                + "(a container bridge or a stale local address does exactly this), so the pair was never actually "
+                + "asked. Nothing about " + peer["name"] + "'s identity is in doubt \u2014 it was never reached. The cure "
+                + "is a fresh card minted on " + peer["name"] + " itself: cards minted now carry only addresses "
+                + "that machine can be reached at.")
+        elif skipped_own and not dialed:
+            ent["stage"] = "own-door"
+            ent["verdict"] = "own-door"
+            ent["verdictText"] = ("Every address on " + peer["name"] + "'s card is this machine's own Mesh door \u2014 "
+                + "its own addresses at its own port \u2014 so there is nothing on the card that could reach "
+                + peer["name"] + " at all. The card was minted from the wrong machine's addresses or edited by "
+                + "hand. The cure is a fresh card minted on " + peer["name"] + " itself and imported here.")
+        else:
+            if "tls" in stages:
+                worst = "tls"
+            elif stages and all(x == "timeout" for x in stages):
+                worst = "timeout"
+            else:
+                worst = "connect"
+            ent["stage"] = worst
+            ent["verdict"] = "unreachable"
+            ent["verdictText"] = mesh_probe_reason("tls" if worst == "tls" else "timeout" if worst == "timeout" else "unreachable")
+        # Build 4 (#178): when the pair did not answer and a
+        # backup route exists, the tunnel's own state rides the
+        # verdict — down, not authorized, or unreachable, in the
+        # supervisor's words, never as a bare code.
+        if tunnel_entry and ent["verdict"] != "match":
+            _ts = mesh_tunnel_state(peer["nodeId"])
+            if _ts.get("sentence"):
+                ent["verdictText"] += " " + _ts["sentence"]
+        out["peers"].append(ent)
+    # 0.2.0e Build 7 (#154): the relay roads this machine has
+    # consented to — one verdict per (destination, carrier) pair
+    # whose asker tick is set HERE. The verdict reads the two
+    # ends this machine can actually check: its own tick (local
+    # truth, by construction of the loop) and the carrier's own
+    # tick (asked over the wire, with a signed probe the carrier
+    # answers from its own state). The destination's acceptance
+    # is the one end no probe can read — it is proven when the
+    # destination answers a carriage — and the sentence says
+    # exactly that rather than rounding the road up to whole.
+    out["relay"] = []
+    for dest in ms["borrow"]["peers"]:
+        for relay in ms["borrow"]["peers"]:
+            if relay["nodeId"] == dest["nodeId"]:
+                continue
+            if dest["nodeId"] not in (relay.get("relayCarryTo") or []):
+                continue
+            word = _mesh_relay_probe(relay, dest["nodeId"])
+            if word == "consent":
+                verdict = "consented"
+                text = (relay["name"] + " will carry this machine's envelopes to "
+                        + dest["name"] + " — the relay road stands consented at both "
+                        "ends this check can read. " + dest["name"] + "'s own acceptance "
+                        "is proven when it answers a carriage.")
+            elif word == "no-consent":
+                verdict = "no-consent"
+                text = ("The relay road to " + dest["name"] + " via " + relay["name"]
+                        + " is consented here, but " + relay["name"] + " has not ticked "
+                        "that it will carry between this machine and " + dest["name"]
+                        + " — the tick is " + relay["name"] + "'s to give, on its own dashboard.")
+            elif word == "dest-unknown":
+                verdict = "dest-unknown"
+                text = (relay["name"] + " is not paired with " + dest["name"]
+                        + ", so it cannot carry this machine's envelopes there — "
+                        "carriage needs the carrier paired with both ends.")
+            elif word == "unauthorized":
+                verdict = "unauthorized"
+                text = (relay["name"] + " answered the relay probe but refused this "
+                        "machine's signature — the pairing or the clocks disagree; "
+                        "the peer check above names the same failure in full.")
+            else:
+                verdict = "dark"
+                text = (relay["name"] + " did not answer the relay probe, so the "
+                        "relay road to " + dest["name"] + " is dark at its first hop.")
+            out["relay"].append({"to": dest["nodeId"], "toName": dest["name"],
+                                 "via": relay["nodeId"], "viaName": relay["name"],
+                                 "verdict": verdict, "verdictText": text})
+    # The summary: the first problem, or the all-clear.
+    problems = []
+    if self_sec["verdict"] == "mismatch":
+        problems.append("this machine's door is presenting the wrong certificate")
+    elif self_sec["verdict"] == "not-listening":
+        problems.append("this machine's Mesh door is not answering")
+    for ent in out["peers"]:
+        if ent["verdict"] != "match":
+            problems.append(ent["name"] + ": " + ent["verdict"])
+    if problems:
+        out["summary"] = "Found " + ("a problem" if len(problems) == 1 else str(len(problems)) + " problems") + " \u2014 " + "; ".join(problems) + "."
+    elif out["peers"]:
+        out["summary"] = "Everything the check can see is consistent: this machine presents the certificate its cards advertise, and every paired machine matches its card and accepts this machine's signature."
+    else:
+        out["summary"] = "This machine's own door is consistent \u2014 it presents the certificate on its disk. No machines are paired yet, so there are no peer checks to run."
+    return out
+
+
+# -- The door's knock ledger (0.2.0e Build 4, #143/#154) ------------
+# The Mesh door can face the open internet now (a declared
+# public endpoint is exactly that), so it keeps count of failed
+# knocks per source: failed TLS handshakes at accept time, and
+# requests that fail signature authentication. Five failures
+# inside a minute close the door to that source — connections
+# are dropped at accept, before any handler runs — for a
+# backoff that doubles per repeat closing (60s, 120s, 240s, …
+# capped at 900s). Every knock and every closing is logged to
+# the bridge's stdout in words. A successful authentication
+# clears the source's failure slate: a paired peer's valid
+# signed traffic is never throttled, and whole requests are
+# not chatty, so no legitimate federation pattern can reach
+# five failures inside a minute. State is in-memory only: a
+# bridge restart reopens every door, which is the honest
+# failure direction for a lockout.
+
+MESH_DOOR_KNOCK_FAILS = 5
+MESH_DOOR_KNOCK_WINDOW = 60
+MESH_DOOR_BLOCK_BASE = 60
+MESH_DOOR_BLOCK_CAP = 900
+_MESH_DOOR_LOCK = threading.Lock()
+_MESH_DOOR = {}
+
+
+def _mesh_door_log(msg):
+    print("Navi Mesh: " + msg, flush=True)
+
+
+def mesh_door_blocked(ip):
+    now = time.time()
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        return bool(st and st["blockedUntil"] > now)
+
+
+def mesh_door_knock(ip, kind):
+    # One failed knock from a source: a handshake that failed
+    # at the door, or a request its signature did not carry.
+    # Returns "counted", or "blocked" when this knock closed
+    # the door (or the door was already closed).
+    if not ip:
+        return "counted"
+    now = time.time()
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.setdefault(ip, {"fails": [], "blockedUntil": 0.0, "blocks": 0, "dropLogged": False})
+        if st["blockedUntil"] > now:
+            return "blocked"
+        st["fails"] = [t for t in st["fails"] if now - t < MESH_DOOR_KNOCK_WINDOW]
+        st["fails"].append(now)
+        n = len(st["fails"])
+        if n >= MESH_DOOR_KNOCK_FAILS:
+            st["blocks"] += 1
+            secs = min(MESH_DOOR_BLOCK_CAP, MESH_DOOR_BLOCK_BASE * (2 ** (st["blocks"] - 1)))
+            st["blockedUntil"] = now + secs
+            st["fails"] = []
+            st["dropLogged"] = False
+            _mesh_door_log("door closed to " + str(ip) + " for " + str(secs) + "s — " + str(n)
+                           + " failed knocks (" + str(kind) + ") inside " + str(MESH_DOOR_KNOCK_WINDOW)
+                           + "s. It reopens on its own when the backoff runs out.")
+            return "blocked"
+        _mesh_door_log("door knock from " + str(ip) + " (" + str(kind) + ") — " + str(n) + " of "
+                       + str(MESH_DOOR_KNOCK_FAILS) + " inside the window before the door closes to it.")
+        return "counted"
+
+
+def mesh_door_success(ip):
+    # A valid signed request: the source's slate is wiped. A
+    # paired peer therefore cannot accumulate its way into a
+    # closing across honest mistakes spaced by real work.
+    if not ip:
+        return
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        if st:
+            st["fails"] = []
+
+
+def mesh_door_drop(ip):
+    # A connection from a closed source, dropped at accept:
+    # logged once per closing, so a flood cannot flood the log.
+    with _MESH_DOOR_LOCK:
+        st = _MESH_DOOR.get(ip)
+        if st and not st["dropLogged"]:
+            st["dropLogged"] = True
+            _mesh_door_log("door dropped a connection from " + str(ip) + " — the door is still closed to it.")
+
+
+class _MeshDoorServer(ThreadingHTTPServer):
+    # The Mesh door's server: the accept loop itself minds the
+    # knock ledger. The listening socket is deliberately NOT
+    # TLS-wrapped: wrapping the listener would run every
+    # handshake inside accept() itself — before any hook of
+    # ours, uncounted, and with no bound on how long a stalled
+    # handshake may park the serve loop. Instead each accepted
+    # raw socket is wrapped here, in get_request, with a
+    # bounded wait: a source the door is closed to is dropped
+    # before any TLS work is spent on it, a handshake that
+    # fails is a counted knock, and only a completed handshake
+    # ever reaches a handler thread. The accepted socket
+    # returns to blocking for the handler, exactly as the
+    # wrapped-listener shape it replaces behaved — the wire
+    # cannot tell the difference; the ledger can.
+    daemon_threads = True
+    mesh_tls_context = None
+
+    def get_request(self):
+        while True:
+            sock, addr = super().get_request()
+            ip = addr[0] if addr else ""
+            if ip and mesh_door_blocked(ip):
+                mesh_door_drop(ip)
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                continue
+            try:
+                sock.settimeout(10)
+                tls = self.mesh_tls_context.wrap_socket(
+                    sock, server_side=True)
+                tls.settimeout(None)
+            except Exception:
+                if ip:
+                    mesh_door_knock(ip, "handshake")
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                continue
+            return tls, addr
 
 
 # -- The dedicated Mesh door -----------------------------------------
@@ -4420,6 +8224,120 @@ def mesh_status_payload(cfg, via_dhd=False):
 # serve the node-facing endpoints at all: borrowers dial this
 # port — the peer card's port — only. There is no plaintext Mesh
 # listener.
+
+
+# -- Quick Sync over the Mesh (0.2.0e Build 6, #176 phase 2) ---------
+# Sync's second transport: the same sync set (chats + Case Files,
+# format navi-sync/1, tombstones included) rides whole signed Mesh
+# requests to a paired peer instead of the backup repo. The
+# exchange is two-way in ONE request — the borrower sends its set,
+# the lender converges it and answers with its own set, the
+# borrower converges that — so one answered door settles both
+# machines. Convergence is sync_apply's, unchanged: the transport
+# differs, the semantics (including deletion tombstones) do not.
+# Serving requires only the pairing itself — mesh_authenticate IS
+# the consent — and one hard refusal: when both machines know
+# their operator's GitHub login and they differ, the sets are
+# different people's data and nothing crosses.
+
+def _mesh_sync_operator_refusal(body):
+    mine = github_auth()
+    theirs = str((body or {}).get("operatorLogin") or "")
+    return bool(mine and theirs and mine["login"].lower() != theirs.lower())
+
+
+def _mesh_sync_set_wire():
+    collected, manifest, _index = sync_collect()
+    files = {}
+    for path, blob in collected.items():
+        files[path] = base64.b64encode(blob).decode("ascii")
+    return files, manifest
+
+
+def _mesh_sync_decode(payload):
+    # A sync set off the wire, {path: bytes}, or None when the
+    # payload is not shaped like one. Paths may only live under
+    # sync/ and may not climb — a set is data, never a route.
+    files_in = (payload or {}).get("files")
+    if not isinstance(files_in, dict):
+        return None
+    out = {}
+    for path, b64 in files_in.items():
+        p = str(path)
+        if not p.startswith("sync/") or ".." in p.split("/"):
+            return None
+        try:
+            out[p] = base64.b64decode(str(b64), validate=True)
+        except Exception:
+            return None
+    return out
+
+
+def _mesh_sync_admit(handler, body):
+    # The borrow handler's admission shape, shared by the two
+    # sync routes: parse the body, then authenticate the peer.
+    # Returns (data, peer) or (None, (code, payload)).
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return None, (400, {"ok": False, "reason": "bad-request"})
+    if not isinstance(data, dict):
+        return None, (400, {"ok": False, "reason": "bad-request"})
+    peer = mesh_authenticate(handler, body, str(data.get("requestId") or ""))
+    if peer is None:
+        return None, (401, {"ok": False, "reason": "unauthorized"})
+    if _mesh_sync_operator_refusal(data):
+        return None, (200, {"ok": False, "reason": "different-operator"})
+    return (data, peer), None
+
+
+def mesh_handle_sync_pull(handler, body):
+    # POST /mesh/sync/pull — a paired peer asks for this
+    # machine's sync set (a trigger round's pull). Answers with
+    # the set; applies nothing.
+    t0 = time.time()
+    admitted, refusal = _mesh_sync_admit(handler, body)
+    if admitted is None:
+        return refusal
+    _data, peer = admitted
+    files, manifest = _mesh_sync_set_wire()
+    mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
+                        "wallMs": int((time.time() - t0) * 1000),
+                        "outcome": "pull"})
+    return 200, {"ok": True, "files": files, "manifest": manifest}
+
+
+def mesh_handle_sync_exchange(handler, body):
+    # POST /mesh/sync/exchange — the full round in one request:
+    # converge the borrower's set, then answer with this
+    # machine's set for the borrower to converge. The sync lock
+    # serializes against this machine's own rounds — a collision
+    # answers "busy" and the borrower falls back to the repo,
+    # never waits.
+    t0 = time.time()
+    admitted, refusal = _mesh_sync_admit(handler, body)
+    if admitted is None:
+        return refusal
+    data, peer = admitted
+    theirs = _mesh_sync_decode(data)
+    if theirs is None:
+        return 200, {"ok": False, "reason": "bad-set"}
+    if not _SYNC_LOCK.acquire(False):
+        return 200, {"ok": False, "reason": "busy"}
+    try:
+        applied = sync_apply(load_config(), {
+            "files": theirs,
+            "manifest": data.get("manifest") if isinstance(data.get("manifest"), dict) else {},
+        })
+    finally:
+        _SYNC_LOCK.release()
+    files, manifest = _mesh_sync_set_wire()
+    mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
+                        "wallMs": int((time.time() - t0) * 1000),
+                        "outcome": "exchange"})
+    return 200, {"ok": True, "files": files,
+                 "manifest": manifest, "applied": applied}
+
 
 class MeshHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -4453,7 +8371,19 @@ class MeshHandler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "reason": "not-found"})
 
     def do_POST(self):
-        if self.path.split("?")[0] == "/mesh/borrow":
+        if self.path.split("?")[0] == "/mesh/relay":
+            code, payload = mesh_handle_relay(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/roster":
+            code, payload = mesh_handle_roster(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/sync/pull":
+            code, payload = mesh_handle_sync_pull(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/sync/exchange":
+            code, payload = mesh_handle_sync_exchange(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/borrow":
             code, payload = mesh_handle_borrow(self, self._body())
             if code == "drop":
                 # Build .87 (gate 4, borrower half): a handler-level
@@ -4480,6 +8410,456 @@ class MeshHandler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "reason": "not-found"})
 
 
+
+# -- Managed backup route (0.2.0e Build 4, #178) -------------------
+# The SSH door stays a Mesh road, but the bridge keeps the road
+# itself now: for a peer whose backup route is on, the bridge
+# spawns and supervises its own `ssh -N -L` forward — the peer's
+# Mesh door, carried through the peer's SSH door, presented on a
+# bridge-owned loopback port — and that endpoint joins the peer's
+# dial list LAST, computed at dial time, never written into the
+# stored record. Direct entries are always tried first; a dead
+# tunnel costs nothing beyond the ordinary per-entry timeouts.
+# The key is a dedicated ed25519 pair: the public half rides this
+# node's pairing card, and the lender authorizes it once, in
+# person, as a forwarding-only line in ~/.ssh/authorized_keys.
+# The private half lives at 0600 under config/mesh and never
+# rides a backup — backups collect named files, and key files
+# are never collected (the node keypair's custody, unchanged).
+# Hand-run tunnels and hand-edited 127.0.0.1 records keep
+# working untouched beside all of this: a record entry is a
+# record entry, however it got there.
+
+MESH_TUNNELS = {}
+MESH_TUNNEL_LOCK = threading.Lock()
+_MESH_TUNNEL_BACKOFFS = (5, 15, 60)
+
+
+def mesh_ensure_tunnel_key():
+    # (ok, error-sentence). Generated with ssh-keygen — the same
+    # OpenSSH tooling the supervisor runs — so the private half
+    # is in exactly the format ssh reads.
+    if os.path.isfile(MESH_TUNNEL_KEY_PATH) and \
+            os.path.isfile(MESH_TUNNEL_PUB_PATH):
+        return True, ""
+    try:
+        os.makedirs(MESH_DIR, exist_ok=True)
+        r = subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "",
+             "-C", "navi-mesh-tunnel", "-f", MESH_TUNNEL_KEY_PATH],
+            capture_output=True, timeout=30)
+        if r.returncode != 0 or not os.path.isfile(MESH_TUNNEL_KEY_PATH):
+            return False, ("This machine could not create its Mesh tunnel "
+                           "key — ssh-keygen did not answer. The managed "
+                           "backup route needs the OpenSSH client tools.")
+        os.chmod(MESH_TUNNEL_KEY_PATH, 0o600)
+        return True, ""
+    except Exception:
+        return False, ("This machine could not create its Mesh tunnel "
+                       "key — ssh-keygen is not available. The managed "
+                       "backup route needs the OpenSSH client tools.")
+
+
+def mesh_tunnel_public_key():
+    # This node's tunnel public key line, or "" — generated on
+    # first need (pairing-card mint, Mesh page), like the node
+    # identity beside it.
+    if not os.path.isfile(MESH_TUNNEL_PUB_PATH):
+        ok, _err = mesh_ensure_tunnel_key()
+        if not ok:
+            return ""
+    return read_file(MESH_TUNNEL_PUB_PATH).strip()
+
+
+def _tunnel_key_blob(pub_line):
+    parts = str(pub_line or "").split()
+    if len(parts) >= 2 and parts[0].startswith("ssh-"):
+        return parts[1]
+    return ""
+
+
+def mesh_tunnel_key_authorized(pub_line):
+    # Whether THIS machine's authorized_keys already carries the
+    # given tunnel key (the lender-side read the Mesh page shows).
+    blob = _tunnel_key_blob(pub_line)
+    if not blob:
+        return False
+    ak = os.path.join(os.path.expanduser("~"), ".ssh", "authorized_keys")
+    try:
+        with open(ak) as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return False
+    return any(blob in ln.split() for ln in lines
+               if not ln.strip().startswith("#"))
+
+
+def mesh_tunnel_authorize(pub_line, node_id, action, door_port):
+    # (ok, sentence). The lender-side act, in person only (the
+    # handler refuses it over DHD, like arming lending): the line
+    # appended lets the peer's tunnel key do exactly one thing —
+    # forward to this machine's Mesh door on loopback. No shell,
+    # no agent, no X11. Idempotent; revoke removes the key's
+    # lines. A missing .ssh or authorized_keys is created with
+    # the permissions sshd insists on.
+    parts = str(pub_line or "").split()
+    blob = _tunnel_key_blob(pub_line)
+    if not blob:
+        return False, ("That machine's card carries no tunnel key — "
+                       "there is nothing to authorize.")
+    ssh_dir = os.path.join(os.path.expanduser("~"), ".ssh")
+    ak = os.path.join(ssh_dir, "authorized_keys")
+    lines = []
+    if os.path.isfile(ak):
+        try:
+            with open(ak) as f:
+                lines = f.read().splitlines()
+        except Exception:
+            lines = []
+    if action == "revoke":
+        kept = [ln for ln in lines if blob not in ln.split()]
+        if len(kept) == len(lines):
+            return True, ("That tunnel key was not in this machine's "
+                          "authorized keys — nothing to revoke.")
+        try:
+            with open(ak, "w") as f:
+                f.write("\n".join(kept) + ("\n" if kept else ""))
+            os.chmod(ak, 0o600)
+        except Exception:
+            return False, "This machine could not rewrite its authorized keys file."
+        return True, ("Revoked: that tunnel key no longer opens "
+                      "anything on this machine.")
+    if any(blob in ln.split() for ln in lines
+           if not ln.strip().startswith("#")):
+        return True, ("That tunnel key is already authorized on this "
+                      "machine — the line was already there, unchanged.")
+    try:
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(ssh_dir, 0o700)
+        except Exception:
+            pass
+        opts = ('permitopen="127.0.0.1:' + str(door_port) + '",no-pty,'
+                "no-agent-forwarding,no-X11-forwarding")
+        lines.append(opts + " " + parts[0] + " " + blob +
+                     " navi-mesh-tunnel:" + str(node_id or "")[:12])
+        with open(ak, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(ak, 0o600)
+    except Exception:
+        return False, "This machine could not write its authorized keys file."
+    return True, ("Authorized: that tunnel key can now forward to this "
+                  "machine's Mesh door — and nothing else on this machine.")
+
+
+def _mesh_tunnel_suggestion(peer):
+    # Build 6 (#143): what the walked backup-route path can
+    # prefill for this peer — the SSH host, taken from the host
+    # of the public endpoint the peer's operator declared on its
+    # card (the machine's public name; its SSH door lives at the
+    # same name in every deployment the field has). The endpoint's
+    # PORT is the Mesh door's, never the SSH door's, so it is not
+    # suggested — the field's standing 227 default stands.
+    ep = str(peer.get("publicEndpoint") or "").strip()
+    if not ep:
+        return {"sshHost": ""}
+    host, _port = _mesh_addr_parts(ep, 0)
+    return {"sshHost": host or ""}
+
+
+def _mesh_tunnel_entry(peer):
+    # The peer's tunnel endpoint as a dial entry, or "" — present
+    # only while the route is on and a local port is allocated.
+    tun = peer.get("tunnel") or {}
+    if tun.get("enabled") and tun.get("localPort"):
+        return "127.0.0.1:" + str(tun["localPort"])
+    return ""
+
+
+def _mesh_effective_addresses(peer):
+    # The dial list: the record's entries in their order, with
+    # the managed tunnel endpoint appended LAST — computed here,
+    # at dial time; the stored record never carries it.
+    addrs = list(peer.get("addresses") or [])
+    ent = _mesh_tunnel_entry(peer)
+    if ent and ent not in addrs:
+        addrs.append(ent)
+    return addrs
+
+
+def mesh_tunnel_state(node_id):
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        if st is not None:
+            return {"state": st.get("state") or "down",
+                    "sentence": st.get("sentence") or ""}
+    return {"state": "off", "sentence": ""}
+
+
+def _mesh_tunnel_set_state(node_id, state, sentence):
+    log = False
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        if st is None:
+            return
+        if st.get("state") != state or st.get("sentence") != sentence:
+            st["state"] = state
+            st["sentence"] = sentence
+            log = bool(sentence) and state != "starting"
+    if log:
+        # One line per state change, never per retry.
+        print("Navi Mesh: " + sentence, flush=True)
+
+
+def _mesh_tunnel_classify(stderr_text, name):
+    # Conservative reading of the ssh process's last words:
+    # only the signatures that unambiguously mean one thing are
+    # named; everything else is honestly just "tunnel down".
+    s = (stderr_text or "").lower()
+    if "permission denied" in s:
+        return "unauthorized", (
+            "The backup tunnel to " + name + " is down: " + name +
+            " has not authorized this machine's tunnel key. On " +
+            name + "'s own dashboard, its Mesh page offers to "
+            "authorize this machine's tunnel key — once, in "
+            "person — and the road keeps itself after that.")
+    if any(x in s for x in ("could not resolve",
+                            "name or service not known",
+                            "connection timed out",
+                            "no route to host",
+                            "network is unreachable",
+                            "connection refused")):
+        return "unreachable", (
+            "The backup tunnel to " + name + " is down: its SSH "
+            "door did not answer from here.")
+    return "down", "The backup tunnel to " + name + " is down."
+
+
+def _mesh_tunnel_wait(node_id, seconds):
+    # Sleep in slices; True means the supervisor should exit.
+    end = time.time() + max(0.0, seconds)
+    while time.time() < end:
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or st.get("stop"):
+                return True
+        time.sleep(0.5)
+    with MESH_TUNNEL_LOCK:
+        st = MESH_TUNNELS.get(node_id)
+        return st is None or bool(st.get("stop"))
+
+
+def _mesh_tunnel_supervise(node_id):
+    fails = 0
+    while True:
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or st.get("stop"):
+                return
+        cfg = load_config()
+        ms = mesh_settings(cfg)
+        peer = next((p for p in ms["borrow"]["peers"]
+                     if p["nodeId"] == node_id), None)
+        if peer is None or not ms["enabled"] or \
+                not (peer.get("tunnel") or {}).get("enabled"):
+            with MESH_TUNNEL_LOCK:
+                MESH_TUNNELS.pop(node_id, None)
+            return
+        tun = peer["tunnel"]
+        host = tun.get("sshHost") or ""
+        user = tun.get("sshUser") or ""
+        lp = tun.get("localPort")
+        if not host or not user or not lp:
+            _mesh_tunnel_set_state(
+                node_id, "down",
+                "The backup route to " + peer["name"] + " is on but "
+                "not filled in: it needs that machine's SSH host "
+                "and user, set on the Mesh page.")
+            if _mesh_tunnel_wait(node_id, 5):
+                return
+            continue
+        ok, err = mesh_ensure_tunnel_key()
+        if not ok:
+            _mesh_tunnel_set_state(node_id, "down", err)
+            if _mesh_tunnel_wait(node_id, 30):
+                return
+            continue
+        argv = ["ssh", "-N",
+                "-L", str(lp) + ":127.0.0.1:" + str(peer["port"]),
+                "-i", MESH_TUNNEL_KEY_PATH,
+                "-p", str(tun["sshPort"]),
+                "-o", "BatchMode=yes",
+                "-o", "IdentitiesOnly=yes",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=30",
+                "-o", "ServerAliveCountMax=3",
+                "-o", "StrictHostKeyChecking=accept-new",
+                user + "@" + host]
+        _mesh_tunnel_set_state(node_id, "starting", "")
+        try:
+            proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE)
+        except Exception:
+            _mesh_tunnel_set_state(
+                node_id, "down",
+                "The backup tunnel to " + peer["name"] + " could "
+                "not start — the ssh program did not answer on "
+                "this machine.")
+            if _mesh_tunnel_wait(node_id, 30):
+                return
+            continue
+        with MESH_TUNNEL_LOCK:
+            st = MESH_TUNNELS.get(node_id)
+            if st is not None:
+                st["proc"] = proc
+        started = time.time()
+        up = False
+        while proc.poll() is None:
+            with MESH_TUNNEL_LOCK:
+                st = MESH_TUNNELS.get(node_id)
+                stop = st is None or st.get("stop")
+            if stop:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                return
+            if not up and time.time() - started >= 3:
+                # ssh exits at once when the forward cannot be
+                # established (ExitOnForwardFailure), so a
+                # process alive after a few seconds is carrying
+                # the road.
+                up = True
+                fails = 0
+                _mesh_tunnel_set_state(
+                    node_id, "up",
+                    "The backup tunnel to " + peer["name"] + " is "
+                    "up: its Mesh door answers here at 127.0.0.1:" +
+                    str(lp) + ", carried by its SSH door.")
+            time.sleep(0.5)
+        err_text = ""
+        try:
+            err_text = (proc.stderr.read() or b"").decode("utf-8",
+                                                          "replace")
+        except Exception:
+            pass
+        word, sentence = _mesh_tunnel_classify(err_text, peer["name"])
+        _mesh_tunnel_set_state(node_id, word, sentence)
+        backoff = _MESH_TUNNEL_BACKOFFS[min(fails,
+                                            len(_MESH_TUNNEL_BACKOFFS) - 1)]
+        fails += 1
+        if _mesh_tunnel_wait(node_id, backoff):
+            return
+
+
+def _mesh_tunnel_allocate_ports(cfg):
+    # Give every route-enabled peer that lacks a local port a
+    # stable one, persisted into the stored record once chosen.
+    # Candidates are probed free on loopback and kept clear of
+    # the door ports and of each other. Returns True when the
+    # config changed (the caller reloads).
+    ms = mesh_settings(cfg)
+    taken = set(ms["listenPorts"])
+    for p in ms["borrow"]["peers"]:
+        lp = (p.get("tunnel") or {}).get("localPort")
+        if lp:
+            taken.add(lp)
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+    raw_peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+    changed = False
+    for rp in raw_peers:
+        if not isinstance(rp, dict):
+            continue
+        tun = rp.get("tunnel")
+        if not isinstance(tun, dict) or tun.get("enabled") is not True:
+            continue
+        if tun.get("localPort"):
+            continue
+        for cand in range(18765, 19265):
+            if cand in taken:
+                continue
+            try:
+                s = socket.socket()
+                s.bind(("127.0.0.1", cand))
+                s.close()
+            except Exception:
+                continue
+            tun["localPort"] = cand
+            taken.add(cand)
+            changed = True
+            break
+    if changed:
+        save_config(cfg)
+    return changed
+
+
+def mesh_tunnel_sync():
+    # Reconcile the supervisors with the config: start one for
+    # each peer whose backup route is on (allocating its local
+    # port first), stop the rest. Called when the Mesh starts,
+    # when Mesh settings save, and when a route is edited.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if ms["enabled"] and any((p.get("tunnel") or {}).get("enabled")
+                             and not (p.get("tunnel") or {}).get("localPort")
+                             for p in ms["borrow"]["peers"]):
+        if _mesh_tunnel_allocate_ports(cfg):
+            cfg = load_config()
+            ms = mesh_settings(cfg)
+    want = set()
+    if ms["enabled"]:
+        for p in ms["borrow"]["peers"]:
+            if (p.get("tunnel") or {}).get("enabled"):
+                want.add(p["nodeId"])
+    with MESH_TUNNEL_LOCK:
+        for node_id in list(MESH_TUNNELS.keys()):
+            if node_id not in want:
+                st = MESH_TUNNELS.pop(node_id)
+                st["stop"] = True
+                proc = st.get("proc")
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+        for node_id in want:
+            st = MESH_TUNNELS.get(node_id)
+            if st is None or not st.get("thread") or \
+                    not st["thread"].is_alive():
+                st = {"stop": False, "proc": None, "state": "",
+                      "sentence": "", "thread": None}
+                t = threading.Thread(target=_mesh_tunnel_supervise,
+                                     args=(node_id,), daemon=True)
+                st["thread"] = t
+                MESH_TUNNELS[node_id] = st
+                t.start()
+
+
+def mesh_tunnel_stop_all():
+    # Bridge shutdown / Mesh off: every tunnel child is
+    # terminated cleanly — no orphan ssh is left holding a
+    # forward for a bridge that is gone.
+    with MESH_TUNNEL_LOCK:
+        entries = list(MESH_TUNNELS.values())
+        MESH_TUNNELS.clear()
+        for st in entries:
+            st["stop"] = True
+            proc = st.get("proc")
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+
 def mesh_start_listener():
     global MESH_SERVERS
     # Build 7 (#87): the peer health thread starts with the Mesh
@@ -4496,20 +8876,42 @@ def mesh_start_listener():
     if not ok:
         return
     cert_path, key_path = mesh_active_cert()
-    try:
-        server = ThreadingHTTPServer(("0.0.0.0", ms["port"]), MeshHandler)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert_path, key_path)
-        server.socket = ctx.wrap_socket(server.socket, server_side=True)
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-        MESH_SERVERS = [server]
-    except Exception:
-        MESH_SERVERS = []
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert_path, key_path)
+    servers = []
+    for door_port in ms["listenPorts"]:
+        try:
+            server = _MeshDoorServer(("0.0.0.0", door_port), MeshHandler)
+            server.mesh_tls_context = ctx
+            # The accept side of get_request waits on a short
+            # fuse: its loop skips dropped and failed knocks
+            # without returning, and a bare blocking accept
+            # would park the serve thread past shutdown's
+            # reach. A timeout raise from accept is an OSError,
+            # which socketserver's request loop already absorbs
+            # — the serve loop simply comes back around and
+            # checks its shutdown flag. Accepted sockets are
+            # re-timed by get_request itself before any use.
+            server.socket.settimeout(0.5)
+            t = threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            servers.append(server)
+        except Exception:
+            # One number being taken (something else already
+            # listens there) never closes the whole door: the
+            # remaining ports still serve, and the miss is named.
+            print("Navi Mesh: door port " + str(door_port) +
+                  " could not be bound — the door serves on its "
+                  "remaining ports.", flush=True)
+    MESH_SERVERS = servers
+    # Build 4 (#178): the managed backup tunnels reconcile with
+    # the same start that opens the door.
+    mesh_tunnel_sync()
 
 
 def mesh_stop_listener():
     global MESH_SERVERS
+    mesh_tunnel_stop_all()
     for s in MESH_SERVERS:
         try:
             s.shutdown()
@@ -5216,23 +9618,274 @@ GITHUB_HEADERS = {
     "User-Agent": "navi-apex-bridge",
 }
 
+# ---------------------------------------------------------------------
+# Sign-in Build 2 (0.2.0e, #173): failures with names, and the
+# reads' own credential.
+#
+# Every GitHub failure Apex surfaces is classified into one of
+# three named kinds — auth (the credential itself is refused),
+# rate (a bucket is spent; the reset time rides along), abuse
+# (GitHub's secondary/abuse safeguard; Retry-After rides along and
+# Apex stops — nothing anywhere retries on its own) — and worded
+# as a sentence. No surface ever shows a bare "HTTP 403" again:
+# that silence is what made the field 403s (#172) undiagnosable.
+#
+# And the app reads — the Updater's checks, the NUR's topic
+# searches and repo reads, downloads — ride the operator's own
+# GitHub sign-in (Build 6, #173 phase 3: one credential for the
+# whole product; Build 2's separate Runtime PAT is retired).
+# Signed out, they go unauthenticated and share that bucket —
+# 60 requests/hour per network address, 10/minute for search —
+# with everything else on the operator's network, and their
+# failures name those limits out loud.
+
+
+class GithubHttpError(Exception):
+    """A GitHub HTTP failure with its evidence attached: status,
+    GitHub's own message, and the response headers (rate-limit and
+    Retry-After facts live there). .code mirrors HTTPError's, so
+    older callers that read it keep working."""
+
+    def __init__(self, status, message="", headers=None, url=""):
+        super().__init__("HTTP " + str(status) + ((": " + message) if message else ""))
+        self.status = status
+        self.code = status
+        self.message = message or ""
+        self.headers = headers
+        self.url = url
+
+
+def _gh_header(headers, name):
+    if headers is None:
+        return None
+    try:
+        v = headers.get(name)
+    except Exception:
+        return None
+    return str(v) if v is not None else None
+
+
+# The last rate-limit buckets GitHub actually reported, keyed by
+# resource ("core" / "search"). Filled in from response headers
+# wherever a GitHub response provides them; the Settings → GitHub
+# identity panel reads them back. None until a response lands.
+_GITHUB_RATE = {"core": None, "search": None}
+
+
+def _github_note_rate(headers, url=""):
+    try:
+        limit = _gh_header(headers, "x-ratelimit-limit")
+        if limit is None:
+            return
+        resource = (_gh_header(headers, "x-ratelimit-resource") or "").strip().lower()
+        if resource not in ("core", "search"):
+            resource = "search" if "/search/" in (url or "") else "core"
+        remaining = _gh_header(headers, "x-ratelimit-remaining")
+        reset = _gh_header(headers, "x-ratelimit-reset")
+        _GITHUB_RATE[resource] = {
+            "limit": int(limit),
+            "remaining": int(remaining) if remaining is not None else None,
+            "reset": int(reset) if reset is not None else None,
+            "at": int(time.time()),
+        }
+    except Exception:
+        pass
+
+
+def github_rate_state():
+    return {"core": _GITHUB_RATE.get("core"), "search": _GITHUB_RATE.get("search")}
+
+
+def _gh_reset_phrase(reset_epoch):
+    if not reset_epoch:
+        return ""
+    try:
+        when = time.strftime("%H:%M", time.localtime(int(reset_epoch)))
+    except Exception:
+        return ""
+    return " It resets at " + when + "."
+
+
+def github_classify_error(status, headers=None, message="", authed=True):
+    """Classify one GitHub failure and word it. Returns a dict:
+    kind ("auth" | "rate" | "abuse" | "error"), the HTTP status,
+    GitHub's own message where it sent one, the reset time and
+    Retry-After where the headers carry them, and `text` — the
+    full sentence a surface shows. `authed` says whether the
+    request carried a credential; an unauthenticated rate failure
+    names the unauthenticated limits explicitly, because that is
+    the fact that fixes it."""
+    msg = (message or "").strip()
+    ml = msg.lower()
+    retry_after = _gh_header(headers, "retry-after")
+    try:
+        retry_after_s = int(retry_after) if retry_after is not None else None
+    except Exception:
+        retry_after_s = None
+    reset_raw = _gh_header(headers, "x-ratelimit-reset")
+    try:
+        reset_at = int(reset_raw) if reset_raw is not None else None
+    except Exception:
+        reset_at = None
+    remaining = _gh_header(headers, "x-ratelimit-remaining")
+    kind = "error"
+    if status in (401,):
+        kind = "auth"
+    elif status == 429 or "secondary rate" in ml or "abuse detection" in ml or (status == 403 and retry_after_s is not None):
+        kind = "abuse"
+    elif status == 403 and (remaining == "0" or "rate limit" in ml):
+        kind = "rate"
+    elif status == 403:
+        kind = "auth"
+    if kind == "auth":
+        if status == 401:
+            text = ("GitHub refused the sign-in itself (HTTP 401) — the credential is missing, "
+                    "expired, or revoked. This is not a rate limit; waiting will not cure it.")
+        else:
+            text = ("GitHub answered 403 Forbidden, and it is not a rate limit — the credential "
+                    "lacks access to this, or GitHub is refusing it on sight. Waiting will not cure it.")
+    elif kind == "rate":
+        text = "GitHub's rate limit is used up (HTTP " + str(status) + ")." + _gh_reset_phrase(reset_at)
+        if not authed:
+            text += (" This request went out unauthenticated, so it shared the unauthenticated "
+                     "allowance — 60 requests per hour per network address (10 per minute for "
+                     "search). Sign in with your GitHub account in Settings → GitHub and the app's "
+                     "own reads ride your own allowance instead.")
+    elif kind == "abuse":
+        text = ("GitHub's abuse safeguard tripped (HTTP " + str(status) + ") — automated-looking "
+                "traffic, in GitHub's judgment.")
+        if retry_after_s is not None:
+            text += " It asked Apex to wait " + str(retry_after_s) + " seconds."
+        text += " Apex stops here; nothing retries on its own."
+    elif status and status >= 500:
+        text = "GitHub itself is having trouble (HTTP " + str(status) + ") — the fault is on their side; try again later."
+    elif status == 404:
+        text = "GitHub answered 404 — what was asked for is not there (or is private to another account)."
+    else:
+        text = "GitHub answered HTTP " + str(status) + ((": " + msg) if msg else ".")
+    return {
+        "kind": kind, "status": status, "message": msg,
+        "resetAt": reset_at, "retryAfterSeconds": retry_after_s,
+        "unauthenticated": not authed, "text": text,
+    }
+
+
+def github_error_info(e, authed=True):
+    """The classification for a caught failure: GithubHttpError
+    and urllib's HTTPError both carry their evidence; anything
+    else (a socket that never connected) is worded as reach."""
+    if isinstance(e, GithubHttpError):
+        return github_classify_error(e.status, e.headers, e.message, authed=authed)
+    if isinstance(e, urllib.error.HTTPError):
+        msg = ""
+        try:
+            body = e.read()
+            if body:
+                parsed = json.loads(body.decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    msg = str(parsed.get("message") or "")
+        except Exception:
+            pass
+        return github_classify_error(e.code, getattr(e, "headers", None) or getattr(e, "hdrs", None), msg, authed=authed)
+    if isinstance(e, urllib.error.URLError):
+        return {"kind": "error", "status": None, "message": str(e),
+                "resetAt": None, "retryAfterSeconds": None, "unauthenticated": not authed,
+                "text": "GitHub could not be reached at all — no connection, or github.com is down."}
+    return {"kind": "error", "status": None, "message": str(e),
+            "resetAt": None, "retryAfterSeconds": None, "unauthenticated": not authed,
+            "text": "The GitHub request failed: " + str(e)}
+
+
+def github_error_text(e, authed=True):
+    return github_error_info(e, authed=authed)["text"]
+
 
 def _now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _github_read_headers(accept=None):
+    headers = dict(GITHUB_HEADERS)
+    if accept:
+        headers["Accept"] = accept
+    token = github_read_token()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers, bool(token)
+
+
+def _github_read(url, accept=None):
+    # One app-runtime read (Updater / NUR), behind Build 11's
+    # renewal wrapper (#197): the stored token is renewed
+    # BEFORE the call when its recorded expiry says it is dead
+    # or nearly so, and a 401 that still comes back earns
+    # exactly one renewal + one retry. A 401 surviving that
+    # raises the same GithubHttpError it always did — the
+    # named auth sentence, once.
+    _auth, _attempted = github_ensure_fresh_token()
+    try:
+        return _github_read_once(url, accept)
+    except GithubHttpError as e:
+        if e.code == 401 and not _attempted and github_refresh_auth():
+            return _github_read_once(url, accept)
+        raise
+
+
+def _github_read_once(url, accept=None):
+    # The single attempt. Rides the operator's sign-in token;
+    # failures raise GithubHttpError with the response's
+    # headers attached, so the caller can classify instead of
+    # guessing from a status code.
+    headers, _authed = _github_read_headers(accept)
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            _github_note_rate(resp.headers, url)
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
+        msg = ""
+        try:
+            body = e.read()
+            if body:
+                parsed = json.loads(body.decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    msg = str(parsed.get("message") or "")
+        except Exception:
+            pass
+        raise GithubHttpError(e.code, msg, e.headers, url)
+
+
 def github_json(url):
-    req = urllib.request.Request(url, headers=GITHUB_HEADERS)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode())
+    return json.loads(_github_read(url).decode())
 
 
 def github_text(url, accept):
-    headers = dict(GITHUB_HEADERS)
-    headers["Accept"] = accept
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+    return _github_read(url, accept).decode("utf-8", "replace")
+
+
+# Topic-search discipline (Build 2, #173): the NUR's two catalog
+# searches share one cache and one road — results are cached for
+# five minutes, and a second search waits for the one in flight
+# instead of doubling the Search bucket's spend (10/minute
+# unauthenticated is the tightest allowance Apex touches).
+_GITHUB_SEARCH_CACHE = {}
+_GITHUB_SEARCH_LOCK = threading.Lock()
+_GITHUB_SEARCH_TTL = 300
+
+
+def github_search_repositories(query):
+    now = time.time()
+    hit = _GITHUB_SEARCH_CACHE.get(query)
+    if hit and hit[0] > now:
+        return hit[1]
+    with _GITHUB_SEARCH_LOCK:
+        hit = _GITHUB_SEARCH_CACHE.get(query)
+        if hit and hit[0] > time.time():
+            return hit[1]
+        data = github_json("https://api.github.com/search/repositories?q=" + query + "&per_page=30&sort=updated")
+        _GITHUB_SEARCH_CACHE[query] = (time.time() + _GITHUB_SEARCH_TTL, data)
+        return data
 
 
 # ---------------------------------------------------------------------
@@ -5431,22 +10084,17 @@ def _release_build_seq(rel):
 
 
 def _update_error_text(e):
-    # A failed check, worded honestly: offline and rate-limited are
-    # different days, and the operator deserves to know which one
-    # it is.
-    if isinstance(e, urllib.error.HTTPError):
-        if e.code == 403:
-            return ("GitHub refused the check (HTTP 403) — its rate "
-                    "limit for this network is likely used up. Wait a "
-                    "while and check again.")
-        if e.code == 404:
-            return ("GitHub answered 404 — the project has no "
-                    "published release yet, so there is nothing to "
-                    "update to.")
-        return ("GitHub answered HTTP " + str(e.code)
-                + " — the check did not complete.")
-    return ("The check could not reach GitHub (" + type(e).__name__
-            + ") — this machine may be offline.")
+    # A failed check, worded honestly (Build 2, #173): the failure
+    # is classified and named — auth, rate (with its reset), abuse
+    # (with its wait) — never a bare status code and never a guess.
+    # The check rides the operator's sign-in when one exists;
+    # the classifier hears which, so an unauthenticated rate
+    # failure names the unauthenticated allowance out loud.
+    if isinstance(e, GithubHttpError) and e.status == 404:
+        return ("GitHub answered 404 — the project has no "
+                "published release yet, so there is nothing to "
+                "update to.")
+    return github_error_text(e, authed=bool(github_read_token()))
 
 
 def updater_channel_explicit(cfg=None):
@@ -5825,7 +10473,23 @@ def update_result_payload():
         with open(UPDATE_RESULT_PATH) as f:
             rec = json.load(f)
         if isinstance(rec, dict):
-            return dict(_apply_watchdog(rec), ok=True)
+            out = dict(_apply_watchdog(rec), ok=True)
+            # Build 3 (#175): the failure card pairs its fix with
+            # the reading — a "See what happened" command beside
+            # the manual fallback, derived HERE, at the one read
+            # every record passes through, so a record written by
+            # the helper, by the bridge, or closed by the watchdog
+            # all carry it. The staged folder's parent is the
+            # tag's folder under updates/, where the apply's two
+            # logs live: the installer's own output and the
+            # helper's step log.
+            staged = str(out.get("stagedDir") or "")
+            if staged:
+                tag_dir = os.path.dirname(staged)
+                out["diagnoseCommand"] = (
+                    "cat " + os.path.join(tag_dir, "apply-install.log")
+                    + "; cat " + os.path.join(tag_dir, "apply-trace.log"))
+            return out
     except Exception:
         pass
     return {"ok": True, "state": "none"}
@@ -6291,200 +10955,6 @@ def clear_wedged_bridge(root, port, tgt_seq):
     return (False, holder, desc)
 
 
-def read_installed_build_seq(root):
-    # The Edge build sequence baked into the bridge.py at the
-    # install root (Build 4): the on-disk half of the identity a
-    # same-version refresh has to prove, beside the VERSION
-    # file's number — which a refresh deliberately does not
-    # change. None when the file or the sequence cannot be read
-    # (a bridge from before build sequences existed).
-    try:
-        with open(os.path.join(root, "bridge.py"), "rb") as f:
-            m = re.search(
-                rb"SHIPPED_BUILD_SEQ\\s*=\\s*([0-9]+)", f.read())
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return None
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
-
-
-def _pid_gone(pid):
-    # Gone = no such process, or a zombie: a zombie holds no
-    # sockets (the kernel closed them at death) and its parent
-    # reaps it in its own time.
-    if not pid:
-        return True
-    if not _pid_alive(pid):
-        return True
-    try:
-        with open("/proc/" + str(pid) + "/stat", "rb") as f:
-            parts = f.read().rsplit(b")", 1)
-        state = parts[1].split()[0].decode("utf-8", "replace") if len(parts) > 1 else ""
-        return state == "Z"
-    except Exception:
-        return False
-
-
-def _pid_cmdline(pid):
-    try:
-        with open("/proc/" + str(pid) + "/cmdline", "rb") as f:
-            raw = f.read()
-        return " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip()
-    except Exception:
-        return ""
-
-
-def _pid_cwd(pid):
-    try:
-        return os.path.realpath(os.readlink("/proc/" + str(pid) + "/cwd"))
-    except Exception:
-        return ""
-
-
-def _port_holder_pid(port):
-    # The PID holding the LISTEN socket on the port, resolved from
-    # /proc alone — names a holder that answers nothing, where a
-    # status probe can only shrug.
-    inodes = set()
-    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
-        try:
-            with open(path) as f:
-                rows = f.read().splitlines()[1:]
-        except Exception:
-            continue
-        for row in rows:
-            parts = row.split()
-            if len(parts) > 9 and parts[3] == "0A":
-                try:
-                    if int(parts[1].rsplit(":", 1)[1], 16) == port:
-                        inodes.add(parts[9])
-                except Exception:
-                    pass
-    if not inodes:
-        return None
-    targets = set("socket:[" + ino + "]" for ino in inodes)
-    try:
-        names = os.listdir("/proc")
-    except Exception:
-        return None
-    for name in names:
-        if not name.isdigit():
-            continue
-        try:
-            fds = os.listdir("/proc/" + name + "/fd")
-        except Exception:
-            continue
-        for fd in fds:
-            try:
-                if os.readlink("/proc/" + name + "/fd/" + fd) in targets:
-                    return int(name)
-            except Exception:
-                pass
-    return None
-
-
-def _port_answers_expected(port, tgt_seq):
-    # True when the bridge answering on the port already reports
-    # the target identity — the case where a relaunch spawn
-    # failure must NOT fail the apply: the installer's own
-    # relaunch (build .91) already brought the new bridge up.
-    try:
-        req = urllib.request.Request(
-            "http://127.0.0.1:" + str(port) + "/api/status",
-            headers={"User-Agent": "navi-update-helper"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            seen = json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception:
-        return False
-    if not isinstance(seen, dict) or seen.get("app") != "Navi: Apex":
-        return False
-    return tgt_seq is None or seen.get("buildSeq") == tgt_seq
-
-
-def _holder_remedy(port):
-    # The failure-text remedy for a held port (build .91): name
-    # the holder and its exact kill command when the socket can
-    # resolve it — never "launch the app again" against a wedged
-    # port, the advice that stranded the field update this build
-    # answers.
-    holder = _port_holder_pid(port)
-    if holder:
-        cmd = _pid_cmdline(holder)
-        return ("The port is held by process " + str(holder)
-                + (" (" + cmd + ")" if cmd else "")
-                + ": end it with kill -9 " + str(holder)
-                + ", then run the update again — launching the app "
-                "again cannot work while that process holds the port.")
-    return ("If a process is holding the port, find it with lsof -i :"
-            + str(port) + " and end it, then run the update again; "
-            "otherwise launch the app again from its menu entry.")
-
-
-def clear_wedged_bridge(root, port, tgt_seq):
-    # Build .91 (issue #91): before relaunching, prove the OLD
-    # bridge is actually gone — not merely that its pid file is.
-    # A bridge can still hold the port while answering nothing
-    # (frozen, stopped, stuck mid-work), and every relaunch
-    # against it is a no-op: the new bridge cannot bind, and the
-    # confirmation that follows can only report failure with a
-    # remedy that cannot work. If the target build already
-    # answers, there is nothing to clear; if the port is free,
-    # likewise. A holder is signalled ONLY when it is provably
-    # this install's bridge — bridge.py in its command line AND
-    # its working directory the install root; anything else is
-    # reported, never touched. Escalation mirrors the installer:
-    # SIGTERM, wait for death AND a free port, SIGKILL, wait
-    # again. Returns (ok, holder_pid, holder_desc).
-    if _port_answers_expected(port, tgt_seq):
-        return (True, None, "")
-    holder = _port_holder_pid(port)
-    if holder is None:
-        try:
-            sock = socket.create_connection(("127.0.0.1", port), timeout=2)
-            sock.close()
-            return (False, None,
-                    "something is listening on the port but its process could not be identified")
-        except Exception:
-            return (True, None, "")
-    cmd = _pid_cmdline(holder)
-    desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
-    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
-    if not owned:
-        return (False, holder, desc + " — not this install's bridge, so it was not touched")
-    trace("wedge-clear",
-          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
-    try:
-        os.kill(holder, signal.SIGTERM)
-    except Exception:
-        pass
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    try:
-        os.kill(holder, signal.SIGKILL)
-    except Exception:
-        pass
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    return (False, holder, desc)
-
-
 def _install_log_last_step(log_path):
     # Issue #104: the installer's own step banners ("==> ...")
     # name its steps; the last banner in the log is the step the
@@ -6587,6 +11057,32 @@ def main():
         why = str(e)
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
+
+    # 0.2.0e Build 11 (#198): the homecoming adoption. When the
+    # installer migrated Apex to its new home, it left a machine
+    # marker in this (now parked) tree naming the new home. When
+    # the new home verifiably holds THIS job's target build,
+    # everything from here — the landed classification below,
+    # the wedge clear, the relaunch, the confirmation, and the
+    # record itself — follows the install to its new home
+    # instead of reading the parked tree's old witnesses.
+    try:
+        with open(os.path.join(root, ".apex-migration.json")) as _mf:
+            _mig = json.load(_mf)
+        _new_root = str(_mig.get("to") or "")
+        if (_new_root and _new_root != root
+                and os.path.isfile(os.path.join(_new_root, "bridge.py"))
+                and read_installed_build_seq(_new_root)
+                == job.get("targetBuildSeq")):
+            trace("migration-adopted",
+                  "the installer moved Apex to " + _new_root
+                  + " — relaunch, confirmation and the record follow it there")
+            root = _new_root
+            STATE["result_path"] = os.path.join(
+                root, "config", "update-result.json")
+            env["NAVI_HOME"] = root
+    except Exception:
+        pass
 
     tail_failure = ""
     if code != 0:
@@ -6876,6 +11372,73 @@ if __name__ == "__main__":
 
 _update_apply_lock = threading.Lock()
 _update_apply_state = {"running": False}
+
+
+def _apply_helper_spawn_argv(helper_path, job_path, tag_dir):
+    # Build 12 (#201) — the helper escape, and the invariant it
+    # serves. THE NO-ANCESTRY-SIGNALLING INVARIANT: an apply may
+    # end exactly one process by signal — the bridge it replaces,
+    # by its proven pid, through the installer's stop machinery.
+    # It may never use a group-shaped signal — a systemd unit
+    # stop, a process-group kill, a cgroup kill — because those
+    # mechanisms cannot tell the bridge apart from the apply's
+    # own ancestry: the helper descends from the bridge, and the
+    # installer descends from the helper. Incident 21 is the
+    # tuition: v0.2.0e — Build 11's first unattended pull died
+    # within two seconds on both field machines when the
+    # installer's homecoming retired the bridge's boot unit with
+    # `systemctl --user disable --now` — stopping the unit
+    # signalled every process in it (the bridge, the helper and
+    # the installer together; a new session is not an escape
+    # from a cgroup), and the migration never ran.
+    #
+    # The installer's half of the fix is ordering: it stops the
+    # bridge by pid and retires the unit files without stopping
+    # anything. This is the bridge's half: the helper is spawned
+    # OUTSIDE this bridge's systemd unit, in a transient scope
+    # of its own via systemd-run, so no stop of the bridge's
+    # unit — this installer's, a future installer's, an
+    # operator's — can ever reach it. In scope mode systemd-run
+    # leaves a waiting parent whose lifetime tracks the
+    # helper's, so the pid recorded on the apply record keeps
+    # its meaning for the panel and the watchdog. Where no
+    # scope can be had (no systemd-run, or no user manager
+    # answers — the Docker shape), the spawn falls back to the
+    # plain own-session spawn and SAYS SO, in the step log and
+    # on the record: on such a machine the installer's ordering
+    # is the protection, and nothing pretends otherwise.
+    # Returns (argv, mode, note).
+    base = [sys.executable, helper_path, job_path]
+    sd = shutil.which("systemd-run")
+    if sd:
+        probe = None
+        try:
+            probe = subprocess.run(
+                [sd, "--user", "--scope", "--collect", "-q",
+                 "/bin/true"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=10)
+        except Exception:
+            probe = None
+        if probe is not None and probe.returncode == 0:
+            unit = ("apex-apply-"
+                    + re.sub(r"[^0-9A-Za-z_-]+", "-", str(tag_dir))
+                    + "-" + str(os.getpid()))
+            argv = [sd, "--user", "--scope", "--collect", "-q",
+                    "--unit=" + unit, "--"] + base
+            return (argv, "systemd-run-scope",
+                    "the apply helper runs in its own transient "
+                    "scope (" + unit + ".scope), outside this "
+                    "bridge's systemd unit — a stop of the "
+                    "bridge's unit during the install cannot "
+                    "signal it (#201).")
+    return (base, "plain-session",
+            "systemd-run could not give the apply helper a scope "
+            "of its own here (not installed, or no user manager "
+            "answers), so it runs plainly in its own session, "
+            "inside this bridge's unit — the installer's "
+            "ordering is this run's protection: it stops the "
+            "bridge by pid and never stops its unit (#201).")
 
 
 def _run_update_apply(cfg):
@@ -7187,21 +11750,39 @@ def _run_update_apply(cfg):
             }
             job_path = os.path.join(stage_root, "apply-job.json")
             helper_path = os.path.join(stage_root, "apply-helper.py")
+            # Build 12 (#201): decide HOW the helper is spawned
+            # before the job is written — the mode rides the job
+            # and the record, and is announced as the step log's
+            # first line, ahead of the helper's own first entry,
+            # so the trace always says which protection this run
+            # actually has (see _apply_helper_spawn_argv).
+            spawn_argv, spawn_mode, spawn_note = \
+                _apply_helper_spawn_argv(helper_path, job_path, tag_dir)
+            job["spawnMode"] = spawn_mode
             with open(job_path, "w") as f:
                 json.dump(job, f)
             with open(helper_path, "w") as f:
                 f.write(APPLY_HELPER_PY)
             os.chmod(helper_path, 0o755)
+            try:
+                with open(job["traceLog"], "a") as tf:
+                    tf.write(time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        + " [starting] helper-spawn — " + spawn_note
+                        + "\n")
+            except Exception:
+                pass
             logf = open(os.path.join(stage_root, "apply.log"), "ab")
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, helper_path, job_path],
+                    spawn_argv,
                     cwd=stage_root, stdin=subprocess.DEVNULL,
                     stdout=logf, stderr=subprocess.STDOUT,
                     start_new_session=True, close_fds=True)
             finally:
                 logf.close()
             record["helperPid"] = proc.pid
+            record["helperSpawn"] = spawn_mode
             record["traceLog"] = job["traceLog"]
             _write_update_result(record)
         except Exception as e:
@@ -7306,9 +11887,10 @@ def save_download_payload(data):
 # asks GitHub for a user code, the operator authorizes in their own
 # browser at github.com/login/device, and the bridge polls the token
 # endpoint. No client secret is embedded and no password ever passes
-# through the app. The OAuth client id is a config value: a live id
-# must be registered under the project owner's GitHub account, so the
-# package ships with none and the GitHub page says so plainly.
+# through the app. The OAuth client id is a public identifier: the
+# package ships the project's registered id in
+# config/github-signin.json (Build 6, #173 phase 3), so sign-in
+# works out of the box — one credential for the whole product.
 #
 # The token lands in config/github-auth.json with owner-only
 # permissions. It is NEVER part of a backup (a backup gathers named
@@ -7369,8 +11951,78 @@ GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows"
 GITHUB_CORE_BACKUP_ITEMS = ["soul", "memory", "settings"]
 _github_device = {}
 
+# GitHub sign-in client identity (0.2.0e Build 6, #173 phase 3):
+# the OAuth App the operator signs in to is registered under the
+# project owner's GitHub account with Device Flow enabled. Its
+# client id is a PUBLIC identifier — no client secret exists or
+# is needed for the device flow. The shipped default lives in
+# config/github-signin.json (field client_id); an operator (or a
+# fork) may override it there, or with the older github.client_id
+# config value. Resolution order: the signin file, then config,
+# then the shipped default constant below.
+GITHUB_SIGNIN_PATH = os.path.join(ROOT, "config", "github-signin.json")
+GITHUB_SIGNIN_DEFAULT_CLIENT_ID = "Ov23lijV9Q5ERi6nIAgG"
+
+
+def github_signin_client_id(cfg=None):
+    try:
+        with open(GITHUB_SIGNIN_PATH) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and str(data.get("client_id") or "").strip():
+            return str(data["client_id"]).strip()
+    except Exception:
+        pass
+    if cfg is not None:
+        try:
+            cid = github_settings(cfg)["client_id"]
+            if cid:
+                return cid
+        except Exception:
+            pass
+    return GITHUB_SIGNIN_DEFAULT_CLIENT_ID
+
+
+def github_read_token():
+    # The one credential the app's GitHub reads ride (0.2.0e
+    # Build 6): the OPERATOR's device-flow sign-in token. Build 2
+    # provisioned a separate fine-grained PAT for app reads (the
+    # "Apex Runtime" credential, config/github-runtime.json);
+    # Build 6 supersedes it — no PAT to create, paste, or rotate,
+    # and a leftover runtime file is ignored, never read. Signed
+    # out, this returns None and the reads go unauthenticated
+    # against the public API, exactly as they degrade in words.
+    auth = github_auth()
+    return auth["token"] if auth else None
+
 
 def github_api(method, url, token=None, body=None, form=False):
+    # Build 11 (#197): the shared authenticated-call wrapper.
+    # When the call rides the operator's STORED token (the only
+    # token any authenticated consumer passes), the token is
+    # renewed BEFORE the call when its recorded expiry says it
+    # is dead or nearly so, and a 401 that still comes back
+    # earns exactly one renewal and one retry — one renewal
+    # per call, never a loop. Calls carrying any other token
+    # (the device flow's just-minted token, a token=None OAuth
+    # exchange) pass straight through: renewal is a property
+    # of the stored sign-in, not of the wire.
+    stored = github_auth()
+    if token and stored and token == stored.get("token"):
+        fresh, _attempted = github_ensure_fresh_token()
+        if fresh and fresh.get("token") and fresh["token"] != token:
+            token = fresh["token"]
+        status, resp = _github_api_once(method, url, token, body, form)
+        if status == 401 and not _attempted:
+            renewed_auth = github_refresh_auth()
+            if (renewed_auth and renewed_auth.get("token")
+                    and renewed_auth["token"] != token):
+                status, resp = _github_api_once(
+                    method, url, renewed_auth["token"], body, form)
+        return status, resp
+    return _github_api_once(method, url, token, body, form)
+
+
+def _github_api_once(method, url, token=None, body=None, form=False):
     # One GitHub request; returns (status, parsed JSON or text) and
     # never raises for an HTTP error — the caller words the failure.
     headers = {
@@ -7390,12 +12042,14 @@ def github_api(method, url, token=None, body=None, form=False):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
+            _github_note_rate(resp.headers, url)
             raw = resp.read().decode("utf-8", "replace")
             try:
                 return resp.status, json.loads(raw)
             except Exception:
                 return resp.status, raw
     except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
         raw = e.read().decode("utf-8", "replace")
         try:
             return e.code, json.loads(raw)
@@ -7406,6 +12060,26 @@ def github_api(method, url, token=None, body=None, form=False):
 
 
 def github_api_raw(method, url, token, data, content_type):
+    # Build 11 (#197): the raw sibling rides the same renewal
+    # wrapper as github_api — stored token, pre-emptive renewal,
+    # one renewal + one retry on a 401, never a loop.
+    stored = github_auth()
+    if token and stored and token == stored.get("token"):
+        fresh, _attempted = github_ensure_fresh_token()
+        if fresh and fresh.get("token") and fresh["token"] != token:
+            token = fresh["token"]
+        status, resp = _github_api_raw_once(method, url, token, data, content_type)
+        if status == 401 and not _attempted:
+            renewed_auth = github_refresh_auth()
+            if (renewed_auth and renewed_auth.get("token")
+                    and renewed_auth["token"] != token):
+                status, resp = _github_api_raw_once(
+                    method, url, renewed_auth["token"], data, content_type)
+        return status, resp
+    return _github_api_raw_once(method, url, token, data, content_type)
+
+
+def _github_api_raw_once(method, url, token, data, content_type):
     # github_api's sibling for binary bodies (release assets ride
     # the uploads host as raw bytes, not JSON). Same contract:
     # (status, parsed JSON or text), never raises for HTTP errors.
@@ -7419,12 +12093,14 @@ def github_api_raw(method, url, token, data, content_type):
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
+            _github_note_rate(resp.headers, url)
             raw = resp.read().decode("utf-8", "replace")
             try:
                 return resp.status, json.loads(raw)
             except Exception:
                 return resp.status, raw
     except urllib.error.HTTPError as e:
+        _github_note_rate(e.headers, url)
         raw = e.read().decode("utf-8", "replace")
         try:
             return e.code, json.loads(raw)
@@ -7490,6 +12166,7 @@ def github_auth():
                 "login": str(data.get("login") or ""),
                 "refresh_token": str(data.get("refresh_token") or ""),
                 "expires_in": data.get("expires_in"),
+                "expires_at": data.get("expires_at"),
             }
     except Exception:
         pass
@@ -7508,6 +12185,15 @@ def github_save_auth(token, login, refresh_token=None, expires_in=None):
         data["refresh_token"] = str(refresh_token)
     if expires_in:
         data["expires_in"] = expires_in
+        # Build 11 (#197): the ABSOLUTE expiry, persisted beside
+        # the lifetime — until this build nothing ever read
+        # expires_in back, so no consumer could know the token
+        # had died until GitHub's 401 said so, once per call,
+        # forever. github_ensure_fresh_token reads this.
+        try:
+            data["expires_at"] = int(time.time()) + int(expires_in)
+        except Exception:
+            pass
     os.makedirs(os.path.dirname(GITHUB_TOKEN_PATH), exist_ok=True)
     fd = os.open(GITHUB_TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -7526,7 +12212,7 @@ def github_refresh_auth():
     auth = github_auth()
     if not auth or not auth.get("refresh_token"):
         return None
-    client_id = github_settings(load_config())["client_id"]
+    client_id = github_signin_client_id(load_config())
     if not client_id:
         return None
     st, resp = github_api(
@@ -7551,15 +12237,48 @@ def github_refresh_auth():
     return None
 
 
+def github_ensure_fresh_token():
+    # Build 11 (#197): pre-emptive renewal. When the stored
+    # sign-in carries an absolute expiry (persisted by
+    # github_save_auth since this build) and the token is
+    # expired or inside the renewal margin, renew BEFORE the
+    # first authenticated call instead of discovering the death
+    # as a 401 on every surface, every morning. Returns
+    # (auth, attempted): the auth dict to ride — the fresh one
+    # when renewal worked, the stored one otherwise — and
+    # whether a renewal was ATTEMPTED at all. The wrappers
+    # spend a call's one renewal here or on a 401, never both:
+    # a dead refresh token earns exactly one attempt per call,
+    # not one per layer. When no expiry was ever stored
+    # (sign-ins from before this build), nothing is guessed:
+    # the 401 path in the wrappers covers it, and the first
+    # successful renewal starts the clock for every later call.
+    auth = github_auth()
+    if not auth or not auth.get("refresh_token"):
+        return auth, False
+    exp = auth.get("expires_at")
+    if exp is None:
+        return auth, False
+    try:
+        exp = float(exp)
+    except Exception:
+        return auth, False
+    if time.time() < exp - 300:
+        return auth, False
+    fresh = github_refresh_auth()
+    return (fresh or auth), True
+
+
 def github_status_payload(cfg):
     s = github_settings(cfg)
     auth = github_auth()
+    client_id = github_signin_client_id(cfg)
     return {
         "ok": True,
         "repoUrl": GITHUB_REPO_URL,
         "issuesUrl": GITHUB_REPO_URL + "/issues",
-        "clientId": s["client_id"],
-        "clientIdConfigured": bool(s["client_id"]),
+        "clientId": client_id,
+        "clientIdConfigured": bool(client_id),
         "signedIn": auth is not None,
         "login": auth["login"] if auth else "",
         "backupRepo": s["backup_repo"],
@@ -7571,23 +12290,54 @@ def github_status_payload(cfg):
         "lastBackupResult": s["last_backup_result"],
         "lastImportAt": s["last_import_at"],
         "lastImportResult": s["last_import_result"],
+        # The identities, side by side (Build 2, #173; Build 6
+        # collapses them to one credential). Operator: the human's
+        # device-flow sign-in — the ONLY GitHub credential Apex
+        # holds. It acts as the operator for backup/import and
+        # carries the app's reads (the Updater, the NUR, the
+        # GitHub section) since Build 6 retired the separate
+        # Runtime PAT: sign in once, with your account — no keys
+        # to create, paste, or rotate. Release Automation:
+        # deliberately NOT a credential Apex holds — publication
+        # runs on the operator's signed-in browser session and the
+        # local git remote, and the panel says so instead of
+        # implying a second token exists. Bucket readouts are the
+        # last limits GitHub actually reported to this bridge, or
+        # null.
+        "identities": {
+            "operator": {
+                "signedIn": auth is not None,
+                "login": auth["login"] if auth else "",
+                "scopesNote": "Acts as you — the only GitHub credential Apex holds. Used by backup and import, and by the app's own reads (Updater, NUR, the GitHub section).",
+                "buckets": github_rate_state(),
+            },
+            "automation": {
+                "note": "Releases are published from the operator's signed-in browser session and the local git remote. Apex holds no release credential — by design.",
+            },
+        },
     }
 
 
 def github_issues_payload():
     # The Issues tab inside the GitHub section: the repo's current
-    # open issues, live from the public GitHub API. No token — the
-    # repo is public and listing never requires sign-in. Pull
-    # requests ride the same endpoint and are filtered out.
+    # open issues, live from the public GitHub API. The repo is
+    # public and listing never requires sign-in; when the Runtime
+    # credential is configured the read rides it (Build 2, #173),
+    # so the section stops sharing the unauthenticated bucket
+    # whose exhaustion presented as this tab's bare 403s (#172).
+    # Pull requests ride the same endpoint and are filtered out.
+    _rt = github_read_token()
     st, resp = github_api(
         "GET",
         GITHUB_API_BASE + "/issues?state=open&per_page=100&sort=updated&direction=desc",
-        None,
+        _rt,
     )
     if st != 200 or not isinstance(resp, list):
+        _info = github_classify_error(st, None, github_err_text(resp), authed=bool(_rt))
         return {
             "ok": False,
-            "error": "GitHub issues fetch failed (HTTP " + str(st) + "): " + github_err_text(resp),
+            "error": _info["text"],
+            "githubError": _info,
             "issues": [],
             "fetchedAt": None,
             "repoUrl": GITHUB_REPO_URL,
@@ -7622,19 +12372,22 @@ def github_pulse_payload():
     # The GitHub section's Overview: the project's pulse — repo
     # description, stars/forks/watchers, latest release, recent
     # commits, open-issue count, last push — live from the public
-    # GitHub API, no token. Any failure is reported, never filled
-    # in with invented numbers.
-    st, repo = github_api("GET", GITHUB_API_BASE, None)
+    # GitHub API (on the operator's sign-in when one exists,
+    # Build 6). Any failure is reported, never filled in with
+    # invented numbers.
+    st, repo = github_api("GET", GITHUB_API_BASE, github_read_token())
     if st != 200 or not isinstance(repo, dict):
+        _info = github_classify_error(st, None, github_err_text(repo), authed=bool(github_read_token()))
         return {
             "ok": False,
-            "error": "GitHub pulse fetch failed (HTTP " + str(st) + "): " + github_err_text(repo),
+            "error": _info["text"],
+            "githubError": _info,
             "pulse": None,
             "fetchedAt": None,
             "repoUrl": GITHUB_REPO_URL,
         }
     latest_release = None
-    rst, rel = github_api("GET", GITHUB_API_BASE + "/releases/latest", None)
+    rst, rel = github_api("GET", GITHUB_API_BASE + "/releases/latest", github_read_token())
     if rst == 200 and isinstance(rel, dict):
         latest_release = {
             "tag": str(rel.get("tag_name") or ""),
@@ -7644,7 +12397,7 @@ def github_pulse_payload():
         }
     commits = []
     commit_count = None
-    cst, crows = github_api("GET", GITHUB_API_BASE + "/commits?per_page=100", None)
+    cst, crows = github_api("GET", GITHUB_API_BASE + "/commits?per_page=100", github_read_token())
     if cst == 200 and isinstance(crows, list):
         if len(crows) < 100:
             commit_count = len(crows)
@@ -7661,7 +12414,7 @@ def github_pulse_payload():
                 "url": str(c.get("html_url") or ""),
             })
     issues = []
-    ist, irows = github_api("GET", GITHUB_API_BASE + "/issues?state=open&per_page=8", None)
+    ist, irows = github_api("GET", GITHUB_API_BASE + "/issues?state=open&per_page=8", github_read_token())
     if ist == 200 and isinstance(irows, list):
         for i in irows:
             if not isinstance(i, dict) or "pull_request" in i:
@@ -7701,15 +12454,15 @@ def github_pulse_payload():
 
 
 def github_device_start(cfg):
-    s = github_settings(cfg)
-    if not s["client_id"]:
-        return {"ok": False, "error": "No GitHub OAuth client id is configured yet — sign-in can't start until one is set (the GitHub page shows the setup steps). Viewing issues needs no sign-in at all."}
+    client_id = github_signin_client_id(cfg)
+    if not client_id:
+        return {"ok": False, "error": "No GitHub OAuth client id is configured — sign-in can't start until one is set in config/github-signin.json. Viewing issues needs no sign-in at all."}
     st, resp = github_api(
         "POST", "https://github.com/login/device/code", None,
-        {"client_id": s["client_id"], "scope": "repo"}, form=True,
+        {"client_id": client_id, "scope": "repo"}, form=True,
     )
     if st != 200 or not isinstance(resp, dict) or not resp.get("device_code"):
-        return {"ok": False, "error": "GitHub did not start a device sign-in (HTTP " + str(st) + "): " + github_err_text(resp)}
+        return {"ok": False, "error": "GitHub did not start a device sign-in. " + github_classify_error(st, None, github_err_text(resp), authed=False)["text"]}
     _github_device.clear()
     _github_device.update({
         "device_code": resp["device_code"],
@@ -7732,7 +12485,7 @@ def github_device_poll(cfg):
     st, resp = github_api(
         "POST", "https://github.com/login/oauth/access_token", None,
         {
-            "client_id": s["client_id"],
+            "client_id": github_signin_client_id(cfg),
             "device_code": device_code,
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         },
@@ -7757,7 +12510,9 @@ def github_device_poll(cfg):
     if err == "slow_down":
         return {"ok": True, "status": "pending", "slowDown": True}
     _github_device.clear()
-    return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err or ("HTTP " + str(st))) + ") — start again to retry."}
+    if err:
+        return {"ok": False, "status": "failed", "error": "GitHub sign-in ended (" + str(err) + ") — start again to retry."}
+    return {"ok": False, "status": "failed", "error": "GitHub sign-in ended. " + github_classify_error(st, None, github_err_text(resp), authed=False)["text"] + " Start again to retry."}
 
 
 def _dashboard_image_field(value):
@@ -7767,6 +12522,20 @@ def _dashboard_image_field(value):
     if isinstance(value, str) and value.startswith("data:image/") and len(value) <= 420000:
         return value
     return ""
+
+
+def _dashboard_image_bytes(field):
+    # The raw bytes a dashboard image field carries (Build 6,
+    # #180): the data URL's payload, decoded — or None when the
+    # field is not a well-formed base64 data URL. Byte-exact by
+    # construction; the Operator card's plain-file backup and its
+    # byte-for-byte restore both stand on this.
+    if not field or "," not in str(field):
+        return None
+    try:
+        return base64.b64decode(str(field).split(",", 1)[1], validate=True)
+    except Exception:
+        return None
 
 
 def github_collect_backup(cfg, dashboard=None):
@@ -7797,6 +12566,20 @@ def github_collect_backup(cfg, dashboard=None):
                 "uiScale": (dashboard.get("uiScale")
                             if dashboard.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
             }, indent=2).encode()
+            # Build 6 (#180): the Operator card ALSO travels as
+            # its own plain file — cards/operator-badge.png,
+            # exactly the card's bytes, no archive — so it can be
+            # listed and fetched one card at a time (on the phone,
+            # over DHD) without opening the whole backup. The
+            # dashboard.json copy above stays (older restores read
+            # it); the card file holds the same bytes, openly.
+            # The Mesh node keypair is never in any of this: it
+            # is not read here, and nothing under mesh/ below
+            # moves more than pairing-card pictures.
+            _card_field = _dashboard_image_field((dashboard or {}).get("operatorBadge"))
+            _card_bytes = _dashboard_image_bytes(_card_field) if _card_field else None
+            if _card_bytes:
+                files["cards/operator-badge.png"] = _card_bytes
     # The Mesh ledger rides a backup ONLY on the operator's
     # explicit tick (Settings → System → Navi Mesh; Q4, off by
     # default): it is metadata — who lent whom how many seconds —
@@ -7977,7 +12760,7 @@ def github_fetch_backup(cfg):
     }
     files = {}
     for path, sha in blobs.items():
-        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or path.startswith("chats/") or (path.startswith("chips/") and path.endswith(".png")):
+        if path in fixed or path.startswith("rag-packs/") or path.startswith("vault/") or path.startswith("mesh-cards/") or path.startswith("cards/") or path.startswith("chats/") or (path.startswith("chips/") and path.endswith(".png")):
             bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
             if bst == 200 and isinstance(blob, dict) and blob.get("content"):
                 try:
@@ -8176,11 +12959,32 @@ def github_import_changes(cfg, fetched, dashboard=None):
                 _new = _dashboard_image_field(_backed_dash.get(_key))
                 _cur = _dashboard_image_field(_cur_dash.get(_key))
                 if _new and _new != _cur:
+                    # Build 6 (#180): when the card's own file
+                    # rides the backup, the Operator card item
+                    # below speaks for the badge — one restore,
+                    # one line.
+                    if _key == "operatorBadge" and "cards/operator-badge.png" in files:
+                        continue
                     changes.append({
                         "item": "settings", "label": _label,
                         "detail": "Would restore your " + _label.lower() + " from the backup.",
                         "willChange": True,
                     })
+    if "cards/operator-badge.png" in files:
+        # Build 6 (#180): the Operator card as its own restorable
+        # thing — compared as raw bytes against the card this
+        # machine currently holds, because byte-for-byte is the
+        # promise the plain file makes.
+        _card = files["cards/operator-badge.png"]
+        _cur_dash = dashboard if isinstance(dashboard, dict) else {}
+        _curf = _dashboard_image_field(_cur_dash.get("operatorBadge"))
+        _curb = _dashboard_image_bytes(_curf) if _curf else None
+        if _curb != _card:
+            changes.append({
+                "item": "settings", "label": "Operator card",
+                "detail": "Would restore your Operator card from its own plain file in the backup (cards/operator-badge.png) — the card's exact bytes, fetched on its own, no archive to open.",
+                "willChange": True,
+            })
     return changes, items
 
 
@@ -8339,6 +13143,18 @@ def github_apply_import(cfg, fetched):
                 }
         except Exception:
             dashboard_out = None
+    if dashboard_out is not None and "cards/operator-badge.png" in files:
+        # Build 6 (#180): on restore the card's own file is
+        # canonical — its exact bytes, re-wrapped as the
+        # dashboard's badge field. (dashboard.json's copy is the
+        # same bytes in every backup this product writes; the
+        # plain file wins because it is the one a phone can fetch
+        # alone, over DHD, without the rest of the backup.)
+        _cf = _dashboard_image_field(
+            "data:image/png;base64,"
+            + base64.b64encode(files["cards/operator-badge.png"]).decode("ascii"))
+        if _cf:
+            dashboard_out["operatorBadge"] = _cf
     taken = str(manifest.get("backedUpAt") or "")
     result = (
         "Imported the backup from " + (taken[:10] if taken else "an unknown date")
@@ -8408,7 +13224,7 @@ def fetch_repo_chip(full_name):
             "url": rel.get("html_url") or "",
             "publishedAt": rel.get("published_at") or "",
         }
-    except urllib.error.HTTPError as e:
+    except (urllib.error.HTTPError, GithubHttpError) as e:
         # 404 is the only answer that means "no releases yet" — a
         # rate limit or an outage must surface as a failed catalog,
         # never as a chip that looks release-less.
@@ -8469,7 +13285,27 @@ def chip_cartridge_filename(repo, rows):
 
 
 def github_download(url):
-    req = urllib.request.Request(url, headers=GITHUB_HEADERS)
+    # Build 11 (#197): downloads ride the renewal wrapper too —
+    # pre-emptive renewal when the stored expiry says so, and
+    # one renewal + one retry on a 401 (an expired token used
+    # to fail the Updater's asset download outright, every
+    # morning, until the operator signed in again by hand).
+    _auth, _attempted = github_ensure_fresh_token()
+    try:
+        return _github_download_once(url)
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and not _attempted and github_refresh_auth():
+            return _github_download_once(url)
+        raise
+
+
+def _github_download_once(url):
+    # A runtime read like any other (Build 2): the operator's
+    # sign-in token rides along. (Release-asset downloads
+    # themselves are unmetered by GitHub; the header costs
+    # nothing and keeps the read on the app's own identity.)
+    headers, _authed = _github_read_headers()
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read()
 
@@ -8631,28 +13467,31 @@ def chip_catalog_view():
     warning = None
     repos = []
     try:
-        data = github_json(
-            "https://api.github.com/search/repositories"
-            "?q=topic:navi-chips&per_page=30&sort=updated"
-        )
+        # Build 2 (#173): the search rides the Runtime credential
+        # when configured, is cached for five minutes, and runs
+        # one at a time (github_search_repositories); a failure is
+        # classified and named, never a bare status.
+        data = github_search_repositories("topic:navi-chips")
         failures = 0
+        last_err = None
         for item in data.get("items") or []:
             full = item.get("full_name")
             if not full:
                 continue
             try:
                 repos.append(fetch_repo_chip(full))
-            except Exception:
+            except Exception as fe:
                 failures += 1
+                last_err = fe
         if failures:
             warning = (
                 "GitHub could not be fully read for "
                 + str(failures)
-                + " of the chips (rate limit or outage) — the list "
-                "may be incomplete. Search again in a minute."
+                + " of the chips — the list may be incomplete. "
+                + github_error_text(last_err, authed=bool(github_read_token()))
             )
     except Exception as e:
-        error = "GitHub search failed: " + str(e)
+        error = "GitHub search failed. " + github_error_text(e, authed=bool(github_read_token()))
     installs = {row.get("full_name"): row for row in load_chip_installs()}
     # Issue #22: an entry also reads as installed when a chip with
     # the same slug is on this machine under another name — a
@@ -10947,35 +15786,34 @@ def github_publish_files(repo_name, files, topic, description, release=None):
     if not auth:
         return {"ok": False, "error": "You are not signed in to GitHub. Sign in under Settings → GitHub & Backup, or use Export for GitHub and upload the ZIP yourself."}
     login, token = auth["login"], auth["token"]
-    # Every call below goes through pub(): it carries the current
-    # token, and on a 401 it renews the sign-in once from the
-    # stored refresh token and retries the call once (issue #14).
-    # A 401 that survives that — or arrives with no refresh token
-    # stored — means the saved sign-in is dead, and the operator
-    # hears that in plain words, never as a raw HTTP string.
-    state = {"token": token, "renewed": False}
+    # Every call below goes through pub(): it carries the
+    # current token. Renewal itself is the shared wrapper's
+    # job since Build 11 (#197) — github_api / github_api_raw
+    # renew the stored sign-in once on a 401 and retry once,
+    # the behavior this loop first grew for itself (issue
+    # #14); pub() only re-reads the stored token afterwards,
+    # because a renewal rotates it mid-publish. A 401 that
+    # survives the wrapper means the saved sign-in is dead,
+    # and the operator hears that in plain words, never as a
+    # raw HTTP string.
+    state = {"token": token}
 
     def reauth_error():
         return {"ok": False, "error": "GitHub rejected the sign-in Navi has saved — the token has expired or been revoked, and Navi could not renew it. Sign out and back in under Settings → GitHub & Backup, then publish again. Nothing was uploaded."}
 
+    def _resync_token():
+        now = github_auth()
+        if now and now.get("token"):
+            state["token"] = now["token"]
+
     def pub(method, url, body=None):
         st, resp = github_api(method, url, state["token"], body)
-        if st == 401 and not state["renewed"]:
-            state["renewed"] = True
-            fresh = github_refresh_auth()
-            if fresh:
-                state["token"] = fresh["token"]
-                st, resp = github_api(method, url, state["token"], body)
+        _resync_token()
         return st, resp
 
     def pub_raw(method, url, data, content_type):
         st, resp = github_api_raw(method, url, state["token"], data, content_type)
-        if st == 401 and not state["renewed"]:
-            state["renewed"] = True
-            fresh = github_refresh_auth()
-            if fresh:
-                state["token"] = fresh["token"]
-                st, resp = github_api_raw(method, url, state["token"], data, content_type)
+        _resync_token()
         return st, resp
 
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(repo_name or "")).strip("-.")[:100]
@@ -11414,6 +16252,43 @@ def vault_write(rel, content):
     os.replace(tmp, full)
 
 
+def vault_delete_note(rel):
+    # One note out of the desk (Build 3, #177: factored out of the
+    # /api/vault/delete handler so the deletion's tombstone lives
+    # in exactly one place). Returns True when a file went.
+    full = vault_fs_path(rel)
+    if not os.path.isfile(full):
+        return False
+    os.remove(full)
+    sync_record_tombstone("vault", rel)
+    return True
+
+
+def vault_delete_folder(rel):
+    # A folder and everything in it (the handler's walk, kept).
+    # Every note inside is tombstoned by its vault path; when the
+    # folder IS a case folder (cases/<slug>), the case itself is
+    # tombstoned too, so deleting a case from the Vault's tree
+    # cannot resurrect through sync either. Returns the number of
+    # markdown notes removed, exactly as the handler always has.
+    full = vault_fs_path(rel)
+    count = 0
+    if os.path.isdir(full):
+        notes = []
+        for base, dirs, files in os.walk(full):
+            for name in files:
+                if name.lower().endswith(".md"):
+                    notes.append(os.path.relpath(os.path.join(base, name), VAULT_DIR).replace(os.sep, "/"))
+                    count += 1
+        shutil.rmtree(full)
+        for note_rel in notes:
+            sync_record_tombstone("vault", note_rel)
+        parts = rel.split("/")
+        if len(parts) == 2 and parts[0] == "cases":
+            sync_record_tombstone("cases", parts[1])
+    return count
+
+
 def vault_ensure_seed():
     # First run only: if the folder already exists, the operator's
     # desk is theirs — seeding never writes into it again.
@@ -11777,28 +16652,30 @@ def rag_catalog_view():
     warning = None
     repos = []
     try:
-        data = github_json(
-            "https://api.github.com/search/repositories"
-            "?q=topic:navi-rag&per_page=30&sort=updated"
-        )
+        # Build 2 (#173): same discipline as the chips catalog —
+        # Runtime credential, five-minute cache, one search in
+        # flight, failures classified and named.
+        data = github_search_repositories("topic:navi-rag")
         failures = 0
+        last_err = None
         for item in data.get("items") or []:
             full = item.get("full_name")
             if not full:
                 continue
             try:
                 repos.append(fetch_repo_chip(full))
-            except Exception:
+            except Exception as fe:
                 failures += 1
+                last_err = fe
         if failures:
             warning = (
                 "GitHub could not be fully read for "
                 + str(failures)
-                + " of the packs (rate limit or outage) — the list "
-                "may be incomplete. Search again in a minute."
+                + " of the packs — the list may be incomplete. "
+                + github_error_text(last_err, authed=bool(github_read_token()))
             )
     except Exception as e:
-        error = "GitHub search failed: " + str(e)
+        error = "GitHub search failed. " + github_error_text(e, authed=bool(github_read_token()))
     installs = {row.get("full_name"): row for row in load_rag_installs()}
     # Issue #22, the pack half — the case from Alex's screenshot:
     # a pack forged in RAG Studio (its local/ record, folder named
@@ -13188,6 +18065,119 @@ def _llamafile_chat_impl(messages, endpoint, model):
     return content
 
 
+# --- Sync tombstones (0.2.0e Build 3, issues #176/#177) -------------
+# A deletion on one machine must never resurrect from another
+# machine's copy. Convergence (below) never deletes — it only
+# merges — so a delete needs its own travelling record: the
+# tombstone, {kind: {key: deletion epoch}}, kept in
+# config/sync-state.json beside the store it describes and carried
+# by every Quick Sync payload. The funnels that delete record
+# here: chat_delete and the write-through's removals (chats),
+# case_delete (cases), and the Vault's delete paths (notes).
+# Stored backups are snapshots and are NEVER reached into — a
+# tombstone governs convergence between live machines only; the
+# copy inside an old backup stays in that backup (the #163 law).
+# A tombstone yields to newer work: if the surviving copy carries
+# a stamp LATER than the deletion, the copy wins and the tombstone
+# is dropped — a thread genuinely continued after its deletion
+# elsewhere is not a resurrection.
+SYNC_STATE_PATH = os.path.join(ROOT, "config", "sync-state.json")
+_SYNC_TOMBSTONE_KEEP_SECONDS = 90 * 86400
+_sync_state_cache = {"mtime": None, "state": None}
+
+
+def _sync_state_load():
+    # Read-through cache on the file's mtime: the state is small,
+    # written rarely, and read by hot paths (every chat delete).
+    try:
+        mtime = os.path.getmtime(SYNC_STATE_PATH)
+    except Exception:
+        mtime = None
+    if _sync_state_cache["state"] is not None and _sync_state_cache["mtime"] == mtime:
+        return _sync_state_cache["state"]
+    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}},
+             "lastSyncAt": None, "lastSyncEpoch": 0, "lastResult": "",
+             "lastTrigger": "", "lastState": ""}
+    try:
+        with open(SYNC_STATE_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            state.update({k: raw[k] for k in state if k in raw})
+            tombs = raw.get("tombstones")
+            if isinstance(tombs, dict):
+                for kind in ("chats", "cases", "vault"):
+                    if isinstance(tombs.get(kind), dict):
+                        state["tombstones"][kind] = {
+                            str(k): float(v) for k, v in tombs[kind].items()
+                            if isinstance(v, (int, float))}
+    except Exception:
+        pass
+    _sync_state_cache["mtime"] = mtime
+    _sync_state_cache["state"] = state
+    return state
+
+
+def _sync_state_save(state):
+    try:
+        os.makedirs(os.path.dirname(SYNC_STATE_PATH), exist_ok=True)
+        tmp = SYNC_STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, SYNC_STATE_PATH)
+        try:
+            _sync_state_cache["mtime"] = os.path.getmtime(SYNC_STATE_PATH)
+        except Exception:
+            _sync_state_cache["mtime"] = None
+        _sync_state_cache["state"] = state
+    except Exception:
+        pass
+
+
+def _sync_tombstones_pruned(tombs, now=None):
+    now = now if now is not None else time.time()
+    out = {}
+    for kind in ("chats", "cases", "vault"):
+        rows = tombs.get(kind) if isinstance(tombs, dict) else None
+        out[kind] = {}
+        if isinstance(rows, dict):
+            for k, v in rows.items():
+                if isinstance(v, (int, float)) and now - float(v) <= _SYNC_TOMBSTONE_KEEP_SECONDS:
+                    out[kind][str(k)] = float(v)
+    return out
+
+
+def sync_record_tombstone(kind, key, at=None):
+    # The deletion funnels' one call. Best-effort by design: a
+    # tombstone that fails to record must never fail the delete
+    # the operator asked for — the delete itself already happened.
+    if kind not in ("chats", "cases", "vault") or not key:
+        return
+    try:
+        state = _sync_state_load()
+        tombs = _sync_tombstones_pruned(state.get("tombstones") or {})
+        when = float(at) if at else time.time()
+        prev = tombs[kind].get(str(key))
+        if prev is None or when > prev:
+            tombs[kind][str(key)] = when
+        state["tombstones"] = tombs
+        _sync_state_save(state)
+    except Exception:
+        pass
+
+
+def _sync_merge_tombstones(local, remote):
+    # Union by key, newest deletion wins — a tombstone one machine
+    # has not seen yet must survive every round until it ages out,
+    # or the delete it guards could resurrect from the one machine
+    # that missed it.
+    merged = _sync_tombstones_pruned(local or {})
+    for kind, rows in _sync_tombstones_pruned(remote or {}).items():
+        for k, v in rows.items():
+            if k not in merged[kind] or v > merged[kind][k]:
+                merged[kind][k] = v
+    return merged
+
+
 # --- Server-side chats (0.1.9e Build 12, issue #139) -----------------
 # Chats lived only in browser localStorage (navi.chats) until this
 # build: every install — and every browser origin — held its own
@@ -13290,6 +18280,9 @@ def chat_delete(cid):
         return False
     try:
         os.remove(_chat_path(cid))
+        # Build 3 (#177): the deletion is tombstoned, so a sync
+        # with another machine's older copy cannot resurrect it.
+        sync_record_tombstone("chats", cid)
         return True
     except Exception:
         return False
@@ -13335,6 +18328,10 @@ def chats_replace_all(records, uploads):
             if name.endswith(".json") and name != "uploads.json" and name[:-5] not in keep:
                 try:
                     os.remove(os.path.join(CHATS_DIR, name))
+                    # Build 3 (#177): a thread the writing window
+                    # dropped is a deletion like any other — it is
+                    # tombstoned so sync cannot bring it back.
+                    sync_record_tombstone("chats", name[:-5])
                 except Exception:
                     pass
     if uploads is not None:
@@ -13445,6 +18442,758 @@ def chats_converge(incoming, incoming_uploads=None):
             chats_save_uploads(list(merged.values()))
     summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"]
     return summary
+
+
+# --- Quick Sync (0.2.0e Build 3, issue #176) -------------------------
+# The Operator Badge backup round (#136) is proven and deliberate;
+# Quick Sync is its fluid sibling, ruled by Alex the night the
+# badge round passed in the field (2026-11-13): a Sync control in
+# Apex | Utilities that opens nothing and pops a card — one tap
+# runs the whole round (pull, converge, push) so work started on
+# the laptop is pickable-up on the phone over DHD, and vice versa.
+# Build 6 adds the second transport (phase 2): the Mesh carries
+# the round whenever a paired peer's road is lit — see the sync
+# handlers beside the Mesh server and _sync_mesh_round below;
+# the repo remains the fallback and the convergence semantics
+# are shared by both.
+#
+# The sync set is the living work: the chat store AND Case Files.
+# Settings, Soul/Memory, chips and RAG packs stay with the full
+# badge backup (chips and packs keep themselves synced through
+# their own channels anyway). The transport is the backup repo,
+# under a sync/ prefix the restore format never touches, riding
+# the OPERATOR identity — per #173's separation, never the
+# read-only Runtime PAT. The badge in its slot is the round's
+# identity root and trigger, as #136 ruled: a pointer, never an
+# authenticator; the Operator sign-in remains the only key, and a
+# signed-out round is refused and NAMED, never silently skipped.
+#
+# Convergence is the badge round's semantics (chats_converge)
+# plus the tombstones of the section above: deletions travel as
+# records and yield only to genuinely newer work. Diverged chats
+# park as dated siblings; a case file that diverged inside the
+# same second parks its remote copy as a ".from-sync-<date>"
+# sibling file — nothing is ever silently lost, and only a parked
+# pair makes the card say "Needs your eyes", naming it.
+#
+# Pull triggers: the button (the full round), app start, and DHD
+# session start (pull + converge each). No polling daemon; the
+# Mesh peer-contact trigger is phase 2, with the Mesh transport.
+
+SYNC_FORMAT = "navi-sync/1"
+SYNC_PREFIX = "sync/"
+_SYNC_LOCK = threading.Lock()
+_SYNC_DHD_SEEN = {}
+_SYNC_DHD_LOCK = threading.Lock()
+_SYNC_DHD_SESSION_GAP = 300
+_SYNC_TRIGGER_DEBOUNCE = 60
+
+
+def _sync_now_iso():
+    return _now_iso()
+
+
+def _sync_fail(status, step):
+    # Build 2's naming discipline (#173), applied to sync: every
+    # failure the card can show is a classified sentence — held
+    # offline, named auth, named rate with its wait.
+    if status == 0:
+        return {"kind": "offline", "state": "held",
+                "error": "Can't reach GitHub — " + step + " did not happen. The round is held; the next trigger retries it."}
+    if status in (401, 403, 429):
+        rate = github_rate_state() or {}
+        core = rate.get("core") if isinstance(rate, dict) else None
+        spent = status == 429 or (isinstance(core, dict)
+                                  and (core.get("remaining") or 0) == 0
+                                  and (core.get("reset") or 0) > time.time())
+        if spent:
+            wait = _gh_reset_phrase(core.get("reset")) if isinstance(core, dict) else ""
+            return {"kind": "rate", "state": "held",
+                    "error": "GitHub's rate limit is spent." + wait + " The round is held until the bucket refills — nothing was half-written."}
+        return {"kind": "auth", "state": "auth",
+                "error": "GitHub refused the Operator credential (HTTP " + str(status) + ") while sync tried to " + step + " — the sign-in may have expired or been revoked. Sign in again in Settings → GitHub & Backup."}
+    return {"kind": "error", "state": "held",
+            "error": "GitHub answered HTTP " + str(status) + " while sync tried to " + step + ". The round is held; this step wrote nothing."}
+
+
+def _sync_auth_error():
+    return {"ok": False, "state": "auth", "kind": "auth", "route": "Backup repo",
+            "error": "Not signed in to GitHub — Quick Sync moves your chats and cases through your backup repo, so it needs the Operator sign-in. The badge in its slot points at the account; the sign-in is the key."}
+
+
+def _sync_safe_rel(rel):
+    # A remote-supplied relative path is jailed by construction:
+    # no empty, dot, or parent parts, no backslashes, no NUL.
+    parts = str(rel or "").split("/")
+    if not parts:
+        return None
+    for p in parts:
+        if p in ("", ".", "..") or "\\" in p or "\x00" in p:
+            return None
+    return "/".join(parts)
+
+
+def _sync_case_files(slug):
+    # {rel: {"sha": hex, "mtime": epoch}} for one case folder, or
+    # None when the case is not on this machine.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None
+    out = {}
+    for base, dirs, names in os.walk(d):
+        dirs.sort()
+        for name in sorted(names):
+            full = os.path.join(base, name)
+            if not os.path.isfile(full):
+                continue
+            rel = os.path.relpath(full, d).replace(os.sep, "/")
+            try:
+                with open(full, "rb") as f:
+                    data = f.read()
+                out[rel] = {"sha": hashlib.sha256(data).hexdigest(),
+                            "mtime": os.path.getmtime(full)}
+            except Exception:
+                continue
+    return out
+
+
+def sync_collect():
+    # The local sync set as {path: bytes} plus the case index the
+    # convergence reads the other side by.
+    payload = chats_payload()
+    files = {}
+    files[SYNC_PREFIX + "chats.json"] = json.dumps(
+        {"chats": payload["chats"], "uploads": payload["uploads"],
+         "exportedAt": _sync_now_iso()}, indent=2).encode()
+    state = _sync_state_load()
+    files[SYNC_PREFIX + "tombstones.json"] = json.dumps(
+        _sync_tombstones_pruned(state.get("tombstones") or {}), indent=2).encode()
+    index = {}
+    cases_root = os.path.join(VAULT_DIR, "cases")
+    if os.path.isdir(cases_root):
+        for slug in sorted(os.listdir(cases_root)):
+            if not os.path.isdir(os.path.join(cases_root, slug)):
+                continue
+            entries = _sync_case_files(slug)
+            if entries is None:
+                continue
+            index[slug] = {"files": entries}
+            d = _case_dir(slug)
+            for rel in entries:
+                try:
+                    with open(os.path.join(d, *rel.split("/")), "rb") as f:
+                        files[SYNC_PREFIX + "cases/" + slug + "/" + rel] = f.read()
+                except Exception:
+                    continue
+    files[SYNC_PREFIX + "cases-index.json"] = json.dumps(index, indent=2).encode()
+    manifest = {"format": SYNC_FORMAT, "app": "Apex",
+                "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
+                "chats": len(payload["chats"]), "cases": len(index)}
+    files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
+    return files, manifest, index
+
+
+def _sync_repo(cfg):
+    # (auth, base) for the operator's backup repo, ensuring it
+    # exists — the same ensure github_run_backup performs. Returns
+    # (None, fail) on a classified failure.
+    auth = github_auth()
+    if not auth:
+        return None, None
+    s = github_settings(cfg)
+    login, token, repo = auth["login"], auth["token"], s["backup_repo"]
+    base = "https://api.github.com/repos/" + login + "/" + repo
+    st, _ = github_api("GET", base, token)
+    if st == 404:
+        st, created = github_api("POST", "https://api.github.com/user/repos", token, {
+            "name": repo, "private": s["backup_private"],
+            "description": "Apex backup — her ready-to-fly essentials (Soul, Memory, settings, chips, RAG packs, workflows, the Vault, Mesh pairing cards, chats).",
+            "auto_init": True})
+        if st not in (200, 201):
+            return None, _sync_fail(st, "create the backup repo")
+    elif st != 200:
+        return None, _sync_fail(st, "read the backup repo")
+    return (auth, base), None
+
+
+def sync_fetch(cfg):
+    # The remote sync set, through git trees/blobs like the backup
+    # import (so large evidence files still arrive whole). A repo
+    # with no sync/ tree yet is an EMPTY remote, not an error.
+    # Returns ({"files": {...}, "manifest": {...}|None}, None) or
+    # (None, fail).
+    got = _sync_repo(cfg)
+    if got[0] is None:
+        return None, got[1] or _sync_auth_error()
+    auth, base = got[0]
+    token = auth["token"]
+    st, repo_j = github_api("GET", base, token)
+    if st != 200 or not isinstance(repo_j, dict):
+        return None, _sync_fail(st, "read the backup repo")
+    branch = str(repo_j.get("default_branch") or "main")
+    st, tree = github_api("GET", base + "/git/trees/" + urllib.parse.quote(branch, safe="") + "?recursive=1", token)
+    if st != 200 or not isinstance(tree, dict):
+        return None, _sync_fail(st, "list the backup repo's files")
+    blobs = {}
+    for entry in tree.get("tree") or []:
+        if entry.get("type") == "blob" and str(entry.get("path") or "").startswith(SYNC_PREFIX):
+            blobs[str(entry["path"])] = entry.get("sha")
+    files = {}
+    for path, sha in blobs.items():
+        bst, blob = github_api("GET", base + "/git/blobs/" + str(sha), token)
+        if bst == 200 and isinstance(blob, dict) and blob.get("content"):
+            try:
+                files[path] = base64.b64decode(str(blob["content"]))
+            except Exception:
+                continue
+    manifest = None
+    if SYNC_PREFIX + "manifest.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "manifest.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict) and parsed.get("format") == SYNC_FORMAT:
+                manifest = parsed
+        except Exception:
+            manifest = None
+    return {"files": files, "manifest": manifest}, None
+
+
+def _sync_apply_tombstones(tombs, summary):
+    # Deletions land BEFORE anything converges in — and only over
+    # copies no newer than the deletion itself. Returns the set of
+    # tombstone keys that were SUPERSEDED by newer local work (the
+    # caller drops them from the stored set).
+    dropped = {"chats": set(), "cases": set(), "vault": set()}
+    local_chats = {str(c["id"]): c for c in chats_all()}
+    for cid, at in (tombs.get("chats") or {}).items():
+        rec = local_chats.get(str(cid))
+        if rec is None:
+            continue
+        if (rec.get("updatedAt") or 0) <= at:
+            if chat_delete(cid):
+                summary["removedChats"] += 1
+        else:
+            dropped["chats"].add(str(cid))
+    for slug, at in (tombs.get("cases") or {}).items():
+        entries = _sync_case_files(slug)
+        if entries is None:
+            continue
+        newest = max([e["mtime"] for e in entries.values()] or [0])
+        if newest <= at:
+            res, _err = case_delete(slug)
+            if res is not None:
+                summary["removedCases"] += 1
+        else:
+            dropped["cases"].add(str(slug))
+    for rel, at in (tombs.get("vault") or {}).items():
+        safe = _sync_safe_rel(rel)
+        if safe is None:
+            continue
+        # A stale local copy goes (case files included — and the
+        # converge below vetoes re-writing this same file from
+        # the remote copy it was deleted against); a file edited
+        # after the deletion is newer work and keeps its copy,
+        # dropping the tombstone.
+        full = vault_fs_path(safe)
+        try:
+            if os.path.isfile(full):
+                if os.path.getmtime(full) <= at:
+                    vault_delete_note(safe)
+                    summary["removedNotes"] += 1
+                else:
+                    dropped["vault"].add(safe)
+        except Exception:
+            continue
+    return dropped
+
+
+def _sync_apply_cases(fetched, tombs, summary):
+    files = fetched["files"]
+    remote_index = {}
+    if SYNC_PREFIX + "cases-index.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "cases-index.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                remote_index = parsed
+        except Exception:
+            remote_index = {}
+    day = time.strftime("%Y-%m-%d", time.localtime())
+    vault_tombs = tombs.get("vault") or {}
+    for slug in sorted(remote_index):
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", str(slug)):
+            continue
+        if str(slug) in (tombs.get("cases") or {}):
+            continue  # tombstoned in the phase above; nothing lands
+        remote_files = (remote_index.get(slug) or {}).get("files") or {}
+        local_before = _sync_case_files(slug)
+        d = _case_dir(slug)
+        if d is None:
+            continue
+        wrote = 0
+        for rel in sorted(remote_files):
+            safe = _sync_safe_rel(rel)
+            if safe is None:
+                continue
+            meta = remote_files.get(rel) or {}
+            rsha = str(meta.get("sha") or "")
+            rmtime = float(meta.get("mtime") or 0)
+            veto = vault_tombs.get("cases/" + slug + "/" + safe)
+            if veto is not None and veto >= rmtime:
+                continue  # deleted here after that copy was made
+            data = files.get(SYNC_PREFIX + "cases/" + slug + "/" + safe)
+            if data is None:
+                continue
+            full = os.path.join(d, *safe.split("/"))
+            local_meta = (local_before or {}).get(safe)
+            if local_meta and local_meta["sha"] == rsha:
+                continue
+            if local_meta and local_meta["mtime"] > rmtime + 1:
+                continue  # this machine's copy is the newer work
+            if local_meta and rmtime <= local_meta["mtime"] + 1:
+                # Same-second divergence: park the remote copy as
+                # a dated sibling — both survive, the case is
+                # named to the operator's eyes.
+                sib = full + ".from-sync-" + day
+                try:
+                    with open(sib, "rb") as f:
+                        if f.read() == data:
+                            continue
+                except Exception:
+                    pass
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(sib, "wb") as f:
+                    f.write(data)
+                if slug not in summary["caseEyes"]:
+                    summary["caseEyes"].append(slug)
+                continue
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as f:
+                f.write(data)
+            try:
+                os.utime(full, (rmtime, rmtime))
+            except Exception:
+                pass
+            wrote += 1
+        if wrote:
+            if local_before is None:
+                summary["casesAdded"] += 1
+            else:
+                summary["casesUpdated"] += 1
+            summary["caseFilesPulled"] += wrote
+
+
+def sync_apply(cfg, fetched):
+    # Converge a fetched remote sync set into this machine:
+    # tombstones, then chats, then case files. Returns the round
+    # summary the card speaks.
+    summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
+               "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
+               "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
+               "eyes": [], "caseEyes": []}
+    files = fetched["files"]
+    remote_tombs = {}
+    if SYNC_PREFIX + "tombstones.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "tombstones.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                remote_tombs = parsed
+        except Exception:
+            remote_tombs = {}
+    state = _sync_state_load()
+    merged = _sync_merge_tombstones(state.get("tombstones") or {}, remote_tombs)
+    dropped = _sync_apply_tombstones(merged, summary)
+    remote_chats, remote_uploads = [], None
+    if SYNC_PREFIX + "chats.json" in files:
+        try:
+            parsed = json.loads(files[SYNC_PREFIX + "chats.json"].decode("utf-8", "replace"))
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("chats"), list):
+                    remote_chats = parsed["chats"]
+                if isinstance(parsed.get("uploads"), list):
+                    remote_uploads = parsed["uploads"]
+        except Exception:
+            remote_chats, remote_uploads = [], None
+    # The tombstone's other half: a chat ABSENT here but present
+    # in the remote set is not an "add" when a tombstone covers
+    # it — it is the resurrection the tombstone exists to refuse.
+    # (The phase above only deletes copies that exist locally;
+    # without this filter, convergence would faithfully re-add
+    # every deleted thread from the other machine's store.) A
+    # remote copy stamped NEWER than the deletion is genuine
+    # later work: it converges in, and the tombstone drops.
+    chat_tombs = merged.get("chats") or {}
+    if chat_tombs:
+        kept = []
+        for raw in remote_chats:
+            rec = _chat_normalize(raw)
+            if rec is None:
+                continue
+            at = chat_tombs.get(str(rec["id"]))
+            if at is not None and (rec.get("updatedAt") or 0) <= at:
+                continue
+            if at is not None:
+                dropped["chats"].add(str(rec["id"]))
+            kept.append(raw)
+        remote_chats = kept
+    for kind in ("chats", "cases", "vault"):
+        for key in dropped[kind]:
+            merged[kind].pop(key, None)
+    state["tombstones"] = merged
+    _sync_state_save(state)
+    before_ids = {str(c["id"]) for c in chats_all()}
+    conv = chats_converge(remote_chats, remote_uploads)
+    summary["chatsAdded"] = conv["added"]
+    summary["chatsReplaced"] = conv["replaced"]
+    summary["chatsSiblings"] = conv["siblings"]
+    if conv["siblings"]:
+        for c in chats_all():
+            if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
+                summary["eyes"].append(str(c.get("title") or c["id"]))
+    _sync_apply_cases(fetched, merged, summary)
+    summary["changed"] = (summary["removedChats"] + summary["removedCases"]
+                          + summary["removedNotes"] + summary["chatsAdded"]
+                          + summary["chatsReplaced"] + summary["chatsSiblings"]
+                          + summary["casesAdded"] + summary["casesUpdated"])
+    return summary
+
+
+def _sync_push(cfg, base, token, files, fetched_files):
+    # Publish the converged local set. Files the remote already
+    # holds byte-identical are not rewritten. Returns the count
+    # of files actually written, or (None, fail).
+    written = 0
+    for path in sorted(files):
+        if fetched_files.get(path) == files[path]:
+            continue
+        url = base + "/contents/" + urllib.parse.quote(path, safe="/")
+        sha = None
+        gst, existing = github_api("GET", url, token)
+        if gst == 200 and isinstance(existing, dict):
+            sha = existing.get("sha")
+        elif gst not in (200, 404):
+            return None, _sync_fail(gst, "check " + path + " in the backup repo")
+        body = {"message": "Apex Quick Sync " + _sync_now_iso(),
+                "content": base64.b64encode(files[path]).decode()}
+        if sha:
+            body["sha"] = sha
+        pst, _resp = github_api("PUT", url, token, body)
+        if pst not in (200, 201):
+            return None, _sync_fail(pst, "write " + path + " to the backup repo")
+        written += 1
+    return written, None
+
+
+def _sync_record_result(state, trigger, result):
+    state["lastSyncAt"] = _sync_now_iso()
+    state["lastSyncEpoch"] = time.time()
+    state["lastTrigger"] = trigger
+    state["lastState"] = result.get("state") or ""
+    state["lastResult"] = result.get("message") or result.get("error") or ""
+    _sync_state_save(state)
+
+
+def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
+    eyes = list(summary["eyes"])
+    for slug in summary["caseEyes"]:
+        meta = _case_manifest(slug)
+        eyes.append("the case “" + str((meta or {}).get("title") or slug) + "”")
+    pulled_chats = summary["chatsAdded"] + summary["chatsReplaced"]
+    result = {
+        "ok": True,
+        "state": "eyes" if eyes else "synced",
+        "route": "Backup repo",
+        "pulledChats": pulled_chats,
+        "pushedFiles": pushed_files,
+        "caseFilesPulled": summary["caseFilesPulled"],
+        "removed": summary["removedChats"] + summary["removedCases"] + summary["removedNotes"],
+        "needsEyes": eyes,
+        "openIncluded": bool(open_chat_id) and str(open_chat_id) in collected_chats,
+    }
+    if eyes:
+        result["message"] = ("Synced — but " + str(len(eyes)) + " item"
+                             + ("s" if len(eyes) != 1 else "")
+                             + " parked both copies and need your eyes: "
+                             + "; ".join(eyes[:3]) + ".")
+    elif pulled_chats or summary["chatsSiblings"] or summary["changed"]:
+        result["message"] = "Synced — the machines converged."
+    else:
+        result["message"] = "Synced — already in step."
+    return result
+
+
+# -- Quick Sync's Mesh transport, borrower side (Build 6, #176) ------
+# A round tries the Mesh first: for each paired peer this machine
+# borrows from, in card order, a probe asks whether the road is
+# lit; the first answering peer gets the exchange — one whole
+# signed request carrying this machine's set out and the peer's
+# set back, converged on arrival. Any failure at any step falls
+# through to the backup-repo round, unchanged. The set is capped:
+# past the cap the repo (built for bulk) carries the round.
+_SYNC_MESH_MAX_BYTES = 96 * 1024 * 1024
+
+
+def _sync_mesh_peers():
+    ms = mesh_settings(load_config())
+    if not ms["enabled"]:
+        return []
+    return [p for p in ms["borrow"]["peers"] if p["canBorrow"]]
+
+
+def _sync_mesh_ask(peer, path, body):
+    # One signed sync request; the peer's parsed payload, or None
+    # for every failure shape (unlit, refused, misshapen) — the
+    # caller treats them all the same: try the next road.
+    body = dict(body or {})
+    body["requestId"] = uuid.uuid4().hex
+    auth = github_auth()
+    body["operatorLogin"] = auth["login"] if auth else ""
+    # The Mesh wire signs and sends exact bytes (the borrow path
+    # passes bytes); the payload is serialized ONCE, here, so the
+    # signed bytes are the sent bytes.
+    wire = json.dumps(body).encode()
+    try:
+        status, raw = _mesh_request(peer, "POST", path, wire,
+                                     body["requestId"], 120)
+    except Exception:
+        return None
+    if status != 200:
+        return None
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return None
+    return payload
+
+
+def _sync_mesh_round(cfg, open_chat_id):
+    # A finished round result (route named for the peer) when a
+    # Mesh exchange completes, else None. Runs under sync_round's
+    # lock; the lender serializes its own side the same way.
+    peers = _sync_mesh_peers()
+    if not peers:
+        return None
+    collected, manifest, _index = sync_collect()
+    if sum(len(b) for b in collected.values()) > _SYNC_MESH_MAX_BYTES:
+        return None
+    files = {}
+    for path, blob in collected.items():
+        files[path] = base64.b64encode(blob).decode("ascii")
+    local_ids = set(str(c["id"]) for c in chats_payload()["chats"])
+    for peer in peers:
+        if mesh_probe_peer(peer) is None:
+            continue
+        payload = _sync_mesh_ask(peer, "/mesh/sync/exchange",
+                                 {"files": files, "manifest": manifest})
+        if payload is None:
+            continue
+        theirs = _mesh_sync_decode(payload)
+        if theirs is None:
+            continue
+        summary = sync_apply(cfg, {
+            "files": theirs,
+            "manifest": payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {},
+        })
+        result = _sync_finish_summary(summary, len(files),
+                                      open_chat_id, local_ids)
+        result["route"] = "Mesh — " + peer["name"]
+        result["pushedChats"] = 0
+        return result
+    return None
+
+
+def _sync_mesh_pull(cfg):
+    # A trigger pull over the Mesh: (route, summary) or None —
+    # apply a peer's set, push nothing, mirroring the repo pull.
+    for peer in _sync_mesh_peers():
+        if mesh_probe_peer(peer) is None:
+            continue
+        payload = _sync_mesh_ask(peer, "/mesh/sync/pull", {})
+        if payload is None:
+            continue
+        theirs = _mesh_sync_decode(payload)
+        if theirs is None:
+            continue
+        summary = sync_apply(cfg, {
+            "files": theirs,
+            "manifest": payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {},
+        })
+        return ("Mesh — " + peer["name"]), summary
+    return None
+
+
+def sync_round(cfg, trigger="button", open_chat_id=""):
+    # The full round behind the Sync control: pull, converge,
+    # push. One round at a time, across every trigger — a second
+    # caller is held, never raced.
+    if not _SYNC_LOCK.acquire(False):
+        return {"ok": False, "state": "held", "kind": "busy", "route": "Backup repo",
+                "error": "A sync round is already running — this one is held, and the running round's verdict is the one that counts."}
+    try:
+        # Build 6 (#176 phase 2): a lit Mesh road carries the
+        # round before the repo is asked — the exchange needs no
+        # GitHub sign-in at all. Anything less than a completed
+        # exchange falls through to the repo round below, which
+        # keeps its own sign-in gate and wording.
+        mesh_result = None
+        try:
+            mesh_result = _sync_mesh_round(cfg, open_chat_id)
+        except Exception:
+            mesh_result = None
+        if mesh_result is not None:
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, mesh_result)
+            state["lastRoute"] = mesh_result["route"]
+            _sync_state_save(state)
+            return mesh_result
+        if not github_auth():
+            return _sync_auth_error()
+        fetched, fail = sync_fetch(cfg)
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            return out
+        summary = sync_apply(cfg, fetched)
+        got = _sync_repo(cfg)
+        if got[0] is None:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(got[1] or _sync_auth_error())
+            return out
+        auth, base = got[0]
+        local_files, _manifest, _index = sync_collect()
+        # What the push changes for the other side, counted in
+        # chats: local threads the remote does not hold, or holds
+        # older.
+        remote_chats = {}
+        if SYNC_PREFIX + "chats.json" in fetched["files"]:
+            try:
+                parsed = json.loads(fetched["files"][SYNC_PREFIX + "chats.json"].decode("utf-8", "replace"))
+                if isinstance(parsed, dict):
+                    for c in parsed.get("chats") or []:
+                        rec = _chat_normalize(c)
+                        if rec:
+                            remote_chats[str(rec["id"])] = rec
+            except Exception:
+                remote_chats = {}
+        pushed_chats = 0
+        local_ids = set()
+        for c in chats_payload()["chats"]:
+            cid = str(c["id"])
+            local_ids.add(cid)
+            rc = remote_chats.get(cid)
+            if rc is None or (c.get("updatedAt") or 0) > (rc.get("updatedAt") or 0) or _chat_msgs_key(c) != _chat_msgs_key(rc):
+                pushed_chats += 1
+        written, fail = _sync_push(cfg, base, auth["token"], local_files, fetched["files"])
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            return out
+        result = _sync_finish_summary(summary, written, open_chat_id, local_ids)
+        result["pushedChats"] = pushed_chats
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        state["lastRoute"] = "Backup repo"
+        _sync_state_save(state)
+        return result
+    finally:
+        _SYNC_LOCK.release()
+
+
+def sync_pull_round(cfg, trigger):
+    # The trigger round: pull + converge, no push — the door
+    # opening refreshes the room; publishing stays the button's
+    # (and the next full round's) act. Quiet by design: verdicts
+    # land in the sync state, never in a popup.
+    if not _SYNC_LOCK.acquire(False):
+        return None
+    try:
+        # Build 6 (#176 phase 2): a lit Mesh road answers a
+        # trigger pull before the repo is asked — same quiet
+        # shape: apply what arrived, push nothing.
+        mesh_hit = None
+        try:
+            mesh_hit = _sync_mesh_pull(cfg)
+        except Exception:
+            mesh_hit = None
+        if mesh_hit is not None:
+            result = _sync_finish_summary(mesh_hit[1], 0, "", set())
+            result["route"] = mesh_hit[0]
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, result)
+            state["lastRoute"] = mesh_hit[0]
+            _sync_state_save(state)
+            return result
+        if not github_auth():
+            return None
+        fetched, fail = sync_fetch(cfg)
+        if fail:
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, {"state": fail.get("state") or "held",
+                                                 "message": fail.get("error") or ""})
+            return None
+        summary = sync_apply(cfg, fetched)
+        result = _sync_finish_summary(summary, 0, "", set())
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        return result
+    except Exception:
+        return None
+    finally:
+        _SYNC_LOCK.release()
+
+
+def sync_state_payload():
+    auth = github_auth()
+    state = _sync_state_load()
+    return {
+        "signedIn": bool(auth),
+        "login": (auth or {}).get("login") or "",
+        "route": state.get("lastRoute") or "Backup repo",
+        "lastSyncAt": state.get("lastSyncAt"),
+        "lastSyncEpoch": state.get("lastSyncEpoch") or 0,
+        "lastResult": state.get("lastResult") or "",
+        "lastState": state.get("lastState") or "",
+        "lastTrigger": state.get("lastTrigger") or "",
+    }
+
+
+def _sync_trigger_pull(trigger):
+    try:
+        cfg = load_config()
+        # Build 6: the pull round itself gates the repo path on
+        # sign-in; the Mesh path needs none, so triggers no longer
+        # pre-gate on the sign-in here.
+        sync_pull_round(cfg, trigger)
+    except Exception:
+        pass
+
+
+def sync_startup_pull():
+    # App start (the __main__ thread beside the backup loop):
+    # a short grace for the bridge to finish coming up, then the
+    # pull. Inert when signed out.
+    time.sleep(10)
+    _sync_trigger_pull("app-start")
+
+
+def sync_note_dhd_session(device_key):
+    # DHD session start: the proxy calls this for every accepted
+    # request; a device whose last accepted request is older than
+    # the session gap (or which has never been seen) counts as a
+    # session starting, and the room is refreshed — once, with a
+    # global debounce so a door in heavy use pulls at most every
+    # debounce window.
+    now = time.time()
+    key = str(device_key or "device")
+    with _SYNC_DHD_LOCK:
+        last = _SYNC_DHD_SEEN.get(key, 0)
+        any_recent = any(now - v < _SYNC_TRIGGER_DEBOUNCE for v in _SYNC_DHD_SEEN.values())
+        if now - last < _SYNC_DHD_SESSION_GAP or any_recent:
+            if now - last >= _SYNC_DHD_SESSION_GAP:
+                _SYNC_DHD_SEEN[key] = now
+            return
+        _SYNC_DHD_SEEN[key] = now
+    threading.Thread(target=_sync_trigger_pull, args=("dhd-session",), daemon=True).start()
 
 
 # --- Boot mode (0.1.9e Build 12, issue #142) -------------------------
@@ -14178,6 +19927,12 @@ def case_delete(slug):
         shutil.rmtree(d)
     except Exception as e:
         return None, "The case folder could not be removed: " + str(e)
+    # Build 3 (#177): the case's deletion is tombstoned (its tied
+    # chat's was recorded by chat_delete above), so convergence
+    # with another machine cannot resurrect the case — while the
+    # copies inside backups already taken stay untouched, as the
+    # paragraph above rules.
+    sync_record_tombstone("cases", slug)
     cfg = load_config()
     block = cfg.get("casefiles") if isinstance(cfg.get("casefiles"), dict) else {}
     was_open = block.get("open") == slug
@@ -14298,18 +20053,39 @@ class Handler(BaseHTTPRequestHandler):
     def _public_gate_blocks(self):
         # The gate exists only while the bridge is actually bound
         # publicly (public mode was ON at launch). Loopback callers
-        # are never gated. Everyone else needs the acceptance
-        # cookie whose value is a hash of the current access code.
+        # are never gated. Everyone else is judged by the device
+        # registry (Build 2, #173): a trusted device's own token
+        # opens; the shared-code cookie opens only while no device
+        # has ever been approved; everything else is blocked.
         if ACTIVE_BIND_HOST != "0.0.0.0":
             return False
         if self._client_is_loopback():
             return False
-        code = public_settings(load_config())["access_code"]
-        if not code:
+        cfg = load_config()
+        if not public_settings(cfg)["access_code"]:
             return True
-        want = PUBLIC_COOKIE + "=" + public_token(code)
-        parts = [p.strip() for p in (self.headers.get("Cookie") or "").split(";")]
-        return want not in parts
+        ok, dev, _legacy = door_gate_acceptance(cfg, door_cookie_value(self.headers.get("Cookie")))
+        if ok and dev is not None:
+            door_touch_device(cfg, dev)
+        return not ok
+
+    def _gate_pending_poll(self):
+        # The waiting device's poll on the bridge's own door (the
+        # DHD proxy answers its own; same registry, same words).
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        pid = (q.get("id") or [""])[0]
+        status, dev = door_pending_poll(load_config(), pid)
+        body = json.dumps({"status": status}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        if status == "approved" and dev is not None and dev.get("token"):
+            self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
 
     def do_DELETE(self):
         # The only DELETE on the dashboard surface: removing a
@@ -14338,7 +20114,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         _path = self.path.split("?")[0]
         if _path == "/__gate":
-            self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+            self._send(200, gate_page_html(approval_mode=bool(door_approved_devices(load_config()))).encode(), "text/html; charset=utf-8")
+            return
+        if _path == "/__gate/pending":
+            # A waiting device's poll — exempt from the gate block
+            # below by design: the pending id is its credential.
+            self._gate_pending_poll()
             return
         # Build .86: the node-facing Mesh endpoints (/mesh/status,
         # /mesh/borrow) are NOT served on this dashboard surface at
@@ -14350,7 +20131,7 @@ class Handler(BaseHTTPRequestHandler):
             if _path.startswith("/api/"):
                 self._send(403, {"error": "access code required"})
             else:
-                self._send(200, gate_page_html().encode(), "text/html; charset=utf-8")
+                self._send(200, gate_page_html(approval_mode=bool(door_approved_devices(load_config()))).encode(), "text/html; charset=utf-8")
             return
         # Build 9 (#90): GET /mesh/card and /api/mesh/card — the
         # card as copyable text — are REMOVED. Pairing is the PNG
@@ -14376,6 +20157,14 @@ class Handler(BaseHTTPRequestHandler):
             _ok, _err = mesh_ensure_cert()
             if not _ok:
                 self._send(200, {"ok": False, "error": _err})
+                return
+            # Build 4 (#143): the generator refuses a card it
+            # cannot honestly address — no physical-LAN address
+            # and no declared public endpoint — in words, here,
+            # instead of minting a picture that strands the pair.
+            _refusal = mesh_card_refusal(_cfg)
+            if _refusal:
+                self._send(200, {"ok": False, "error": _refusal})
                 return
             self._send(200, build_mesh_card_png(load_config()), "image/png")
             return
@@ -14654,6 +20443,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"ok": False, "error": "Not in the local intel store."})
             else:
                 self._send(200, {"ok": True, "item": _item})
+        elif self.path == "/api/wire":
+            self._send(200, WIRE.state())
+        elif self.path.split("?")[0] == "/api/wire/article":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send(200, WIRE.read_article((qs.get("url") or [""])[0]))
+        elif self.path == "/api/ctf":
+            self._send(200, CTF.state())
+        elif self.path == "/api/bounties":
+            self._send(200, BOUNTIES.state())
         elif self.path == "/api/intel/digest":
             try:
                 self._send(200, INTEL.build_digest())
@@ -14778,6 +20576,11 @@ class Handler(BaseHTTPRequestHandler):
             # backup/import records. (Settings → GitHub & Backup reads
             # it; the GitHub section itself is the project pulse.)
             self._send(200, github_status_payload(load_config()))
+        elif self.path == "/api/sync":
+            # Build 3 (#176): the Sync card's resting state — when
+            # the last round ran and what it said, so reopening the
+            # card (or the app) shows the truth without a round.
+            self._send(200, sync_state_payload())
         elif self.path == "/api/github/issues":
             # The Issues tab: live open issues for the project repo.
             self._send(200, github_issues_payload())
@@ -14809,32 +20612,35 @@ class Handler(BaseHTTPRequestHandler):
         cfg = load_config()
         if self.path.split("?")[0] == "/__gate":
             # The gate page's form: a remote visitor proving the
-            # code. Success sets the long-lived acceptance cookie
-            # (a hash of the code — regenerate the code and every
-            # cookie stops matching) and sends them to the door
-            # they asked for. Failure serves the gate page again
-            # with the reason, and nothing else.
+            # code. Since Build 2 (#173) the code knocks rather
+            # than opens: the registry decides — a session with the
+            # device's OWN 30-day token (the bootstrap first device,
+            # or a trusted device renewing), or a PENDING device
+            # and its waiting room, approved from a trusted session
+            # in Settings -> System -> Door. Failure serves the
+            # gate page again with the reason, and nothing else.
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
             form = urllib.parse.parse_qs(raw)
             given = (form.get("code") or [""])[0].strip().upper()
+            dev_name = (form.get("device_name") or [""])[0].strip()
             want = public_settings(cfg)["access_code"]
             if want and given == want.upper():
-                self.send_response(303)
-                self.send_header("Location", "/")
-                self.send_header(
-                    "Set-Cookie",
-                    PUBLIC_COOKIE + "=" + public_token(want)
-                    + "; Max-Age=" + str(PUBLIC_COOKIE_MAX_AGE)
-                    + "; Path=/; HttpOnly; SameSite=Lax",
-                )
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
+                if action == "session":
+                    self.send_response(303)
+                    self.send_header("Location", "/")
+                    self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self._send(200, gate_pending_html(dev["id"], dev["name"], door="node").encode(), "text/html; charset=utf-8")
             else:
                 self._send(
                     200,
                     gate_page_html(
-                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again."
+                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again.",
+                        approval_mode=bool(door_approved_devices(cfg)),
                     ).encode(),
                     "text/html; charset=utf-8",
                 )
@@ -14926,6 +20732,20 @@ class Handler(BaseHTTPRequestHandler):
                 block["enabled"] = bool(data.get("enabled"))
             if "nodeName" in data:
                 block["nodeName"] = str(data.get("nodeName") or "")[:80]
+            # Build 4 (#154): the operator-declared public
+            # endpoint. Typed, never harvested; canonicalized to
+            # host:port here, and a value that is not a host:port
+            # refuses the whole save in words rather than landing
+            # as junk on the card.
+            if "publicEndpoint" in data:
+                _ep_err = _mesh_endpoint_error(data.get("publicEndpoint"))
+                if _ep_err:
+                    self._send(200, {"ok": False, "error": _ep_err})
+                    return
+                block["publicEndpoint"] = _mesh_endpoint_clean(data.get("publicEndpoint"))
+            if isinstance(data.get("listenPorts"), list):
+                block["listenPorts"] = _mesh_listen_ports(
+                    data["listenPorts"], block.get("port", 8765))
             if "borrowEnabled" in data:
                 borrow["enabled"] = bool(data.get("borrowEnabled"))
             if "graceMs" in data:
@@ -14996,6 +20816,7 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
             if block.get("enabled") is True:
                 mesh_start_listener()
+                mesh_tunnel_sync()
                 if not was_enabled:
                     # Build 7 (#87): enabling Mesh checks every
                     # paired peer at once, not at the health
@@ -15011,6 +20832,15 @@ class Handler(BaseHTTPRequestHandler):
         # to the retired path falls through to this handler's
         # not-found answer. Peers paired earlier are stored
         # records in config and are untouched by the removal.
+        if self.path == "/api/mesh/health":
+            # 0.2.0e Build 1 (#143): the operator-triggered Mesh
+            # health check \u2014 the two decisive reads of the
+            # field diagnosis, run by the product itself. It
+            # changes no pairing, pin, or routing state; it only
+            # reports. The probes inside it are the short-timeout
+            # kind, so the answer lands in seconds.
+            self._send(200, {"ok": True, "health": mesh_health_check(cfg)})
+            return
         if self.path == "/api/mesh/peers/png":
             # Add a peer from a PNG picture card (Build 7, spec
             # section 13). The dashboard sends the picture's bytes
@@ -15043,6 +20873,11 @@ class Handler(BaseHTTPRequestHandler):
             if aerr:
                 self._send(200, {"ok": False, "error": aerr})
                 return
+            # Build 6 (#143 ask 3): the pairing the first-run
+            # certificate notice accompanied has landed — the
+            # notice has been seen with a pin, and is not shown
+            # again on this machine.
+            mesh_mark_cert_notice(cfg)
             mesh_probe_peers_soon()
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
             return
@@ -15059,6 +20894,22 @@ class Handler(BaseHTTPRequestHandler):
             cfg["mesh"] = block
             save_config(cfg)
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/repair":
+            # Build 6 (#143): the health check's heal, in place —
+            # strip the dead-end addresses from one peer's stored
+            # record. The pairing, its pin, its tunnel route and
+            # its history are kept; the condition is strict (every
+            # address a dead end) and the refusal is a sentence.
+            data = self._body()
+            ok_r, sentence_r = mesh_repair_peer_record(
+                cfg, str(data.get("nodeId") or ""))
+            if ok_r:
+                mesh_probe_peers_soon()
+            self._send(200, {"ok": ok_r,
+                             "message" if ok_r else "error": sentence_r,
+                             "mesh": mesh_status_payload(load_config()),
+                             "health": mesh_health_check(load_config())})
             return
         if self.path == "/api/mesh/peers/can-borrow":
             # The borrow-side toggle for one paired peer (Build 7,
@@ -15083,6 +20934,163 @@ class Handler(BaseHTTPRequestHandler):
             cfg["mesh"] = block
             save_config(cfg)
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/relay":
+            # 0.2.0e Build 7 (#154): one relay consent tick. The
+            # three kinds name whose consent the tick is, and the
+            # tick is stored on the record of the peer it names
+            # first (see _mesh_peer): carryTo = "this peer may
+            # carry MY envelopes to <other>", acceptFrom = "this
+            # peer may carry envelopes TO ME from <other>",
+            # willCarryTo = "I will carry THIS peer's envelopes
+            # to <other>". All three are consent, so the doctrine
+            # is the lending doctrine: granting is an in-person
+            # act on this machine's own dashboard — a request
+            # through the DHD door may UNtick (revoking works
+            # from anywhere) but never tick on.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            other = str(data.get("other") or "")
+            kind = str(data.get("kind") or "")
+            field = {"carryTo": "relayCarryTo",
+                     "acceptFrom": "relayAcceptFrom",
+                     "willCarryTo": "relayWillCarryTo"}.get(kind)
+            if field is None or not target or not other or other == target:
+                self._send(200, {"ok": False, "error": "That relay consent change does not name a carrier, another machine, and which consent it is."})
+                return
+            want = bool(data.get("on"))
+            if want and (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(200, {"ok": False, "error": "Relay consent is given at this machine, in person — this view is through the DHD door, so the tick cannot be set from here. Unticking works from anywhere."})
+                return
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            known = {str(p.get("nodeId") or "") for p in peers if isinstance(p, dict)}
+            if target not in known or other not in known:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    cur = [str(v) for v in (p.get(field) or []) if str(v)]
+                    if want and other not in cur:
+                        cur.append(other)
+                    if not want:
+                        cur = [v for v in cur if v != other]
+                    p[field] = cur
+                new_peers.append(p)
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/tunnel":
+            # Build 4 (#178): one peer's managed backup route —
+            # ordinary borrower-side config (it points THIS
+            # machine's ssh at the peer's SSH door; it changes
+            # no consent on the peer). The supervisor reconciles
+            # as soon as the save lands.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            found = None
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    tun = dict(p.get("tunnel") or {})
+                    if "enabled" in data:
+                        tun["enabled"] = bool(data.get("enabled"))
+                    if "sshHost" in data:
+                        tun["sshHost"] = str(data.get("sshHost") or "").strip()[:255]
+                    if "sshUser" in data:
+                        tun["sshUser"] = str(data.get("sshUser") or "").strip()[:64]
+                    if "sshPort" in data:
+                        tun["sshPort"] = max(1, min(65535, _mesh_int(data.get("sshPort"), 227)))
+                    p["tunnel"] = tun
+                    found = tun
+                new_peers.append(p)
+            if found is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if found.get("enabled") and (not found.get("sshHost") or not found.get("sshUser")):
+                self._send(200, {"ok": False, "error": "The backup route needs that machine's SSH host and user before it can be turned on — fill both in and save again."})
+                return
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            mesh_tunnel_sync()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/federation":
+            # 0.2.0e Build 8 (#154): the Federation page's acts —
+            # fedinets, gateway cards, trust toggles and ticks,
+            # founding, caps, the Badge enrollment, the audit
+            # log's state. The tiering lives in federation_act:
+            # read + revoke ride any door; manage acts through
+            # DHD need the Badge step-up; crown acts need the
+            # full ceremony at every door. DHD manages only THIS
+            # node's federation posture — the acts all read and
+            # write this node's own config, so no door can flip
+            # another operator's switches.
+            data = self._body()
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            self._send(200, federation_act(data, via_dhd))
+            return
+        if self.path == "/api/mesh/peers/tunnel-authorize":
+            # Build 4 (#178) made this act in-person-only, the
+            # lending doctrine of its day. The crown-acts ruling
+            # (Alex, 2026-11-13 20:56 EST) amended the door while
+            # keeping its property — a stolen session must not
+            # quietly grant trust: authorizing a tunnel key is a
+            # CROWN ACT. Through DHD it runs under the full
+            # ceremony (the trusted-device session the door
+            # itself provides + the Operator Badge step-up + the
+            # named-action confirm + an audit entry); at the desk
+            # it needs the same named confirm + audit, the Badge
+            # being the door's addition. REVOKING stays open
+            # through every door — revocation is never gated —
+            # and audits too. The act itself is unchanged:
+            # authorizing writes a forwarding-only line for the
+            # peer's tunnel key into this operator's
+            # ~/.ssh/authorized_keys; revoking removes it.
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            action = "revoke" if str(data.get("action") or "") == "revoke" else "authorize"
+            ms_now = mesh_settings(cfg)
+            peer = next((p for p in ms_now["borrow"]["peers"] if p["nodeId"] == target), None)
+            if peer is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if not (peer.get("tunnelPublicKey") or ""):
+                self._send(200, {"ok": False, "error": "That machine's card carries no tunnel key — it was minted before the managed backup route, or by an older build. Re-share its card from its Mesh page and pair it again, and the key arrives with the card."})
+                return
+            if action == "authorize":
+                ok_c, err_c = _fed_crown_ok(cfg, via_dhd, data,
+                                            _fed_confirm_tunnel(peer["name"]))
+                if not ok_c:
+                    self._send(200, {"ok": False, "error": err_c})
+                    return
+            ok, sentence = mesh_tunnel_authorize(peer["tunnelPublicKey"], target, action, ms_now["port"])
+            if ok:
+                federation_audit(
+                    "tunnel-" + action, "",
+                    ("Authorized " if action == "authorize" else "Revoked ")
+                    + peer["name"] + "'s tunnel key"
+                    + (" under the crown ceremony." if action == "authorize"
+                       else " — revocation, open through every door."),
+                    "dhd" if via_dhd else "desk")
+            self._send(200, {"ok": ok, "message": sentence, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/settings/updater-channel":
             # The Updater's channel switch (build .83): persist
@@ -15228,9 +21236,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
                 schedule_bridge_restart()
         elif self.path == "/api/settings/public/regenerate":
-            # A fresh code. Because the acceptance cookie is a
-            # hash of the code, this invalidates every client the
-            # old code let in — they will be asked again.
+            # A fresh code. The shared-code cookie stops matching
+            # at once, and no new knock can use the old code —
+            # but a device already approved keeps its OWN token
+            # (Build 2): trusted devices are revoked one by one in
+            # the Door list, not by changing the code under them.
             block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
             block = dict(block)
             block["access_code"] = generate_access_code()
@@ -15239,6 +21249,33 @@ class Handler(BaseHTTPRequestHandler):
             cfg["public_server"] = block
             save_config(cfg)
             self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/approve":
+            # Trusted-device approval (Build 2, #173): a pending
+            # device gets its own token and 30 days. Served to any
+            # session that is itself inside the door (loopback or
+            # gate-accepted — the gate above has already judged);
+            # a waiting device's poll picks the approval up.
+            data = self._body()
+            dev = door_approve(load_config(), str(data.get("id") or ""))
+            if dev is None:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore — its knock may have expired.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/deny":
+            data = self._body()
+            if door_deny(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/revoke":
+            # Per-device revoke: the record goes, and with it the
+            # token — that device is at the gate on its next knock,
+            # and no one else's session notices.
+            data = self._body()
+            if door_revoke(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not in the list.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
         elif self.path == "/api/shell":
             data = self._body()
             try:
@@ -15848,7 +21885,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     _ireply = INTEL.lookup(_iquery)
                 except Exception:
-                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → Threat Intelligence) shows its state."
+                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → The Wire) shows its state."
                 payload = {
                     "reply": _ireply,
                     "exec": None,
@@ -15965,6 +22002,16 @@ class Handler(BaseHTTPRequestHandler):
                     _system_prompt += "\n\n" + _ibrief
             except Exception:
                 pass
+            # Awareness (0.2.0e Build 7, #188/#189/Add.5): the
+            # wire, the CTF board and the bounty board ride the
+            # same way - one composed block, staleness included,
+            # so "what's the sitch" is a behavior, not a search.
+            try:
+                _aw = _awareness_brief_block()
+                if _aw:
+                    _system_prompt += "\n\n" + _aw
+            except Exception:
+                pass
             _bound_case = ""
             try:
                 _cid = data.get("chatId")
@@ -16015,6 +22062,13 @@ class Handler(BaseHTTPRequestHandler):
                     if _ms["enabled"] and _ms["borrow"]["enabled"] and _ms["borrow"]["peers"]:
                         reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms)
                 if reply is None:
+                    # Build 8 (#154): owner preemption — the
+                    # owner's own work starting takes the machine
+                    # from any FEDERATION borrow in flight (the
+                    # borrower is answered "preempted", by name).
+                    # Pairwise borrows are never preempted; local
+                    # work simply takes the next slot for them.
+                    mesh_preempt_borrowed()
                     with MESH_LOCK:
                         MESH_STATE["local_gen"] += 1
                     try:
@@ -16106,7 +22160,7 @@ class Handler(BaseHTTPRequestHandler):
                 # on disk, the operator hears about it in plain words.
                 self._send(200, {"ok": False, "error": "That note no longer exists — it may have been moved or deleted outside the app. The tree has been refreshed."})
             else:
-                os.remove(vault_fs_path(rel))
+                vault_delete_note(rel)
                 self._send(200, {"ok": True})
         elif self.path == "/api/vault/move":
             # Rename / drag-and-drop move. Never overwrites.
@@ -16139,12 +22193,7 @@ class Handler(BaseHTTPRequestHandler):
             if not rel:
                 self._send(200, {"ok": False, "error": "That folder path escapes the vault."})
             else:
-                full = vault_fs_path(rel)
-                count = 0
-                if os.path.isdir(full):
-                    for base, dirs, files in os.walk(full):
-                        count += len([f for f in files if f.lower().endswith(".md")])
-                    shutil.rmtree(full)
+                count = vault_delete_folder(rel)
                 self._send(200, {"ok": True, "deletedNotes": count})
         elif self.path == "/api/chips/save":
             # Chip Studio saving an edit: re-forge the chip file
@@ -17087,6 +23136,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "deleted": gone})
+        elif self.path == "/api/wire/refresh":
+            self._send(200, WIRE.refresh_now())
+        elif self.path == "/api/wire/settings":
+            data = self._body()
+            cfg2 = load_config()
+            block = cfg2.get("wire") if isinstance(cfg2.get("wire"), dict) else {}
+            if "enabled" in data:
+                block["enabled"] = data.get("enabled") is not False
+            if "intervalMinutes" in data:
+                block["intervalMinutes"] = _mesh_int(data.get("intervalMinutes"), 30)
+            if "retentionDays" in data:
+                block["retentionDays"] = _mesh_int(data.get("retentionDays"), 7)
+            cfg2["wire"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "wire": wire_settings(cfg2)})
+        elif self.path == "/api/ctf/refresh":
+            self._send(200, CTF.refresh_now())
+        elif self.path == "/api/ctf/settings":
+            data = self._body()
+            cfg2 = load_config()
+            block = cfg2.get("ctf") if isinstance(cfg2.get("ctf"), dict) else {}
+            if "enabled" in data:
+                block["enabled"] = data.get("enabled") is not False
+            if "intervalMinutes" in data:
+                block["intervalMinutes"] = _mesh_int(data.get("intervalMinutes"), 60)
+            cfg2["ctf"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "ctf": ctf_settings(cfg2)})
+        elif self.path == "/api/bounties/refresh":
+            self._send(200, BOUNTIES.refresh_now())
+        elif self.path == "/api/bounties/settings":
+            data = self._body()
+            cfg2 = load_config()
+            block = cfg2.get("bounties") if isinstance(cfg2.get("bounties"), dict) else {}
+            if "enabled" in data:
+                block["enabled"] = data.get("enabled") is not False
+            if "intervalMinutes" in data:
+                block["intervalMinutes"] = _mesh_int(data.get("intervalMinutes"), 360)
+            cfg2["bounties"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "bounties": bounties_settings(cfg2)})
         elif self.path == "/api/intel/refresh":
             # Build 15 (#165): a manual cycle, run on the engine's
             # own thread — the response never waits on a feed.
@@ -17168,7 +23258,7 @@ class Handler(BaseHTTPRequestHandler):
                     "- **Known-exploited (CISA KEV):** " + ("yes — remediation due " + (item.get("kevDue") or "?") if item.get("kev") else "no"),
                     "- **Products (CPE):** " + (", ".join(item.get("products") or []) or "—"),
                     "",
-                    "Filed from the Threat Intelligence Center — " + cid
+                    "Filed from The Wire — " + cid
                     + ", per the intel digest generated " + (gen_at or "at an unstamped time")
                     + ((" by " + coll) if coll else "")
                     + ". Sources: NVD / CISA KEV / EPSS, as stamped in the Center.",
@@ -17194,6 +23284,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/github/badge-sync/dismiss":
             data = self._body()
             self._send(200, badge_sync_dismiss(str(data.get("operationId") or "")))
+        elif self.path == "/api/sync/run":
+            # Build 3 (#176): the Sync control's round — pull,
+            # converge, push — riding the Operator identity. The
+            # open thread's id rides along so the card can say
+            # whether the thread on screen was in the round.
+            data = self._body()
+            self._send(200, sync_round(load_config(), "button", str(data.get("openChatId") or "")))
         elif self.path == "/api/github/backup":
             data = self._body()
             dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None
@@ -17382,7 +23479,233 @@ def watchdog(started_mtime):
             pass
 
 
+def run_self_check():
+    # 0.2.0e Build 10 (#193, installer rebuild piece C): the
+    # product's own verdict on the install it is running from —
+    # never a version proxy. Three proofs, all against the live
+    # tree beside this file: (1) the stamps agree — the SHIPPED_VERSION
+    # file, the config's stamped version, and the stamps baked
+    # into this bridge are one build; (2) every payload file
+    # the package's MANIFEST.txt declares verifies by sha256
+    # against the bytes in place; (3) every runtime engine
+    # imports from THIS directory. The verdict lands in
+    # config/install-self-check.json and prints as one named
+    # sentence: SELF-CHECK OK / SELF-CHECK FAILED. Exit 0 only
+    # when all three proofs hold.
+    root = ROOT
+    problems = []
+    checked = 0
+    disk_version = ""
+    try:
+        with open(os.path.join(root, "VERSION"), encoding="utf-8") as f:
+            disk_version = f.read().strip()
+    except Exception:
+        problems.append("the SHIPPED_VERSION file is missing from this install")
+    try:
+        cfg = load_config()
+    except Exception:
+        cfg = {}
+    # The witnesses, the same ones the updater reads: the
+    # SHIPPED_VERSION file (number + status word), the config's stamped
+    # version/version_status, and the stamps baked into this
+    # bridge. All must name the same build.
+    if disk_version:
+        parts = disk_version.splitlines()[0].split() if disk_version.splitlines() else []
+        if not parts or parts[0] != SHIPPED_VERSION:
+            problems.append("the SHIPPED_VERSION file reads " + disk_version
+                            + " but this bridge is " + SHIPPED_VERSION)
+        elif len(parts) > 1 and parts[1] != SHIPPED_VERSION_STATUS:
+            problems.append("the SHIPPED_VERSION file's status word is " + parts[1]
+                            + " but this bridge is " + SHIPPED_VERSION_STATUS)
+    if cfg.get("version") and cfg.get("version") != SHIPPED_VERSION:
+        problems.append("the config's stamped version is " + str(cfg.get("version"))
+                        + " but this bridge is " + SHIPPED_VERSION)
+    if cfg.get("version_status") and cfg.get("version_status") != SHIPPED_VERSION_STATUS:
+        problems.append("the config's stamped version status is "
+                        + str(cfg.get("version_status")) + " but this bridge is "
+                        + SHIPPED_VERSION_STATUS)
+    man_path = os.path.join(root, "MANIFEST.txt")
+    entries = []
+    if os.path.isfile(man_path):
+        try:
+            with open(man_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) == 3 and parts[1] == "payload":
+                        entries.append((parts[0], parts[2]))
+        except Exception:
+            problems.append("MANIFEST.txt cannot be read in this install")
+    else:
+        problems.append("MANIFEST.txt is missing from this install — the payload cannot be verified")
+    for rel, want in entries:
+        if want == "-":
+            continue
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            problems.append(rel + " is missing from this install")
+            continue
+        h = hashlib.sha256()
+        try:
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+        except Exception:
+            problems.append(rel + " cannot be read in this install")
+            continue
+        if h.hexdigest() != want:
+            problems.append(rel + " does not match the digest its manifest declares")
+        else:
+            checked += 1
+    if os.path.isfile(man_path) and not entries:
+        problems.append("MANIFEST.txt declares no payload files")
+    for mod in ("guardian", "intel", "wire", "ctf", "bounties"):
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "selfcheck_" + mod, os.path.join(root, mod + ".py"))
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+        except Exception as e:
+            problems.append(mod + ".py does not import from this install ("
+                            + type(e).__name__ + ")")
+    # 0.2.0e Build 11 (#198, the permissions doctrine): the
+    # ownership verdict over this tree — every file should be
+    # owned by the operator running the bridge and readable by
+    # them. A root-owned leftover (a past sudo repair's copies,
+    # a voice venv installed under sudo) is exactly how an
+    # install quietly rots until an update dies on it; the
+    # verdict names the offenders in the record instead. It
+    # does NOT fail the proofs above — the install stands on
+    # those — it is the product saying the rest out loud.
+    # Symlinks are skipped (their targets live outside the
+    # tree's ownership story), and so is updates/ (staged
+    # downloads, not the install itself).
+    ownership_offenders = []
+    ownership_count = 0
+    try:
+        _uid = os.getuid()
+
+        def _own_bad(p, is_dir):
+            try:
+                st = os.lstat(p)
+            except Exception:
+                return False
+            if st.st_uid != _uid:
+                return True
+            if not os.access(p, os.R_OK):
+                return True
+            if is_dir and not os.access(p, os.X_OK):
+                return True
+            return False
+
+        for _dp, _dns, _fns in os.walk(root):
+            _rel_dp = os.path.relpath(_dp, root)
+            _kept = []
+            for _d in _dns:
+                _p = os.path.join(_dp, _d)
+                if os.path.islink(_p):
+                    continue
+                if _rel_dp == "." and _d == "updates":
+                    continue
+                _kept.append(_d)
+                if _own_bad(_p, True):
+                    ownership_count += 1
+                    if len(ownership_offenders) < 50:
+                        ownership_offenders.append(
+                            os.path.relpath(_p, root))
+            _dns[:] = _kept
+            for _n in _fns:
+                _p = os.path.join(_dp, _n)
+                if os.path.islink(_p):
+                    continue
+                if _own_bad(_p, False):
+                    ownership_count += 1
+                    if len(ownership_offenders) < 50:
+                        ownership_offenders.append(
+                            os.path.relpath(_p, root))
+    except Exception:
+        ownership_offenders = []
+        ownership_count = 0
+    ownership_ok = ownership_count == 0
+    ok = not problems
+    if ok:
+        body = ("the stamps agree (build " + BRIDGE_BUILD
+                + ", sequence " + str(SHIPPED_BUILD_SEQ) + "), all " + str(checked)
+                + " manifest payload files verify byte-for-byte, and every "
+                "runtime engine imports from this install.")
+        sentence = "Self-check passed: " + body
+    else:
+        body = "; ".join(problems) + "."
+        sentence = "Self-check FAILED: " + body
+    rec = {"ok": ok, "sentence": sentence, "build": BRIDGE_BUILD,
+           "buildSeq": SHIPPED_BUILD_SEQ, "version": SHIPPED_VERSION,
+           "payloadVerified": checked, "problems": problems,
+           "ownershipOk": ownership_ok,
+           "ownershipOffenders": ownership_offenders,
+           "ownershipOffenderCount": ownership_count,
+           "at": int(time.time())}
+    try:
+        with open(os.path.join(root, "config", "install-self-check.json"), "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=1)
+    except Exception:
+        pass
+    print(("SELF-CHECK OK: " if ok else "SELF-CHECK FAILED: ") + body, flush=True)
+    if ownership_ok:
+        print("SELF-CHECK OWNERSHIP: ok — every file in this tree is owned by "
+              "the operator running the bridge and readable by them.", flush=True)
+    else:
+        print("SELF-CHECK OWNERSHIP: " + str(ownership_count)
+              + " file(s) in this tree are not owned by the operator running "
+              "the bridge, or cannot be read by them: "
+              + ", ".join(ownership_offenders)
+              + ("…" if ownership_count > len(ownership_offenders) else "")
+              + " — the install stands, but repair ownership (sudo chown -R) "
+              "before the next update has to carry them.", flush=True)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    # 0.2.0e Build 7: the access code's deliberate doors, for a
+    # headless or container install where no dashboard is open
+    # yet — the recovery one-liners the Docker docs carry:
+    #   python3 bridge.py --dhd-code         print the current
+    #                                        code (minting one
+    #                                        first if none was
+    #                                        ever set)
+    #   python3 bridge.py --dhd-code-reset   mint a NEW code and
+    #                                        print it; the old
+    #                                        code stops knocking
+    #                                        at once (devices
+    #                                        already trusted keep
+    #                                        their own tokens,
+    #                                        exactly as the
+    #                                        dashboard's
+    #                                        regenerate behaves)
+    # Both end here, before any server starts; ordinary boots
+    # never print the code anywhere.
+    if len(sys.argv) > 1 and sys.argv[1] in ("--dhd-code", "--dhd-code-reset"):
+        _cfg = load_config()
+        if sys.argv[1] == "--dhd-code-reset":
+            _block = _cfg.get("public_server") if isinstance(_cfg.get("public_server"), dict) else {}
+            _block = dict(_block)
+            _block["access_code"] = generate_access_code()
+            if "enabled" not in _block:
+                _block["enabled"] = False
+            _cfg["public_server"] = _block
+            save_config(_cfg)
+            print(_block["access_code"])
+        else:
+            print(ensure_access_code(_cfg))
+        sys.exit(0)
+    # 0.2.0e Build 10 (#193): the install self-check — the
+    # installer runs this against the freshly promoted tree
+    # before it may call the install done, and an operator can
+    # run it any time: python3 bridge.py --self-check. It ends
+    # here, before any server starts.
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-check":
+        sys.exit(run_self_check())
     cfg = load_config()
     # Automatic profiling (Build 14, #157): a config with no
     # hardware profile profiles this machine once, here, before
@@ -17475,6 +23798,10 @@ if __name__ == "__main__":
     # runs whether a backup is due on the operator's chosen interval,
     # and runs it when signed in. Daemon thread; dies with the bridge.
     threading.Thread(target=github_auto_backup_loop, daemon=True).start()
+    # Build 3 (#176): Quick Sync's app-start pull — the third
+    # trigger beside the Sync control and DHD session start. It
+    # only pulls and converges; publishing stays a deliberate act.
+    threading.Thread(target=sync_startup_pull, daemon=True).start()
     # Scheduled warm (Build 14, #157): checks runtime.warm_at once
     # a minute and, at the configured minute, starts + warms a
     # llamafile that is not answering. Daemon thread; dies with
@@ -17498,6 +23825,12 @@ if __name__ == "__main__":
     # setting every cycle, and a node named as a receiver pulls
     # its collector's digest over the Mesh door instead of
     # polling the feeds itself.
+    try:
+        WIRE.start()
+        CTF.start()
+        BOUNTIES.start()
+    except Exception:
+        pass
     try:
         if intel_settings(cfg)["enabled"]:
             INTEL.start()
@@ -17602,15 +23935,26 @@ if __name__ == "__main__":
         # If an enable operation was waiting on this restart, its
         # persisted card now reconciles with the live state.
         dhd_resume_enable_operation()
+    # Federation (Build 8): a gateway card waiting at
+    # config/federation/invitation.png — placed there by a
+    # container image's first boot, or by an operator's hand — is
+    # imported admission-only, once, before the doors open.
+    try:
+        _fed_invited = federation_import_invitation_file()
+        if _fed_invited:
+            print("Federation: admitted to '" + _fed_invited + "' by its "
+                  "waiting gateway card (admission + introduction only).", flush=True)
+    except Exception:
+        pass
     # Navi Mesh (Ring 1; dedicated door since build .86): if Mesh
-    # is on, open its dedicated TLS listener on the mesh port —
+    # is on, open its dedicated TLS door on its listen ports —
     # always, whether or not DHD is on. Mesh never rides the DHD
     # door; the proxy refuses /mesh/* outright.
     if mesh_settings(cfg)["enabled"]:
         mesh_start_listener()
         if MESH_SERVERS:
-            print("Navi Mesh is ON: the dedicated Mesh door listens on port "
-                  + str(mesh_settings(cfg)["port"]) + " (TLS, fingerprint-pinned).", flush=True)
+            print("Navi Mesh is ON: the dedicated Mesh door listens on ports "
+                  + ", ".join(str(p) for p in mesh_settings(cfg)["listenPorts"]) + " (TLS, fingerprint-pinned).", flush=True)
         else:
             print("Navi Mesh is ON but its dedicated door did not open — see the Mesh page.", flush=True)
     server.serve_forever()
