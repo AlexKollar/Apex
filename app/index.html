@@ -1057,6 +1057,13 @@
   @media (max-width: 800px) {
     #syncCard { left:12px; right:12px; bottom:12px; width:auto; }
   }
+
+  /* Federation page (Build 8): the fedinet cards sit two-up on
+     the desktop canvas and stack in the dedicated phone
+     arrangement — one column, full-width cards, nothing squeezed. */
+  .fed-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .fed-grid .card { margin-top:0; }
+  @media (max-width: 800px) { .fed-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -1370,7 +1377,7 @@ function badgeForgeFinish(cv, cx, name, nodeName, cb) {
 }
 
 
-var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater", "GitHub", "Docs", "Settings", "Guardian"];
+var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federation", "Updater", "GitHub", "Docs", "Settings", "Guardian"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
 // Apex | Systems group (Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
@@ -1396,7 +1403,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Updater"
 // are one work surface now. Nav placement only: the Vault's
 // view, route and behavior are exactly as #134/#135 left them.
 var NAV_GROUPS = {
-  systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"]] },
+  systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"], ["Federation", "Federation"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["Threat Intelligence", "ThreatIntel"], ["CTF Board", "CTFBoard"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
@@ -1405,7 +1412,7 @@ var NAV_FLAT = ["Chat"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
 // the view keys stay what they have always been; the labels wear
 // the product line — Apex | DHD, Apex | Mesh.
-var NAV_LABELS = { DHD: "Apex | DHD", Mesh: "Apex | Mesh" };
+var NAV_LABELS = { DHD: "Apex | DHD", Mesh: "Apex | Mesh", Federation: "Apex | Federation" };
 function navLabel(name) { return NAV_LABELS[name] || name; }
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
@@ -1468,6 +1475,7 @@ function navIcon(name) {
   if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
+  if (name === "Federation") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-fed'><circle cx='12' cy='5' r='2.6'/><circle cx='5' cy='18' r='2.6'/><circle cx='19' cy='18' r='2.6'/><path d='M10.2 7.2L6.6 15.6M13.8 7.2l3.6 8.4M7.6 18h8.8'/></svg>";
   if (name === "Apex | Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
   if (name === "Apex | Apps") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='8' height='8' rx='1.5'/><rect x='13' y='3' width='8' height='8' rx='1.5'/><rect x='3' y='13' width='8' height='8' rx='1.5'/><rect x='13' y='13' width='8' height='8' rx='1.5'/></svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
@@ -1585,6 +1593,8 @@ var openCaseState = null;    // live: last /api/status openCase report (Build 15
 var meshMsg = "";
 var meshTunnelArmed = {};    // Build 5 (#179): peers whose Backup route switch stands flipped on locally, awaiting the SSH host/user the bridge requires — UI state only, never posted until the fields stand filled
 var meshPngMsg = "";         // the PNG card import's own verdict, shown at the drop zone (Build 7)
+var meshTunnelConfirmFor = null; // Build 8: the peer whose tunnel-key crown confirm strip stands open on its card
+var meshTunnelAuthMsg = null;    // Build 8: the tunnel-key act's verdict, shown on the peer's own card
 var meshHealth = null;       // the last /api/mesh/health report (0.2.0e Build 1, #143); null until the operator runs the check
 var meshHealthBusy = false;  // a health check is in flight
 var meshHealthMsg = "";      // the health check's own fetch failure, when the bridge did not answer
@@ -1688,8 +1698,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.07";
-var SHIPPED_BUILD_SEQ = 7;
+var BRIDGE_BUILD = "2026-11-13.08";
+var SHIPPED_BUILD_SEQ = 8;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2204,7 +2214,7 @@ var DOC_GROUPS = [
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -4616,10 +4626,10 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Getting there — the doors</h4>" +
   "<p>Mesh always travels through its <b>own dedicated TLS door</b>, whether or not DHD is on. The door listens on <b>8765 always</b>, plus every number in its <b>listen ports</b> list — <b>8443</b> and <b>2475</b> ship alongside it, and you can add or remove numbers in the Mesh settings. One door on several numbers: the same protocol, the same certificate, the same fingerprint on every port, so a record entry naming any of them reaches the same door — which is what lets a pair use an egress-friendly number from networks that strangle unusual ports. Mesh never rides the DHD door: the DHD proxy refuses Mesh paths outright, and the dashboard itself serves only the dashboard-local Mesh controls behind the access-code gate; the node-facing status and borrow endpoints live only on the dedicated ports. There is no plaintext Mesh listener. There is no NAT traversal and no racing between lenders: the first reachable lender serves.</p>" +
   "<p><b>The door minds its knocks.</b> Because a declared endpoint puts the door on the open internet, it counts failed handshakes and failed signature checks per source; five failures inside a minute close the door to that source — connections dropped at accept, on every door port at once, since the knock ledger belongs to the door and not to any one number — for a backoff that doubles per repeat closing (60 seconds, doubling, capped at 900) and reopens on its own. Every knock and closing is logged in words. A valid signed request clears its source's slate, so a paired machine's ordinary traffic is never throttled; the ledger is memory only, and a bridge restart reopens every door.</p>" +
-  "<p><b>The backup route.</b> A pair can keep a second, quieter road: an SSH tunnel Apex itself maintains, per peer, so the SSH door (227 as forwarded) can carry the Mesh when the direct road cannot be used. Turn on a peer's <b>Backup route</b> on the Mesh page — SSH host, port, and user — and the bridge allocates a stable local port, keeps the tunnel alive (restarts with backoff, returns after a bridge restart), and appends the tunnel endpoint <i>last</i> to the peer's addresses at dial time: computed, never written into the stored record, so direct addresses are always tried first. The tunnel runs on a <b>dedicated keypair</b> the bridge generates — its public half rides this machine's card and shows on its Mesh page; the private half never leaves the machine and never rides a backup. On the lending machine the key is admitted once, <b>in person</b>, from its own dashboard: <b>Authorize tunnel key</b> writes a single-purpose line into <span class='mono'>~/.ssh/authorized_keys</span> — a forward to the Mesh door and nothing else, no shell, no agent — and revoke removes exactly that line. A tunnel you run by hand keeps working untouched alongside.</p><p><b>Relay — the third road.</b> Roads fail in threes: the direct addresses, the declared public endpoint, the backup tunnel — and sometimes all three are dark while a third paired machine can see both ends. That machine can <b>carry</b> the ask. The borrow is wrapped, exactly as signed for the lender, in a second signed envelope addressed to the carrier; the carrier checks three consents, forwards the inner request byte-for-byte to the lender's door, and returns the sealed answer the same way. It sees envelope metadata only — who asks, who is asked, how many bytes, what stage it ended at — and its ledger records exactly that and nothing more. Consent is <b>three ticks, one on each machine</b>, each given on that machine's own dashboard in the <b>Relay</b> section of the carrier's peer card: the asker ticks that the carrier may carry its envelopes to the lender; the carrier ticks that it will carry between the pair; the lender ticks that the carrier may carry envelopes to it from the asker. Any missing tick refuses the carriage <b>by name</b> — the refusal says which machine has not consented — and unticking any one stops the next carriage, because every machine re-reads its consent on every request. Consent is given in person, like lending: through the DHD door a tick can be unticked from anywhere, but never ticked on. The road is <b>one hop, hard</b>: a relayed envelope is never re-relayed. Direct is always tried first — the relay is the road of last resort — and only chat answers ride it; sync and every other class stay direct-only. When an answer comes back carried, the reply's pill names the machine that <b>answered</b> and a line under it names the road: <i>via relay &lt;machine&gt;</i>. When the relay road fails, the local fallback keeps the stage's name — <i>no-consent</i>, <i>relay-dark</i>, <i>dest-dark</i>, <i>dest-refused</i> — in the same sentence style as every other failure.</p></div>" +
+  "<p><b>The backup route.</b> A pair can keep a second, quieter road: an SSH tunnel Apex itself maintains, per peer, so the SSH door (227 as forwarded) can carry the Mesh when the direct road cannot be used. Turn on a peer's <b>Backup route</b> on the Mesh page — SSH host, port, and user — and the bridge allocates a stable local port, keeps the tunnel alive (restarts with backoff, returns after a bridge restart), and appends the tunnel endpoint <i>last</i> to the peer's addresses at dial time: computed, never written into the stored record, so direct addresses are always tried first. The tunnel runs on a <b>dedicated keypair</b> the bridge generates — its public half rides this machine's card and shows on its Mesh page; the private half never leaves the machine and never rides a backup. On the lending machine the key is admitted once, from its own dashboard — since Build 8 a <b>crown act</b>: spoken by name to confirm, audited, and through the DHD door run under the Operator Badge step-up: <b>Authorize tunnel key</b> writes a single-purpose line into <span class='mono'>~/.ssh/authorized_keys</span> — a forward to the Mesh door and nothing else, no shell, no agent — and revoke, open from anywhere, removes exactly that line. A tunnel you run by hand keeps working untouched alongside.</p><p><b>Relay — the third road.</b> Roads fail in threes: the direct addresses, the declared public endpoint, the backup tunnel — and sometimes all three are dark while a third paired machine can see both ends. That machine can <b>carry</b> the ask. The borrow is wrapped, exactly as signed for the lender, in a second signed envelope addressed to the carrier; the carrier checks three consents, forwards the inner request byte-for-byte to the lender's door, and returns the sealed answer the same way. It sees envelope metadata only — who asks, who is asked, how many bytes, what stage it ended at — and its ledger records exactly that and nothing more. Consent is <b>three ticks, one on each machine</b>, each given on that machine's own dashboard in the <b>Relay</b> section of the carrier's peer card: the asker ticks that the carrier may carry its envelopes to the lender; the carrier ticks that it will carry between the pair; the lender ticks that the carrier may carry envelopes to it from the asker. Any missing tick refuses the carriage <b>by name</b> — the refusal says which machine has not consented — and unticking any one stops the next carriage, because every machine re-reads its consent on every request. Consent is given in person, like lending: through the DHD door a tick can be unticked from anywhere, but never ticked on. The road is <b>one hop, hard</b>: a relayed envelope is never re-relayed. Direct is always tried first — the relay is the road of last resort — chat answers ride it, and since Build 8 a fedinet's roster sync rides it too, under the same ticks; every other class stays direct-only. When an answer comes back carried, the reply's pill names the machine that <b>answered</b> and a line under it names the road: <i>via relay &lt;machine&gt;</i>. When the relay road fails, the local fallback keeps the stage's name — <i>no-consent</i>, <i>relay-dark</i>, <i>dest-dark</i>, <i>dest-refused</i> — in the same sentence style as every other failure.</p></div>" +
     "<div class='doc-sec'><h4>When the Mesh goes dark — the health check</h4>" +
   "<p>A Mesh failure used to report a single word — <i>unreachable — fingerprint</i> — and the rest was archaeology. Now the failure surfaces speak in sentences. A peer's roster row carries the full reason under its state: what answered, what did not match, and the cure where the product knows it. A changed Mesh identity is cured by importing that machine's fresh PNG card — the pin is replaced in place and the pair's ledger history is kept. A refused signature names its first suspect — the two machines' clocks — because a Mesh signature lives for 120 seconds, so a clock more than two minutes out reads as a forgery. A borrow that falls back names the stage it failed at — connect, TLS, fingerprint, signature, or timeout — in the chat notice.</p>" +
-  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. The census accounts for every one of the door's ports, so the door's own extra numbers never read as extra processes. The check also knows its own door: an entry that <i>is</i> this machine's own Mesh door is skipped without dialing, and an address answering with this machine's OWN certificate is named <b>your own door</b> — never reported as the peer's changed identity — while loopback at a <i>different</i> port (an SSH forward to the peer) is a road, and is dialed like any other. When the answering address is a peer's backup tunnel, the verdict says so: <i>via the backup tunnel</i>; when that tunnel is down, its state is a sentence of its own — down, key not authorized, or host unreachable. Every verdict is a sentence, with the actual fingerprints side by side. The check itself changes nothing — it reads and reports. What Build 6 adds is the heal, offered in place: when a peer's record holds only dead-end addresses — loopback, a container bridge's gateway, the harvest mistakes of older cards — the card names them as junk and offers the repair on the spot: import a fresh card minted on that machine, or clear the dead addresses now and import when you can, the pairing, its pin, and its history kept either way. The same build walks the backup route: the route card prefills the SSH host from the endpoint the peer declared on its card, and says plainly that authorizing a tunnel key happens in person, on the lender's own dashboard — never from over the wire. And the first time you pair, the Mesh page says the quiet part before any trust is pinned: the door's certificate is self-signed, no authority vouches for it, and the card you were handed is the trust — importing it is what pins it.</p><p>For every relay road this machine has consented to, the check adds a <b>relay verdict</b>: it asks the carrier, with a signed probe that carries nothing, whether the carrier's own tick for the pair is in place and whether the destination is paired there at all. The verdict names what it found — consented, the carrier's tick missing, the carrier not paired with the destination, or the carrier dark at the first hop — and it is honest about the one end no probe can read: the destination's own acceptance is proven when it answers a carriage.</p></div>" +
+  "<p>The <b>Mesh health check</b>, at the foot of the Mesh page, runs the two decisive reads of any dark pair on the spot. It compares the certificate on this machine's disk with the one its Mesh door actually presents — a difference means something else is serving the door, usually a second bridge, and the check's process census counts the bridges and names the door's owner. For every paired machine it holds the fingerprint this machine pinned from its card up against the certificate that machine presents right now, and then runs the signed check, so identity and signature are judged separately. The census accounts for every one of the door's ports, so the door's own extra numbers never read as extra processes. The check also knows its own door: an entry that <i>is</i> this machine's own Mesh door is skipped without dialing, and an address answering with this machine's OWN certificate is named <b>your own door</b> — never reported as the peer's changed identity — while loopback at a <i>different</i> port (an SSH forward to the peer) is a road, and is dialed like any other. When the answering address is a peer's backup tunnel, the verdict says so: <i>via the backup tunnel</i>; when that tunnel is down, its state is a sentence of its own — down, key not authorized, or host unreachable. Every verdict is a sentence, with the actual fingerprints side by side. The check itself changes nothing — it reads and reports. What Build 6 adds is the heal, offered in place: when a peer's record holds only dead-end addresses — loopback, a container bridge's gateway, the harvest mistakes of older cards — the card names them as junk and offers the repair on the spot: import a fresh card minted on that machine, or clear the dead addresses now and import when you can, the pairing, its pin, and its history kept either way. The same build walks the backup route: the route card prefills the SSH host from the endpoint the peer declared on its card, and says plainly that authorizing a tunnel key is the lender's own act, on its own dashboard — since Build 8 a crown act, spoken by name there (and, through its DHD door, under its Operator Badge), never a borrower's to give. And the first time you pair, the Mesh page says the quiet part before any trust is pinned: the door's certificate is self-signed, no authority vouches for it, and the card you were handed is the trust — importing it is what pins it.</p><p>For every relay road this machine has consented to, the check adds a <b>relay verdict</b>: it asks the carrier, with a signed probe that carries nothing, whether the carrier's own tick for the pair is in place and whether the destination is paired there at all. The verdict names what it found — consented, the carrier's tick missing, the carrier not paired with the destination, or the carrier dark at the first hop — and it is honest about the one end no probe can read: the destination's own acceptance is proven when it answers a carriage.</p></div>" +
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
   "<li><b>Certificate fingerprint does not match.</b> The machine that answered is not presenting the certificate on its card — the card is stale, or something else is answering at that address. Re-copy the card from that machine's Mesh page and re-add the peer.</li>" +
   "<li><b>The health check says “your own door.”</b> An address on the peer's card led back to this machine — classically a container-bridge or stale local address harvested onto an older card — and the door that answered was this machine's own. The peer was never reached and its identity is not in doubt. Mint a fresh card on the <i>peer</i> machine — cards minted now carry only reachable addresses — and import it here.</li>" +
@@ -4628,6 +4638,15 @@ var DOC_PAGES = [
   "<li><b>“&lt;machine&gt; dropped mid-answer.”</b> The lender went away during a reply — its operator hit Stop lending now, or the machine or its bridge stopped. Your reply was written locally, whole. Check the lender.</li>" +
   "<li><b>A peer shows unreachable.</b> The roster says why, and when it was last checked. <i>Unauthorized</i> means the other machine does not hold this machine's card — pairing is the consent, so re-exchange cards. <i>Fingerprint</i> means the machine answering is not presenting the certificate on its card. Anything else means it could not be reached at all: its Mesh is off, its bridge is stopped, or the addresses on its card no longer reach it. Checks retry on their own about every thirty seconds, and the roster updates when one succeeds.</li>" +
   "<li><b>“This image has no readable Mesh card data.”</b> The PNG card arrived without its payload — almost always because a chat app recompressed it on the way. Resend the original card file inside a .zip, or by any channel that moves files untouched, and import that.</li></ul></div>" },
+  { id: "federation", title: "Federation — fedinets & deep trust", related: ["mesh", "dhd", "settings"], html:
+    "<div class='doc-sec'><h4>From pairs to a fedinet</h4>" +
+  "<p>Pairing is two machines trusting each other, one ceremony at a time. A <b>fedinet</b> is the named, many-machine form: a set of nodes whose <b>gateway</b> keeps a <b>signed roster</b> — who is in, with their card facts, in join order. <b>Node numbers are roster facts</b>: the gateway assigns them at admission, and the signed roster is the only place they live. Any operator can <b>found</b> a fedinet and be its gateway; a node can keep several fedinets at once, and no trust bleeds between them. The first fedinet is <b>Rockport Mesh</b> — its real roster lives on its gateway and is never baked into an install; an install ships the machinery and learns the roster from the gateway's signature.</p>" +
+  "<p><b>Gateway cards.</b> A gateway hands out a <b>green</b> card — a pairing card's form, the fedinet's name on its face. Importing one is <b>admission + introduction only</b>: the gateway becomes a peer, its roster becomes fetchable, and no trust is granted. Trust is a separate act, below. A node's gateway can also be its <b>Founding Member</b> — the two facts are distinct, and the roster shows both.</p></div>" +
+    "<div class='doc-sec'><h4>Deep trust, and its guardrails</h4>" +
+  "<p>With a fedinet's <b>trust-by-default</b> on, its signed roster <b>auto-pairs and auto-lends</b> on this node — deep trust, against the gateway's signature, never against a claim. The guardrails are the operator's own, per fedinet: the <b>new-member tick</b> (a member who joins after your trust baseline lends only while it stands; unticked, they are pairing-only for you), a <b>per-member untrust</b> that always wins, a per-member lend tick for named exceptions, an hourly <b>borrow cap</b>, and <b>owner preemption</b> — your own work takes the machine from a federation borrow mid-flight (the borrower is answered <i>preempted</i>, by name; a hand-made pairing's borrow is never preempted). One flip of trust-by-default off ends all auto-lending; pairings already made stay pairings.</p>" +
+  "<p><b>Staleness is a posture, not an error.</b> A roster last verified more than <b>72 hours</b> ago degrades its fedinet to pairing-only, with the sentence on the Federation page saying so, until a sync lands. Syncs ride the Mesh door directly, or — when the direct road is dark — <b>via relay</b>, on Build 7's three ticks and one-hop rule. <b>Expulsion</b> is a signed roster revision: it lands at the next sync, removes the federation's own records for the departed node, and never touches a pairing made by hand.</p></div>" +
+    "<div class='doc-sec'><h4>The doors: DHD tiers & crown acts</h4>" +
+  "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
     "<div class='doc-sec'><h4>The container node</h4>" +
   "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
@@ -5548,10 +5567,10 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-Threat Intelligence", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-Threat Intelligence", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD", Federation: "nav-child-systems-Federation" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Threat Intelligence", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-systems-Federation", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-Threat Intelligence", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -6308,6 +6327,7 @@ function meshViewState() {
     lendEnabled: !!l.enabled,
     lend: { maxSharePercent: l.maxSharePercent != null ? l.maxSharePercent : 25, maxGenerationsPerHour: l.maxGenerationsPerHour != null ? l.maxGenerationsPerHour : 20, perPeerPerHour: l.perPeerPerHour != null ? l.perPeerPerHour : 10, idleOnly: l.idleOnly !== false, idleAfterSeconds: l.idleAfterSeconds != null ? l.idleAfterSeconds : 60 },
     ledgerInBackup: !!m.ledgerInBackup, certNoticeSeen: !!m.certNoticeSeen, borrowing: false, lendingNow: false,
+    headline: "",
     viaDhd: false,
     state: m.enabled ? ((b.peers || []).length ? "on" : "no-peers") : "off", warning: "",
     peers: (b.peers || []).map(function (p) { var t = p.tunnel || {}; return { name: p.name || "Unnamed peer", nodeId: p.nodeId || "", short: String(p.nodeId || "").slice(0, 12), canBorrow: p.canBorrow !== false, reachable: null, status: "unknown", lastProbeError: "", lastProbeReason: "", lastProbeAgeSec: null, balanceSec: 0, lastTs: 0, publicEndpoint: p.publicEndpoint || "", tunnel: { enabled: !!t.enabled, sshHost: t.sshHost || "", sshPort: t.sshPort || 227, sshUser: t.sshUser || "", localPort: t.localPort || null }, hasTunnelKey: !!p.tunnelPublicKey, tunnelKeyAuthorized: false, tunnelState: "off", tunnelSentence: "", tunnelSuggestion: p.tunnelSuggestion || { sshHost: "" }, relayCarryTo: p.relayCarryTo || [], relayAcceptFrom: p.relayAcceptFrom || [], relayWillCarryTo: p.relayWillCarryTo || [] }; })
@@ -6429,6 +6449,228 @@ function meshLineHtml(mesh) {
   }
   return "";
 }
+// -- Federation (0.2.0e Build 8, #154) ------------------------------
+// Its own page (Alex's ruling, 2026-11-13 — not a Mesh tab): the
+// fedinets this node keeps, their signed rosters, the gateway
+// cards, the trust toggles and ticks, founding, borrow caps, and
+// the trust audit log. DHD serves this same page as the remote
+// admin surface; the bridge tiers the acts (read + revoke open,
+// manage behind the Badge step-up, crown acts under the full
+// ceremony), and refusals come back as sentences the page shows
+// ON THE CARD that was acted on.
+//
+// The switch gate, structurally: no control on this page ever
+// flips locally. A press sends the act; the bridge answers with
+// the state it actually stored; the page re-renders from that
+// answer alone. Flip, stored state, and reload read one truth
+// because there is only the one truth to read.
+var federationState = null;
+var fedMsg = { error: "", errorFor: "", sentence: "" };
+var fedConfirm = null;
+
+function federationAct(body, forId) {
+  if (CONFIG.backend !== "live") { fedMsg.error = "Federation runs through the live bridge."; fedMsg.errorFor = forId || ""; render(); return; }
+  fetch("/api/federation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.fedinets) federationState = j;
+    fedMsg.error = j && j.ok ? "" : ((j && j.error) || "The bridge did not answer that act.");
+    fedMsg.errorFor = j && j.ok ? "" : (forId || "");
+    fedMsg.sentence = (j && j.sentence) || "";
+    if (view === "Federation") render();
+  }).catch(function () {
+    fedMsg.error = "The bridge did not answer that act."; fedMsg.errorFor = forId || "";
+    if (view === "Federation") render();
+  });
+}
+function fedBadge() { return CONFIG.operatorBadge || ""; }
+function fedSwitch(on, attrs, label) {
+  return "<button class='switch' role='switch' aria-checked='" + (on ? "true" : "false") + "' " + attrs + " aria-label='" + esc(label) + "'><span class='knob'></span></button>";
+}
+function fedConfirmHtml(fedId) {
+  if (!fedConfirm || fedConfirm.fedinetId !== fedId) return "";
+  return "<div class='card' style='margin-top:10px;border-color:#f5b544'><b>A crown act — speak its name.</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>Type the words <span class='mono' style='color:var(--ink)'>" + esc(fedConfirm.label) + "</span> to confirm. " +
+    (federationState && federationState.viaDhd ? "Through the DHD door your Operator Badge rides with the act as the step-up; " : "") +
+    "the act lands in the audit log either way.</p>" +
+    "<div class='row' style='margin-top:6px'><input class='grow' id='fed-confirm-in' type='text' placeholder='" + esc(fedConfirm.label) + "' aria-label='Type the confirm words'><button class='act' data-fed-confirm-go='1' style='min-height:44px'>Confirm</button><button class='ghost' data-fed-confirm-cancel='1' style='min-height:44px'>Cancel</button></div></div>";
+}
+function federationHtml() {
+  var s = federationState;
+  var h = "<h3>Apex | Federation</h3>";
+  var mv = meshViewState();
+  if (mv.headline) h += "<p style='margin-top:2px'><span class='dot pdot' style='background:#3fb96f'></span> <b>" + esc(mv.headline) + "</b> <span style='color:var(--dim)'>— the headline is the state now, not a census of pairs.</span></p>";
+  h += "<p style='color:var(--dim);max-width:680px'>A fedinet is a named set of machines whose gateway keeps a <b>signed roster</b>. A gateway card admits a node and introduces it — trust is a separate, deeper act: with trust-by-default on, the roster auto-pairs and auto-lends on this node. Every trust act, through any door, lands in the audit log at the foot of this page.</p>";
+  if (CONFIG.backend === "live" && !s) { federationAct({ act: "state" }, ""); h += "<div class='card'>Reading this node's fedinets…</div>"; return h; }
+  if (!s) { h += "<div class='card'>Federation runs through the live bridge — switch the backend to Live in Settings.</div>"; return h; }
+  if (fedMsg.sentence) h += "<p style='color:var(--accent);margin-top:8px'>" + esc(fedMsg.sentence) + "</p>";
+  if (fedMsg.error && !fedMsg.errorFor) h += "<p style='color:#f58a8a;margin-top:8px'>" + esc(fedMsg.error) + "</p>";
+  // The Badge card: the DHD step-up factor.
+  h += "<div class='card' style='margin-top:12px'><b>The Operator Badge — the DHD step-up</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>" + (s.badgeEnrolled
+      ? "A Badge is enrolled on this node (its fingerprint only — the picture itself never stays here). Through the DHD door, manage acts present it as the step-up and crown acts run under it with a named confirm."
+      : "No Badge is enrolled on this node. Until one is, manage and crown acts cannot ride the DHD door — the ceremony cannot run, and the bridge says so by name. Enrollment happens in person, here, and stores only the Badge's fingerprint.") + "</p>" +
+    "<div class='row' style='margin-top:8px'>" +
+    (s.badgeEnrolled
+      ? "<button class='ghost' data-fed-badge-clear='1' style='min-height:44px'>Clear the enrollment</button>"
+      : "<button class='act' data-fed-badge-enroll='1' style='min-height:44px'>Enroll this dashboard's Operator Badge</button>") +
+    (s.viaDhd ? "<span style='color:var(--dim);font-size:12px'>This view is through the DHD door — enrollment itself is in-person only.</span>" : "") +
+    "</div></div>";
+  // Join: import a gateway card, or found a fedinet.
+  h += "<div class='fed-grid'>";
+  h += "<div class='card'><b>Join a fedinet</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>Import a gateway card — the green picture a gateway hands out. The import admits this node and introduces it to the gateway; it grants no trust by itself.</p>" +
+    (s.invitationWaiting ? "<p style='margin-top:6px'>An invitation is waiting on this node (a container's preload, or a card dropped at <span class='mono'>config/federation/invitation.png</span>).</p><button class='act' data-fed-invitation='1' style='min-height:44px;margin-top:6px'>Import the waiting invitation</button>" : "") +
+    "<div class='row' style='margin-top:8px'><button class='ghost' data-fed-import-btn='1' style='min-height:44px'>Import a gateway card PNG…</button><input id='fed-import-file' type='file' accept='.png,image/png' style='display:none' aria-label='Gateway card PNG file'></div>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:8px'>The known fedinet: <b>" + esc(s.knownDefault.name) + "</b>. " + esc(s.knownDefault.note) + "</p></div>";
+  h += "<div class='card'><b>Found a fedinet</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>Mint a fedinet of your own: this node becomes its gateway, signs roster v1, and stands as its Founding Member — Node 1. Founding is a crown act: it needs its name spoken, and it audits.</p>" +
+    "<div class='row' style='margin-top:8px'><input class='grow' id='fed-new-name' type='text' placeholder='Fedinet name — e.g. Rockport Mesh' aria-label='New fedinet name'><button class='act' data-fed-found='1' style='min-height:44px'>Found it</button></div>" +
+    fedConfirmHtml("__found__") + "</div>";
+  h += "</div>";
+  if (fedMsg.error && fedMsg.errorFor === "__join__") h += "<p style='color:#f58a8a;margin-top:8px'>" + esc(fedMsg.error) + "</p>";
+  // The fedinets themselves.
+  (s.fedinets || []).forEach(function (f) {
+    h += "<div class='card' style='margin-top:14px'><div class='row' style='flex-wrap:wrap;gap:8px'><b style='font-size:16px'>" + esc(f.name) + "</b>" +
+      "<span style='color:var(--dim);font-size:12px'>" + (f.role === "gateway" ? "This node is the gateway" : "Gateway: " + esc(f.gatewayName || "") + " · <span class='mono'>" + esc(f.gatewayShort || "") + "</span>") + "</span>" +
+      (f.ownNumber ? "<span style='color:var(--dim);font-size:12px'>You are Node " + f.ownNumber + "</span>" : "") +
+      "<span style='color:var(--dim);font-size:12px'>Roster v" + f.rosterVersion + "</span></div>";
+    if (f.staleSentence) h += "<p style='color:#f5b544;font-size:12px;margin-top:6px'>" + esc(f.staleSentence) + "</p>";
+    if (fedMsg.error && fedMsg.errorFor === f.id) h += "<p style='color:#f58a8a;font-size:12px;margin-top:6px'>" + esc(fedMsg.error) + "</p>";
+    if (f.gatewayCardPng) {
+      h += "<div style='margin-top:10px'><img src='data:image/png;base64," + f.gatewayCardPng + "' alt='The gateway card for " + esc(f.name) + "' style='width:280px;max-width:100%;border-radius:8px'><div class='row' style='margin-top:6px'><a class='ghost' style='min-height:44px;display:inline-flex;align-items:center;padding:0 14px;text-decoration:none' href='data:image/png;base64," + f.gatewayCardPng + "' download='gateway-card-" + esc(f.name.replace(/[^A-Za-z0-9]+/g, "-")) + ".png'>Download the gateway card</a><span style='color:var(--dim);font-size:12px'>Green — admission + introduction, never trust by itself. Send the file itself, inside a .zip for chat apps.</span></div></div>";
+    }
+    // Trust switches.
+    h += "<div style='margin-top:12px;border-top:1px solid var(--line);padding-top:10px'><div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>TRUST — THIS NODE'S POSTURE</div>" +
+      "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'>" + fedSwitch(f.trustByDefault, "data-fed-trust='" + esc(f.id) + "'", "Trust-by-default for " + f.name) + "<span style='font-size:12px'><b>Trust-by-default (deep)</b> — the signed roster auto-pairs and auto-lends here. Turning it on is a crown act.</span></div>" +
+      "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'>" + fedSwitch(f.lendToNew, "data-fed-tick='" + esc(f.id) + "'", "Lend to new members automatically in " + f.name) + "<span style='font-size:12px'><b>Lend to new members automatically</b> — unticked, a member who joins later is pairing-only for this node until ticked.</span></div>" +
+      "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'><span style='font-size:12px'>Borrow cap (generations/hour across this fedinet, 0 = none)</span><input id='fed-cap-" + esc(f.id) + "' type='number' min='0' value='" + (f.borrowCap || 0) + "' style='width:90px;min-height:44px' aria-label='Borrow cap for " + esc(f.name) + "'><button class='ghost' data-fed-cap='" + esc(f.id) + "' style='min-height:44px'>Save cap</button></div>" +
+      fedConfirmHtml(f.id) + "</div>";
+    // Pending joins (gateway).
+    if (f.role === "gateway" && f.pendingJoins && f.pendingJoins.length) {
+      h += "<div style='margin-top:12px;border-top:1px solid var(--line);padding-top:10px'><div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>KNOCKING — WAITING FOR YOUR WORD</div>";
+      f.pendingJoins.forEach(function (p) {
+        h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'><span class='grow' style='font-size:12px'><b>" + esc(p.name || "Unnamed node") + "</b> · <span class='mono'>" + esc(String(p.nodeId).slice(0, 12)) + "</span></span><button class='act' data-fed-admit='" + esc(f.id) + "|" + esc(p.nodeId) + "' style='min-height:44px'>Admit</button><button class='ghost' data-fed-deny='" + esc(f.id) + "|" + esc(p.nodeId) + "' style='min-height:44px'>Deny</button></div>";
+      });
+      h += "</div>";
+    }
+    // Members.
+    h += "<div style='margin-top:12px;border-top:1px solid var(--line);padding-top:10px'><div style='color:var(--dim);font-size:11px;letter-spacing:.06em'>THE ROSTER</div>";
+    if (!f.members || !f.members.length) h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>No roster here yet — " + (f.role === "gateway" ? "admit a knock and the roster begins." : "sync with the gateway and its signed roster lands.") + "</p>";
+    (f.members || []).forEach(function (m) {
+      var self = m.nodeId === s.nodeId;
+      h += "<div style='margin-top:10px'><div class='row' style='flex-wrap:wrap;gap:8px'><span style='font-size:12px'><b>Node " + m.n + " — " + esc(m.name) + "</b>" + (m.gateway ? " · gateway" : "") + (m.founding ? " · Founding Member" : "") + " · <span class='mono' style='color:var(--dim)'>" + esc(m.short) + "</span></span></div>" +
+        "<p style='color:var(--dim);font-size:12px;margin-top:2px'>" + esc(m.posture) + "</p>";
+      if (!self) {
+        h += "<div class='row' style='margin-top:4px;flex-wrap:wrap;gap:10px'><span class='row' style='gap:6px'>" + fedSwitch(m.lendOverride, "data-fed-lend='" + esc(f.id) + "|" + esc(m.nodeId) + "'", "Lend to " + m.name + " individually") + "<span style='font-size:12px'>Lend individually</span></span>" +
+          "<span class='row' style='gap:6px'>" + fedSwitch(m.untrusted, "data-fed-untrust='" + esc(f.id) + "|" + esc(m.nodeId) + "'", "Untrust " + m.name) + "<span style='font-size:12px'>Untrusted — always wins</span></span>" +
+          (f.role === "gateway" ? "<button class='ghost' data-fed-expel='" + esc(f.id) + "|" + esc(m.nodeId) + "' style='min-height:44px'>Expel</button>" : "") + "</div>";
+      }
+      h += "</div>";
+    });
+    h += "</div>";
+    // Fedinet actions.
+    h += "<div class='row' style='margin-top:12px;flex-wrap:wrap;gap:8px'>" +
+      (f.role === "gateway"
+        ? "<button class='ghost' data-fed-sync='" + esc(f.id) + "' style='min-height:44px'>Republish the roster</button>"
+        : "<button class='ghost' data-fed-sync='" + esc(f.id) + "' style='min-height:44px'>Sync the roster</button>" +
+          (f.ownNumber ? "" : "<button class='ghost' data-fed-knock='" + esc(f.id) + "' style='min-height:44px'>Knock — ask to join</button>") +
+          "<button class='ghost' data-fed-leave='" + esc(f.id) + "' style='min-height:44px'>Leave this fedinet</button>") +
+      "</div></div>";
+  });
+  if (!(s.fedinets || []).length) {
+    h += "<div class='card' style='margin-top:14px'><b>No fedinets yet</b><p style='color:var(--dim);font-size:12px;margin-top:4px'>This node keeps no fedinet. Import a gateway card to be admitted to one — " + esc(s.knownDefault.name) + " is the known one — or found your own above. Pairwise pairing on the Mesh page is untouched by any of this, either way.</p></div>";
+  }
+  // The audit log.
+  h += "<div class='card' style='margin-top:14px'><b>The trust audit log</b><p style='color:var(--dim);font-size:12px;margin-top:4px'>Every trust-class act on this node, through any door, in sentences. Metadata only — never content.</p>";
+  var rows = (s.audit || []).slice().reverse();
+  if (!rows.length) h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>No trust acts yet.</p>";
+  rows.forEach(function (r) {
+    h += "<p style='font-size:12px;margin-top:6px'><span style='color:var(--dim)'>" + esc(new Date((r.ts || 0) * 1000).toLocaleString()) + " · " + esc(r.via === "dhd" ? "via DHD" : "at the desk") + "</span> — <b>" + esc(r.action) + "</b>" + (r.fedinet ? " · " + esc(r.fedinet) : "") + "<br><span style='color:var(--dim)'>" + esc(r.detail) + "</span></p>";
+  });
+  h += "</div>";
+  return h;
+}
+function wireFederation() {
+  if (!federationState) federationAct({ act: "state" }, "");
+  var q = function (sel) { return mainEl.querySelector(sel); };
+  var qa = function (sel) { return mainEl.querySelectorAll(sel); };
+  var split = function (v) { var i = (v || "").indexOf("|"); return i < 0 ? [v, ""] : [v.slice(0, i), v.slice(i + 1)]; };
+  qa("[data-fed-trust]").forEach(function (b) { b.onclick = function () {
+    var id = b.getAttribute("data-fed-trust");
+    var f = (federationState.fedinets || []).filter(function (x) { return x.id === id; })[0];
+    if (!f) return;
+    if (f.trustByDefault) { fedConfirm = null; federationAct({ act: "trust", fedinetId: id, on: false }, id); }
+    else { fedConfirm = { act: "trust", fedinetId: id, label: "trust " + f.name, extra: { on: true } }; fedMsg.error = ""; render(); }
+  }; });
+  qa("[data-fed-tick]").forEach(function (b) { b.onclick = function () {
+    var id = b.getAttribute("data-fed-tick");
+    var f = (federationState.fedinets || []).filter(function (x) { return x.id === id; })[0];
+    if (f) federationAct({ act: "tick", fedinetId: id, on: !f.lendToNew, badge: fedBadge() }, id);
+  }; });
+  qa("[data-fed-lend]").forEach(function (b) { b.onclick = function () {
+    var pr = split(b.getAttribute("data-fed-lend"));
+    var f = (federationState.fedinets || []).filter(function (x) { return x.id === pr[0]; })[0];
+    var m = f && (f.members || []).filter(function (x) { return x.nodeId === pr[1]; })[0];
+    if (m) federationAct({ act: "lend", fedinetId: pr[0], nodeId: pr[1], on: !m.lendOverride, badge: fedBadge() }, pr[0]);
+  }; });
+  qa("[data-fed-untrust]").forEach(function (b) { b.onclick = function () {
+    var pr = split(b.getAttribute("data-fed-untrust"));
+    var f = (federationState.fedinets || []).filter(function (x) { return x.id === pr[0]; })[0];
+    var m = f && (f.members || []).filter(function (x) { return x.nodeId === pr[1]; })[0];
+    if (m) federationAct({ act: "untrust", fedinetId: pr[0], nodeId: pr[1], on: !m.untrusted, badge: fedBadge() }, pr[0]);
+  }; });
+  qa("[data-fed-cap]").forEach(function (b) { b.onclick = function () {
+    var id = b.getAttribute("data-fed-cap");
+    var inp = q("#fed-cap-" + id);
+    federationAct({ act: "cap", fedinetId: id, cap: inp ? Number(inp.value || 0) : 0, badge: fedBadge() }, id);
+  }; });
+  qa("[data-fed-admit]").forEach(function (b) { b.onclick = function () { var pr = split(b.getAttribute("data-fed-admit")); federationAct({ act: "admit", fedinetId: pr[0], nodeId: pr[1], badge: fedBadge() }, pr[0]); }; });
+  qa("[data-fed-deny]").forEach(function (b) { b.onclick = function () { var pr = split(b.getAttribute("data-fed-deny")); federationAct({ act: "deny", fedinetId: pr[0], nodeId: pr[1], badge: fedBadge() }, pr[0]); }; });
+  qa("[data-fed-expel]").forEach(function (b) { b.onclick = function () { var pr = split(b.getAttribute("data-fed-expel")); federationAct({ act: "expel", fedinetId: pr[0], nodeId: pr[1], badge: fedBadge() }, pr[0]); }; });
+  qa("[data-fed-knock]").forEach(function (b) { b.onclick = function () { federationAct({ act: "knock", fedinetId: b.getAttribute("data-fed-knock") }, b.getAttribute("data-fed-knock")); }; });
+  qa("[data-fed-sync]").forEach(function (b) { b.onclick = function () { federationAct({ act: "sync", fedinetId: b.getAttribute("data-fed-sync") }, b.getAttribute("data-fed-sync")); }; });
+  qa("[data-fed-leave]").forEach(function (b) { b.onclick = function () { federationAct({ act: "leave", fedinetId: b.getAttribute("data-fed-leave") }, b.getAttribute("data-fed-leave")); }; });
+  qa("[data-fed-invitation]").forEach(function (b) { b.onclick = function () { federationAct({ act: "import-invitation", badge: fedBadge() }, "__join__"); }; });
+  qa("[data-fed-badge-enroll]").forEach(function (b) { b.onclick = function () {
+    if (!CONFIG.operatorBadge) { fedMsg.error = "This dashboard holds no Operator Badge yet — set it under Settings → Operator first, then enroll it here."; fedMsg.errorFor = ""; render(); return; }
+    federationAct({ act: "badge-enroll", badge: CONFIG.operatorBadge }, "");
+  }; });
+  qa("[data-fed-badge-clear]").forEach(function (b) { b.onclick = function () { federationAct({ act: "badge-clear" }, ""); }; });
+  var foundBtn = q("[data-fed-found]");
+  if (foundBtn) foundBtn.onclick = function () {
+    var nameEl = q("#fed-new-name");
+    var name = nameEl ? String(nameEl.value || "").trim() : "";
+    if (!name) { fedMsg.error = "A fedinet needs a name first."; fedMsg.errorFor = "__join__"; render(); return; }
+    fedConfirm = { act: "found", fedinetId: "__found__", label: "found " + name, extra: { name: name } };
+    fedMsg.error = ""; render();
+  };
+  var impBtn = q("[data-fed-import-btn]");
+  var impFile = q("#fed-import-file");
+  if (impBtn && impFile) {
+    impBtn.onclick = function () { impFile.click(); };
+    impFile.onchange = function () {
+      var file = impFile.files && impFile.files[0];
+      if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var buf = new Uint8Array(rd.result), bin = "";
+        for (var i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+        federationAct({ act: "import", cardPngB64: btoa(bin), badge: fedBadge() }, "__join__");
+      };
+      rd.readAsArrayBuffer(file);
+    };
+  }
+  qa("[data-fed-confirm-cancel]").forEach(function (b) { b.onclick = function () { fedConfirm = null; render(); }; });
+  qa("[data-fed-confirm-go]").forEach(function (b) { b.onclick = function () {
+    if (!fedConfirm) return;
+    var inp = q("#fed-confirm-in");
+    var body = { act: fedConfirm.act, confirm: inp ? inp.value : "", badge: fedBadge() };
+    if (fedConfirm.fedinetId !== "__found__") body.fedinetId = fedConfirm.fedinetId;
+    Object.keys(fedConfirm.extra || {}).forEach(function (k) { body[k] = fedConfirm.extra[k]; });
+    var forId = fedConfirm.fedinetId === "__found__" ? "__join__" : fedConfirm.fedinetId;
+    fedConfirm = null;
+    federationAct(body, forId);
+  }; });
+}
 function renderMeshStatus() {
   var m = meshViewState();
   var dot = meshDotColor(m);
@@ -6441,6 +6683,12 @@ function renderMeshStatus() {
     // construction, and the span wraps rather than widening the
     // column on a phone.
     if (m.state === "warning" && m.warning) line = m.warning;
+    // Build 8 (#154; ruling 2026-11-13): while this node keeps a
+    // fedinet, the headline is the STATE — "Mesh Online" — not a
+    // census of pairs. A warning still outranks it (the row is
+    // the persistent warning surface), and the activity words
+    // below still speak while work is actually moving.
+    else if (m.headline) line = m.headline;
     else if (m.borrowing) line = "Borrowing now";
     else if (m.lendingNow) line = "Lending now";
     else if (m.lendEnabled && m.borrowEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle") + " · borrowing automatic";
@@ -6650,7 +6898,7 @@ function meshTunnelHtml(p, m) {
     "<label style='font-size:12px'>SSH user <input type='text' data-mesh-tun-user='" + esc(p.nodeId) + "' value='" + esc(t.sshUser || "") + "' aria-label='SSH user for the backup route to " + esc(p.name) + "' style='" + inp + "'></label>" +
     "<button type='button' class='ghost' data-mesh-tunnel-save='" + esc(p.nodeId) + "' aria-label='Save the backup route to " + esc(p.name) + "' style='min-height:44px'>Save route</button></div>";
   if (!t.enabled && !armed) {
-    h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>The walked path, three presses: flip the switch to arm the route" + (sug ? " — the SSH host is already filled in from the public endpoint " + esc(p.name) + " declared on its card" : "") + ", fill whichever field is still blank, then Save route, and the bridge keeps the tunnel open by itself. One step no button here can take: " + esc(p.name) + " must authorize this machine's tunnel key on its own dashboard, in person, before the tunnel can open — authorization is never given from over the wire.</p>";
+    h += "<p style='color:var(--dim);font-size:12px;margin-top:6px'>The walked path, three presses: flip the switch to arm the route" + (sug ? " — the SSH host is already filled in from the public endpoint " + esc(p.name) + " declared on its card" : "") + ", fill whichever field is still blank, then Save route, and the bridge keeps the tunnel open by itself. One step no button here can take: " + esc(p.name) + " must authorize this machine's tunnel key on its own dashboard — a crown act there, spoken by name (and, through its DHD door, under its Operator Badge) — before the tunnel can open. It is never the borrower's to give.</p>";
   }
   if (armed) {
     h += "<p style='font-size:12px;margin-top:6px;color:var(--accent)'>The route is armed, not on: it still needs that machine's SSH host and user. Fill in whichever is blank above and press Save route — the bridge keeps the tunnel from there.</p>";
@@ -6661,10 +6909,19 @@ function meshTunnelHtml(p, m) {
       : "<p style='color:var(--dim);font-size:12px;margin-top:6px'>The bridge keeps this tunnel open itself — no command to run, nothing to keep alive by hand. Direct addresses are always tried first; the tunnel is the road of last resort.</p>";
   }
   if (p.hasTunnelKey) {
-    if (m.viaDhd) {
-      h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>Tunnel key: " + (p.tunnelKeyAuthorized ? "authorized on this machine." : "not authorized on this machine.") + " Authorizing happens at this machine, in person — this view is through the DHD door, so the button is at home.</p>";
-    } else {
-      h += "<div style='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap'><button type='button' class='ghost' data-mesh-tunnel-auth='" + esc(p.nodeId) + "' data-auth-action='" + (p.tunnelKeyAuthorized ? "revoke" : "authorize") + "' aria-label='" + (p.tunnelKeyAuthorized ? "Revoke " : "Authorize ") + esc(p.name) + "'s tunnel key on this machine' style='min-height:44px'>" + (p.tunnelKeyAuthorized ? "Revoke tunnel key" : "Authorize tunnel key") + "</button><span style='font-size:12px;color:var(--dim)'>" + (p.tunnelKeyAuthorized ? "This machine lets " + esc(p.name) + "'s tunnel key forward to its Mesh door — nothing else." : "Let " + esc(p.name) + " keep a backup tunnel to this machine's Mesh door — forwarding only, to this door only.") + "</span></div>";
+    // Build 8: authorizing a tunnel key is a CROWN ACT (the
+    // 2026-11-13 ruling amended Build 4's in-person-only door):
+    // it runs at the desk and through DHD alike, under a
+    // named-action confirm — and through DHD, the Operator
+    // Badge step-up rides with it. Revoking stays open through
+    // every door. The confirm strip opens ON THIS CARD and a
+    // refusal lands on it too — never a silent snap-back.
+    h += "<div style='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap'><button type='button' class='ghost' data-mesh-tunnel-auth='" + esc(p.nodeId) + "' data-auth-action='" + (p.tunnelKeyAuthorized ? "revoke" : "authorize") + "' aria-label='" + (p.tunnelKeyAuthorized ? "Revoke " : "Authorize ") + esc(p.name) + "'s tunnel key on this machine' style='min-height:44px'>" + (p.tunnelKeyAuthorized ? "Revoke tunnel key" : "Authorize tunnel key") + "</button><span style='font-size:12px;color:var(--dim)'>" + (p.tunnelKeyAuthorized ? "This machine lets " + esc(p.name) + "'s tunnel key forward to its Mesh door — nothing else. Revoking works from anywhere." : "Let " + esc(p.name) + " keep a backup tunnel to this machine's Mesh door — forwarding only, to this door only. A crown act: it asks you to speak its name" + (m.viaDhd ? ", and your Operator Badge rides as the step-up through this door" : "") + ".") + "</span></div>";
+    if (meshTunnelConfirmFor === p.nodeId && !p.tunnelKeyAuthorized) {
+      h += "<div style='margin-top:8px;border:1px solid #f5b544;border-radius:8px;padding:10px'><b style='font-size:12px'>A crown act — speak its name.</b><p style='color:var(--dim);font-size:12px;margin-top:4px'>Type the words <span class='mono' style='color:var(--ink)'>authorize tunnel key for " + esc(p.name) + "</span> to confirm. The act lands in the Federation audit log.</p><div class='row' style='margin-top:6px'><input class='grow' id='mesh-tunnel-confirm-in' type='text' placeholder='authorize tunnel key for " + esc(p.name) + "' aria-label='Type the confirm words'><button class='act' data-mesh-tunnel-confirm='" + esc(p.nodeId) + "' style='min-height:44px'>Confirm</button><button class='ghost' data-mesh-tunnel-cancel='1' style='min-height:44px'>Cancel</button></div></div>";
+    }
+    if (meshTunnelAuthMsg && meshTunnelAuthMsg.nodeId === p.nodeId) {
+      h += "<p style='font-size:12px;margin-top:6px;color:" + (meshTunnelAuthMsg.ok ? "var(--accent)" : "#f58a8a") + "'>" + esc(meshTunnelAuthMsg.text) + "</p>";
     }
   } else {
     h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>" + esc(p.name) + "'s card carries no tunnel key — it predates the managed backup route. Re-share its card from its Mesh page and pair it again, and the key arrives with the card.</p>";
@@ -7033,11 +7290,28 @@ function wireMeshCard() {
       var nodeId = b.getAttribute("data-mesh-tunnel-auth");
       var action = b.getAttribute("data-auth-action") || "authorize";
       if (CONFIG.backend !== "live") { meshMsg = "Tunnel keys need the live bridge."; render(); return; }
+      // Build 8: authorize opens the crown confirm strip on the
+      // peer's own card; revoke — open through every door —
+      // posts at once.
+      if (action === "authorize") { meshTunnelConfirmFor = nodeId; meshTunnelAuthMsg = null; render(); return; }
       fetch("/api/mesh/peers/tunnel-authorize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId, action: action }) })
         .then(function (r) { return r.json(); })
-        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshMsg = j.message || "Saved."; } else meshMsg = (j && (j.error || j.message)) || "The bridge refused."; render(); })
-        .catch(function () { meshMsg = "The bridge did not answer — is it running?"; render(); });
+        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshTunnelAuthMsg = { nodeId: nodeId, ok: true, text: j.message || "Saved." }; } else meshTunnelAuthMsg = { nodeId: nodeId, ok: false, text: (j && (j.error || j.message)) || "The bridge refused." }; render(); })
+        .catch(function () { meshTunnelAuthMsg = { nodeId: nodeId, ok: false, text: "The bridge did not answer — is it running?" }; render(); });
     };
+  });
+  mainEl.querySelectorAll("[data-mesh-tunnel-confirm]").forEach(function (b) {
+    b.onclick = function () {
+      var nodeId = b.getAttribute("data-mesh-tunnel-confirm");
+      var inp = document.getElementById("mesh-tunnel-confirm-in");
+      fetch("/api/mesh/peers/tunnel-authorize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nodeId: nodeId, action: "authorize", confirm: inp ? inp.value : "", badge: CONFIG.operatorBadge || "" }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.ok) { meshState = j.mesh; meshTunnelConfirmFor = null; meshTunnelAuthMsg = { nodeId: nodeId, ok: true, text: j.message || "Saved." }; } else meshTunnelAuthMsg = { nodeId: nodeId, ok: false, text: (j && (j.error || j.message)) || "The bridge refused." }; render(); })
+        .catch(function () { meshTunnelAuthMsg = { nodeId: nodeId, ok: false, text: "The bridge did not answer — is it running?" }; render(); });
+    };
+  });
+  mainEl.querySelectorAll("[data-mesh-tunnel-cancel]").forEach(function (b) {
+    b.onclick = function () { meshTunnelConfirmFor = null; render(); };
   });
   mainEl.querySelectorAll("[data-mesh-repair-clear]").forEach(function (b) {
     b.onclick = function () {
@@ -9232,6 +9506,8 @@ function render() {
     h += meshCardHtml();
     h += meshRosterHtml();
     h += meshHealthHtml();
+  } else if (view === "Federation") {
+    h += federationHtml();
   } else if (view === "RAG") {
     h += "<h3>RAG · knowledge packs</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='RAG sections' style='margin-bottom:10px'><button class='" + (ragTab === "packs" ? "act" : "ghost") + "' data-ragtab='packs' aria-label='Knowledge packs tab'>Packs</button><button class='" + (ragTab === "studio" ? "act" : "ghost") + "' data-ragtab='studio' aria-label='RAG Studio tab'>RAG Studio</button></div>";
@@ -10345,6 +10621,8 @@ function wire() {
     wireDhd();
   } else if (view === "Mesh") {
     wireMeshCard();
+  } else if (view === "Federation") {
+    wireFederation();
   } else if (view === "Vault") {
     var vq = function (sel) { return mainEl.querySelector(sel); };
     var vqa = function (sel) { return mainEl.querySelectorAll(sel); };

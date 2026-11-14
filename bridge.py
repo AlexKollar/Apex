@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-13.07"
+BRIDGE_BUILD = "2026-11-13.08"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 7
+SHIPPED_BUILD_SEQ = 8
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2698,6 +2698,12 @@ MESH_STATE = {
     "borrowed_peer": "",
     "borrowed_started": 0.0,
     "lend_stop_stamp": 0.0,
+    # Federation (Build 8): the fedinet an in-flight federation
+    # borrow belongs to ("" for a pairwise borrow — those are
+    # never preempted), and the owner-preemption stamp, the
+    # preempt path's mirror of lend_stop_stamp.
+    "borrowed_fedinet": "",
+    "preempt_stamp": 0.0,
     # Local generations in flight on this machine (either role) —
     # the busy/idle signals admission and status read.
     "local_gen": 0,
@@ -2974,6 +2980,15 @@ def _mesh_peer(p):
         "relayCarryTo": _mesh_id_list(p.get("relayCarryTo")),
         "relayAcceptFrom": _mesh_id_list(p.get("relayAcceptFrom")),
         "relayWillCarryTo": _mesh_id_list(p.get("relayWillCarryTo")),
+        # 0.2.0e Build 8 (#154): federation provenance — the
+        # fedinet whose roster made this record, when the
+        # federation made it. "" for a hand-made pairing (the
+        # operator's own ceremony, never the federation's to
+        # create, edit, or remove). autoPaired marks records the
+        # federation materialized from a signed roster, as
+        # opposed to the one introduction record an import makes.
+        "viaFedinet": str(p.get("viaFedinet") or "")[:64],
+        "autoPaired": p.get("autoPaired") is True,
     }
 
 
@@ -4339,10 +4354,21 @@ def build_mesh_peer_card_png(peer):
     return _mesh_card_png_render(card)
 
 
-def _mesh_card_png_render(card):
+def _mesh_card_png_render(card, variant="pairing"):
     # Draws one pairing-card picture from a card dict: the face a
     # person reads above, the whole card as the tEXt payload.
-    caps = card.get("capabilities") if isinstance(card.get("capabilities"), dict) else {}
+    # 0.2.0e Build 8: the "gateway" variant draws the same face
+    # for a GATEWAY card payload — the fedinet's name in the big
+    # line, the gateway's own facts below it, a green accent in
+    # place of the Mesh blue, and the navi-gateway-card keyword
+    # on the payload chunk. Pairing output is byte-identical to
+    # before: variant defaults to "pairing" and face is card.
+    gateway = variant == "gateway"
+    face = card
+    if gateway:
+        gw = card.get("gateway") if isinstance(card.get("gateway"), dict) else {}
+        face = gw
+    caps = face.get("capabilities") if isinstance(face.get("capabilities"), dict) else {}
     cap_caps = caps.get("caps") if isinstance(caps.get("caps"), dict) else {}
     W, H = 720, 452
     BG = (10, 14, 18)
@@ -4351,7 +4377,11 @@ def _mesh_card_png_render(card):
     # distinct at a glance from the chips' coral red and the
     # knowledge packs' green. (It was a cyan until #117 ruled
     # color is family; cyan sat too close to the RAG green.)
-    ACCENT = (59, 130, 246)
+    # Build 8: a gateway card wears GREEN — the fedinet family's
+    # color, ruled with the card itself (2026-11-13): a pairing
+    # card in blue pairs one machine; the green one admits to a
+    # fedinet.
+    ACCENT = (34, 197, 94) if gateway else (59, 130, 246)
     INK = (230, 241, 245)
     DIM = (159, 179, 200)
     img = bytearray(bytes(BG) * (W * H))
@@ -4371,7 +4401,7 @@ def _mesh_card_png_render(card):
     MX = 36
     y = 30
     _mesh_face_draw(img, W, H, MX, y, "NAVI MESH", 3, ACCENT)
-    right = "PAIRING CARD"
+    right = "GATEWAY CARD" if gateway else "PAIRING CARD"
     _mesh_face_draw(img, W, H, W - MX - _mesh_face_text_w(right, 3), y, right, 3, DIM)
     y += 21 + 22
     name = _mesh_face_clean(card.get("name") or "This machine") or "THIS MACHINE"
@@ -4382,7 +4412,10 @@ def _mesh_card_png_render(card):
         name = name[: max(0, (W - 2 * MX) // (6 * scale) - 3)] + "..."
     _mesh_face_draw(img, W, H, MX, y, name, scale, INK)
     y += 7 * scale + 14
-    _mesh_face_draw(img, W, H, MX, y, "NODE " + str(card.get("nodeId") or "")[:12], 2, DIM)
+    if gateway:
+        _mesh_face_draw(img, W, H, MX, y, "GATEWAY " + (_mesh_face_clean(face.get("name") or "") or "THIS MACHINE"), 2, DIM)
+        y += 14 + 6
+    _mesh_face_draw(img, W, H, MX, y, "NODE " + str(face.get("nodeId") or "")[:12], 2, DIM)
     y += 14 + 16
     for x in range(MX, W - MX):
         px(x, y, ACCENT)
@@ -4422,6 +4455,8 @@ def _mesh_card_png_render(card):
         _mesh_face_draw(img, W, H, MX, y, line, 2, INK)
         y += 14 + 6
     foot = _mesh_face_wrap(
+        "THIS CARD ADMITS ITS BEARER TO AN INTRODUCTION - THE GATEWAY'S SIGNED ROSTER DOES THE REST. SEND THE FILE ITSELF - INSIDE A .ZIP FOR CHAT APPS, WHICH RECOMPRESS PICTURES AND STRIP THE DATA OUT."
+        if gateway else
         "THE PAIRING DATA RIDES INSIDE THIS PICTURE. SEND THE FILE ITSELF - "
         "INSIDE A .ZIP FOR CHAT APPS, WHICH RECOMPRESS PICTURES AND STRIP THE DATA OUT.",
         54,
@@ -4434,7 +4469,7 @@ def _mesh_card_png_render(card):
     for yy in range(H):
         raw.append(0)
         raw += img[yy * W * 3:(yy + 1) * W * 3]
-    text = b"navi-mesh-card\x00" + json.dumps(card).encode()
+    text = (b"navi-gateway-card\x00" if gateway else b"navi-mesh-card\x00") + json.dumps(card).encode()
     ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -4643,6 +4678,7 @@ def mesh_lender_generate(messages, endpoint, model):
             if MESH_STATE["borrowed_conn"] is conn:
                 MESH_STATE["borrowed_conn"] = None
                 MESH_STATE["borrowed_peer"] = ""
+                MESH_STATE["borrowed_fedinet"] = ""
                 MESH_STATE["borrowed_resp"] = None
             MESH_STATE["last_borrowed_done"] = time.time()
         try:
@@ -4729,6 +4765,19 @@ def mesh_handle_borrow(handler, body):
                         if q["nodeId"] == via), None)
         if carrier is None or peer["nodeId"] not in (carrier.get("relayAcceptFrom") or []):
             return 200, {"ok": False, "reason": "no-consent", "missing": "lender"}
+    # 0.2.0e Build 8 (#154): a FEDERATION-made peer borrows under
+    # this node's federation posture, judged fresh on every ask —
+    # the toggle, the tick, the untrust list, the roster's
+    # freshness, the fedinet cap. A refusal names its why-word in
+    # "detail"; the pairing itself is untouched either way (a
+    # federation member refused here is still paired — it is
+    # pairing-only until the posture says otherwise). Hand-made
+    # pairings never reach this check.
+    fed_id = str(peer.get("viaFedinet") or "")
+    if fed_id:
+        _fed_ok, _fed_why = federation_lend_ok(cfg, peer)
+        if not _fed_ok:
+            return 200, {"ok": False, "reason": "federation", "detail": _fed_why}
     # Too large is refused whole, never truncated: the assembled
     # prompt must fit the lender's own context setting.
     ctx_limit = 4096
@@ -4764,7 +4813,9 @@ def mesh_handle_borrow(handler, body):
     model = cfg.get("live", {}).get("model_name") or "navi"
     with MESH_LOCK:
         MESH_STATE["borrowed_peer"] = peer["nodeId"]
+        MESH_STATE["borrowed_fedinet"] = fed_id
     stop_stamp = MESH_STATE["lend_stop_stamp"]
+    preempt_stamp = MESH_STATE["preempt_stamp"]
     started = time.time()
     try:
         reply, usage = mesh_lender_generate(messages, endpoint, model)
@@ -4776,6 +4827,15 @@ def mesh_handle_borrow(handler, body):
             # drops so its fusion fallback (R3) speaks.
             mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "aborted"})
             return "drop", None
+        if fed_id and MESH_STATE["preempt_stamp"] != preempt_stamp:
+            # Build 8: owner preemption landed mid-generation —
+            # the owner's own work took the machine. Unlike
+            # instant-off (a revocation), preemption ANSWERS: the
+            # borrower is told its ask was preempted, by name, so
+            # its fallback speaks the right sentence and a later
+            # ask can be served.
+            mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "preempted"})
+            return 200, {"ok": False, "reason": "preempted"}
         mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "error"})
         return 502, {"ok": False, "reason": "lender-error"}
     if MESH_STATE["lend_stop_stamp"] != stop_stamp:
@@ -4912,11 +4972,15 @@ def mesh_handle_relay(handler, body):
     if isinstance(inner_data, dict):
         declared_via = str(inner_data.get("via") or "")
     own_id = str(ms.get("nodeId") or "") or (mesh_node_id() or "")
-    if inner_path == "/mesh/borrow" and declared_via != own_id:
+    if inner_path in ("/mesh/borrow", "/mesh/roster") and declared_via != own_id:
         return 200, {"ok": False, "reason": "hop-limit"}
-    if inner_path != "/mesh/borrow":
-        # First build scope: the generate class only. Every other
-        # class answers on the direct road or not at all.
+    if inner_path not in ("/mesh/borrow", "/mesh/roster"):
+        # Carriage scope: the generate class (Build 7) and the
+        # roster class (Build 8 — a fedinet's roster sync rides
+        # the same sealed carriage, on the same three ticks and
+        # the same one-hop rule; the roster door adds its own
+        # checks at the destination). Every other class answers
+        # on the direct road or not at all.
         return 200, {"ok": False, "reason": "class-off"}
     # The asker's own tick, declared inside its signed envelope —
     # the asker enforces its tick by only ever declaring it when
@@ -4933,7 +4997,7 @@ def mesh_handle_relay(handler, body):
     # the destination pinned by THIS machine's record for it.
     try:
         _status, raw = _mesh_send_prepared(
-            dest, "POST", "/mesh/borrow", fwd_headers, inner_body,
+            dest, "POST", inner_path, fwd_headers, inner_body,
             CHAT_TIMEOUT)
     except _MeshFpError:
         mesh_ledger_append({"peer": peer["nodeId"], "direction": "relayed",
@@ -5009,6 +5073,1609 @@ def mesh_stop_lending(via_dhd=False):
         except Exception:
             pass
     return mesh_status_payload(load_config(), via_dhd)
+
+
+# -- Federation (0.2.0e Build 8, #154; rulings 2026-11-13) ------------
+# Ring 2's trust layer, as ruled the night it was designed:
+#
+# A FEDINET is a named set of nodes whose gateway keeps a SIGNED
+# ROSTER — member node ids, card fingerprints, join order (Node
+# numbers are roster facts, assigned by the gateway at admission).
+# A GATEWAY CARD — a pairing card's form, rendered GREEN, the
+# fedinet's name on its face, its payload riding a navi-gateway-card
+# PNG chunk — imports as ADMISSION + INTRODUCTION ONLY: the gateway
+# becomes a peer here and its roster becomes fetchable; no trust is
+# granted by the import itself.
+#
+# TRUST IS DEEP (Alex's ruling, 2026-11-13, taken over the shallow
+# recommendation with its threat model on the table): when an
+# operator's trust-by-default toggle for a fedinet is ON, that
+# fedinet's signed roster auto-pairs AND auto-lends on this node —
+# against the roster's signatures, never against a claim. The
+# per-member "lend to new members automatically" tick (default ON)
+# refines it: a member who joined after this node's trust baseline
+# is lent to only while the tick stands; unticked, new members are
+# pairing-only FOR THIS MEMBER until ticked. A per-member untrust
+# always wins over both. One flip of trust-by-default OFF ends all
+# auto-lending for the fedinet (pairings already made stay
+# pairings). A roster older than the freshness window (72 hours)
+# degrades the fedinet to pairing-only, with the sentence on the
+# Federation page saying so. Expulsion is a signed roster revision
+# — effective at the next sync; pairings made by hand outside the
+# fedinet are never touched by any of this.
+#
+# THE DOORS (DHD tiers, as amended by the crown-acts ruling, Alex
+# 2026-11-13 20:56 EST): read + revoke are open through the DHD
+# door always. Manage acts (imports, ticks, caps, admissions)
+# through DHD need the trusted-device session the door itself
+# provides PLUS the step-up. CROWN ACTS — enabling deep trust,
+# founding a fedinet, authorizing tunnel keys — run through DHD
+# too, under the full ceremony: trusted-device session + the
+# Operator Badge step-up + a named-action confirm (the act spelled
+# in words) + an audit entry. At the desk the same crown acts need
+# the same named confirm + audit; the Badge is the door's addition.
+#
+# THE BADGE FACTOR: the Operator Badge (the operator card of #173 /
+# #180) is presented as an image; the node stores only its SHA-256
+# fingerprint, enrolled IN PERSON at the desk (enrollment itself
+# never rides DHD). A presented badge whose hash differs is refused
+# by name; a node with no badge enrolled refuses DHD crown/manage
+# acts by name — the ceremony cannot run, and says so.
+#
+# Every trust-class act, through any door, lands in the audit log
+# (config/federation/audit.json — sentences, metadata only).
+#
+# Custody, unchanged from Ring 1: the node keypair never leaves the
+# node and is never backed up; the roster is signed with it. The
+# federation slice of config carries NO key material — rosters are
+# public-by-design facts (the same facts pairing cards carry).
+FED_DIR = os.path.join(ROOT, "config", "federation")
+FED_AUDIT_PATH = os.path.join(FED_DIR, "audit.json")
+FED_INVITATION_PATH = os.path.join(FED_DIR, "invitation.png")
+FED_ROSTER_STALE_HOURS = 72
+FED_ROSTER_FRESH_SECONDS = FED_ROSTER_STALE_HOURS * 3600
+ROCKPORT_FEDINET_NAME = "Rockport Mesh"
+
+# The named-action confirms: a crown act is confirmed by speaking
+# its name. The page shows the words; the operator types them; the
+# bridge compares them exactly. A refusal names the words, so the
+# ceremony is discoverable from its own refusal.
+def _fed_confirm_found(name):
+    return "found " + str(name or "")
+
+
+def _fed_confirm_trust(fed_name):
+    return "trust " + str(fed_name or "")
+
+
+def _fed_confirm_tunnel(peer_name):
+    return "authorize tunnel key for " + str(peer_name or "")
+
+
+def _federation_slice(cfg):
+    raw = cfg.get("federation") if isinstance(cfg.get("federation"), dict) else {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _fed_sanitize(raw):
+    # One fedinet record, cleaned. The roster is kept verbatim
+    # (its signature covers it — cleaning it would break the very
+    # thing that makes it trustworthy); everything else is
+    # clamped to shape.
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get("name") or "").strip()[:80]
+    if not name:
+        return None
+    fid = str(raw.get("id") or "")
+    if not fid:
+        fid = "fed_" + hashlib.sha256(
+            (str(raw.get("gatewayNodeId") or "") + "|" + name).encode()
+        ).hexdigest()[:16]
+    roster = raw.get("roster") if isinstance(raw.get("roster"), dict) else None
+    since = raw.get("memberSince") if isinstance(raw.get("memberSince"), dict) else {}
+    since = {str(k): _mesh_int(v, 0) for k, v in list(since.items())[:256]}
+    return {
+        "id": fid,
+        "name": name,
+        "role": "gateway" if raw.get("role") == "gateway" else "member",
+        "gatewayNodeId": str(raw.get("gatewayNodeId") or "")[:64],
+        "gatewayName": str(raw.get("gatewayName") or "")[:80],
+        "gatewayCard": raw.get("gatewayCard") if isinstance(raw.get("gatewayCard"), dict) else None,
+        "gatewayCardPayload": raw.get("gatewayCardPayload") if isinstance(raw.get("gatewayCardPayload"), dict) else None,
+        "roster": roster,
+        "rosterSyncedAt": _mesh_int(raw.get("rosterSyncedAt"), 0),
+        "trustByDefault": raw.get("trustByDefault") is True,
+        "lendToNew": raw.get("lendToNew") is not False,
+        "untrusted": _mesh_id_list(raw.get("untrusted")),
+        "lendOverrides": _mesh_id_list(raw.get("lendOverrides")),
+        "memberSince": since,
+        "trustBaselineVersion": _mesh_int(raw.get("trustBaselineVersion"), 0),
+        "borrowCap": max(0, min(100000, _mesh_int(raw.get("borrowCap"), 0))),
+        "pendingJoins": [p for p in (raw.get("pendingJoins") or [])
+                         if isinstance(p, dict)][:32] if isinstance(raw.get("pendingJoins"), list) else [],
+        "foundedAt": _mesh_int(raw.get("foundedAt"), 0),
+    }
+
+
+def federation_settings(cfg):
+    raw = _federation_slice(cfg)
+    out = []
+    seen = set()
+    feds = raw.get("fedinets") if isinstance(raw.get("fedinets"), list) else []
+    for item in feds:
+        fed = _fed_sanitize(item)
+        if fed is not None and fed["id"] not in seen:
+            seen.add(fed["id"])
+            out.append(fed)
+    return out
+
+
+def _federation_badge_sha(cfg):
+    raw = _federation_slice(cfg)
+    sha = str(raw.get("badgeSha256") or "")
+    return sha if re.fullmatch(r"[0-9a-f]{64}", sha or "") else ""
+
+
+def _federation_save(cfg, fedinets):
+    raw = dict(_federation_slice(cfg))
+    raw["fedinets"] = fedinets
+    cfg["federation"] = raw
+    save_config(cfg)
+
+
+def _fed_find(fedinets, fed_id):
+    for i, f in enumerate(fedinets):
+        if f["id"] == fed_id:
+            return i, f
+    return -1, None
+
+
+def _fed_canonical(roster):
+    body = {k: v for k, v in roster.items() if k != "sig"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _fed_roster_members(fed):
+    roster = (fed or {}).get("roster") or {}
+    members = roster.get("members") if isinstance(roster, dict) else None
+    return members if isinstance(members, list) else []
+
+
+def _fed_roster_version(fed):
+    roster = (fed or {}).get("roster") or {}
+    try:
+        return int(roster.get("version") or 0)
+    except Exception:
+        return 0
+
+
+def _fed_member(fed, node_id):
+    for m in _fed_roster_members(fed):
+        if isinstance(m, dict) and str(m.get("nodeId") or "") == node_id:
+            return m
+    return None
+
+
+def _fed_roster_fresh(fed):
+    # Freshness is about the last successful SYNC, not the
+    # roster's age on the gateway: a quiet fedinet whose roster
+    # has not changed in a month is still fresh the hour after
+    # this node last verified it. Past the window, trust degrades
+    # to pairing-only until a sync lands.
+    return fed.get("rosterSyncedAt", 0) > 0 and \
+        (time.time() - fed["rosterSyncedAt"]) <= FED_ROSTER_FRESH_SECONDS
+
+
+def _fed_roster_stale_sentence(fed):
+    return ("This fedinet's roster was last verified more than "
+            + str(FED_ROSTER_STALE_HOURS) + " hours ago, so its trust is "
+            "pairing-only until a roster sync lands — pairings hold, "
+            "auto-lending waits.")
+
+
+def federation_audit(action, fed_name, detail, via):
+    try:
+        os.makedirs(FED_DIR, exist_ok=True)
+        rows = []
+        if os.path.isfile(FED_AUDIT_PATH):
+            try:
+                rows = json.loads(read_file(FED_AUDIT_PATH) or "[]")
+            except Exception:
+                rows = []
+        if not isinstance(rows, list):
+            rows = []
+        rows.append({"ts": int(time.time()), "action": str(action)[:60],
+                     "fedinet": str(fed_name or "")[:80],
+                     "detail": str(detail or "")[:300],
+                     "via": "dhd" if via == "dhd" else "desk"})
+        rows = rows[-300:]
+        with open(FED_AUDIT_PATH, "w") as f:
+            json.dump(rows, f, indent=1)
+    except Exception:
+        pass
+
+
+def federation_audit_read():
+    try:
+        if os.path.isfile(FED_AUDIT_PATH):
+            rows = json.loads(read_file(FED_AUDIT_PATH) or "[]")
+            if isinstance(rows, list):
+                return rows[-60:]
+    except Exception:
+        pass
+    return []
+
+
+def _fed_badge_bytes(data):
+    # The presented Badge: a data:image URL or a bare base64 body,
+    # decoded through the dashboard's own image-field discipline.
+    field = data.get("badge") if isinstance(data, dict) else None
+    if not isinstance(field, str) or not field:
+        return None
+    if field.startswith("data:image/"):
+        return _dashboard_image_bytes(_dashboard_image_field(field))
+    try:
+        return base64.b64decode(field, validate=True)
+    except Exception:
+        return None
+
+
+def _fed_badge_ok(cfg, via_dhd, data):
+    # The step-up, door side: at the desk the operator's presence
+    # is the factor and nothing is asked. Through DHD the Badge
+    # must be presented and must match the fingerprint enrolled
+    # on THIS node — or the act refuses, by name.
+    if not via_dhd:
+        return True, ""
+    enrolled = _federation_badge_sha(cfg)
+    if not enrolled:
+        return False, ("No Operator Badge is enrolled on this node as the "
+                       "DHD step-up factor, so this act cannot ride the DHD "
+                       "door — enroll the Badge in person, on this node's "
+                       "Federation page, and the ceremony can run.")
+    presented = _fed_badge_bytes(data)
+    if presented is None:
+        return False, ("That act needs the Operator Badge step-up through "
+                       "the DHD door: present the Operator Badge picture "
+                       "with the request. Without the Badge, it stays an "
+                       "in-person act.")
+    digest = hashlib.sha256(presented).hexdigest()
+    if not secrets.compare_digest(digest, enrolled):
+        return False, ("The Badge presented does not match the one enrolled "
+                       "on this node — the act is refused.")
+    return True, ""
+
+
+def _fed_crown_ok(cfg, via_dhd, data, confirm_label):
+    # The crown ceremony: the named-action confirm at every door,
+    # the Badge step-up added by the DHD door. Returns
+    # (ok, refusal-sentence).
+    ok, err = _fed_badge_ok(cfg, via_dhd, data)
+    if not ok:
+        return False, err
+    if str((data or {}).get("confirm") or "") != confirm_label:
+        return False, ("That act needs its name spoken: confirm it with "
+                       "the words '" + confirm_label + "'.")
+    return True, ""
+
+
+# -- Gateway cards -----------------------------------------------------
+# A gateway card is a pairing card's form carrying a bigger fact:
+# not "pair with me" but "I keep the roster of this fedinet; here
+# is my card so you can reach me, and my signature over the claim."
+
+def _fed_gateway_payload(cfg, fed):
+    own = mesh_card(cfg)
+    payload = {
+        "gatewayCard": 1,
+        "fedinetId": fed["id"],
+        "name": fed["name"],
+        "gateway": own,
+        "rosterVersion": _fed_roster_version(fed),
+        "issuedAt": int(time.time()),
+    }
+    payload["sig"] = mesh_sign(_fed_canonical(payload))
+    return payload
+
+
+def build_gateway_card_png(cfg, fed):
+    payload = _fed_gateway_payload(cfg, fed)
+    return _mesh_card_png_render(payload, variant="gateway")
+
+
+def parse_gateway_card_png(data):
+    # The gateway-card mirror of parse_mesh_card_png: same PNG
+    # discipline (CRC-checked tEXt, named refusals), the
+    # navi-gateway-card keyword. Returns (payload, error).
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or bytes(data[:8]) != b"\x89PNG\r\n\x1a\n":
+        return None, MESH_CARD_PNG_NOT_PNG
+    data = bytes(data)
+    pos = 8
+    payload = None
+    saw_pairing = False
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if pos + 12 + length > len(data):
+            return None, MESH_CARD_PNG_DAMAGED
+        chunk_data = data[pos + 8:pos + 8 + length]
+        if kind == b"tEXt":
+            nul = chunk_data.find(b"\x00")
+            if nul > 0:
+                keyword = chunk_data[:nul]
+                if keyword == b"navi-gateway-card":
+                    (crc_stored,) = struct.unpack(">I", data[pos + 8 + length:pos + 12 + length])
+                    if binascii.crc32(kind + chunk_data) & 0xFFFFFFFF != crc_stored:
+                        return None, MESH_CARD_PNG_DAMAGED
+                    payload = chunk_data[nul + 1:]
+                elif keyword == b"navi-mesh-card":
+                    saw_pairing = True
+        if kind == b"IEND":
+            break
+        pos += 8 + length + 4
+    if payload is None:
+        if saw_pairing:
+            return None, ("That picture is a Mesh pairing card, not a gateway "
+                          "card — pairing cards pair one machine; gateway cards "
+                          "come from a fedinet gateway's Federation page.")
+        return None, MESH_CARD_PNG_NO_PAYLOAD
+    try:
+        card = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return None, MESH_CARD_PNG_DAMAGED
+    if not isinstance(card, dict) or card.get("gatewayCard") != 1:
+        return None, MESH_CARD_PNG_DAMAGED
+    return card, ""
+
+
+def _fed_verify_gateway_card(payload):
+    # The card's claim, checked: the embedded gateway card must
+    # validate as a pairing card, and the signature over the
+    # payload must verify against the gateway's own key — a card
+    # anyone can print, but only the gateway can sign.
+    gw = payload.get("gateway") if isinstance(payload.get("gateway"), dict) else None
+    if gw is None:
+        return None, "That gateway card carries no gateway — it is damaged."
+    peer, perr = mesh_parse_card(json.dumps(gw))
+    if peer is None:
+        return None, perr or "That gateway card's gateway does not validate."
+    sig = str(payload.get("sig") or "")
+    if not sig or not mesh_verify(str(gw.get("publicKeyPem") or ""),
+                                  _fed_canonical(payload), sig):
+        return None, ("That gateway card's signature does not verify against "
+                      "its gateway's key — the card was not signed by the "
+                      "gateway it names, so nothing was imported.")
+    return peer, ""
+
+
+def _fed_import_gateway_payload(cfg, payload, trust_default=False):
+    # Import = admission + introduction. Creates (or refreshes)
+    # the member-side fedinet record and the gateway's peer
+    # record — marked as federation-made, introduction only. No
+    # lending posture moves: trust starts OFF unless the caller
+    # is the container first boot's Rockport default (the ruled
+    # exception, and even then nothing lends until a signed
+    # roster syncs and says who the members are).
+    peer, err = _fed_verify_gateway_card(payload)
+    if peer is None:
+        return None, err
+    if peer["nodeId"] and peer["nodeId"] == (mesh_node_id() or ""):
+        return None, ("That gateway card is this node's own — a node does "
+                      "not join a fedinet it gateways; it is already the "
+                      "gateway, and its Founding Member.")
+    name = str(payload.get("name") or "").strip()[:80]
+    if not name:
+        return None, "That gateway card names no fedinet."
+    fed_id = str(payload.get("fedinetId") or "") or "fed_" + hashlib.sha256(
+        (peer["nodeId"] + "|" + name).encode()).hexdigest()[:16]
+    fedinets = federation_settings(cfg)
+    idx, fed = _fed_find(fedinets, fed_id)
+    created = fed is None
+    if created:
+        fed = _fed_sanitize({
+            "id": fed_id, "name": name, "role": "member",
+            "gatewayNodeId": peer["nodeId"], "gatewayName": peer["name"],
+            "gatewayCard": payload.get("gateway"),
+            "gatewayCardPayload": payload,
+            "trustByDefault": bool(trust_default),
+            "foundedAt": int(time.time()),
+        })
+        fedinets.append(fed)
+    else:
+        fed["gatewayCard"] = payload.get("gateway")
+        fed["gatewayCardPayload"] = payload
+        fed["gatewayName"] = peer["name"]
+    # The introduction: the gateway joins this node's peers as a
+    # federation-made record — paired, never hand-made, and (until
+    # trust + roster say otherwise) lending nothing.
+    ms = mesh_settings(cfg)
+    existing = next((p for p in ms["borrow"]["peers"] if p["nodeId"] == peer["nodeId"]), None)
+    if existing is None:
+        peer["viaFedinet"] = fed["id"]
+        peer["autoPaired"] = True
+        _cfg2 = load_config()
+        mesh_add_peer(_cfg2, peer)
+        cfg = _cfg2
+    _federation_save(cfg, fedinets)
+    return fed, ""
+
+
+# -- Rosters -----------------------------------------------------------
+# The roster is the gateway's signed word: who is in, in what
+# order, with the card facts every member needs to pair the
+# others. Versions only move forward; a rollback or a bad
+# signature is refused by name at the door.
+
+def _fed_member_entry(cfg, peer_like, n, joined_at):
+    caps = peer_like.get("capabilities")
+    entry = {
+        "n": int(n),
+        "nodeId": str(peer_like.get("nodeId") or ""),
+        "name": str(peer_like.get("name") or "")[:80],
+        "publicKeyPem": str(peer_like.get("publicKeyPem") or ""),
+        "certFingerprint": str(peer_like.get("certFingerprint") or ""),
+        "addresses": [str(a)[:120] for a in (peer_like.get("addresses") or [])][:8],
+        "port": _mesh_int(peer_like.get("port"), 8765),
+        "publicEndpoint": str(peer_like.get("publicEndpoint") or "")[:120],
+        "capabilities": caps if isinstance(caps, dict) else {},
+        "joinedAt": int(joined_at or 0),
+    }
+    if peer_like.get("founding"):
+        # The Founding Member mark is a roster fact like the Node
+        # number — it survives every rebuild of the entry.
+        entry["founding"] = True
+    return entry
+
+
+def _fed_sign_roster(cfg, fed):
+    roster = fed.get("roster") or {}
+    roster = dict(roster)
+    roster.pop("sig", None)
+    roster["fedinetId"] = fed["id"]
+    roster["name"] = fed["name"]
+    roster["gatewayNodeId"] = fed["gatewayNodeId"]
+    roster["updatedAt"] = int(time.time())
+    roster["sig"] = mesh_sign(_fed_canonical(roster))
+    fed["roster"] = roster
+    return roster
+
+
+def _fed_verify_roster(fed, roster):
+    if not isinstance(roster, dict):
+        return "bad-roster"
+    if str(roster.get("fedinetId") or "") != fed["id"]:
+        return "wrong-fedinet"
+    gw_card = fed.get("gatewayCard") or {}
+    pem = str(gw_card.get("publicKeyPem") or "")
+    sig = str(roster.get("sig") or "")
+    if not pem or not sig or not mesh_verify(pem, _fed_canonical(roster), sig):
+        return "roster-unverified"
+    return ""
+
+
+def _fed_gateway_locked(fed):
+    # This node IS the gateway: the stored roster is refreshed
+    # from this node's own peer records before it is published
+    # or signed onward (a member whose card facts changed here —
+    # a fresh import — must not ride a stale entry). Member-side
+    # copies never pass through here; for them the roster is the
+    # gateway's signed word exactly as received.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    out = []
+    for m in _fed_roster_members(fed):
+        if not isinstance(m, dict):
+            continue
+        nid = str(m.get("nodeId") or "")
+        if nid == own_id:
+            own = mesh_card(cfg)
+            entry = _fed_member_entry(cfg, own, m.get("n") or 1, m.get("joinedAt"))
+            if m.get("founding"):
+                entry["founding"] = True
+            out.append(entry)
+            continue
+        rec = next((p for p in ms["borrow"]["peers"] if p["nodeId"] == nid), None)
+        if rec is not None:
+            entry = _fed_member_entry(cfg, rec, m.get("n") or len(out) + 1, m.get("joinedAt"))
+            if m.get("founding"):
+                entry["founding"] = True
+            out.append(entry)
+        else:
+            out.append(m)
+    return out
+
+
+def _fed_gateway_publish(cfg, fedinets, fed):
+    # Gateway side: reconcile the roster this node SIGNS with
+    # the roster the caller intends, sign, persist. Called after
+    # every membership change (admit / expel) and before a roster
+    # is served to a member whose copy is behind.
+    #
+    # The change test reads the LAST SIGNED roster from disk —
+    # never the caller's in-memory copy, which admit/expel have
+    # already mutated (comparing the intent against itself made
+    # every membership change a "no-op" and left new members
+    # riding a stale signature). The intended member set is
+    # refreshed from this node's own records; when the refreshed
+    # intent equals the signed roster exactly, the publish is a
+    # no-op and the version stands — a member's routine sync
+    # poll never churns it.
+    fed = dict(fed)
+    disk_feds = federation_settings(load_config())
+    _di, disk_fed = _fed_find(disk_feds, fed["id"])
+    stored_members = _fed_roster_members(disk_fed) if disk_fed else []
+    stored_version = _fed_roster_version(disk_fed) if disk_fed else 0
+    members = _fed_gateway_locked(fed)
+    if disk_fed is not None and (disk_fed.get("roster") or {}).get("sig") \
+            and members == stored_members:
+        return disk_fed
+    fed["roster"] = dict(fed.get("roster") or {})
+    fed["roster"]["members"] = members
+    fed["roster"]["version"] = stored_version + 1
+    _fed_sign_roster(cfg, fed)
+    fed["rosterSyncedAt"] = int(time.time())
+    idx, _old = _fed_find(fedinets, fed["id"])
+    if idx < 0:
+        fedinets.append(fed)
+    else:
+        fedinets[idx] = fed
+    _federation_save(cfg, fedinets)
+    return fed
+
+
+def _fed_accept_roster(cfg, fedinets, fed, roster):
+    # Member side (and the gateway's own no-op): a roster is
+    # accepted only whole — right fedinet, gateway's signature,
+    # version strictly forward. Anything else is refused by name
+    # and the stored roster stands.
+    err = _fed_verify_roster(fed, roster)
+    if err:
+        return fed, err
+    if _fed_roster_version({"roster": roster}) <= _fed_roster_version(fed) and fed.get("roster"):
+        return fed, "roster-rollback"
+    fed = dict(fed)
+    fed["roster"] = roster
+    fed["rosterSyncedAt"] = int(time.time())
+    idx, _old = _fed_find(fedinets, fed["id"])
+    fedinets[idx] = fed
+    _federation_save(cfg, fedinets)
+    return fed, ""
+
+
+# -- What trust DOES ---------------------------------------------------
+# federation_apply is the materializer: after any roster or trust
+# change it reconciles this node's peer records with the signed
+# roster. It only ever touches records the federation itself made
+# (viaFedinet) — a hand-made pairing is the operator's and is
+# never created, edited, or removed here.
+
+def federation_apply(cfg):
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    fedinets = federation_settings(cfg)
+    changed = False
+    peers = list(ms["borrow"]["peers"])
+    for fed in fedinets:
+        members = [m for m in _fed_roster_members(fed) if isinstance(m, dict)]
+        member_ids = {str(m.get("nodeId") or "") for m in members}
+        active = fed["trustByDefault"] and _fed_roster_fresh(fed)
+        # Departures: records the federation OWNS for nodes no
+        # longer on the roster go away. A record that pre-dated
+        # the federation (hand-paired, then admitted — marked,
+        # never autoPaired) is only UNMARKED: the pairing itself
+        # was the operator's before the fedinet and stays the
+        # operator's after it. Pairing-only posture (a stale
+        # roster) sweeps nothing — they are still members; the
+        # roster merely went stale.
+        if fed.get("roster"):
+            kept = []
+            for p in peers:
+                if p.get("viaFedinet") == fed["id"] and p["nodeId"] not in member_ids \
+                        and p["nodeId"] != fed["gatewayNodeId"]:
+                    changed = True
+                    if p.get("autoPaired"):
+                        continue
+                    p = dict(p)
+                    p["viaFedinet"] = ""
+                kept.append(p)
+            peers = kept
+        if not active:
+            continue
+        for m in members:
+            nid = str(m.get("nodeId") or "")
+            if not nid or nid == own_id or nid in fed["untrusted"]:
+                continue
+            rec = next((p for p in peers if p["nodeId"] == nid), None)
+            entry = _fed_member_entry(cfg, m, m.get("n") or 0, m.get("joinedAt"))
+            peer, perr = mesh_parse_card(json.dumps({
+                "meshCard": 1, "name": entry["name"], "nodeId": nid,
+                "publicKeyPem": entry["publicKeyPem"],
+                "certFingerprint": entry["certFingerprint"],
+                "addresses": entry["addresses"], "port": entry["port"],
+                "publicEndpoint": entry["publicEndpoint"],
+                "capabilities": entry["capabilities"],
+            }))
+            if peer is None:
+                continue
+            if rec is None:
+                peer["viaFedinet"] = fed["id"]
+                peer["autoPaired"] = True
+                peers.append(peer)
+                changed = True
+            elif rec.get("viaFedinet") == fed["id"]:
+                # Refresh the federation-owned facts of a record
+                # the federation made (a member's new card facts
+                # ride the roster); operator facts on it — relay
+                # ticks, the tunnel route — are never the roster's
+                # to rewrite.
+                for k in ("name", "publicKeyPem", "certFingerprint",
+                          "addresses", "port", "publicEndpoint", "capabilities"):
+                    if rec.get(k) != peer.get(k):
+                        rec[k] = peer[k]
+                        changed = True
+    if changed:
+        cfg2 = load_config()
+        block = dict(cfg2.get("mesh") or {})
+        borrow = dict(block.get("borrow") or {})
+        borrow["peers"] = peers
+        block["borrow"] = borrow
+        cfg2["mesh"] = block
+        save_config(cfg2)
+    return changed
+
+
+def _fed_cap_hit(fed, member_ids):
+    cap = fed.get("borrowCap") or 0
+    if cap <= 0:
+        return False
+    cutoff = time.time() - 3600
+    total = 0
+    for r in mesh_ledger_read():
+        if r.get("direction") == "lent" and r.get("outcome") == "ok" \
+                and (r.get("ts") or 0) >= cutoff and r.get("peer") in member_ids:
+            total += 1
+    return total >= cap
+
+
+def federation_lend_ok(cfg, peer):
+    # The borrow door's federation question, answered with a
+    # why-word: may this federation-made peer borrow, right now,
+    # under this node's own posture? Pairwise (hand-made) peers
+    # never reach here — the door asks only for viaFedinet
+    # records. The checks are this node's OWN acts: its toggle,
+    # its tick, its untrust list, its cap. The lender's general
+    # caps in mesh_handle_borrow still apply after this returns.
+    fed_id = str(peer.get("viaFedinet") or "")
+    if not fed_id:
+        return True, "pairwise"
+    fedinets = federation_settings(cfg)
+    _idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None:
+        return False, "no-fedinet"
+    nid = str(peer.get("nodeId") or "")
+    if nid in fed["untrusted"]:
+        return False, "untrusted"
+    member = _fed_member(fed, nid)
+    if member is None and nid != fed["gatewayNodeId"]:
+        return False, "not-on-roster"
+    if not _fed_roster_fresh(fed):
+        # Staleness degrades EVERYTHING the federation lends to
+        # pairing-only — the prep's sentence, no exceptions for
+        # individual ticks: a stale roster cannot prove the
+        # member was not expelled an hour ago.
+        return False, "roster-stale"
+    if nid in (fed.get("lendOverrides") or []):
+        # An individual tick is the operator's own per-member
+        # act: it lends even while the fedinet's general toggle
+        # is off (it is not AUTO-lending; it is named lending),
+        # and untrust above still beats it.
+        return True, "member-tick"
+    if not fed["trustByDefault"]:
+        return False, "trust-off"
+    version = _fed_roster_version(fed)
+    since = (fed.get("memberSince") or {}).get(nid)
+    if since is None:
+        since = version if nid == fed["gatewayNodeId"] else 0
+    if since > fed.get("trustBaselineVersion", 0) and not fed["lendToNew"]:
+        return False, "new-member"
+    member_ids = {str(m.get("nodeId") or "") for m in _fed_roster_members(fed)}
+    if _fed_cap_hit(fed, member_ids):
+        return False, "cap"
+    return True, "member-tick" if since > fed.get("trustBaselineVersion", 0) else "trust-on"
+
+
+def mesh_preempt_borrowed():
+    # Owner preemption (the prep's rule: the owner's own work
+    # goes first): when local generation starts and the machine
+    # is mid-borrow for a FEDERATION-made peer, the borrowed
+    # generation is aborted and the borrow handler answers the
+    # borrower with the named outcome "preempted" — never dropped
+    # silently, and a pairwise borrow is never preempted.
+    with MESH_LOCK:
+        fed_id = MESH_STATE.get("borrowed_fedinet") or ""
+        conn = MESH_STATE["borrowed_conn"]
+        resp = MESH_STATE["borrowed_resp"]
+    if not fed_id or conn is None:
+        return False
+    with MESH_LOCK:
+        MESH_STATE["preempt_stamp"] = time.time()
+    try:
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
+    if resp is not None:
+        try:
+            resp.close()
+        except Exception:
+            pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return True
+
+
+# -- Roster traffic ------------------------------------------------------
+# Asks ride the Mesh door (POST /mesh/roster), signed like every
+# Mesh request. Authentication at the roster door is deliberately
+# wider than pairing: a fedinet member is known by the roster
+# itself — its key is a roster fact, signed by the gateway — so a
+# member this node has not paired with yet can still sync, knock,
+# and be answered. The gateway's signature over the roster is the
+# credential every answer stands on.
+
+def _fed_roster_auth(handler, body, fed_hint):
+    # Returns (asker_node_id, error_word). Accepts: a paired peer
+    # (mesh_authenticate), OR any current roster member's key, OR
+    # the pinned gateway key of the hinted fedinet.
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return "", "bad-request"
+    if not isinstance(data, dict):
+        return "", "bad-request"
+    peer = mesh_authenticate(handler, body, str(data.get("requestId") or ""))
+    if peer is not None:
+        return str(peer.get("nodeId") or ""), ""
+    node = str(handler.headers.get("X-Mesh-Node") or "")
+    ts_raw = str(handler.headers.get("X-Mesh-Ts") or "")
+    sig = str(handler.headers.get("X-Mesh-Sig") or "")
+    if not node or not sig:
+        return "", "unauthorized"
+    try:
+        ts = int(ts_raw)
+    except Exception:
+        return "", "unauthorized"
+    if abs(time.time() - ts) > 120:
+        return "", "unauthorized"
+    cfg = load_config()
+    candidates = {}
+    for fed in federation_settings(cfg):
+        if fed_hint and fed["id"] != fed_hint:
+            continue
+        gw = fed.get("gatewayCard") or {}
+        if gw.get("nodeId"):
+            candidates[str(gw["nodeId"])] = str(gw.get("publicKeyPem") or "")
+        for m in _fed_roster_members(fed):
+            if isinstance(m, dict) and m.get("nodeId"):
+                candidates[str(m["nodeId"])] = str(m.get("publicKeyPem") or "")
+        if fed["role"] == "gateway":
+            # A pending joiner may also authenticate — by the
+            # key its knock carried — so it can poll for the
+            # roster that admits it. Its card is in the pending
+            # list because its knock already proved the key.
+            for p in (fed.get("pendingJoins") or []):
+                if isinstance(p, dict) and isinstance(p.get("card"), dict):
+                    card = p["card"]
+                    if card.get("nodeId"):
+                        candidates[str(card["nodeId"])] = str(card.get("publicKeyPem") or "")
+    pem = candidates.get(node)
+    if not pem:
+        return "", "unauthorized"
+    payload = mesh_sig_payload(str(data.get("requestId") or ""), ts_raw, body)
+    if not mesh_verify(pem, payload, sig):
+        return "", "unauthorized"
+    return node, ""
+
+
+def _fed_roster_ask(peer, payload):
+    body = json.dumps(payload).encode()
+    try:
+        _code, raw = _mesh_request(peer, "POST", "/mesh/roster", body,
+                                   str(payload.get("requestId") or ""), 15)
+        data = json.loads(raw.decode("utf-8", "replace"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _fed_roster_sync(cfg, fed):
+    # One sync round for one member-side fedinet: ask the gateway
+    # (direct first, then via a consented relay — Build 8 admits
+    # the roster class to relay carriage on Build 7's consent and
+    # one-hop rules), accept a verified forward roster, then let
+    # the materializer reconcile pairings. Returns a sentence.
+    ms = mesh_settings(cfg)
+    gw_rec = next((p for p in ms["borrow"]["peers"]
+                   if p["nodeId"] == fed["gatewayNodeId"]), None)
+    if gw_rec is None:
+        return "The gateway is not paired on this node, so the roster cannot be fetched."
+    payload = {"action": "get", "fedinetId": fed["id"],
+               "version": _fed_roster_version(fed),
+               "requestId": secrets.token_hex(8)}
+    answer = _fed_roster_ask(gw_rec, payload)
+    if answer is None:
+        answer = _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload)
+    if answer is None:
+        return ("The gateway did not answer — the roster stands as it was. "
+                "Direct and relay roads were both tried.")
+    if not answer.get("ok"):
+        return "The gateway refused the roster ask (" + str(answer.get("reason") or "refused") + ")."
+    roster = answer.get("roster")
+    if roster is None:
+        fed2 = dict(fed)
+        fed2["rosterSyncedAt"] = int(time.time())
+        fedinets = federation_settings(cfg)
+        idx, _o = _fed_find(fedinets, fed["id"])
+        fedinets[idx] = fed2
+        _federation_save(cfg, fedinets)
+        return "The roster is current — the gateway's version matches this node's."
+    fedinets = federation_settings(cfg)
+    _i, cur = _fed_find(fedinets, fed["id"])
+    _fed, err = _fed_accept_roster(cfg, fedinets, cur, roster)
+    if err:
+        return "The roster the gateway sent was refused (" + err + ") — the stored roster stands."
+    federation_apply(load_config())
+    return "Roster synced — version " + str(_fed_roster_version(roster)) + " is this node's word now."
+
+
+def _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload):
+    # The roster ask, carried: the same signed ask, wrapped in
+    # Build 7's relay envelope — the inner body gains the "via"
+    # declaration the destination's consent check reads, and the
+    # destination's answer rides back sealed, exactly as a
+    # borrow's does.
+    ms = mesh_settings(cfg)
+    own_rec_hint = gw_rec
+    for relay in _mesh_relay_candidates(ms, own_rec_hint):
+        inner_payload = dict(payload)
+        inner_payload["via"] = relay["nodeId"]
+        inner_payload["requestId"] = secrets.token_hex(8)
+        inner_body = json.dumps(inner_payload).encode()
+        headers = mesh_signed_headers(str(inner_payload["requestId"]), inner_body)
+        outer = {
+            "requestId": secrets.token_hex(8),
+            "to": gw_rec["nodeId"],
+            "askerConsent": True,
+            "inner": {
+                "path": "/mesh/roster",
+                "headers": {k: headers[k] for k in
+                            ("X-Mesh-Node", "X-Mesh-Ts", "X-Mesh-Sig")},
+                "bodyB64": base64.b64encode(inner_body).decode("ascii"),
+            },
+        }
+        outer_body = json.dumps(outer).encode()
+        try:
+            _code, raw = _mesh_request(relay, "POST", "/mesh/relay", outer_body,
+                                       outer["requestId"], 20)
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if not isinstance(data, dict) or not data.get("ok") or not data.get("bodyB64"):
+            continue
+        try:
+            inner = json.loads(base64.b64decode(data["bodyB64"]).decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if isinstance(inner, dict):
+            return inner
+    return None
+
+
+def mesh_handle_roster(handler, body):
+    # POST /mesh/roster — join (a self-signed knock from a node
+    # holding the gateway card; admission is the gateway
+    # operator's act, never automatic), get (a member — or a
+    # pending joiner — asks for the current roster), roster (a
+    # member offers a newer roster it holds: gossip, so a
+    # fedinet heals around a dark gateway; the gateway's
+    # signature is the only credential an offered roster needs).
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return 200, {"ok": False, "reason": "mesh-off"}
+    action = str(data.get("action") or "")
+    fed_id = str(data.get("fedinetId") or "")
+    fedinets = federation_settings(cfg)
+    _idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None:
+        return 200, {"ok": False, "reason": "no-fedinet"}
+    if action == "join":
+        # A first knock is on NO roster yet, so roster auth
+        # cannot know it. The knock authenticates SELF-signed:
+        # the card inside the request names the key, and the
+        # request's signature must verify against that very key —
+        # the knocker proves it holds the key its card names, and
+        # the card itself is only a claim until the gateway's
+        # operator admits it.
+        card = data.get("card") if isinstance(data.get("card"), dict) else None
+        kpeer, kerr = (mesh_parse_card(json.dumps(card)) if card else (None, "no card"))
+        if kpeer is None:
+            return 200, {"ok": False, "reason": "bad-card",
+                         "detail": kerr or "the knock carries no valid card"}
+        node = str(handler.headers.get("X-Mesh-Node") or "")
+        ts_raw = str(handler.headers.get("X-Mesh-Ts") or "")
+        sig = str(handler.headers.get("X-Mesh-Sig") or "")
+        try:
+            ts_ok = abs(time.time() - int(ts_raw)) <= 120
+        except Exception:
+            ts_ok = False
+        if node != kpeer["nodeId"] or not ts_ok or not sig or not mesh_verify(
+                str(kpeer.get("publicKeyPem") or ""),
+                mesh_sig_payload(str(data.get("requestId") or ""), ts_raw, body), sig):
+            return 401, {"ok": False, "reason": "unauthorized"}
+        asker = kpeer["nodeId"]
+    else:
+        asker, aerr = _fed_roster_auth(handler, body, fed_id)
+        if aerr:
+            return 401, {"ok": False, "reason": aerr}
+    # A declared carrier adds a check, exactly as at the borrow
+    # door: this node's record for the carrier must tick that it
+    # may carry envelopes to this node from the authenticated
+    # asker, or the carried ask is refused by name.
+    via = str(data.get("via") or "")
+    if via:
+        carrier = next((q for q in ms["borrow"]["peers"]
+                        if q["nodeId"] == via), None)
+        if carrier is None or asker not in (carrier.get("relayAcceptFrom") or []):
+            return 200, {"ok": False, "reason": "no-consent", "missing": "lender"}
+    if action == "join":
+        if fed["role"] != "gateway":
+            return 200, {"ok": False, "reason": "not-gateway"}
+        card = data.get("card") if isinstance(data.get("card"), dict) else None
+        peer, perr = (mesh_parse_card(json.dumps(card)) if card else (None, "no card"))
+        if peer is None or peer["nodeId"] != asker:
+            return 200, {"ok": False, "reason": "bad-card",
+                         "detail": perr or "the knock carries no valid card"}
+        if _fed_member(fed, asker) is not None:
+            return 200, {"ok": True, "already": True,
+                         "roster": fed.get("roster")}
+        if asker == fed["gatewayNodeId"]:
+            return 200, {"ok": True, "already": True,
+                         "roster": fed.get("roster")}
+        pending = [p for p in (fed.get("pendingJoins") or [])
+                   if str(p.get("nodeId") or "") != asker]
+        pending.append({"nodeId": asker, "card": card, "ts": int(time.time())})
+        fed = dict(fed)
+        fed["pendingJoins"] = pending[-32:]
+        idx2, _o = _fed_find(fedinets, fed["id"])
+        fedinets[idx2] = fed
+        _federation_save(cfg, fedinets)
+        return 200, {"ok": True, "pending": True}
+    if action == "get":
+        if fed["role"] == "gateway":
+            fed = _fed_gateway_publish(cfg, fedinets, fed)
+            fedinets = federation_settings(cfg)
+            _i2, fed = _fed_find(fedinets, fed["id"])
+        known = _fed_member(fed, asker) is not None or asker == fed["gatewayNodeId"] \
+            or any(str(p.get("nodeId") or "") == asker for p in (fed.get("pendingJoins") or []))
+        if not known:
+            return 200, {"ok": False, "reason": "not-a-member"}
+        try:
+            theirs = int(data.get("version") or 0)
+        except Exception:
+            theirs = 0
+        if theirs >= _fed_roster_version(fed):
+            return 200, {"ok": True, "current": True, "roster": None,
+                         "version": _fed_roster_version(fed)}
+        return 200, {"ok": True, "roster": fed.get("roster"),
+                     "version": _fed_roster_version(fed)}
+    if action == "roster":
+        roster = data.get("roster")
+        fed2, err = _fed_accept_roster(cfg, fedinets, fed, roster)
+        if err:
+            return 200, {"ok": False, "reason": err}
+        federation_apply(load_config())
+        return 200, {"ok": True, "version": _fed_roster_version(fed2)}
+    return 400, {"ok": False, "reason": "bad-request"}
+
+
+def _fed_observe_members(fed):
+    # First sightings: a roster member this node has never seen
+    # is stamped with the roster version at which it was first
+    # seen — the fact the new-member tick reads. Existing stamps
+    # never move.
+    since = dict(fed.get("memberSince") or {})
+    version = _fed_roster_version(fed)
+    for m in _fed_roster_members(fed):
+        if isinstance(m, dict):
+            nid = str(m.get("nodeId") or "")
+            if nid and nid not in since:
+                since[nid] = version
+    fed["memberSince"] = since
+    return fed
+
+
+def federation_headline(cfg):
+    # The Mesh status headline, graduated (2026-11-13 ruling):
+    # when this node keeps any fedinet, the headline is the
+    # STATE — "Mesh Online" — not a census of pairs.
+    return "Mesh Online" if federation_settings(cfg) else ""
+
+
+def federation_payload(cfg, via_dhd=False):
+    ms = mesh_settings(cfg)
+    own_id = mesh_node_id() or ms["nodeId"]
+    fedinets = federation_settings(cfg)
+    out = []
+    for fed in fedinets:
+        members = []
+        for m in _fed_roster_members(fed):
+            if not isinstance(m, dict):
+                continue
+            nid = str(m.get("nodeId") or "")
+            if nid == own_id:
+                posture = "This node"
+                if fed["role"] == "gateway":
+                    posture += " — the gateway of this fedinet"
+                if m.get("founding"):
+                    posture += ", and its Founding Member"
+                posture += "."
+            elif nid in fed["untrusted"]:
+                posture = ("Untrusted by you — never lent to, whatever the "
+                           "roster or the ticks say.")
+            elif nid in (fed.get("lendOverrides") or []):
+                posture = "Ticked by you individually — this node lends to it."
+            elif not fed["trustByDefault"]:
+                posture = "Pairing only — trust-by-default is off for this fedinet."
+            elif not _fed_roster_fresh(fed):
+                posture = "Pairing only — the roster is past its freshness window."
+            elif (fed.get("memberSince") or {}).get(nid, 0) > fed.get("trustBaselineVersion", 0) \
+                    and not fed["lendToNew"]:
+                posture = ("New since your trust baseline, and your new-member "
+                           "tick is off — pairing only for now.")
+            else:
+                posture = "Auto-lent under trust-by-default."
+            members.append({
+                "n": m.get("n") or 0, "nodeId": nid,
+                "name": str(m.get("name") or ""), "short": nid[:12],
+                "posture": posture,
+                "untrusted": nid in fed["untrusted"],
+                "lendOverride": nid in (fed.get("lendOverrides") or []),
+                "founding": bool(m.get("founding")),
+                "gateway": nid == fed["gatewayNodeId"],
+            })
+        members.sort(key=lambda x: x["n"])
+        entry = {
+            "id": fed["id"], "name": fed["name"], "role": fed["role"],
+            "gatewayNodeId": fed["gatewayNodeId"],
+            "gatewayName": fed["gatewayName"],
+            "gatewayShort": fed["gatewayNodeId"][:12],
+            "rosterVersion": _fed_roster_version(fed),
+            "rosterFresh": _fed_roster_fresh(fed),
+            "rosterSyncedAt": fed.get("rosterSyncedAt") or 0,
+            "staleSentence": "" if _fed_roster_fresh(fed) else _fed_roster_stale_sentence(fed),
+            "trustByDefault": fed["trustByDefault"],
+            "lendToNew": fed["lendToNew"],
+            "borrowCap": fed.get("borrowCap") or 0,
+            "members": members,
+            "pendingJoins": [{"nodeId": str(p.get("nodeId") or ""),
+                              "name": str(((p.get("card") or {}).get("name")) or ""),
+                              "ts": p.get("ts") or 0}
+                             for p in (fed.get("pendingJoins") or []) if isinstance(p, dict)],
+            "ownNumber": next((m["n"] for m in members if m["nodeId"] == own_id), 0),
+        }
+        if fed["role"] == "gateway":
+            try:
+                entry["gatewayCardPng"] = base64.b64encode(
+                    build_gateway_card_png(cfg, fed)).decode("ascii")
+            except Exception:
+                entry["gatewayCardPng"] = ""
+        elif fed.get("gatewayCardPayload"):
+            # A member re-shares the card it imported — the
+            # gateway's own signed payload, re-drawn; nothing is
+            # re-signed and nothing new is claimed.
+            try:
+                entry["gatewayCardPng"] = base64.b64encode(_mesh_card_png_render(
+                    fed["gatewayCardPayload"], variant="gateway")).decode("ascii")
+            except Exception:
+                entry["gatewayCardPng"] = ""
+        out.append(entry)
+    return {
+        "ok": True,
+        "nodeId": own_id, "nodeName": ms["nodeName"],
+        "viaDhd": bool(via_dhd),
+        "badgeEnrolled": bool(_federation_badge_sha(cfg)),
+        "invitationWaiting": os.path.isfile(FED_INVITATION_PATH),
+        "knownDefault": {"name": ROCKPORT_FEDINET_NAME,
+                         "note": ("Rockport Mesh is the known fedinet — its "
+                                  "gateway card is the invitation. Import the "
+                                  "card and this node is admitted; the roster "
+                                  "itself lives on its gateway and is never "
+                                  "baked into an install.")},
+        "fedinets": out,
+        "audit": federation_audit_read(),
+    }
+
+
+def federation_import_invitation_file():
+    # The preload story, as a file contract: a gateway card
+    # waiting at config/federation/invitation.png — placed there
+    # by a container image's first boot, or by an operator's hand
+    # — is imported ADMISSION-ONLY at bridge start, once, and
+    # renamed aside so it never imports twice. Container first
+    # boots carry the ruled Rockport default (trust-by-default
+    # ON for the imported fedinet); a hand-dropped file on bare
+    # metal imports with trust OFF — enabling trust stays the
+    # operator's crown act either way, and nothing lends until a
+    # signed roster syncs.
+    if not os.path.isfile(FED_INVITATION_PATH):
+        return ""
+    try:
+        with open(FED_INVITATION_PATH, "rb") as f:
+            data = f.read()
+    except Exception:
+        return ""
+    payload, err = parse_gateway_card_png(data)
+    aside = os.path.join(FED_DIR, "invitation-refused.png")
+    if payload is None:
+        try:
+            os.replace(FED_INVITATION_PATH, aside)
+        except Exception:
+            pass
+        federation_audit("invitation", "", "The waiting invitation was refused: " + err, "desk")
+        return err
+    cfg = load_config()
+    trust_default = os.environ.get("APEX_CONTAINER") == "1"
+    fed, err = _fed_import_gateway_payload(cfg, payload, trust_default=trust_default)
+    try:
+        os.replace(FED_INVITATION_PATH,
+                   os.path.join(FED_DIR, "invitation-imported.png"))
+    except Exception:
+        pass
+    if fed is None:
+        federation_audit("invitation", "", "The waiting invitation was refused: " + err, "desk")
+        return err
+    federation_audit("invitation", fed["name"],
+                     "A waiting gateway card was imported at start — admission "
+                     "and introduction only"
+                     + ("; the container default set trust-by-default ON for "
+                        "this fedinet (it engages at the first signed roster "
+                        "sync)." if trust_default else "."),
+                     "desk")
+    return fed["name"]
+
+
+def federation_act(data, via_dhd=False):
+    # POST /api/federation — every Federation-page act, tiered
+    # per the DHD ruling. Read + revoke ride any door; manage
+    # acts through DHD need the Badge step-up; crown acts need
+    # the ceremony everywhere (Badge added by the door). Every
+    # act answers with the fresh state, so the page, the stored
+    # config, and a reload read one truth (the switch gate).
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "That request was not shaped like a Federation act."}
+    act = str(data.get("act") or "")
+    cfg = load_config()
+    fedinets = federation_settings(cfg)
+    via = "dhd" if via_dhd else "desk"
+
+    def state(**extra):
+        out = federation_payload(load_config(), via_dhd)
+        out.update(extra)
+        return out
+
+    def refuse(sentence):
+        out = state()
+        out["ok"] = False
+        out["error"] = sentence
+        return out
+
+    if act == "state":
+        return state()
+
+    if act in ("badge-enroll", "badge-clear"):
+        if via_dhd:
+            return refuse("The Badge step-up is enrolled in person, at the "
+                          "machine itself — the factor that guards the DHD "
+                          "door is never set through the DHD door.")
+        if act == "badge-enroll":
+            raw = _fed_badge_bytes(data)
+            if raw is None:
+                return refuse("No Badge picture rode that request — enrollment "
+                              "needs the Operator Badge image itself.")
+            rawcfg = dict(_federation_slice(cfg))
+            rawcfg["badgeSha256"] = hashlib.sha256(raw).hexdigest()
+            cfg["federation"] = rawcfg
+            save_config(cfg)
+            federation_audit("badge-enroll", "", "The Operator Badge was "
+                             "enrolled as the DHD step-up factor (fingerprint "
+                             "only; the picture never stays on this node).", via)
+            return state(sentence="The Operator Badge is enrolled — crown and "
+                                  "manage acts can now ride the DHD door under "
+                                  "its step-up.")
+        rawcfg = dict(_federation_slice(cfg))
+        rawcfg.pop("badgeSha256", None)
+        cfg["federation"] = rawcfg
+        save_config(cfg)
+        federation_audit("badge-clear", "", "The Operator Badge enrollment "
+                         "was cleared — DHD crown and manage acts are shut "
+                         "until a Badge is enrolled again.", via)
+        return state(sentence="The Badge enrollment is cleared.")
+
+    if act == "found":
+        name = str(data.get("name") or "").strip()[:80]
+        if not name:
+            return refuse("A fedinet needs a name — the name rides its "
+                          "gateway card's face and its roster's head.")
+        if any(f["name"].lower() == name.lower() for f in fedinets):
+            return refuse("This node already keeps a fedinet named '" + name + "'.")
+        ok, err = _fed_crown_ok(cfg, via_dhd, data, _fed_confirm_found(name))
+        if not ok:
+            return refuse(err)
+        ms = mesh_settings(cfg)
+        own_id = mesh_node_id() or ms["nodeId"]
+        if not own_id:
+            return refuse("This node's Mesh identity is not minted yet — "
+                          "enable the Mesh and let it mint its keypair first.")
+        own = mesh_card(cfg)
+        fed = _fed_sanitize({
+            "name": name, "role": "gateway",
+            "gatewayNodeId": own_id, "gatewayName": own.get("name"),
+            "gatewayCard": own, "foundedAt": int(time.time()),
+            "memberSince": {own_id: 1},
+        })
+        entry = _fed_member_entry(cfg, own, 1, int(time.time()))
+        entry["founding"] = True
+        fed["roster"] = {"version": 0, "members": [entry]}
+        fedinets.append(fed)
+        fed = _fed_gateway_publish(cfg, fedinets, fed)
+        federation_audit("found", name, "Founded the fedinet and signed "
+                         "roster v1 — this node is its gateway and its "
+                         "Founding Member (Node 1).", via)
+        return state(sentence="'" + name + "' is founded — this node is its "
+                              "gateway and its Founding Member. Its gateway "
+                              "card is on this page, ready to hand out.")
+
+    # Everything below names a fedinet.
+    fed_id = str(data.get("fedinetId") or "")
+    idx, fed = _fed_find(fedinets, fed_id)
+    if fed is None and act not in ("import", "import-invitation"):
+        return refuse("That fedinet is not on this node.")
+
+    if act in ("import", "import-invitation"):
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        if act == "import-invitation":
+            if not os.path.isfile(FED_INVITATION_PATH):
+                return refuse("No invitation is waiting on this node.")
+            federation_import_invitation_file()
+            return state(sentence="The waiting invitation was imported — "
+                                  "admission and introduction only.")
+        raw = data.get("cardPngB64") or ""
+        try:
+            png = base64.b64decode(str(raw), validate=True)
+        except Exception:
+            return refuse("That file did not arrive whole — import the "
+                          "gateway card's PNG file itself.")
+        payload, perr = parse_gateway_card_png(png)
+        if payload is None:
+            return refuse(perr)
+        fed2, ierr = _fed_import_gateway_payload(load_config(), payload)
+        if fed2 is None:
+            return refuse(ierr)
+        federation_audit("import", fed2["name"], "Imported the gateway card "
+                         "of '" + fed2["name"] + "' — admission and "
+                         "introduction only; no trust was granted by the "
+                         "import.", via)
+        return state(sentence="'" + fed2["name"] + "' admitted this node — "
+                              "its gateway is paired as an introduction. "
+                              "Trust is a separate act, below.")
+
+    if act == "gateway-card":
+        if fed["role"] != "gateway":
+            return refuse("Only the gateway mints its fedinet's gateway card.")
+        try:
+            png = build_gateway_card_png(cfg, fed)
+        except Exception as e:
+            return refuse("The gateway card could not be drawn: " + str(e)[:120])
+        return state(cardPngB64=base64.b64encode(png).decode("ascii"),
+                     sentence="The gateway card for '" + fed["name"] + "' — "
+                              "green, and it admits whoever imports it to an "
+                              "introduction, nothing more.")
+
+    if act == "knock":
+        ms = mesh_settings(cfg)
+        gw = next((p for p in ms["borrow"]["peers"]
+                   if p["nodeId"] == fed["gatewayNodeId"]), None)
+        if gw is None:
+            return refuse("The gateway is not paired on this node — import "
+                          "its gateway card first.")
+        payload = {"action": "join", "fedinetId": fed["id"],
+                   "card": mesh_card(cfg), "requestId": secrets.token_hex(8)}
+        body = json.dumps(payload).encode()
+        try:
+            _code, raw = _mesh_request(gw, "POST", "/mesh/roster", body,
+                                       payload["requestId"], 15)
+            ans = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return refuse("The gateway did not answer the knock — the road "
+                          "is dark, or the gateway is off.")
+        if not isinstance(ans, dict) or not ans.get("ok"):
+            return refuse("The gateway refused the knock (" +
+                          str((ans or {}).get("reason") or "refused") + ").")
+        if ans.get("roster"):
+            fedinets2 = federation_settings(load_config())
+            _i, cur = _fed_find(fedinets2, fed["id"])
+            _f, aerr = _fed_accept_roster(load_config(), fedinets2, cur, ans["roster"])
+            if not aerr:
+                _fed_observe_members(_f)
+                fedinets3 = federation_settings(load_config())
+                _i3, cur3 = _fed_find(fedinets3, fed["id"])
+                cur3["memberSince"] = _f["memberSince"]
+                fedinets3[_i3] = cur3
+                _federation_save(load_config(), fedinets3)
+                federation_apply(load_config())
+        federation_audit("knock", fed["name"], "Knocked on the gateway's "
+                         "door — admission is the gateway operator's act.",
+                         via)
+        return state(sentence="The knock is sent — this node waits in the "
+                              "gateway's pending list until its operator "
+                              "admits it.")
+
+    if act == "sync":
+        if fed["role"] == "gateway":
+            fed = _fed_gateway_publish(cfg, fedinets, fed)
+            return state(sentence="This node IS the gateway — its roster is "
+                                  "the signed word, republished at version " +
+                                  str(_fed_roster_version(fed)) + ".")
+        sentence = _fed_roster_sync(load_config(), fed)
+        fedinets2 = federation_settings(load_config())
+        _i, cur = _fed_find(fedinets2, fed["id"])
+        if cur is not None:
+            _fed_observe_members(cur)
+            fedinets2[_i] = cur
+            _federation_save(load_config(), fedinets2)
+        federation_audit("sync", fed["name"], sentence, via)
+        return state(sentence=sentence)
+
+    if act in ("admit", "deny", "expel"):
+        if fed["role"] != "gateway":
+            return refuse("Only the gateway admits, denies, or expels — "
+                          "this node is a member of '" + fed["name"] + "'.")
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        nid = str(data.get("nodeId") or "")
+        if act == "deny":
+            fed = dict(fed)
+            fed["pendingJoins"] = [p for p in (fed.get("pendingJoins") or [])
+                                   if str(p.get("nodeId") or "") != nid]
+            fedinets[idx] = fed
+            _federation_save(cfg, fedinets)
+            federation_audit("deny", fed["name"], "Denied the pending knock "
+                             "from node " + nid[:12] + ".", via)
+            return state(sentence="The knock was denied.")
+        joiner = next((p for p in (fed.get("pendingJoins") or [])
+                       if str(p.get("nodeId") or "") == nid), None)
+        if act == "admit":
+            if joiner is None:
+                return refuse("That knock is no longer pending.")
+            peer, perr = mesh_parse_card(json.dumps(joiner.get("card") or {}))
+            if peer is None:
+                return refuse("The pending card no longer validates: " + (perr or ""))
+            cfg2 = load_config()
+            ms2 = mesh_settings(cfg2)
+            existing = next((p for p in ms2["borrow"]["peers"]
+                             if p["nodeId"] == peer["nodeId"]), None)
+            if existing is not None:
+                # Already paired here (by hand, before the knock):
+                # the record keeps its operator facts — relay
+                # ticks, the tunnel route — and gains only its
+                # federation provenance.
+                block = dict(cfg2.get("mesh") or {})
+                borrow = dict(block.get("borrow") or {})
+                new_peers = []
+                for p in borrow.get("peers") or []:
+                    if isinstance(p, dict) and str(p.get("nodeId") or "") == peer["nodeId"]:
+                        p = dict(p)
+                        p["viaFedinet"] = fed["id"]
+                        # autoPaired stays as it was (False): the
+                        # federation marked this record, it did not
+                        # make it — an expulsion unmarks it again
+                        # rather than deleting the pairing.
+                    new_peers.append(p)
+                borrow["peers"] = new_peers
+                block["borrow"] = borrow
+                cfg2["mesh"] = block
+                save_config(cfg2)
+            else:
+                peer["viaFedinet"] = fed["id"]
+                peer["autoPaired"] = True
+                mesh_add_peer(cfg2, peer)
+            fed = dict(fed)
+            fed["pendingJoins"] = [p for p in (fed.get("pendingJoins") or [])
+                                   if str(p.get("nodeId") or "") != nid]
+            members = _fed_roster_members(fed)
+            nxt = max([int(m.get("n") or 0) for m in members if isinstance(m, dict)] + [0]) + 1
+            fed["roster"] = dict(fed.get("roster") or {})
+            fed["roster"]["members"] = members + [
+                _fed_member_entry(cfg2, peer, nxt, int(time.time()))]
+            fedinets[idx] = fed
+            # No save here: the publish reconciles this intent
+            # against the last SIGNED roster on disk and saves
+            # the whole slice (pending list included) itself.
+            fed = _fed_gateway_publish(load_config(), federation_settings(load_config()), fed)
+            _fed_observe_members(fed)
+            fedinets4 = federation_settings(load_config())
+            _i4, cur4 = _fed_find(fedinets4, fed["id"])
+            cur4["memberSince"] = fed["memberSince"]
+            fedinets4[_i4] = cur4
+            _federation_save(load_config(), fedinets4)
+            federation_audit("admit", fed["name"], "Admitted " +
+                             str(peer.get("name") or nid[:12]) + " as Node " +
+                             str(nxt) + " of the fedinet; roster republished.",
+                             via)
+            return state(sentence=str(peer.get("name") or "The node") +
+                                  " is Node " + str(nxt) + " of '" + fed["name"] +
+                                  "' — the signed roster carries it now.")
+        # expel
+        members = [m for m in _fed_roster_members(fed)
+                   if str((m or {}).get("nodeId") or "") != nid]
+        if len(members) == len(_fed_roster_members(fed)):
+            return refuse("That node is not on the roster.")
+        fed = dict(fed)
+        fed["roster"] = dict(fed.get("roster") or {})
+        fed["roster"]["members"] = members
+        fedinets[idx] = fed
+        fed = _fed_gateway_publish(load_config(), federation_settings(load_config()), fed)
+        federation_audit("expel", fed["name"], "Expelled node " + nid[:12] +
+                         " — a signed roster revision carries it at the "
+                         "next sync; hand-made pairings are untouched.", via)
+        return state(sentence="Node " + nid[:12] + " is off the roster — the "
+                              "expulsion rides the next signed revision.")
+
+    if act == "leave":
+        if fed["role"] == "gateway":
+            return refuse("A gateway cannot leave its own fedinet — it "
+                          "dissolves only when its operator retires the "
+                          "gateway itself.")
+        ms = mesh_settings(cfg)
+        keep = [p for p in ms["borrow"]["peers"] if p.get("viaFedinet") != fed["id"]]
+        if len(keep) != len(ms["borrow"]["peers"]):
+            cfg2 = load_config()
+            block = dict(cfg2.get("mesh") or {})
+            borrow = dict(block.get("borrow") or {})
+            borrow["peers"] = keep
+            block["borrow"] = borrow
+            cfg2["mesh"] = block
+            save_config(cfg2)
+        fedinets.pop(idx)
+        _federation_save(load_config(), fedinets)
+        federation_audit("leave", fed["name"], "Left the fedinet — its "
+                         "federation-made pairings went with it; hand-made "
+                         "pairings stand.", via)
+        return state(sentence="This node has left '" + fed["name"] + "'.")
+
+    if act == "trust":
+        want = data.get("on") is True
+        if want:
+            ok, err = _fed_crown_ok(cfg, via_dhd, data, _fed_confirm_trust(fed["name"]))
+            if not ok:
+                return refuse(err)
+            fed = dict(fed)
+            fed["trustByDefault"] = True
+            version = _fed_roster_version(fed)
+            if not fed.get("trustBaselineVersion"):
+                fed["trustBaselineVersion"] = version
+            _fed_observe_members(fed)
+            fedinets[idx] = fed
+            _federation_save(cfg, fedinets)
+            federation_apply(load_config())
+            federation_audit("trust", fed["name"], "Enabled DEEP trust — "
+                             "the signed roster now auto-pairs and auto-lends "
+                             "on this node (trust baseline: roster version " +
+                             str(fed["trustBaselineVersion"]) + ").", via)
+            return state(sentence="Deep trust is ON for '" + fed["name"] +
+                                  "' — its signed roster auto-pairs and "
+                                  "auto-lends on this node.")
+        fed = dict(fed)
+        fed["trustByDefault"] = False
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("trust", fed["name"], "Turned trust-by-default OFF "
+                         "— auto-lending ends now; pairings already made "
+                         "stay pairings.", via)
+        return state(sentence="Trust-by-default is OFF for '" + fed["name"] +
+                              "' — auto-lending ends; pairings stay.")
+
+    if act == "tick":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        fed = dict(fed)
+        fed["lendToNew"] = data.get("on") is True
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("tick", fed["name"], "Set 'lend to new members "
+                         "automatically' " + ("ON." if fed["lendToNew"] else
+                         "OFF — new members are pairing-only for this node "
+                         "until ticked."), via)
+        return state(sentence="The new-member tick is " +
+                              ("ON." if fed["lendToNew"] else "OFF."))
+
+    if act == "untrust":
+        nid = str(data.get("nodeId") or "")
+        want = data.get("on") is True
+        if not want:
+            ok, err = _fed_badge_ok(cfg, via_dhd, data)
+            if not ok:
+                return refuse(err)
+        fed = dict(fed)
+        untrusted = [u for u in fed["untrusted"] if u != nid]
+        if want:
+            untrusted.append(nid)
+        fed["untrusted"] = untrusted
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("untrust" if want else "retrust", fed["name"],
+                         ("Untrusted node " + nid[:12] + " — it is never "
+                          "lent to, whatever the roster or ticks say.")
+                         if want else
+                         ("Restored node " + nid[:12] + " to the fedinet's "
+                          "ordinary posture."), via)
+        return state(sentence="Node " + nid[:12] + " is " +
+                              ("untrusted." if want else "back under the "
+                               "fedinet's ordinary posture."))
+
+    if act == "lend":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        nid = str(data.get("nodeId") or "")
+        want = data.get("on") is True
+        fed = dict(fed)
+        overrides = [u for u in (fed.get("lendOverrides") or []) if u != nid]
+        if want:
+            overrides.append(nid)
+        fed["lendOverrides"] = overrides
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("lend", fed["name"], "Ticked node " + nid[:12] +
+                         " individually — this node lends to it."
+                         if want else
+                         "Removed the individual lend tick for node " +
+                         nid[:12] + ".", via)
+        return state(sentence="The individual lend tick for node " + nid[:12] +
+                              " is " + ("ON." if want else "OFF."))
+
+    if act == "cap":
+        ok, err = _fed_badge_ok(cfg, via_dhd, data)
+        if not ok:
+            return refuse(err)
+        fed = dict(fed)
+        fed["borrowCap"] = max(0, min(100000, _mesh_int(data.get("cap"), 0)))
+        fedinets[idx] = fed
+        _federation_save(cfg, fedinets)
+        federation_audit("cap", fed["name"], "Set the fedinet borrow cap to " +
+                         (str(fed["borrowCap"]) + " generations an hour."
+                          if fed["borrowCap"] else "no cap."), via)
+        return state(sentence="The borrow cap for '" + fed["name"] + "' is " +
+                              (str(fed["borrowCap"]) + " generations an hour."
+                               if fed["borrowCap"] else "off."))
+
+    return refuse("That Federation act is not one this build knows.")
 
 
 # -- Borrower transport ----------------------------------------------
@@ -5978,6 +7645,11 @@ def mesh_status_payload(cfg, via_dhd=False):
         "lendingNow": MESH_STATE["borrowed_conn"] is not None,
         "state": state,
         "warning": warning,
+        # 0.2.0e Build 8 (#154; ruling 2026-11-13): the headline
+        # graduates from census to state — "Mesh Online" while
+        # this node keeps any fedinet; "" while it keeps none,
+        # and every surface keeps its census words.
+        "headline": federation_headline(cfg),
         "viaDhd": bool(via_dhd),
         "capabilities": mesh_capabilities(cfg),
         "peers": peers,
@@ -6701,6 +8373,9 @@ class MeshHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.split("?")[0] == "/mesh/relay":
             code, payload = mesh_handle_relay(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/roster":
+            code, payload = mesh_handle_roster(self, self._body())
             self._send(code, payload)
         elif self.path.split("?")[0] == "/mesh/sync/pull":
             code, payload = mesh_handle_sync_pull(self, self._body())
@@ -19125,16 +20800,39 @@ class Handler(BaseHTTPRequestHandler):
             mesh_tunnel_sync()
             self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
             return
+        if self.path == "/api/federation":
+            # 0.2.0e Build 8 (#154): the Federation page's acts —
+            # fedinets, gateway cards, trust toggles and ticks,
+            # founding, caps, the Badge enrollment, the audit
+            # log's state. The tiering lives in federation_act:
+            # read + revoke ride any door; manage acts through
+            # DHD need the Badge step-up; crown acts need the
+            # full ceremony at every door. DHD manages only THIS
+            # node's federation posture — the acts all read and
+            # write this node's own config, so no door can flip
+            # another operator's switches.
+            data = self._body()
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            self._send(200, federation_act(data, via_dhd))
+            return
         if self.path == "/api/mesh/peers/tunnel-authorize":
-            # Build 4 (#178): the lender-side act — IN PERSON
-            # ONLY, the same doctrine as arming lending (Q1): a
-            # request arriving through the DHD proxy surface is
-            # refused. Authorizing writes a forwarding-only line
-            # for the peer's tunnel key into this operator's
+            # Build 4 (#178) made this act in-person-only, the
+            # lending doctrine of its day. The crown-acts ruling
+            # (Alex, 2026-11-13 20:56 EST) amended the door while
+            # keeping its property — a stolen session must not
+            # quietly grant trust: authorizing a tunnel key is a
+            # CROWN ACT. Through DHD it runs under the full
+            # ceremony (the trusted-device session the door
+            # itself provides + the Operator Badge step-up + the
+            # named-action confirm + an audit entry); at the desk
+            # it needs the same named confirm + audit, the Badge
+            # being the door's addition. REVOKING stays open
+            # through every door — revocation is never gated —
+            # and audits too. The act itself is unchanged:
+            # authorizing writes a forwarding-only line for the
+            # peer's tunnel key into this operator's
             # ~/.ssh/authorized_keys; revoking removes it.
-            if (self.headers.get("X-Apex-Via") or "") == "dhd":
-                self._send(200, {"ok": False, "error": "A tunnel key can only be authorized from this machine's own dashboard, in person — not through the DHD door. Revoking works the same way: at the machine."})
-                return
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
             data = self._body()
             target = str(data.get("nodeId") or "")
             action = "revoke" if str(data.get("action") or "") == "revoke" else "authorize"
@@ -19146,7 +20844,21 @@ class Handler(BaseHTTPRequestHandler):
             if not (peer.get("tunnelPublicKey") or ""):
                 self._send(200, {"ok": False, "error": "That machine's card carries no tunnel key — it was minted before the managed backup route, or by an older build. Re-share its card from its Mesh page and pair it again, and the key arrives with the card."})
                 return
+            if action == "authorize":
+                ok_c, err_c = _fed_crown_ok(cfg, via_dhd, data,
+                                            _fed_confirm_tunnel(peer["name"]))
+                if not ok_c:
+                    self._send(200, {"ok": False, "error": err_c})
+                    return
             ok, sentence = mesh_tunnel_authorize(peer["tunnelPublicKey"], target, action, ms_now["port"])
+            if ok:
+                federation_audit(
+                    "tunnel-" + action, "",
+                    ("Authorized " if action == "authorize" else "Revoked ")
+                    + peer["name"] + "'s tunnel key"
+                    + (" under the crown ceremony." if action == "authorize"
+                       else " — revocation, open through every door."),
+                    "dhd" if via_dhd else "desk")
             self._send(200, {"ok": ok, "message": sentence, "mesh": mesh_status_payload(load_config())})
             return
         if self.path == "/api/settings/updater-channel":
@@ -20119,6 +21831,13 @@ class Handler(BaseHTTPRequestHandler):
                     if _ms["enabled"] and _ms["borrow"]["enabled"] and _ms["borrow"]["peers"]:
                         reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms)
                 if reply is None:
+                    # Build 8 (#154): owner preemption — the
+                    # owner's own work starting takes the machine
+                    # from any FEDERATION borrow in flight (the
+                    # borrower is answered "preempted", by name).
+                    # Pairwise borrows are never preempted; local
+                    # work simply takes the next slot for them.
+                    mesh_preempt_borrowed()
                     with MESH_LOCK:
                         MESH_STATE["local_gen"] += 1
                     try:
@@ -21791,6 +23510,17 @@ if __name__ == "__main__":
         # If an enable operation was waiting on this restart, its
         # persisted card now reconciles with the live state.
         dhd_resume_enable_operation()
+    # Federation (Build 8): a gateway card waiting at
+    # config/federation/invitation.png — placed there by a
+    # container image's first boot, or by an operator's hand — is
+    # imported admission-only, once, before the doors open.
+    try:
+        _fed_invited = federation_import_invitation_file()
+        if _fed_invited:
+            print("Federation: admitted to '" + _fed_invited + "' by its "
+                  "waiting gateway card (admission + introduction only).", flush=True)
+    except Exception:
+        pass
     # Navi Mesh (Ring 1; dedicated door since build .86): if Mesh
     # is on, open its dedicated TLS door on its listen ports —
     # always, whether or not DHD is on. Mesh never rides the DHD

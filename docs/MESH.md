@@ -103,7 +103,28 @@ Roads fail in threes: the direct addresses, the declared public endpoint, the ba
 
 Consent is **three ticks, one on each machine**, each given on that machine's own dashboard in the **Relay** section of the carrier's peer card: the asker ticks that the carrier may carry its envelopes to the lender; the carrier ticks that it will carry between the pair; the lender ticks that the carrier may carry envelopes to it from the asker. Any missing tick refuses the carriage **by name** — the refusal says which machine has not consented — and unticking any one stops the next carriage, because every machine re-reads its consent on every request. Consent is given in person, like lending: through the DHD door a tick can be unticked from anywhere, but never ticked on.
 
-The road is **one hop, hard**: a relayed envelope is never re-relayed. Direct is always tried first — the relay is the road of last resort — and only chat answers ride it; sync and every other class stay direct-only. When an answer comes back carried, the reply's pill names the machine that **answered** and a line under it names the road: *via relay <machine>*. When the relay road fails, the local fallback keeps the stage's name — *no-consent*, *relay-dark*, *dest-dark*, *dest-refused* — in the same sentence style as every other failure. The health check reports a **relay verdict** for every consented road: it asks the carrier, with a signed probe that carries nothing, whether the carrier's own tick is in place and whether the destination is paired there at all, and it is honest about the one end no probe can read — the destination's own acceptance is proven when it answers a carriage.
+The road is **one hop, hard**: a relayed envelope is never re-relayed. Direct is always tried first — the relay is the road of last resort — chat answers ride it, and since Build 8 a fedinet's roster sync rides it too, under the same ticks and the destination's own consent check; every other class stays direct-only. When an answer comes back carried, the reply's pill names the machine that **answered** and a line under it names the road: *via relay <machine>*. When the relay road fails, the local fallback keeps the stage's name — *no-consent*, *relay-dark*, *dest-dark*, *dest-refused* — in the same sentence style as every other failure. The health check reports a **relay verdict** for every consented road: it asks the carrier, with a signed probe that carries nothing, whether the carrier's own tick is in place and whether the destination is paired there at all, and it is honest about the one end no probe can read — the destination's own acceptance is proven when it answers a carriage.
+
+## Federation — fedinets on the Mesh (Build 8)
+
+Everything above is the pairwise Mesh: two machines, one card
+each, trust by ceremony. Build 8 grows it into **fedinets** —
+named sets of nodes whose gateway keeps a **signed roster**
+(Node numbers are roster facts), admitted by **green gateway
+cards** (admission + introduction only), and lent to under
+**deep trust** when the operator's per-fedinet toggle is on:
+the roster auto-pairs and auto-lends, refined by the
+new-member tick, per-member untrust, borrow caps, and owner
+preemption. Roster sync rides this door — direct, via relay,
+or by member gossip — and a stale roster degrades its fedinet
+to pairing-only with the sentence on the **Federation page**,
+where the whole thing is administered (its own page, its own
+audit log, and DHD tiers with the Operator Badge step-up for
+manage acts and the full crown ceremony — Badge + named-action
+confirm + audit — for enabling trust, founding, and tunnel-key
+authorization). While a node keeps any fedinet, the Mesh status
+headline is the state: **Mesh Online**. The full account lives
+in `docs/FEDERATION.md`.
 
 ## Troubleshooting
 

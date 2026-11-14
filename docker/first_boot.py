@@ -29,8 +29,23 @@
 #      Later boots never re-print it; the deliberate doors are
 #      the bridge's own: `python3 bridge.py --dhd-code`
 #      (re-print) and `--dhd-code-reset` (a new code).
+#   4. The federation invitation (0.2.0e Build 8, first boot):
+#      an image built to join a fedinet carries the gateway's
+#      card at docker/gateway-card.png. When it is present, it
+#      is copied into the volume as the waiting invitation
+#      (config/federation/invitation.png); the bridge imports
+#      it at start — ADMISSION ONLY: the node is introduced to
+#      the gateway, and nothing lends until the fedinet's
+#      signed roster syncs. The card is public data (a pairing
+#      card's facts + the gateway's signature); the gateway's
+#      identity never leaves the gateway — the card is minted
+#      THERE, never in the image build's audience. An image
+#      carrying no card simply starts unfederated. (The tree's
+#      docker/sample-gateway-card.png is a SAMPLE — its shape,
+#      with sample facts — never wired as an invitation.)
 import importlib.util
 import os
+import shutil
 import socket
 import sys
 
@@ -108,6 +123,23 @@ def main():
         bridge.mesh_ensure_identity(cfg)
         bridge.mesh_ensure_cert()
         cfg = bridge.load_config()
+
+    if container and first:
+        # The federation invitation (Build 8): the image's
+        # bundled gateway card, when it carries one, becomes the
+        # volume's waiting invitation. The bridge performs the
+        # import itself at start (admission-only); here we only
+        # place the file — first_boot invents no second import
+        # path.
+        bundled = os.path.join(APP, "docker", "gateway-card.png")
+        waiting = os.path.join(APP, "config", "federation", "invitation.png")
+        if os.path.isfile(bundled) and not os.path.exists(waiting):
+            os.makedirs(os.path.dirname(waiting), exist_ok=True)
+            shutil.copyfile(bundled, waiting)
+            print("Apex container: a bundled gateway card rides this "
+                  "image — it waits as this node's federation "
+                  "invitation and is imported, admission-only, at "
+                  "start.", flush=True)
 
     # The access code. First boot mints fresh, unconditionally:
     # whatever the shipped config carries as a placeholder is
