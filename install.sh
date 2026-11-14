@@ -1,120 +1,194 @@
 #!/usr/bin/env bash
-# Apex installer — Linux (reference build)
-# Script-based on purpose (no graphical wizard): it downloads the Navi
-# llamafile from Hugging Face, installs the app, wires up startup, and
-# registers Apex in the application menu with its icon.
-# The install root is /opt/navi-apex. An earlier install under
-# ~/.local/share/navi is migrated as a clean break: its bridge and
-# boot service are stopped and disabled, its llamafile binary is
-# MOVED into /opt (never re-downloaded), its config and persona
-# documents are carried across, and the old files are removed — so
-# nothing from the old location can grab port 8675 at boot or answer
-# the browser with a stale page.
-# One installer, every major Linux family (build .70, issue #48):
-# the distro family is detected up front from /etc/os-release and
-# announced in plain words, and ONLY the dependency step branches
-# on it — a small per-family package table (apt / dnf / pacman)
-# for the same dependency set. Bazzite is its own case (immutable:
-# no rpm-ostree layering, no reboot — the window build takes the
-# user-space path or is skipped, said out loud), and an
-# unrecognized distro is never guessed at: the system-package
-# step is skipped with a warning and the core install completes.
-# If a real llamafile binary is already present in the install
-# location, the download (and the llamafile setup) is skipped entirely.
-# --fresh reinstalls the app from scratch — everything in the install
-# location is removed and reinstalled — EXCEPT the operator's own
-# state: the llamafile binary, the installed chips (the whole chips/
-# folder), her knowledge packs (rag-packs/), the DHD certificate
-# home (config/dhd/), and the Soul/Memory
-# documents are stashed before the wipe
-# and restored after it, so a fresh install never costs Navi her
-# chips or who she is. Her voice venv is stashed and restored too,
-# and the voice step checks it: when the engines still import, the
-# voice install is skipped as already set up. A first install has
-# nothing to stash and creates everything fresh, as it should.
+# Apex installer — 0.2.0e Build 10 (#193): the manifest-driven,
+# stage-and-swap installer. Three laws, learned from eighteen
+# field incidents (files/installer-audit.md):
+#
+#   A) The payload is a CONTRACT, not a habit. MANIFEST.txt
+#      declares every file this package carries, its class and
+#      its sha256. The installer copies and verifies FROM the
+#      manifest — there are no hand-written per-file copy lists
+#      left to desync (the #192 class: engines present in the
+#      zip, absent from the tree, silence in the product).
+#   B) Placement is ONE ACT. The new tree is assembled in a
+#      staging directory BESIDE the live tree and promoted by
+#      rename; a kill or failure at any point leaves the
+#      previous version ENTIRELY live (payload, app, config) or
+#      the new version entirely live — never a mixture (the
+#      incident-18 chimera: Build 9's face over Build 7's
+#      bridge). The two-file .pending flip ceremony is gone.
+#   C) Provisioning is not placement. A first install
+#      provisions an operator-owned install root ONCE; every
+#      placement after that runs in the operator's own context
+#      and never needs sudo. An install invoked through sudo
+#      (root's context wearing the operator's name) REFUSES up
+#      front, by name, before anything is touched: under sudo,
+#      systemctl --user cannot reach the operator's bus and
+#      files land root-owned (incidents 16/17). After the swap,
+#      the product verifies ITSELF — stamps, manifest hashes,
+#      engine imports — and the install stands or rolls back on
+#      that verdict, not on a version proxy.
+#
+# What an install preserves, untouched as ever: the llamafile,
+# installed chips and RAG packs, the Vault, DHD certificates,
+# the Mesh identity, chats, config, the voice venv and the
+# operator's Soul/Memory. --fresh still means a clean payload
+# over the same keep-list.
 set -euo pipefail
 
-LLAMAFILE_URL="https://huggingface.co/saintssec/navi.llamafile/resolve/main/navi.llamafile"
-INSTALL_DIR="${NAVI_HOME:-/opt/navi-apex}"
-OLD_DIR="$HOME/.local/share/navi"
-STARTUP=""
-FRESH=""
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SRC_DIR"
 
-# /opt is root-owned on most systems: file operations on the install
-# root go through sudo when the operator can't write there directly.
-# The finished install is chown'd back to the operator — the bridge
-# runs as them and writes the persona documents as them.
+STAMP="2026-11-14.10"
+BUILD_STAMP="2026-11-14.10"
+
+# --- Who is running this, and in whose name -------------------
+# SUDO in the old sense is GONE: placement runs unprivileged in
+# the operator's context, always. PKG_SUDO survives for the
+# provisioning steps that genuinely need the package manager.
+OPERATOR="$(id -un)"
+PKG_SUDO=""
+if [ "$(id -u)" -ne 0 ]; then PKG_SUDO="sudo"; fi
+# SUDO is always empty now — placement never escalates (piece C).
+# The variable survives only so the proven regions spliced into
+# this installer, which prefix their copies with $SUDO, run
+# exactly as written: unprivileged, in the operator's context.
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-  if [ -d "$INSTALL_DIR" ]; then
-    [ -w "$INSTALL_DIR" ] || SUDO="sudo"
-  else
-    [ -w "$(dirname "$INSTALL_DIR")" ] || SUDO="sudo"
-  fi
+LLAMAFILE_URL="https://huggingface.co/saintssec/navi.llamafile/resolve/main/navi.llamafile"
+
+# Root wearing the operator's name (sudo from an operator shell)
+# is refused BEFORE anything is touched: its $HOME, its user
+# bus and its file ownership are all root's, and an install from
+# that context can only strand root-owned files in an
+# operator-owned tree (incident 17). A genuine root shell (a
+# container's first boot, a root login — no SUDO_USER) installs
+# as root, the operator of that context, and converges the same
+# way.
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+  echo "ERROR: this install was invoked through sudo (root's context wearing $SUDO_USER's name) — refusing before anything is touched." >&2
+  echo "       Under sudo, systemctl --user cannot reach $SUDO_USER's session bus and files would land root-owned in" >&2
+  echo "       $SUDO_USER's tree. Run it as $SUDO_USER instead:  ./install.sh (no sudo — placement never needs it)." >&2
+  exit 1
 fi
 
+# --- Where Apex lives ------------------------------------------
+INSTALL_DIR="/opt/navi-apex"
+OLD_DIR="$HOME/.local/share/navi"
+STARTUP=""
 VOICE=""
+FRESH=""
 NO_RELAUNCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --startup) STARTUP="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
-    --fresh) FRESH=1; shift ;;
+    --startup) STARTUP="$2"; shift 2 ;;
     --voice) VOICE="$2"; shift 2 ;;
+    --fresh) FRESH=1; shift ;;
     --no-relaunch) NO_RELAUNCH=1; shift ;;
-    *) echo "unknown option: $1" >&2; exit 1 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+case "$INSTALL_DIR" in
+  /*) ;;
+  *) INSTALL_DIR="$PWD/$INSTALL_DIR" ;;
+esac
+while [ "$INSTALL_DIR" != "/" ] && [ "${INSTALL_DIR%/}" != "$INSTALL_DIR" ]; do INSTALL_DIR="${INSTALL_DIR%/}"; done
+PARENT_DIR="$(dirname "$INSTALL_DIR")"
+STAGE_DIR="$PARENT_DIR/.apex-stage"
+PREV_DIR="$PARENT_DIR/.apex-prev"
+FAILED_DIR="$PARENT_DIR/.apex-failed-$STAMP"
+CARRY_DIR="$PARENT_DIR/.apex-carry"
 
-# Is there a terminal that can actually answer a prompt? The test
-# is OPENING /dev/tty, never [ -r /dev/tty ] (build .84, issue
-# #75): in a shell with no controlling terminal — the app's own
-# CLI shell, cron, a detached helper — the device node exists and
-# reads as readable, so the old guard passed, and the read behind
-# it died mid-prompt with "/dev/tty: No such device or address"
-# (the v0.1.7a field failure on NeoArcadia, which cost the remote
-# install its running bridge for the night). Opening the device
-# in a subshell answers the real question and changes nothing.
-HAVE_TTY=""
-if ( : < /dev/tty ) 2>/dev/null; then
-  HAVE_TTY=1
+# A previous install killed between the two renames of its swap
+# heals here, before anything else reads the tree: the install
+# dir missing while a complete previous tree waits beside it
+# means the previous version comes back, whole.
+if [ ! -d "$INSTALL_DIR" ] && [ -d "$PREV_DIR" ]; then
+  echo "==> Healing an interrupted swap: restoring the previous install from $PREV_DIR"
+  mv "$PREV_DIR" "$INSTALL_DIR"
 fi
 
-# The startup mode is the operator's call, made during the install —
-# there is no hard-coded default. --startup launch|boot answers it
-# ahead of time (for scripted installs); otherwise the installer asks.
-if [ -z "$STARTUP" ]; then
-  if [ -n "$HAVE_TTY" ]; then
-    echo ""
-    echo "How should the navi.llamafile server start?"
-    echo "  1) On app launch — starts when you open Apex, stops when it closes"
-    echo "  2) At system boot — registered as a service, warm before you open the app"
-    while true; do
-      printf "Enter 1 or 2: "
-      if ! read -r CHOICE < /dev/tty; then
-        echo "" >&2
-        echo "The terminal stopped answering before a choice was made." >&2
-        echo "Re-run with --startup launch or --startup boot to answer ahead of time." >&2
-        exit 1
-      fi
-      case "$CHOICE" in
-        1|launch) STARTUP="launch"; break ;;
-        2|boot) STARTUP="boot"; break ;;
-        *) echo "Please answer 1 or 2." ;;
-      esac
-    done
-  else
-    echo "No terminal to ask about startup mode. Re-run with --startup launch or --startup boot." >&2
+# --- Up-front ownership truth (incidents 16/17) ----------------
+# An existing tree that this context cannot write is refused
+# BEFORE the bridge is stopped or a file is moved — never
+# discovered mid-copy with the old install already stopped.
+if [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; then
+  echo "ERROR: the existing install at $INSTALL_DIR is not writable by $OPERATOR — refusing before anything is touched." >&2
+  echo "       Its files are owned by another user (a past install run as root leaves exactly this). Repair ownership" >&2
+  echo "       once, as that user:  sudo chown -R $OPERATOR: $INSTALL_DIR   — then run this installer again, without sudo." >&2
+  exit 1
+fi
+# Foreign-owned FILES inside a writable tree do not refuse the
+# install (incident 16, second reading): stage-and-swap never
+# writes into the old tree's files — it renames the whole tree
+# aside and renames a wholly operator-owned stage in. A payload
+# file a past sudo repair left root-owned is simply left behind
+# in the previous tree; if that tree then cannot be fully
+# deleted by the operator, its retirement below says so by name
+# and keeps it, rather than failing an install that already
+# succeeded. What still refuses, above, is a tree the operator
+# cannot write at all — the rename itself would be a lie there.
+if [ ! -d "$INSTALL_DIR" ]; then
+  # First install: provision the operator-owned root, once.
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || {
+    echo "ERROR: cannot create the install root $INSTALL_DIR as $OPERATOR — provision it once, owned by the operator:" >&2
+    echo "       sudo mkdir -p $INSTALL_DIR && sudo chown $OPERATOR: $INSTALL_DIR   — then run this installer again, without sudo." >&2
     exit 1
+  }
+  [ -w "$INSTALL_DIR" ] || {
+    echo "ERROR: the install root $INSTALL_DIR exists but is not writable by $OPERATOR." >&2
+    echo "       Provision it once, owned by the operator:  sudo chown $OPERATOR: $INSTALL_DIR" >&2
+    exit 1
+  }
+fi
+
+echo "== Apex installer — build $STAMP (manifest-driven, stage-and-swap)"
+echo "   Installing into: $INSTALL_DIR (as $OPERATOR; placement is unprivileged)"
+
+# With no --startup choice, an interactive run on a real terminal
+# asks; a detached run (the updater's apply helper, piped output)
+# decides from the config the previous install recorded rather
+# than dying on a prompt nobody can answer (#75).
+HAVE_TTY=""
+if ( : < /dev/tty ) 2>/dev/null; then HAVE_TTY=1; fi
+if [ -z "$STARTUP" ]; then
+  _cfg_mode=""
+  if [ -f "$INSTALL_DIR/config/navi.config.json" ]; then
+    _cfg_mode="$(python3 -c "import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get('startup') or '')
+except Exception:
+    print('')" "$INSTALL_DIR/config/navi.config.json" 2>/dev/null || true)"
+  fi
+  _units_on=""
+  if [ -f "$HOME/.config/systemd/user/navi-bridge.service" ]; then _units_on=1; fi
+  if [ -n "$_cfg_mode" ]; then
+    case "$_cfg_mode" in
+      on-boot) STARTUP="boot" ;;
+      *) STARTUP="launch" ;;
+    esac
+    echo "    startup choice: keeping the recorded choice from the installed config ($_cfg_mode)"
+  elif [ -n "$_units_on" ]; then
+    STARTUP="boot"
+    echo "    startup choice: boot services are registered for this install — keeping boot mode"
+  elif [ -n "$HAVE_TTY" ]; then
+    echo ""
+    echo "How should Apex start?"
+    echo "  1) When you launch the app (default)"
+    echo "  2) At boot — services start with the machine (headless-friendly)"
+    printf "Choose [1/2, Enter = 1]: "
+    read -r _ans < /dev/tty || _ans=""
+    case "$_ans" in 2) STARTUP="boot" ;; *) STARTUP="launch" ;; esac
+  else
+    STARTUP="launch"
+    echo "    startup choice: no terminal and nothing recorded — defaulting to launch mode"
+    echo "    (pass --startup boot to run Apex as boot services instead)."
   fi
 fi
-
 case "$STARTUP" in
   launch|boot) ;;
-  *) echo "--startup must be 'launch' or 'boot'" >&2; exit 1 ;;
+  *) echo "ERROR: --startup must be launch or boot (got: $STARTUP)" >&2; exit 2 ;;
 esac
 
-echo "==> Apex installer (Linux) — startup mode: $STARTUP"
 
 # --- Stopping a running bridge — a proof, not a gesture (.91, #91) --
 # The old stop fired one SIGTERM at the pid file's process, deleted
@@ -522,6 +596,54 @@ install_system_deps() {
       ;;
   esac
 }
+
+# --- The manifest contract (piece A) ---------------------------
+# MANIFEST.txt lines: <path>\t<class>\t<sha256 | "-">
+# Classes: payload (lands in the tree, hash-verified in place by
+# the product's self-check), seed-config (lands only where the
+# tree has none), generated (ships as a template; the installer
+# generates the real file), package-only (never lands).
+MANIFEST="$SRC_DIR/MANIFEST.txt"
+manifest_rows() {
+  [ -f "$MANIFEST" ] || return 0
+  grep -v '^#' "$MANIFEST" | grep -v '^$' || true
+}
+# Verify the package against its own declaration BEFORE anything
+# is stopped or staged: a payload file missing from the package,
+# or one whose bytes are not the declared bytes, fails the
+# install BY NAME here — the #192 failure shape (a build whose
+# package and payload disagreed) can no longer reach the machine.
+echo "==> Verifying the package against its manifest"
+_missing=""
+_bad=""
+while IFS=$'\t' read -r _p _c _h; do
+  [ -n "$_p" ] || continue
+  case "$_c" in
+    payload|seed-config|generated)
+      if [ ! -f "$SRC_DIR/$_p" ]; then _missing="$_missing $_p"; continue; fi
+      if [ "$_h" != "-" ]; then
+        _got="$(sha256sum "$SRC_DIR/$_p" | awk '{print $1}')"
+        [ "$_got" = "$_h" ] || _bad="$_bad $_p"
+      fi
+      ;;
+  esac
+done <<EOF_MANIFEST
+$(manifest_rows)
+EOF_MANIFEST
+if [ -n "$_missing" ]; then
+  echo "ERROR: this package is incomplete — its manifest declares files it does not carry:$_missing" >&2
+  echo "       Nothing was stopped or changed. Re-download the package and run the installer again." >&2
+  exit 1
+fi
+if [ -n "$_bad" ]; then
+  echo "ERROR: package files whose bytes are not the bytes the manifest declares:$_bad" >&2
+  echo "       Nothing was stopped or changed. Re-download the package and run the installer again." >&2
+  exit 1
+fi
+echo "    the package matches its manifest"
+
+
+
 install_system_deps
 
 # --- DHD prerequisites (build .74) --------------------------------
@@ -611,8 +733,6 @@ install_dhd_prereqs() {
   fi
   echo "DHD-PREREQS: openssl=$ossl; cert-home=$home_state; low-port-capability=$cap_state"
 }
-install_dhd_prereqs
-
 # A file that starts with an HTML doctype is a web page, not the
 # llamafile binary (older installs could end up holding the Hugging
 # Face repo page under this name). Such a file is never treated as an
@@ -621,22 +741,16 @@ is_html_file() {
   [ -f "$1" ] && head -c 4096 "$1" 2>/dev/null | grep -qiE '<!doctype html|<html'
 }
 
-# --- Migration: a clean break from the pre-/opt install location ---
-# Retire everything the old location could use to answer again — its
-# bridge, its boot service — move its llamafile instead of
-# re-downloading 3.27 GB, and carry its config and persona across.
-# The old files themselves are removed at the end of the install,
-# once the new location is fully in place.
+# --- Migration: the pre-/opt location, carried not moved -------
+# The old location's state lands in the carry dir beside the
+# install; the stage assembly below consumes it. The old tree
+# itself is removed only after the new one is verified live.
 MIGRATED=""
 if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
   MIGRATED=1
-  echo "==> Migrating the earlier install from $OLD_DIR to $INSTALL_DIR"
-  # The old location's bridge gets the same proven stop as any
-  # other (build .91): found by pid file, port, and working
-  # directory, waited on, escalated — and if its port cannot be
-  # cleared, the install aborts here, before anything is moved.
+  echo "==> Carrying the earlier install at $OLD_DIR across"
   if ! stop_bridge "$OLD_DIR"; then
-    echo "ERROR: the previous install's bridge could not be stopped — aborting before anything is moved." >&2
+    echo "ERROR: the previous install's bridge could not be stopped — aborting before anything is carried." >&2
     exit 1
   fi
   UNIT_FILE="$HOME/.config/systemd/user/navi-llamafile.service"
@@ -646,397 +760,172 @@ if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
     systemctl --user daemon-reload 2>/dev/null || true
     echo "    old boot service (pointing at $OLD_DIR) disabled and removed"
   fi
-  $SUDO mkdir -p "$INSTALL_DIR"
+  rm -rf "$CARRY_DIR"; mkdir -p "$CARRY_DIR"
   if [ -f "$OLD_DIR/navi.llamafile" ] && is_html_file "$OLD_DIR/navi.llamafile"; then
     rm -f "$OLD_DIR/navi.llamafile"
   fi
-  if [ ! -f "$INSTALL_DIR/navi.llamafile" ] && [ -f "$OLD_DIR/navi.llamafile" ]; then
-    $SUDO mv "$OLD_DIR/navi.llamafile" "$INSTALL_DIR/navi.llamafile"
-    echo "    navi.llamafile moved from the old location — no re-download"
-  fi
-  # A fresh install stashes the operator's chips and Soul/Memory
-  # before the wipe and restores them after it (see below) — the
-  # binary move applies either way.
-  if [ -z "$FRESH" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    for f in navi.config.json soul.md memory.md; do
-      if [ ! -f "$INSTALL_DIR/config/$f" ] && [ -f "$OLD_DIR/config/$f" ]; then
-        $SUDO cp "$OLD_DIR/config/$f" "$INSTALL_DIR/config/$f"
-        echo "    config/$f carried across from the old location"
-      fi
-    done
-  fi
-  # Installed chips travel too — in fresh mode they land before the
-  # wipe, so the stash below picks them up and restores them.
-  if [ -d "$OLD_DIR/chips" ] && [ ! -d "$INSTALL_DIR/chips" ]; then
-    $SUDO cp -r "$OLD_DIR/chips" "$INSTALL_DIR/chips"
-    echo "    installed chips carried across from the old location"
-  fi
-  if [ -d "$OLD_DIR/config/vault" ] && [ ! -d "$INSTALL_DIR/config/vault" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    $SUDO cp -r "$OLD_DIR/config/vault" "$INSTALL_DIR/config/vault"
-    echo "    the Vault carried across from the old location"
-  fi
+  [ -f "$OLD_DIR/navi.llamafile" ] && mv "$OLD_DIR/navi.llamafile" "$CARRY_DIR/navi.llamafile" && echo "    navi.llamafile carried — no re-download"
+  for _d in config chips rag-packs; do
+    [ -d "$OLD_DIR/$_d" ] && cp -r "$OLD_DIR/$_d" "$CARRY_DIR/$_d"
+  done
+  [ -f "$OLD_DIR/voice/calls.json" ] && mkdir -p "$CARRY_DIR/voice" && cp "$OLD_DIR/voice/calls.json" "$CARRY_DIR/voice/calls.json"
+  echo "    config, chips and packs carried from the old location"
 fi
 
-$SUDO mkdir -p "$INSTALL_DIR"
-
-# Stop the bridge this install replaces — BEFORE any of its files
-# are touched (the --fresh wipe below included) — and prove the
-# stop (build .91, issue #91; the machinery is defined above). If
-# the port cannot be cleared, the install aborts here with the
-# holder named and every file untouched.
-echo "==> Stopping any bridge still running from a previous install"
-if ! stop_bridge "$INSTALL_DIR"; then
-  echo "ERROR: the previous bridge could not be stopped — aborting with every file untouched." >&2
-  exit 1
-fi
-# The previous shell window goes too (build .49): a window left open
-# from the old install keeps the old dashboard's process alive and
-# can hold the single-instance lock, so the new build never becomes
-# the one actually running. Stop it before the new files land.
-# Build 3 (#174): this is a real stop now — TERM, wait, verify,
-# SIGKILL — not the bare pattern-kill it was: the field apply died
-# because the window survived it and the rebuild's copy hit the
-# live binary (Text file busy).
-stop_shell "$INSTALL_DIR"
-
-if [ -n "$FRESH" ]; then
-  echo "==> Fresh install: wiping $INSTALL_DIR and reinstalling from scratch"
-  echo "    (the llamafile, your installed chips, the Vault, the DHD certificate home, your chats, and your Soul/Memory documents are kept)"
-  # Stash the operator's own state before the wipe: the installed
-  # chips (chips, installs, workflows) and the Soul/Memory
-  # documents. A first install has none of these — the stash stays
-  # empty and everything is created fresh, as it should be.
-  STASH_DIR="$(mktemp -d)"
-  if [ -d "$INSTALL_DIR/chips" ]; then
-    $SUDO cp -r "$INSTALL_DIR/chips" "$STASH_DIR/chips" 2>/dev/null || true
-  fi
-  if [ -d "$INSTALL_DIR/rag-packs" ]; then
-    $SUDO cp -r "$INSTALL_DIR/rag-packs" "$STASH_DIR/rag-packs" 2>/dev/null || true
-  fi
-  # The Vault (config/vault/) rides the same keep-list (build .72):
-  # the shared desk of notes survives the wipe like everything else
-  # that is hers and yours.
-  if [ -d "$INSTALL_DIR/config/vault" ]; then
-    $SUDO cp -r "$INSTALL_DIR/config/vault" "$STASH_DIR/vault" 2>/dev/null || true
-  fi
-  # The DHD certificate home (config/dhd/) rides the same keep-list
-  # (build .77, issue #60): a real ACME certificate lives there, and
-  # a fresh reinstall must never wipe it and force re-issuance.
-  if [ -d "$INSTALL_DIR/config/dhd" ]; then
-    $SUDO cp -r "$INSTALL_DIR/config/dhd" "$STASH_DIR/dhd" 2>/dev/null || true
-  fi
-  # The Mesh identity home (config/mesh/) rides the same keep-list
-  # (build .85): the node keypair and Mesh certificate live there,
-  # and a fresh reinstall must never wipe the node's identity —
-  # losing it would silently orphan every pairing this machine
-  # holds. The ledger rides with it; it is metadata, not content.
-  if [ -d "$INSTALL_DIR/config/mesh" ]; then
-    $SUDO cp -r "$INSTALL_DIR/config/mesh" "$STASH_DIR/mesh" 2>/dev/null || true
-  fi
-  # The server-side chat store (config/chats/, Build 12, #139)
-  # rides the same keep-list: the threads are the operator's
-  # history with her, kept the way the Mesh identity is kept.
-  if [ -d "$INSTALL_DIR/config/chats" ]; then
-    $SUDO cp -r "$INSTALL_DIR/config/chats" "$STASH_DIR/chats" 2>/dev/null || true
-  fi
-  # Her downloaded speech models and her call log are hers too —
-  # they ride the same keep-list. The voice venv rides along as
-  # well: the voice step below checks whether her voice is already
-  # set up in it (the engines import) and skips the rebuild when
-  # it is, so a fresh install never re-pays the pip install for a
-  # voice that already works.
-  if [ -d "$INSTALL_DIR/voice/models" ]; then
-    $SUDO cp -r "$INSTALL_DIR/voice/models" "$STASH_DIR/voice-models" 2>/dev/null || true
+# --- Stage assembly (piece B) ----------------------------------
+# The new tree is built BESIDE the live one. The live tree is not
+# touched by anything in this section: a kill here leaves the
+# previous version entirely live, down to its config.
+echo "==> Assembling the new tree beside the live one"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR"
+IS_UPDATE=""
+[ -f "$INSTALL_DIR/bridge.py" ] && IS_UPDATE=1
+if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
+  # The whole previous tree is the stage's foundation — operator
+  # state, runtime residue and all — minus the shell's build
+  # residue (regenerated by the build step). The llamafile and
+  # the voice venv are hardlinked where the filesystem allows:
+  # the bridge never writes the llamafile, and the venv is only
+  # ever replaced wholesale by the voice step.
+  (cd "$INSTALL_DIR" && tar --exclude='./shell/target' --exclude='./updates' -cf - .) | (cd "$STAGE_DIR" && tar --no-same-owner -xf -)
+  if [ -f "$INSTALL_DIR/navi.llamafile" ]; then
+    rm -f "$STAGE_DIR/navi.llamafile"
+    ln "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"
   fi
   if [ -d "$INSTALL_DIR/voice/venv" ]; then
-    $SUDO cp -r "$INSTALL_DIR/voice/venv" "$STASH_DIR/voice-venv" 2>/dev/null || true
+    rm -rf "$STAGE_DIR/voice/venv"
+    cp -al "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv" 2>/dev/null || cp -r "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv"
   fi
-  if [ -f "$INSTALL_DIR/voice/calls.json" ]; then
-    $SUDO cp "$INSTALL_DIR/voice/calls.json" "$STASH_DIR/voice-calls.json" 2>/dev/null || true
-  fi
-  for f in soul.md memory.md; do
-    if [ -f "$INSTALL_DIR/config/$f" ]; then
-      $SUDO cp "$INSTALL_DIR/config/$f" "$STASH_DIR/$f" 2>/dev/null || true
-    fi
+  # The stage starts from the OLD tree, so update staging the
+  # updater left behind never rides into the new version.
+  rm -rf "$STAGE_DIR/updates"
+elif [ -n "$IS_UPDATE" ]; then
+  echo "    fresh install: keeping the llamafile, chips, packs, the Vault, DHD and Mesh homes,"
+  echo "    chats, config and the voice venv — everything else is rebuilt from the package"
+  for _d in chips rag-packs; do
+    [ -d "$INSTALL_DIR/$_d" ] && cp -r "$INSTALL_DIR/$_d" "$STAGE_DIR/$_d"
   done
-  $SUDO find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name 'navi.llamafile' -exec rm -rf {} +
+  if [ -d "$INSTALL_DIR/config" ]; then
+    mkdir -p "$STAGE_DIR/config"
+    for _d in vault dhd mesh chats; do
+      [ -d "$INSTALL_DIR/config/$_d" ] && cp -r "$INSTALL_DIR/config/$_d" "$STAGE_DIR/config/$_d"
+    done
+    for _f in navi.config.json soul.md memory.md; do
+      [ -f "$INSTALL_DIR/config/$_f" ] && cp "$INSTALL_DIR/config/$_f" "$STAGE_DIR/config/$_f"
+    done
+  fi
+  [ -f "$INSTALL_DIR/navi.llamafile" ] && { ln "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"; }
+  [ -d "$INSTALL_DIR/voice/models" ] && mkdir -p "$STAGE_DIR/voice" && cp -r "$INSTALL_DIR/voice/models" "$STAGE_DIR/voice/models"
+  [ -d "$INSTALL_DIR/voice/venv" ] && { cp -al "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv" 2>/dev/null || cp -r "$INSTALL_DIR/voice/venv" "$STAGE_DIR/voice/venv"; }
+  [ -f "$INSTALL_DIR/voice/calls.json" ] && mkdir -p "$STAGE_DIR/voice" && cp "$INSTALL_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json"
 fi
-$SUDO mkdir -p "$INSTALL_DIR/app" "$INSTALL_DIR/config" "$INSTALL_DIR/assets"
-if [ -n "$FRESH" ] && [ -n "${STASH_DIR:-}" ]; then
-  if [ -d "$STASH_DIR/chips" ]; then
-    $SUDO cp -r "$STASH_DIR/chips" "$INSTALL_DIR/chips"
-    echo "    installed chips restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/rag-packs" ]; then
-    $SUDO cp -r "$STASH_DIR/rag-packs" "$INSTALL_DIR/rag-packs"
-    echo "    her knowledge packs restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/vault" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    $SUDO cp -r "$STASH_DIR/vault" "$INSTALL_DIR/config/vault"
-    echo "    the Vault (your shared desk of notes) restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/dhd" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    $SUDO cp -r "$STASH_DIR/dhd" "$INSTALL_DIR/config/dhd"
-    echo "    the DHD certificate home (config/dhd/) restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/mesh" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    $SUDO cp -r "$STASH_DIR/mesh" "$INSTALL_DIR/config/mesh"
-    echo "    the Mesh identity home (config/mesh/) restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/chats" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/config"
-    $SUDO cp -r "$STASH_DIR/chats" "$INSTALL_DIR/config/chats"
-    echo "    the chat store (config/chats/) restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/voice-models" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/voice"
-    $SUDO cp -r "$STASH_DIR/voice-models" "$INSTALL_DIR/voice/models"
-    echo "    her speech models restored across the fresh install"
-  fi
-  if [ -f "$STASH_DIR/voice-calls.json" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/voice"
-    $SUDO cp "$STASH_DIR/voice-calls.json" "$INSTALL_DIR/voice/calls.json"
-    echo "    her call log restored across the fresh install"
-  fi
-  if [ -d "$STASH_DIR/voice-venv" ]; then
-    $SUDO mkdir -p "$INSTALL_DIR/voice"
-    $SUDO cp -r "$STASH_DIR/voice-venv" "$INSTALL_DIR/voice/venv"
-    echo "    her voice venv restored across the fresh install"
-  fi
-  for f in soul.md memory.md; do
-    if [ -f "$STASH_DIR/$f" ]; then
-      $SUDO cp "$STASH_DIR/$f" "$INSTALL_DIR/config/$f"
-      echo "    config/$f restored across the fresh install"
-    fi
+if [ -d "$CARRY_DIR" ]; then
+  [ -f "$CARRY_DIR/navi.llamafile" ] && [ ! -f "$STAGE_DIR/navi.llamafile" ] && mv "$CARRY_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"
+  for _d in config chips rag-packs; do
+    if [ -d "$CARRY_DIR/$_d" ] && [ ! -d "$STAGE_DIR/$_d" ]; then cp -r "$CARRY_DIR/$_d" "$STAGE_DIR/$_d"; fi
   done
-  rm -rf "$STASH_DIR"
+  if [ -f "$CARRY_DIR/voice/calls.json" ] && [ ! -f "$STAGE_DIR/voice/calls.json" ]; then
+    mkdir -p "$STAGE_DIR/voice"; cp "$CARRY_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json"
+  fi
+fi
+# A target holding ONLY a pre-seeded llamafile (no bridge.py —
+# the documented skip: the operator fetched the binary
+# themselves, or a bench pre-seeds it) is neither an update
+# nor a fresh tree above, so neither branch inherited the
+# binary and the download below fired for a file already
+# sitting at the target. Inherit it here.
+if [ -z "$IS_UPDATE" ] && [ -f "$INSTALL_DIR/navi.llamafile" ] && [ ! -f "$STAGE_DIR/navi.llamafile" ]; then
+  ln "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$INSTALL_DIR/navi.llamafile" "$STAGE_DIR/navi.llamafile"
+  echo "    navi.llamafile already present at the target — keeping it (no download)"
+fi
+# The payload, FROM the manifest: every payload file lands;
+# every seed-config file lands only where the tree has none.
+while IFS=$'\t' read -r _p _c _h; do
+  [ -n "$_p" ] || continue
+  case "$_c" in
+    payload)
+      mkdir -p "$STAGE_DIR/$(dirname "$_p")"
+      cp "$SRC_DIR/$_p" "$STAGE_DIR/$_p"
+      ;;
+    seed-config)
+      if [ ! -f "$STAGE_DIR/$_p" ]; then
+        mkdir -p "$STAGE_DIR/$(dirname "$_p")"
+        cp "$SRC_DIR/$_p" "$STAGE_DIR/$_p"
+      fi
+      ;;
+  esac
+done <<EOF_MANIFEST
+$(manifest_rows)
+EOF_MANIFEST
+find "$STAGE_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+echo "    payload placed from the manifest"
+
+# Generated files: the desktop entry and the service units are
+# templates in the package; the real ones are generated here,
+# into the stage, carrying the FINAL install path.
+mkdir -p "$STAGE_DIR/config/dhd" "$STAGE_DIR/config/mesh" "$STAGE_DIR/config/chats" "$STAGE_DIR/voice/models" "$STAGE_DIR/systemd"
+sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$SRC_DIR/assets/navi-apex.desktop" > "$STAGE_DIR/assets/navi-apex.desktop"
+if [ "$STARTUP" = "boot" ]; then
+  cat > "$STAGE_DIR/systemd/navi-llamafile.service" <<EOF_UNITS
+[Unit]
+Description=Navi llamafile server (Apex)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/run-llamafile.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF_UNITS
+  cat > "$STAGE_DIR/systemd/navi-bridge.service" <<EOF_UNITS
+[Unit]
+Description=Navi bridge (Apex dashboard + API)
+After=network.target navi-llamafile.service
+Wants=navi-llamafile.service
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/start.sh --headless
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF_UNITS
 fi
 
-if [ -f "$INSTALL_DIR/navi.llamafile" ] && is_html_file "$INSTALL_DIR/navi.llamafile"; then
-  echo "==> The existing $INSTALL_DIR/navi.llamafile is an HTML page, not the llamafile binary — removing it"
-  $SUDO rm -f "$INSTALL_DIR/navi.llamafile"
+# The model file: carried across above when one exists; a first
+# install downloads it into the STAGE — a failed download aborts
+# here, with the live tree (if any) entirely untouched.
+if [ -f "$STAGE_DIR/navi.llamafile" ] && is_html_file "$STAGE_DIR/navi.llamafile"; then
+  rm -f "$STAGE_DIR/navi.llamafile"
 fi
-
-if [ -f "$INSTALL_DIR/navi.llamafile" ]; then
-  echo "==> navi.llamafile already exists in $INSTALL_DIR — skipping the download and llamafile setup"
-else
+if [ ! -f "$STAGE_DIR/navi.llamafile" ]; then
   echo "==> Downloading the Navi llamafile"
   echo "    from: $LLAMAFILE_URL"
-  $SUDO curl -fL -o "$INSTALL_DIR/navi.llamafile" "$LLAMAFILE_URL"
-  if is_html_file "$INSTALL_DIR/navi.llamafile"; then
-    $SUDO rm -f "$INSTALL_DIR/navi.llamafile"
+  if ! curl -fL -o "$STAGE_DIR/navi.llamafile" "$LLAMAFILE_URL"; then
+    echo "ERROR: the model download failed — aborting with the live tree untouched." >&2
+    echo "       The staged tree is left at $STAGE_DIR for inspection; nothing was stopped or replaced." >&2
+    exit 1
+  fi
+  if is_html_file "$STAGE_DIR/navi.llamafile"; then
+    rm -f "$STAGE_DIR/navi.llamafile"
     echo "ERROR: the download produced an HTML page, not the llamafile binary." >&2
     echo "       Expected the file itself from: $LLAMAFILE_URL" >&2
     exit 1
   fi
-  $SUDO chmod +x "$INSTALL_DIR/navi.llamafile"
 fi
+chmod +x "$STAGE_DIR/navi.llamafile" 2>/dev/null || true
+chmod +x "$STAGE_DIR/bridge.py" "$STAGE_DIR/start.sh" "$STAGE_DIR/run-llamafile.sh" 2>/dev/null || true
+[ -f "$STAGE_DIR/install.sh" ] && rm -f "$STAGE_DIR/install.sh" || true
 
-# The stop itself already happened — and was proven — before the
-# files above were touched (build .91). What remains here is the
-# backstop warning: if a page that is not a Navi bridge still answers on 8675 — the
-# operator's own earlier UI for Navi also served this address — the
-# launcher would land on that program's page, not this dashboard.
-# It is not this installer's process to kill; warn, by name, now.
-if curl -s --max-time 2 -o /dev/null http://localhost:8675/ 2>/dev/null; then
-  if ! curl -s --max-time 2 http://localhost:8675/api/status 2>/dev/null | grep -q '"app": "Navi: Apex"'; then
-    FOREIGN_TITLE=$(curl -s --max-time 2 http://localhost:8675/ 2>/dev/null | grep -oiE '<title[^>]*>[^<]*</title>' | head -1 | sed -E 's/<[^>]+>//g' || true)
-    echo "WARNING: http://localhost:8675 is still served by a different program (its page is titled \"$FOREIGN_TITLE\") — not a Navi bridge." >&2
-    echo "         Launching Apex will keep showing that program's page until it is stopped." >&2
-    echo "         Find it with: lsof -i :8675" >&2
-  fi
-fi
 
-echo "==> Installing the dashboard, bridge, icon, and config"
-$SUDO cp -r app/* "$INSTALL_DIR/app/"
-# Issue #104 (Build 6): the bridge is staged under a pending
-# name, NOT installed — the running version witnesses (bridge.py
-# with its baked-in build sequence, the config's version record,
-# and the VERSION file) all keep naming the OLD build until the
-# version flip at the very end of this installer lands them
-# together. A failure anywhere before the flip therefore leaves
-# an install that honestly reports its old version, and Check
-# for updates re-offers the update instead of crying current.
-$SUDO cp bridge.py "$INSTALL_DIR/bridge.py.pending"
-# Guardian (Build 14, #156): the bridge imports guardian.py from
-# beside itself, so the engine lands in the install root next to
-# bridge.py. It is a plain source file like the assets above —
-# a copy of the sources missing it (a partial tree, say) must not
-# abort the install: say so in plain words and carry on; the
-# bridge runs with its inert Guardian fallback until Apex is
-# installed from a tree that carries the engine.
-if [ -f guardian.py ]; then
-  $SUDO cp guardian.py "$INSTALL_DIR/guardian.py"
-else
-  echo "    note: the Guardian engine file (guardian.py) is missing from this copy of the"
-  echo "          sources. The install continues without it — the bridge will run, but"
-  echo "          Guardian's headroom protection stays off until Apex is installed from"
-  echo "          a copy of the sources that carries guardian.py (the release zip does)."
-fi
-# Threat Intelligence Center (Build 15, #165): the bridge
-# imports intel.py from beside itself, so the engine lands in
-# the install root next to bridge.py, the Guardian's way — a
-# copy of the sources missing it must not abort the install:
-# say so in plain words and carry on; the bridge runs with the
-# Center dark (its inert fallback) until Apex is installed from
-# a tree that carries the engine.
-if [ -f intel.py ]; then
-  $SUDO cp intel.py "$INSTALL_DIR/intel.py"
-else
-  echo "    note: the Threat Intelligence Center engine file (intel.py) is missing from"
-  echo "          this copy of the sources. The install continues without it — the bridge"
-  echo "          will run, but the Center stays dark until Apex is installed from a copy"
-  echo "          of the sources that carries intel.py (the release zip does)."
-fi
-# Awareness engines (0.2.0e Build 9, #192): the bridge imports
-# wire.py from beside itself — the news wire, the first family of
-# the awareness home — so the engine lands in the install root
-# next to bridge.py, the Guardian's way. Build 7 put the engine
-# in the package but never gave this installer its copy block, so
-# every install.sh install ran with the wire dark behind the
-# bridge's honest "missing from this install" sentence while the
-# zip it came from carried the file all along (#192, field-found).
-# A copy of the sources missing it must not abort the install:
-# say so in plain words and carry on; the bridge runs with the
-# wire dark (its inert fallback) until Apex is installed from a
-# tree that carries the engine.
-if [ -f wire.py ]; then
-  $SUDO cp wire.py "$INSTALL_DIR/wire.py"
-else
-  echo "    note: the news wire engine file (wire.py) is missing from this copy of the"
-  echo "          sources. The install continues without it — the bridge will run, but"
-  echo "          the news wire stays dark until Apex is installed from a copy of the"
-  echo "          sources that carries wire.py (the release zip does)."
-fi
-# The CTF board's engine (0.2.0e Build 9, #192): the bridge
-# imports ctf.py from beside itself, so the engine lands in the
-# install root next to bridge.py, the Guardian's way — the same
-# Build 7 hole as wire.py above, closed in the same pass. A copy
-# of the sources missing it must not abort the install: say so
-# in plain words and carry on; the bridge runs with the CTF
-# board dark (its inert fallback) until Apex is installed from
-# a tree that carries the engine.
-if [ -f ctf.py ]; then
-  $SUDO cp ctf.py "$INSTALL_DIR/ctf.py"
-else
-  echo "    note: the CTF board engine file (ctf.py) is missing from this copy of the"
-  echo "          sources. The install continues without it — the bridge will run, but"
-  echo "          the CTF board stays dark until Apex is installed from a copy of the"
-  echo "          sources that carries ctf.py (the release zip does)."
-fi
-# The bounty board's engine (0.2.0e Build 9, #192): the bridge
-# imports bounties.py from beside itself, so the engine lands
-# in the install root next to bridge.py, the Guardian's way —
-# the same Build 7 hole as wire.py above, closed in the same
-# pass. A copy of the sources missing it must not abort the
-# install: say so in plain words and carry on; the bridge runs
-# with the bounty board dark (its inert fallback) until Apex is
-# installed from a tree that carries the engine.
-if [ -f bounties.py ]; then
-  $SUDO cp bounties.py "$INSTALL_DIR/bounties.py"
-else
-  echo "    note: the bounty board engine file (bounties.py) is missing from this copy"
-  echo "          of the sources. The install continues without it — the bridge will run,"
-  echo "          but the bounty board stays dark until Apex is installed from a copy of"
-  echo "          the sources that carries bounties.py (the release zip does)."
-fi
-# The VERSION file is the app's single source of truth for its own
-# version — the bridge reads it on every /api/status and the Updater
-# compares it against the latest release. It is app code, not
-# operator state: replaced on every install, like bridge.py.
-# (Installers before build .47 never copied it at all, so the bridge
-# fell back to the version recorded in the preserved config — a
-# file written by whichever build installed first — and the menu
-# footer flashed the new build's baked 0.1.0 at first paint before
-# the status poll "reverted" it to that stale 1.0.0.)
-# Issue #104 (Build 6): staged as VERSION.pending like the bridge
-# — it becomes the install's VERSION only in the flip at the end,
-# and it is the LAST file the flip moves, because it is the first
-# witness every reader asks.
-$SUDO cp VERSION "$INSTALL_DIR/VERSION.pending"
-$SUDO cp start.sh "$INSTALL_DIR/start.sh"
-$SUDO chmod +x "$INSTALL_DIR/start.sh"
-$SUDO cp run-llamafile.sh "$INSTALL_DIR/run-llamafile.sh"
-$SUDO chmod +x "$INSTALL_DIR/run-llamafile.sh"
-# The standalone window's sources (Tauri shell) — built into the
-# navi-apex-shell binary by the shell step near the end of this
-# installer, once the install root belongs to the operator.
-$SUDO mkdir -p "$INSTALL_DIR/shell"
-$SUDO cp -r shell/* "$INSTALL_DIR/shell/"
-# The package's docs land in the installed tree too (build .77,
-# issue #60): the shipped tree and the installed tree agree, so
-# docs/DHD.md is on the machine beside everything else it documents.
-$SUDO mkdir -p "$INSTALL_DIR/docs"
-$SUDO cp -r docs/* "$INSTALL_DIR/docs/"
-# The app icon is cosmetic — a missing copy must never abort an
-# install. A git clone of the repo carries none of the binary icon
-# files (they ship only inside the release zip), so a clone install
-# reaches this line with no assets/icon.png: warn in plain words
-# and carry on; the app and its menu entry use a fallback icon.
-if [ -f assets/icon.png ]; then
-  $SUDO cp assets/icon.png "$INSTALL_DIR/assets/icon.png"
-else
-  echo "    note: the app icon file (assets/icon.png) is missing from this copy of the sources."
-  echo "          That is expected when installing from a git clone — the clone does not carry"
-  echo "          the binary icon files; they ship inside the release zip. The install continues"
-  echo "          without it, and the app and its menu entry will use a fallback icon."
-fi
-# Navi's chat portrait gets the same treatment as the icon — and
-# for the same reason. The bridge serves it from the install tree
-# (GET /assets/navi-portrait.jpg) for her chat gutter faces and
-# the presence header, and a git clone carries none of the binary
-# asset files (they ship only inside the release zip), so a clone
-# install reaches this line with no portrait to copy: say so in
-# plain words and carry on — chat shows without her picture, and
-# nothing else about the install changes. (Build 7 shipped the
-# portrait inside the zip but this copy step did not exist yet,
-# so Build 7 installs served no picture at all.)
-if [ -f assets/navi-portrait.jpg ]; then
-  $SUDO cp assets/navi-portrait.jpg "$INSTALL_DIR/assets/navi-portrait.jpg"
-else
-  echo "    note: Navi's chat portrait (assets/navi-portrait.jpg) is missing from this copy"
-  echo "          of the sources. That is expected when installing from a git clone — the"
-  echo "          clone does not carry the binary asset files; they ship inside the release"
-  echo "          zip. The install continues without it, and chat will show without her"
-  echo "          picture until Apex is installed from the release zip."
-fi
-# The Row's icon, worn by the DHD door as its favicon (Build 13,
-# issue #151), gets the same treatment: favicon-scale derivatives
-# of the Nocturne Row site's logo, served by the bridge from the
-# install tree (GET /favicon-32.png and /apple-touch-icon.png).
-# A git clone carries none of the binary asset files, so a clone
-# install reaches this line with no icons to copy: say so in
-# plain words and carry on — the door simply wears no icon.
-for icon_file in favicon-32.png icon-180.png; do
-  if [ -f "assets/$icon_file" ]; then
-    $SUDO cp "assets/$icon_file" "$INSTALL_DIR/assets/$icon_file"
-  else
-    echo "    note: the DHD door icon (assets/$icon_file) is missing from this copy of the"
-    echo "          sources. That is expected when installing from a git clone — the clone"
-    echo "          does not carry the binary asset files; they ship inside the release"
-    echo "          zip. The install continues without it, and the door wears no icon"
-    echo "          until Apex is installed from the release zip."
-  fi
-done
-if [ ! -f "$INSTALL_DIR/config/navi.config.json" ]; then
-  $SUDO cp config/navi.config.json "$INSTALL_DIR/config/navi.config.json"
-fi
-# Persona documents are the operator's to edit — never overwrite them
-# on a reinstall.
-[ -f "$INSTALL_DIR/config/soul.md" ] || $SUDO cp config/soul.md "$INSTALL_DIR/config/soul.md"
-[ -f "$INSTALL_DIR/config/memory.md" ] || $SUDO cp config/memory.md "$INSTALL_DIR/config/memory.md"
-# Her voice ships as documentation + a folder: the models download
-# into voice/models/ on first use (that folder is never wiped by an
-# update — see the --fresh stash above), and the call log lives
-# beside them.
-$SUDO cp requirements-voice.txt "$INSTALL_DIR/requirements-voice.txt"
-$SUDO mkdir -p "$INSTALL_DIR/voice/models"
-$SUDO cp voice/README.md "$INSTALL_DIR/voice/README.md"
 # Record the chosen startup mode in the installed config — and
 # re-stamp the two fields that describe THIS package on THIS machine:
 # the bridge port and the install directory. A config carried across
@@ -1044,7 +933,7 @@ $SUDO cp voice/README.md "$INSTALL_DIR/voice/README.md"
 # still names the old build's port and the old location; left alone,
 # the bridge once bound that stale port while its launcher polled
 # the new one. The operator's own settings stay untouched.
-$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$STARTUP" "$INSTALL_DIR" "8675" <<'PY'
+$SUDO python3 - "$STAGE_DIR/config/navi.config.json" "$STARTUP" "$INSTALL_DIR" "8675" <<'PY'
 import json, sys
 path, mode, install_dir, port = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 with open(path) as f:
@@ -1061,7 +950,6 @@ cfg["install_dir"] = install_dir
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PY
-
 # --- Hardware profiling ---
 # Her runtime settings are derived from THIS machine, never copied
 # from the developer's: detect CPU / RAM / GPU, derive threads,
@@ -1071,7 +959,7 @@ PY
 # already in the config (source=manual) is preserved and the log
 # says so; anything else is re-profiled fresh on every install.
 echo "==> Profiling this machine for Navi's runtime settings"
-$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$INSTALL_DIR/hardware-profile.log" <<'PY'
+$SUDO python3 - "$STAGE_DIR/config/navi.config.json" "$STAGE_DIR/hardware-profile.log" <<'PY'
 import json, os, platform, subprocess, sys, time
 cfg_path, log_path = sys.argv[1], sys.argv[2]
 with open(cfg_path) as f:
@@ -1162,6 +1050,187 @@ with open(log_path, "a") as f:
 print(f"    hardware: {det['cpuModel']} · {ram:.1f} GiB RAM · GPU {det['gpuName'] or 'none'} ({det['gpuKind']})")
 print(f"    chosen: {flags} — {tier_label} (full log: hardware-profile.log)")
 PY
+
+# The version witnesses, stamped into the STAGED config (the
+# #104 discipline, kept): the config's version record is written
+# here — into the stage, before the swap — so a failure anywhere
+# before promotion leaves the live tree's witnesses entirely the
+# old build's, and the swap lands every witness together.
+python3 - "$STAGE_DIR/config/navi.config.json" "$STAGE_DIR/VERSION" <<'PY'
+import json, sys
+path, ver_path = sys.argv[1], sys.argv[2]
+with open(ver_path) as f:
+    ver_parts = f.read().strip().splitlines()[0].split()
+if ver_parts:
+    with open(path) as f:
+        cfg = json.load(f)
+    cfg["version"] = ver_parts[0]
+    cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+PY
+
+
+
+# DHD prerequisites land in the STAGE's cert home (the function
+# is the proven one; only its target home is the stage's, and its
+# DHD-PREREQS: summary line is printed exactly as the updater's
+# apply helper expects to read it back).
+DHD_CERT_HOME="$STAGE_DIR/config/dhd"
+install_dhd_prereqs
+
+
+
+# --- The stop, the refresh, the swap ---------------------------
+# Only NOW — the stage complete and verified — is the running
+# bridge stopped, with the proven machinery. If the port cannot
+# be cleared, the install aborts with the live tree untouched
+# and the stage left for inspection.
+echo "==> Stopping any bridge still running from the live tree"
+if ! stop_bridge "$INSTALL_DIR"; then
+  echo "ERROR: the previous bridge could not be stopped — aborting with the live tree untouched." >&2
+  echo "       The staged tree is left at $STAGE_DIR for inspection." >&2
+  exit 1
+fi
+stop_shell "$INSTALL_DIR" || true
+# The final refresh: state written by the bridge in its last
+# moments (chats, Mesh and federation state, config) is copied
+# from the now-stopped live tree into the stage, so the swap
+# loses nothing the copy at assembly time could have raced.
+if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
+  # navi.config.json is EXCLUDED from the refresh: the stage's
+  # copy already carries the assembly-time operator state plus
+  # this install's restamps (startup, port, install dir, the
+  # version stamps and the fresh hardware profile); the live
+  # copy's installer-owned fields are the OLD build's. Every
+  # other config file — chats, Mesh and federation state, the
+  # Vault, DHD certificates, Soul and Memory — refreshes.
+  (cd "$INSTALL_DIR/config" && tar --exclude='./navi.config.json' -cf - .) | (cd "$STAGE_DIR/config" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -d "$INSTALL_DIR/chips" ] && (cd "$INSTALL_DIR/chips" && tar -cf - .) | (mkdir -p "$STAGE_DIR/chips" && cd "$STAGE_DIR/chips" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -d "$INSTALL_DIR/rag-packs" ] && (cd "$INSTALL_DIR/rag-packs" && tar -cf - .) | (mkdir -p "$STAGE_DIR/rag-packs" && cd "$STAGE_DIR/rag-packs" && tar --no-same-owner -xf -) 2>/dev/null || true
+  [ -f "$INSTALL_DIR/voice/calls.json" ] && cp "$INSTALL_DIR/voice/calls.json" "$STAGE_DIR/voice/calls.json" 2>/dev/null || true
+fi
+
+echo "==> Promoting the staged tree — one act"
+rm -rf "$PREV_DIR" 2>/dev/null || true
+if [ -d "$PREV_DIR" ]; then
+  # A stale previous tree that will not delete (foreign-owned
+  # files) must not sit under the promotion rename — mv would
+  # nest the live tree INSIDE it. Rename it aside instead; the
+  # rename needs only the parent directory, which the swap
+  # already depends on.
+  mv "$PREV_DIR" "$PARENT_DIR/.apex-prev-kept-$(date +%s)" 2>/dev/null || {
+    echo "ERROR: a previous tree at $PREV_DIR can neither be deleted nor moved aside — nothing was changed; the staged tree is left at $STAGE_DIR." >&2
+    exit 1
+  }
+  echo "    (a previous tree that would not delete was moved aside, not nested into)"
+fi
+if [ -d "$INSTALL_DIR" ]; then
+  if ! mv "$INSTALL_DIR" "$PREV_DIR"; then
+    echo "ERROR: the live tree could not be moved aside — nothing was changed; the staged tree is left at $STAGE_DIR." >&2
+    exit 1
+  fi
+fi
+if ! mv "$STAGE_DIR" "$INSTALL_DIR"; then
+  echo "ERROR: the promotion rename failed — restoring the previous tree." >&2
+  [ -d "$PREV_DIR" ] && mv "$PREV_DIR" "$INSTALL_DIR"
+  exit 1
+fi
+
+# --- The self-check, in the product ----------------------------
+# The install stands or rolls back on the product's own verdict
+# against the live tree — stamps, manifest hashes, engine
+# imports — not on any version proxy kept by this script.
+echo "==> The product verifies itself (self-check)"
+SC_OUT="$(python3 "$INSTALL_DIR/bridge.py" --self-check 2>&1)" || SC_OUT="$SC_OUT"
+echo "    $SC_OUT"
+case "$SC_OUT" in
+  *"SELF-CHECK OK:"*)
+    echo "    self-check passed — the install stands"
+    ;;
+  *)
+    echo "ERROR: the new tree failed its self-check — rolling back to the previous version, whole." >&2
+    stop_bridge "$INSTALL_DIR" 2>/dev/null || true
+    rm -rf "$FAILED_DIR"
+    mv "$INSTALL_DIR" "$FAILED_DIR"
+    if [ -d "$PREV_DIR" ]; then
+      mv "$PREV_DIR" "$INSTALL_DIR"
+      echo "    the previous version is back in place at $INSTALL_DIR; the failed tree is kept at $FAILED_DIR" >&2
+      if [ -n "${STOPPED_BRIDGE:-}" ] && [ -z "$NO_RELAUNCH" ]; then
+        nohup "$INSTALL_DIR/start.sh" >> "$INSTALL_DIR/start.log" 2>&1 &
+        echo "    the previous version was relaunched" >&2
+      fi
+    else
+      echo "    there was no previous version; the failed tree is kept at $FAILED_DIR and $INSTALL_DIR is empty" >&2
+      rmdir "$INSTALL_DIR" 2>/dev/null || true
+    fi
+    exit 1
+    ;;
+esac
+
+
+
+# --- Post-swap provisioning (operator context, always) ---------
+# Everything below runs as the operator against the live tree:
+# boot services, the menu entry, the shell build, her voice. None
+# of it can strand the install — the tree is already verified —
+# and none of it is ever run under sudo, so systemctl --user
+# always talks to the operator's own bus (incident 17).
+PROVISIONED_MARK="$INSTALL_DIR/.apex-provisioned"
+printf '{"operator": "%s", "at": "%s", "build": "%s"}\n' "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" > "$PROVISIONED_MARK"
+
+
+echo "==> Registering Apex in the application menu"
+ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
+APP_DIR="$HOME/.local/share/applications"
+mkdir -p "$ICON_DIR" "$APP_DIR"
+# Same rule as the install-tree copy above: no icon file in this
+# copy of the sources (a git clone) means the menu entry is still
+# written — it just uses a fallback icon — and the installer's
+# report below says which of the two actually happened.
+MENU_ICON=""
+if [ -f assets/icon.png ]; then
+  cp assets/icon.png "$ICON_DIR/navi-apex.png"
+  MENU_ICON=1
+else
+  echo "    note: no app icon file in this copy of the sources (see the note above) —"
+  echo "          the menu entry is still installed, and it will use a fallback icon."
+fi
+sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" assets/navi-apex.desktop > "$APP_DIR/navi-apex.desktop"
+chmod +x "$APP_DIR/navi-apex.desktop"
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" || true
+if [ -n "$MENU_ICON" ]; then
+  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: navi-apex)"
+else
+  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: fallback — no icon file in this copy of the sources)"
+fi
+
+if [ "$STARTUP" = "boot" ]; then
+  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-bridge.service > "$UNIT_DIR/navi-bridge.service"
+  systemctl --user daemon-reload
+  systemctl --user enable --now navi-llamafile.service
+  systemctl --user enable --now navi-bridge.service
+  echo "    services enabled: navi-llamafile.service, navi-bridge.service"
+  # User services start at LOGIN, not boot, unless lingering is
+  # on for the user. Try to enable it; when this session cannot,
+  # print the exact command instead of leaving the operator to
+  # believe boot-start works when it does not (Build 12, #142).
+  if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
+    echo "    linger: already on — the services start at boot"
+  elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
+    echo "    linger: enabled — the services start at boot, before any login"
+  else
+    echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
+    echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
+  fi
+else
+  echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
+fi
+
 
 # --- Her voice (optional) ---
 # The speech engines (faster-whisper + Kokoro/Piper) are the app's
@@ -1258,71 +1327,6 @@ else
   echo "==> Skipping her voice for now. Install it any time with:"
   echo "    python3 -m pip install -r $INSTALL_DIR/requirements-voice.txt"
   echo "    (or re-run this installer and say yes at the voice step)"
-fi
-
-echo "==> Registering Apex in the application menu"
-ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
-APP_DIR="$HOME/.local/share/applications"
-mkdir -p "$ICON_DIR" "$APP_DIR"
-# Same rule as the install-tree copy above: no icon file in this
-# copy of the sources (a git clone) means the menu entry is still
-# written — it just uses a fallback icon — and the installer's
-# report below says which of the two actually happened.
-MENU_ICON=""
-if [ -f assets/icon.png ]; then
-  cp assets/icon.png "$ICON_DIR/navi-apex.png"
-  MENU_ICON=1
-else
-  echo "    note: no app icon file in this copy of the sources (see the note above) —"
-  echo "          the menu entry is still installed, and it will use a fallback icon."
-fi
-sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" assets/navi-apex.desktop > "$APP_DIR/navi-apex.desktop"
-chmod +x "$APP_DIR/navi-apex.desktop"
-command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" || true
-if [ -n "$MENU_ICON" ]; then
-  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: navi-apex)"
-else
-  echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: fallback — no icon file in this copy of the sources)"
-fi
-
-if [ "$STARTUP" = "boot" ]; then
-  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
-  UNIT_DIR="$HOME/.config/systemd/user"
-  mkdir -p "$UNIT_DIR"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-bridge.service > "$UNIT_DIR/navi-bridge.service"
-  systemctl --user daemon-reload
-  systemctl --user enable --now navi-llamafile.service
-  systemctl --user enable --now navi-bridge.service
-  echo "    services enabled: navi-llamafile.service, navi-bridge.service"
-  # User services start at LOGIN, not boot, unless lingering is
-  # on for the user. Try to enable it; when this session cannot,
-  # print the exact command instead of leaving the operator to
-  # believe boot-start works when it does not (Build 12, #142).
-  if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
-    echo "    linger: already on — the services start at boot"
-  elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
-    echo "    linger: enabled — the services start at boot, before any login"
-  else
-    echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
-    echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
-  fi
-else
-  echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
-fi
-
-# The install root is the operator's, whatever privileges it took to
-# write there: the bridge runs as them and edits persona as them.
-if [ -n "$SUDO" ]; then
-  echo "==> Handing $INSTALL_DIR to $(id -un)"
-  $SUDO chown -R "$(id -un):$(id -gn)" "$INSTALL_DIR"
-fi
-
-# The migration's clean break, completed: the old location goes away
-# entirely, so nothing stale remains to grab port 8675 at boot.
-if [ -n "$MIGRATED" ]; then
-  echo "==> Removing the old install at $OLD_DIR"
-  rm -rf "$OLD_DIR"
 fi
 
 # The standalone window: verify-then-skip. The same law as her
@@ -1602,50 +1606,22 @@ if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
 fi
 
 
-# --- VERSION FLIP (issue #104) ---
-# The install's final act, deliberately last: everything above
-# this line can fail under set -e and leave an install whose
-# witnesses all still name the OLD build, so Check for updates
-# honestly re-offers and a retry starts clean. The flip lands
-# the witnesses in an order that is safe to interrupt: the
-# config's version record first (it is only the fallback
-# witness), the staged bridge second (its baked-in build
-# sequence becomes the disk truth), and the VERSION file LAST
-# of all — it is the primary witness, the one the bridge reads
-# on every /api/status, so it is the last thing that may change.
-echo "==> Stamping the new version (the install's final step)"
-$SUDO python3 - "$INSTALL_DIR/config/navi.config.json" "$INSTALL_DIR/VERSION.pending" <<'PY'
-import json, sys
-path, ver_path = sys.argv[1], sys.argv[2]
-with open(ver_path) as f:
-    ver_parts = f.read().strip().splitlines()[0].split()
-if ver_parts:
-    with open(path) as f:
-        cfg = json.load(f)
-    cfg["version"] = ver_parts[0]
-    cfg["version_status"] = ver_parts[1] if len(ver_parts) > 1 else "stable"
-    with open(path, "w") as f:
-        json.dump(cfg, f, indent=2)
-PY
-$SUDO mv "$INSTALL_DIR/bridge.py.pending" "$INSTALL_DIR/bridge.py"
-$SUDO mv "$INSTALL_DIR/VERSION.pending" "$INSTALL_DIR/VERSION"
-echo "    version stamped: $(head -n 1 "$INSTALL_DIR/VERSION")"
-# --- END VERSION FLIP ---
 
-# --- Relaunch what the install stopped, and verify it (build
-# .91, issue #91, Cause 3) ---
-# An install that replaced a RUNNING bridge used to end here with
-# the new files on disk and nothing serving: the update only took
-# effect when the operator thought to launch the app. Now, when a
-# bridge was stopped at the top of this install, she is relaunched
-# through start.sh and the install verifies the bridge answering
-# on the port is the NEW build (status stamp match) before it
-# calls itself done. Over a stopped app, or with --no-relaunch,
-# nothing is launched — and --no-relaunch says so plainly.
+# The old location's files are removed only now that the new
+# tree is verified live (the migration's standing rule).
+if [ -n "$MIGRATED" ] && [ -d "$OLD_DIR" ]; then
+  rm -rf "$OLD_DIR"
+  echo "    the old location ($OLD_DIR) is removed — everything lives at $INSTALL_DIR now"
+fi
+rm -rf "$CARRY_DIR"
+
+# --- Relaunch what the install stopped, and verify it ----------
+# (The build .91 discipline, kept: a bridge stopped by this
+# install is relaunched through start.sh and the answering
+# bridge's stamp must be the NEW build's before the install
+# calls itself done. --no-relaunch says so plainly instead.)
 RELAUNCH_OK=""
-RELAUNCH_NOW=""
-if [ -n "$STOPPED_BRIDGE" ] && [ -z "$NO_RELAUNCH" ]; then
-  RELAUNCH_NOW=1
+if [ -n "${STOPPED_BRIDGE:-}" ] && [ -z "$NO_RELAUNCH" ]; then
   echo "==> A bridge was running when this install began — relaunching Apex on the new build"
   nohup "$INSTALL_DIR/start.sh" >> "$INSTALL_DIR/start.log" 2>&1 &
   NEW_STAMP="$(sed -n 's/^BRIDGE_BUILD = "\(.*\)".*/\1/p' "$INSTALL_DIR/bridge.py" 2>/dev/null | head -n 1)"
@@ -1665,24 +1641,40 @@ if [ -n "$STOPPED_BRIDGE" ] && [ -z "$NO_RELAUNCH" ]; then
     done
   fi
   if [ -n "$RELAUNCH_OK" ]; then
-    echo "    verified live: the bridge answering on port 8675 reports the new build ($NEW_STAMP)"
+    echo "    verified: the bridge answering on port 8675 is the new build ($NEW_STAMP)"
   else
-    echo "WARNING: Apex was relaunched but the new build could not be verified answering on port 8675." >&2
-    echo "         Watch $INSTALL_DIR/start.log, and start her by hand with: $INSTALL_DIR/start.sh" >&2
+    echo "    WARNING: the bridge was relaunched but the new build's stamp could not be confirmed" >&2
+    echo "    on port 8675 within 90 seconds. The tree itself passed its self-check; see start.log" >&2
+    echo "    in $INSTALL_DIR for the launcher's account of the start." >&2
   fi
+elif [ -n "${STOPPED_BRIDGE:-}" ] && [ -n "$NO_RELAUNCH" ]; then
+  echo "==> --no-relaunch: the bridge this install stopped stays stopped, by your word."
 fi
 
-# Closing lines — exactly one story, and it is the true one.
+# The success record — written only now, after the self-check
+# passed: an install whose record exists is an install the
+# product itself confirmed.
+printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed"}\n' \
+  "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" "$(cat "$INSTALL_DIR/VERSION")" \
+  > "$INSTALL_DIR/.apex-install-record"
+# The previous tree retires only after the new one is verified.
+# Best-effort by design: if it holds files this operator cannot
+# delete (root-owned leftovers of a past sudo repair, incident
+# 16), the install still stands — the kept tree is named, with
+# the one command that removes it.
+rm -rf "$PREV_DIR" 2>/dev/null || true
+if [ -d "$PREV_DIR" ]; then
+  echo "NOTE: the previous install is kept at $PREV_DIR" >&2
+  echo "      It holds files not owned by $OPERATOR (a past sudo repair leaves exactly this), so this" >&2
+  echo "      operator cannot delete it. The new install is complete without it. Remove it with:" >&2
+  echo "        sudo rm -rf $PREV_DIR" >&2
+fi
+
 echo ""
-if [ -n "$NO_RELAUNCH" ] && [ -n "$STOPPED_BRIDGE" ]; then
-  echo "Done — but Apex is NOT running: the bridge this install replaced was stopped and --no-relaunch asked not to restart her."
-  echo "Start her with: $INSTALL_DIR/start.sh"
-elif [ -n "$RELAUNCH_OK" ]; then
-  echo "Done — Apex is running again on the new build."
-elif [ -n "$RELAUNCH_NOW" ]; then
-  echo "Done — the files are in place, but see the warning above: Apex may not be running yet."
-  echo "Start her with: $INSTALL_DIR/start.sh"
+echo "== Apex build $BUILD_STAMP is installed at $INSTALL_DIR"
+echo "   Verified by the product itself: $(python3 -c "import json; print(json.load(open('$INSTALL_DIR/config/install-self-check.json'))['sentence'])" 2>/dev/null || echo 'self-check passed')"
+if [ "$STARTUP" = "boot" ]; then
+  echo "   Startup: at boot (systemd user services: navi-llamafile, navi-bridge)"
 else
-  echo "Done. Launch \"Apex\" from your application menu, or run:"
-  echo "    $INSTALL_DIR/start.sh"
+  echo "   Startup: when you launch the app (the Apex entry in your app menu, or $INSTALL_DIR/start.sh)"
 fi

@@ -52,7 +52,6 @@
   body[data-theme="nord"] #nav-child-navi-Chips .ic { color:#ebcb8b; }
   body[data-theme="nord"] #nav-child-navi-RAG .ic { color:#81a1c1; }
   body[data-theme="nord"] #nav-Vault .ic { color:#bf616a; }
-  body[data-theme="nord"] #nav-child-utilities-Updater .ic { color:#a3be8c; }
   body[data-theme="nord"] #nav-child-utilities-GitHub .ic { color:#d08770; }
   body[data-theme="nord"] #nav-child-utilities-Settings .ic { color:#d8dee9; }
   body[data-theme="nord"] #nav-child-utilities-Docs .ic { color:#d98a94; }
@@ -88,7 +87,6 @@
   body[data-theme="terminal"] #nav-child-navi-Chips .ic { color:#34d399; }
   body[data-theme="terminal"] #nav-child-navi-RAG .ic { color:#2dd4bf; }
   body[data-theme="terminal"] #nav-Vault .ic { color:#fde047; }
-  body[data-theme="terminal"] #nav-child-utilities-Updater .ic { color:#bef264; }
   body[data-theme="terminal"] #nav-child-utilities-GitHub .ic { color:#facc15; }
   body[data-theme="terminal"] #nav-child-utilities-Settings .ic { color:#dcfce7; }
   body[data-theme="terminal"] #nav-child-utilities-Docs .ic { color:#6ee7b7; }
@@ -342,6 +340,19 @@
   .docs-wiki-nav { min-width:190px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; min-height:0; }
   .docs-wiki-body { flex:1; min-width:260px; overflow-y:auto; overscroll-behavior:contain; min-height:0; }
   #view-root.docs-pop { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
+  /* The Wire's article reader (0.2.0e Build 10, #196): while it
+     is open the reader is portaled to <body> — outside the view
+     root's scroll and animation ancestry — so its fixed
+     positioning anchors to the viewport on every door. Desktop:
+     the centered popup, as it always was. Phone widths: a
+     full-screen sheet above its scrim, its own scroll inside,
+     the page behind it locked. */
+  #wire-reader-shade { position:fixed; inset:0; z-index:118; background:rgba(0,0,0,.45); }
+  #wire-reader { position:fixed; z-index:119; left:50%; top:50%; transform:translate(-50%,-50%); width:min(680px,calc(100vw - 24px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:18px 20px; transition:opacity var(--motion-med) var(--motion-ease),transform var(--motion-med) var(--motion-ease); }
+  @media (max-width:800px) {
+    #wire-reader { left:0; top:0; right:0; bottom:0; transform:none; width:auto; max-height:none; height:100dvh; border:none; border-radius:0; box-shadow:none; padding:14px 16px calc(14px + env(safe-area-inset-bottom)); }
+  }
+  body.reader-open { overflow:hidden; }
   #view-root.chat-view > h3, #view-root.chat-view > .card { flex:0 0 auto; }
   #msgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; }
   #msgs + div, #view-root.chat-view > .row { flex:0 0 auto; }
@@ -1377,9 +1388,9 @@ function badgeForgeFinish(cv, cx, name, nodeName, cb) {
 }
 
 
-var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federation", "Updater", "GitHub", "Docs", "Settings", "Guardian"];
+var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federation", "GitHub", "Docs", "Settings", "Guardian"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
-// Apex | Systems group (Mesh / DHD — Node and DHD both open
+// Apex | Network group (Federation / Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
 // surfaces; and the Apex | Utilities drop-up at the foot. NAV keeps
 // every REACHABLE view key for the active-state sweep; NAV_GROUPS
@@ -1403,7 +1414,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federati
 // are one work surface now. Nav placement only: the Vault's
 // view, route and behavior are exactly as #134/#135 left them.
 var NAV_GROUPS = {
-  systems: { label: "Apex | Systems", children: [["Mesh", "Mesh"], ["DHD", "DHD"], ["Federation", "Federation"]] },
+  network: { label: "Apex | Network", children: [["Federation", "Federation"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   // Build 9: the Threat Intelligence section wears a new display
   // name — The Wire — and the CTF Board's separate menu entry is
@@ -1411,7 +1422,7 @@ var NAV_GROUPS = {
   // Display only: the view keys (ThreatIntel, CTFBoard) and every
   // internal name stay exactly as they were; only the labels moved.
   apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["The Wire", "ThreatIntel"], ["Vault", "Vault"]] },
-  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["Updater", "Updater"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
+  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
 };
 var NAV_FLAT = ["Chat"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
@@ -1476,7 +1487,7 @@ function chipdeckGlyphSvg() {
   return "<circle cx='6.2' cy='5.4' r='1.9'/><circle cx='6.2' cy='12' r='1.9'/><circle cx='6.2' cy='18.6' r='1.9'/><path d='M9.4 3.6h9.1a1.9 1.9 0 0 1 1.9 1.9v13a1.9 1.9 0 0 1-1.9 1.9H9.4'/><path d='M15.9 8.2l3.1 4.6h-6.2z'/>";
 }
 function navIcon(name) {
-  if (name === "Apex | Systems") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='3.5' width='19' height='7' rx='1.8'/><rect x='2.5' y='13.5' width='19' height='7' rx='1.8'/><circle cx='6.5' cy='7' r='1' fill='currentColor' stroke='none'/><circle cx='6.5' cy='17' r='1' fill='currentColor' stroke='none'/></svg>";
+  if (name === "Apex | Network") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='3.5' width='19' height='7' rx='1.8'/><rect x='2.5' y='13.5' width='19' height='7' rx='1.8'/><circle cx='6.5' cy='7' r='1' fill='currentColor' stroke='none'/><circle cx='6.5' cy='17' r='1' fill='currentColor' stroke='none'/></svg>";
   if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
@@ -1703,8 +1714,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-13.09";
-var SHIPPED_BUILD_SEQ = 9;
+var BRIDGE_BUILD = "2026-11-14.10";
+var SHIPPED_BUILD_SEQ = 10;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2960,11 +2971,23 @@ function openWireReader(link) {
     render();
   });
 }
+function bindWireReaderClose() {
+  // The reader is portaled to <body> while it is open (Build
+  // 10, #196), so its close controls are bound here, by id —
+  // one binder, called from the wiring pass and from the
+  // portal step in render(), so the two never disagree.
+  var c = document.getElementById("wire-reader-close");
+  if (c) c.onclick = function () { wireReader = null; render(); };
+  var t = document.getElementById("wire-reader-close-top");
+  if (t) t.onclick = function () { wireReader = null; render(); };
+  var s = document.getElementById("wire-reader-shade");
+  if (s) s.onclick = function () { wireReader = null; render(); };
+}
 function wireReaderHtml() {
   var j = wireReader, it = j.item || {};
-  var h = "<div id='wire-reader-shade' style='position:fixed;inset:0;z-index:118;background:rgba(0,0,0,.45)'></div>";
-  h += "<div id='wire-reader' role='dialog' aria-label='Article reader' style='position:fixed;z-index:119;left:50%;top:50%;transform:translate(-50%,-50%);width:min(680px,calc(100vw - 24px));max-height:86vh;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.45);padding:18px 20px;transition:opacity var(--motion-med) var(--motion-ease),transform var(--motion-med) var(--motion-ease)'>";
-  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</div>";
+  var h = "<div id='wire-reader-shade'></div>";
+  h += "<div id='wire-reader' role='dialog' aria-modal='true' aria-label='Article reader'>";
+  h += "<div style='position:sticky;top:0;background:var(--panel2);padding:2px 0 8px;z-index:1'><div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</span><button class='ghost' id='wire-reader-close-top' aria-label='Close the article reader' style='min-height:40px;flex:0 0 auto'>Close</button></div></div>";
   h += "<h3 style='margin:8px 0'>" + esc(j.title || it.title || "Article") + "</h3>";
   (j.paragraphs || []).forEach(function (p) { h += "<p style='font-size:14px;line-height:1.55;margin-top:8px'>" + esc(p) + "</p>"; });
   h += "<div class='row' style='margin-top:14px;gap:8px'><a class='act' href='" + esc(it.link || "#") + "' target='_blank' rel='noopener' style='min-height:40px;text-decoration:none;display:inline-flex;align-items:center;padding:0 14px'>Open original</a><button class='ghost' id='wire-reader-close' style='min-height:40px'>Close</button></div>";
@@ -3036,8 +3059,7 @@ function wireAwareness() {
   mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-go"); render(); }; });
   mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
-  bind("wire-reader-close", function () { wireReader = null; render(); });
-  bind("wire-reader-shade", function () { wireReader = null; render(); });
+  bindWireReaderClose();
   bind("wire-pull", function () {
     intelPost("/api/wire/refresh", {}, function (j) {
       wireMsg = j && j.ok ? "Fetch started — the wire refreshes when the feeds answer." : ((j && j.error) || "The fetch could not start.");
@@ -4555,7 +4577,7 @@ var DOC_PAGES = [
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
   "<li>The <b>same access code</b> as the home-network door guards DHD — one code, both doors. Since Build 2 the code <b>knocks</b> rather than opens: a device presenting it names itself and waits for an approval (the first device approves itself), and each approved device holds its own 30-day session — the <i>Trusted devices</i> section below has the whole flow. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
-  "<p>DHD has its own page, reached from the menu's <b>Apex | Systems</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+  "<p>DHD has its own page, reached from the menu's <b>Apex | Network</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
@@ -4593,7 +4615,7 @@ var DOC_PAGES = [
   { id: "mesh", title: "Apex | Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What Mesh is</h4>" +
   "<p><b>Apex | Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
-  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex | Node</b>, <b>Apex | Mesh</b>, <b>Apex | DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu's Apex | Systems group — which puts the controls first and the <b>roster</b> below them: this machine and every paired machine, each with its capability line, live status, and balance. Settings → System keeps a one-line summary and a button that jumps to the page.</p>" +
+  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex | Node</b>, <b>Apex | Mesh</b>, <b>Apex | DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu's Apex | Network group — one calm column of cards: your door (this machine's identity, its card, and the import drop zone), lending &amp; borrowing, one card per paired machine carrying its capability line, live status and balance, the roads (the managed backup routes), and the Mesh health check at the foot.</p>" +
   "<p>That Servers row is also where Mesh warnings live — the persistent place to check when something feels off. Its dot and line read the connection state at a glance: grey when Mesh is off or no machine is paired yet, green when a paired machine is reachable (amber while a borrow or a lend is actually running), and amber with the reason in short words — <i>“&lt;machine&gt; unreachable”</i>, <i>“&lt;machine&gt; dropped”</i> — when a connection breaks. The chat notice still speaks in the moment a borrow falls back; the status row is what keeps the warning on screen afterwards, until the machine answers again.</p></div>" +
     "<div class='doc-sec'><h4>Pairing — the card is the handshake</h4>" +
   "<p>Each machine has a <b>Mesh card</b> — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a <b>capabilities block</b> — the machine's own report of its hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under.</p><ol>" +
@@ -4695,7 +4717,7 @@ var DOC_PAGES = [
   "<p><b>Nothing is saved silently.</b> Every save leaves a receipt in the chat showing exactly what she wrote, word for word, with a one-tap <b>Undo</b>. A save that corrects an existing entry <b>replaces</b> it — the receipt shows the old line struck through, and Undo restores it. <b>Secrets are never saved</b>, on any path: ask her to remember a password, a key, or a card number and she refuses, says why, and the receipt shows no payload.</p>" +
   "<p><b>Settings → Persona</b> holds the leash: <b>She saves on her own</b> (the default), <b>Ask first</b> (each autonomous save waits as a proposal — in the chat receipt and under Settings → Persona — until you approve or dismiss it), or <b>Only when I say</b> (trigger only). The entries live in two files, split by who authored them: <b>Settings → Operator</b> holds yours — added by hand, or saved because you asked — under <i>About you — memories for Navi</i>; <b>Persona</b> holds hers, under <i>Her file — what she keeps</i>. Every entry says how it got there.</p></div>" +
     "<div class='doc-sec'><h4>Memory, the updater, and Settings</h4>" +
-  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the pane button at the top right of her presence bar — the bar above every view — is its door, and on a phone the top bar's panel button is the other; hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
+  "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the pane button at the top right of her presence bar — the bar above every view — is its door, and on a phone the top bar's panel button is the other; hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> — folded into <b>Settings → System</b>, with the current version's notes as that menu's final block — watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
   "<li><b>Operator</b> — what she calls you, your picture and your Operator Badge, and your file: the memories you handed her about you. Your picture rides beside your messages; upload one in the tab (it is trimmed to a square here, kept with your profile, and carried in the settings backup) or let the picture generated from your name stand in. The <b>Operator Badge</b> is your self-portrait in the cartridge format — a card with your chosen face and your name (and this node's name) carried inside the picture. It is not a credential: nothing reads a badge to prove identity, and a badge whose payload is damaged simply reads as no badge.</li>" +
   "<li><b>Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
   "<li><b>Appearance</b> — the theme picker, Potato mode for low-power machines, and the UI scale.</li>" +
@@ -5470,7 +5492,12 @@ function goView(name) {
   view = name;
   if (window.innerWidth <= 800) { navClosed = true; dockOpen = false; }
   render();
-  if (name === "Updater") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); }
+  if (name === "Settings") { if (updater.state === "idle") checkForUpdates(); fetchUpdateResult(updater.state === "applying"); }
+  // 0.2.0e Build 10 (#195): the federation state is fetched
+  // ONCE per view entry — here, at the door, never from inside
+  // render. An answer that sets nothing is held in
+  // federationError and painted once by the view itself.
+  if (name === "Federation" && CONFIG.backend === "live" && !federationState && !federationFetching) federationFetchState();
 }
 function navBtn(id, label, iconName, targetView) {
   var b = document.createElement("button");
@@ -5533,7 +5560,7 @@ function navGroupWrap(gid) {
 }
 // The menu (0.1.9e Build 4; Build 6, #106; Build 14, #160):
 // Chat pinned; a break; then the groups in the settled order —
-// Apex | Navi, Apex | Apps, Apex | Systems — each a section of
+// Apex | Navi, Apex | Apps, Apex | Network — each a section of
 // header, children, and its OWN break as the section's last
 // element, so the divider travels with the group and sits
 // directly beneath its last visible row in every state (a
@@ -5546,9 +5573,9 @@ function navGroupWrap(gid) {
 // direction; group contents are unchanged).
 navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
 var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
-var navSys = document.createElement("div"); navSys.className = "nav-group-sec"; navSys.id = "nav-sec-systems";
-navSys.appendChild(navGroupHeader("systems"));
-navSys.appendChild(navGroupWrap("systems"));
+var navSys = document.createElement("div"); navSys.className = "nav-group-sec"; navSys.id = "nav-sec-network";
+navSys.appendChild(navGroupHeader("network"));
+navSys.appendChild(navGroupWrap("network"));
 var navBrk2 = document.createElement("div"); navBrk2.className = "nav-break"; navBrk2.setAttribute("aria-hidden", "true"); navSys.appendChild(navBrk2);
 var navNavi = document.createElement("div"); navNavi.className = "nav-group-sec"; navNavi.id = "nav-sec-navi";
 navNavi.appendChild(navGroupHeader("navi"));
@@ -5572,15 +5599,15 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", Updater: "nav-child-utilities-Updater", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-systems-Mesh", DHD: "nav-child-systems-DHD", Federation: "nav-child-systems-Federation" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-systems-Mesh", "nav-child-systems-DHD", "nav-child-systems-Federation", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-Updater", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Chat", "nav-child-network-Federation", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
   });
-  ["systems", "navi", "apps", "utilities"].forEach(function (gid) {
+  ["network", "navi", "apps", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
     if (wrap) {
       var closed = !navGroupsOpen[gid];
@@ -6472,6 +6499,8 @@ function meshLineHtml(mesh) {
 var federationState = null;
 var fedMsg = { error: "", errorFor: "", sentence: "" };
 var fedConfirm = null;
+var federationError = "";
+var federationFetching = false;
 
 function federationAct(body, forId) {
   if (CONFIG.backend !== "live") { fedMsg.error = "Federation runs through the live bridge."; fedMsg.errorFor = forId || ""; render(); return; }
@@ -6483,6 +6512,38 @@ function federationAct(body, forId) {
     if (view === "Federation") render();
   }).catch(function () {
     fedMsg.error = "The bridge did not answer that act."; fedMsg.errorFor = forId || "";
+    if (view === "Federation") render();
+  });
+}
+function federationErrorHtml() {
+  // 0.2.0e Build 10 (#195): the answer that did not set state,
+  // painted ONCE — the bridge's own sentence, and a manual
+  // retry. Nothing here fetches on its own; the strobe this
+  // replaces repainted the page as fast as the door answered.
+  return "<div class='card'><b>Federation state did not load</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>The bridge's answer did not carry this node's federation state: " + esc(federationError) + "</p>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>The page shows that answer once and waits — it does not retry on its own. If the bridge is an older build than this page, updating it is the cure; otherwise check that the bridge is running, then retry.</p>" +
+    "<div class='row' style='margin-top:8px'><button class='act' id='fed-retry' style='min-height:44px'>Retry</button></div></div>";
+}
+function federationFetchState() {
+  // 0.2.0e Build 10 (#195): the ONE fetch of the federation
+  // state — fired by the view's enter hook in goView (and by
+  // the error card's manual Retry), guarded in flight, and
+  // never called from render or from the wiring pass. Any
+  // answer that does not set state lands in federationError
+  // and is painted exactly once by federationHtml.
+  if (federationFetching) return;
+  if (CONFIG.backend !== "live") return;
+  federationFetching = true;
+  federationError = "";
+  fetch("/api/federation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act: "state" }) }).then(function (r) { return r.json(); }).then(function (j) {
+    federationFetching = false;
+    if (j && j.fedinets) { federationState = j; federationError = ""; }
+    else federationError = (j && j.error) || "the answer carried no federation state.";
+    if (view === "Federation") render();
+  }).catch(function () {
+    federationFetching = false;
+    federationError = "the bridge did not answer — is it running?";
     if (view === "Federation") render();
   });
 }
@@ -6504,7 +6565,21 @@ function federationHtml() {
   var mv = meshViewState();
   if (mv.headline) h += "<p style='margin-top:2px'><span class='dot pdot' style='background:#3fb96f'></span> <b>" + esc(mv.headline) + "</b> <span style='color:var(--dim)'>— the headline is the state now, not a census of pairs.</span></p>";
   h += "<p style='color:var(--dim);max-width:680px'>A fedinet is a named set of machines whose gateway keeps a <b>signed roster</b>. A gateway card admits a node and introduces it — trust is a separate, deeper act: with trust-by-default on, the roster auto-pairs and auto-lends on this node. Every trust act, through any door, lands in the audit log at the foot of this page.</p>";
-  if (CONFIG.backend === "live" && !s) { federationAct({ act: "state" }, ""); h += "<div class='card'>Reading this node's fedinets…</div>"; return h; }
+  if (CONFIG.backend === "live" && !s) {
+    // 0.2.0e Build 10 (#195): render NEVER fetches. The state
+    // is requested once per view entry by goView's enter hook;
+    // this function only paints what it already holds — the
+    // loading card while that one fetch is in flight, or,
+    // when the answer did not set state, the answer's own
+    // sentence, once, with a manual retry. The Build 9 shape
+    // fetched from inside this render (and again from the
+    // wiring pass) and re-rendered on every answer, so a
+    // state-less answer — the field case: a pre-federation
+    // bridge answering 404-shaped {"error": "not found"} —
+    // repainted forever: the strobe.
+    if (federationError) { h += federationErrorHtml(); return h; }
+    h += "<div class='card'>Reading this node's fedinets…</div>"; return h;
+  }
   if (!s) { h += "<div class='card'>Federation runs through the live bridge — switch the backend to Live in Settings.</div>"; return h; }
   if (fedMsg.sentence) h += "<p style='color:var(--accent);margin-top:8px'>" + esc(fedMsg.sentence) + "</p>";
   if (fedMsg.error && !fedMsg.errorFor) h += "<p style='color:#f58a8a;margin-top:8px'>" + esc(fedMsg.error) + "</p>";
@@ -6595,7 +6670,11 @@ function federationHtml() {
   return h;
 }
 function wireFederation() {
-  if (!federationState) federationAct({ act: "state" }, "");
+  // 0.2.0e Build 10 (#195): the wiring pass binds the error
+  // card's Retry — it never fetches on its own (the Build 9
+  // line here re-fired the state fetch on every render).
+  var fedRetry = document.getElementById("fed-retry");
+  if (fedRetry) fedRetry.onclick = function () { federationFetchState(); if (view === "Federation") render(); };
   var q = function (sel) { return mainEl.querySelector(sel); };
   var qa = function (sel) { return mainEl.querySelectorAll(sel); };
   var split = function (v) { var i = (v || "").indexOf("|"); return i < 0 ? [v, ""] : [v.slice(0, i), v.slice(i + 1)]; };
@@ -6784,38 +6863,6 @@ function meshCapLine(caps) {
   bits.push(caps.idleOnly === false ? "lends even while busy" : "lends when idle");
   return bits.join(" · ");
 }
-function meshRosterHtml() {
-  // The Mesh page's roster (build .86): this node and every
-  // paired node — name, capability line, live status, balance.
-  // Names and capabilities only: no address ever renders here.
-  var m = meshViewState();
-  var h = "<div class='card'><h3>Mesh roster</h3>";
-  if (!m.enabled) {
-    h += "<p style='color:var(--dim)'>Mesh is off — turn it on with the controls above and the roster fills in as machines are paired.</p></div>";
-    return h;
-  }
-  var selfStatus = m.lendingNow ? "lending now" : m.borrowing ? "borrowing now" : "idle";
-  var selfDot = (m.lendingNow || m.borrowing) ? "#f5b544" : "#34d399";
-  h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
-    "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + selfDot + "'></span><b>" + esc(m.nodeName || "This machine") + "</b><span style='color:var(--dim);font-size:12px'>this machine · " + selfStatus + "</span></div>" +
-    (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") +
-    (m.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(m.publicEndpoint) + "</span> — declared on its card</div>" : "") + "</div>";
-  (m.peers || []).forEach(function (p) {
-    var status = p.reachable === false ? meshUnreachableText(p) : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
-    var dot = p.reachable === false ? "#f87171" : p.probeBusy ? "#f5b544" : p.reachable === true ? "#34d399" : "#9fb3c8";
-    h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
-      "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + dot + "'></span><b>" + esc(p.name) + "</b><span style='color:var(--dim);font-size:12px'>" + status + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
-      (meshCapLine(p.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(p.capabilities)) + "</div>" : "") +
-      (p.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(p.publicEndpoint) + "</span> — declared on its card</div>" : "") +
-      // 0.2.0e Build 1 (#143): the failure in full words under
-      // the short state — what answered, what did not match,
-      // and the cure where the product knows it.
-      (p.reachable === false && p.lastProbeReason ? "<div style='font-size:12px;margin-top:4px'>" + esc(p.lastProbeReason) + "</div>" : "") + "</div>";
-  });
-  if (!m.peers || !m.peers.length) h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>No machines paired yet — pair one with the card exchange above.</p>";
-  h += "</div>";
-  return h;
-}
 function meshHealthHtml() {
   // The Mesh health check card (0.2.0e Build 1, #143): the two
   // decisive reads of the field diagnosis, run by the product
@@ -6968,17 +7015,53 @@ function meshRelayHtml(p, m) {
   h += "</div>";
   return h;
 }
-function meshCardHtml() {
+function meshPostureHtml(m) {
+  // The posture sentence under the page header (0.2.0e Build
+  // 10, #196): the same priority the status column's Mesh row
+  // speaks — a warning first, then the federation headline
+  // ("Mesh Online" — the state, not a census of pairs), then
+  // activity, then the plain on/off posture.
+  var line;
+  if (!m.enabled) line = "The Mesh is off — this machine neither lends nor borrows. Turn it on at your door and it can pair with your other machines.";
+  else if (m.state === "warning" && m.warning) line = m.warning;
+  else if (m.headline) line = m.headline + " — this node keeps a federation, and the door below is its own.";
+  else if (m.borrowing) line = "Borrowing now — a paired machine is answering for this one.";
+  else if (m.lendingNow) line = "Lending now — this machine is answering for a paired machine.";
+  else if (m.lendEnabled && m.borrowEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle") + " · borrowing automatic.";
+  else if (m.lendEnabled) line = "On — " + (m.lend && m.lend.idleOnly === false ? "lending even while busy" : "lending when idle") + ".";
+  else if (m.borrowEnabled) line = "On — borrowing automatic.";
+  else line = "On — borrowing and lending both off.";
+  return "<p style='color:var(--dim)'>" + esc(line) + "</p>";
+}
+function meshPageHtml() {
+  // 0.2.0e Build 10 (#196): the Mesh page as one calm column,
+  // modeled on the Federation page — the posture sentence
+  // under the header, then the sections as cards: Your door,
+  // Lending & borrowing, one card per peer, Roads, and Health
+  // at the foot. Every control the single Build 9 card
+  // carried keeps its id, its handler (wireMeshCard is
+  // unchanged) and its words; only the presentation moved,
+  // and the roster's rows folded into the door and peer cards.
   var m = meshViewState();
-  var lend = m.lend || {};
-  var h = "<div class='card'><h3>Apex | Mesh</h3>" +
-    "<p style='color:var(--dim)'>Pooled inference across your machines: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is a card you carry by hand — a paired machine is a trusted machine.</p>";
-  // Build 6 (#86): save confirmations and refusals render here,
-  // at the controls, directly under the intro — not at the foot
-  // of the card, where a person mid-click never sees them.
+  var h = "<h3>Apex | Mesh</h3>";
+  h += meshPostureHtml(m);
+  // Build 6 (#86) seat, kept: save confirmations and refusals
+  // render at the head of the page, directly under the
+  // posture — where a person mid-click sees them.
   if (meshMsg) h += "<p style='font-size:12px'>" + esc(meshMsg) + "</p>";
+  h += meshDoorHtml(m);
+  h += meshLendBorrowHtml(m);
+  h += meshPeersHtml(m);
+  h += meshRoadsHtml(m);
+  h += meshHealthHtml();
+  return h;
+}
+function meshDoorHtml(m) {
+  var h = "<div class='card'><h3 style='margin-top:0'>Your door</h3>" +
+    "<p style='color:var(--dim)'>Pooled inference across your machines: a stronger machine answers whole chat requests for a weaker one, and the reply says which machine wrote it. Pairing is a card you carry by hand — a paired machine is a trusted machine.</p>";
   h += meshSwitchRow("mesh-master", m.enabled, "Apex | Mesh", "Apex | Mesh master switch");
   if (m.enabled) {
+
     h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's name <input id='mesh-name' type='text' value='" + esc(m.nodeName || "") + "' placeholder='e.g. Home server' aria-label='This machine’s Mesh name' style='min-height:44px'></label>" +
       (m.nodeId ? "<span class='mono' style='font-size:11px;color:var(--dim)'>node " + esc(String(m.nodeId).slice(0, 12)) + "</span>" : "") + "</div>";
     // 0.2.0e Build 4 (#154): the operator-declared public
@@ -7002,14 +7085,44 @@ function meshCardHtml() {
     // here so the operator can see exactly what was shared.
     if (m.tunnelPublicKey) h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>This machine's tunnel key <input type='text' readonly value='" + esc(m.tunnelPublicKey) + "' aria-label='This machine’s Mesh tunnel public key — it rides the pairing card, and a paired machine authorizes it once, at that machine, in person' class='mono' style='min-height:44px;min-width:min(520px,80vw);background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'></label></div>" +
       "<p style='color:var(--dim);font-size:12px'>The public half of the key this machine's managed backup tunnels use. It rides your pairing card; a paired machine authorizes it once, at home, in person — then this machine keeps its backup roads open by itself. The private half never leaves this machine and never rides a backup.</p>";
-    h += "<h4 style='margin:14px 0 0'>Borrowing</h4>";
+    var selfStatus = m.lendingNow ? "lending now" : m.borrowing ? "borrowing now" : "idle";
+    var selfDot = (m.lendingNow || m.borrowing) ? "#f5b544" : "#34d399";
+    h += "<div style='border-top:1px solid var(--line);margin-top:12px;padding-top:8px'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + selfDot + "'></span><b>" + esc(m.nodeName || "This machine") + "</b><span style='color:var(--dim);font-size:12px'>this machine · " + selfStatus + "</span></div>" +
+      (meshCapLine(m.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(m.capabilities)) + "</div>" : "") + "</div>";
+h += "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'><button type='button' class='act' id='mesh-card-png' aria-label='Download my Mesh card as a PNG picture' style='min-height:44px'>Download PNG card</button></div>" +
+      "<p style='color:var(--dim);font-size:12px'>Your card is a picture: a face you can read — name, node, the offer — with the whole card riding inside the picture, the way chips travel. Pairing is the picture, only — there is no text card to copy or paste anymore. Send the file itself; for a chat app, put it inside a .zip first, because chat apps recompress pictures and strip the data out.</p>";
+    // Build 7 (spec section 13): the PNG import — a visible drop
+    // target plus an upload control, both feeding the one
+    // importer (wireMeshCard). Drag-and-drop is the desktop
+    // path; the upload button is the path that works everywhere,
+    // phones included: a 44px target, and the zone wraps its
+    // words instead of widening the page at 360-430px.
+    if (!m.certNoticeSeen) h += "<p style='color:var(--am);font-size:12px;margin-top:10px'>First pairing — one thing worth knowing before any trust is pinned: a Mesh door's certificate is <b>self-signed</b>. No authority vouches for it, and none should: the card you were handed <i>is</i> the trust. Importing it pins that machine's certificate fingerprint on this machine, and from then on this machine accepts that door only when it presents exactly that certificate — a different one is named, never quietly trusted.</p>";
+    h += "<div id='mesh-png-zone' style='margin-top:12px;border:1.5px dashed " + (meshPngDrag ? "var(--accent)" : "var(--line)") + ";border-radius:6px;padding:12px;text-align:center'>" +
+      "<p style='font-size:12px;margin:0'>Pair by picture — drop the other machine's PNG card here</p>" +
+      "<p style='margin:8px 0 0'><label for='mesh-png-file' class='act' style='display:inline-flex;align-items:center;min-height:44px;padding:0 14px;cursor:pointer'>Upload a PNG card</label>" +
+      "<input type='file' id='mesh-png-file' accept='image/png,.png' aria-label='Upload a Mesh PNG card file' style='display:none'></p>" +
+      "<p style='color:var(--dim);font-size:11px;margin:8px 0 0'>The picture must arrive as the original file — inside a .zip for chat apps, which recompress pictures and strip the card data out.</p>" +
+      (meshPngMsg ? "<p style='font-size:12px;margin:8px 0 0'>" + esc(meshPngMsg) + "</p>" : "") +
+      "</div>";
+    h += "<div style='display:flex;align-items:center;gap:8px;margin-top:10px'><input type='checkbox' id='mesh-ledger-backup' aria-label='Include the Mesh ledger in backups'" + (m.ledgerInBackup ? " checked" : "") + " style='width:20px;height:20px'><label for='mesh-ledger-backup' style='font-size:12px'>Include the Mesh ledger in backups (off by default — the ledger is metadata, but whose machines talked is yours)</label></div>";
+    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, public endpoint, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
+  }
+  h += "</div>";
+  return h;
+}
+function meshLendBorrowHtml(m) {
+  if (!m.enabled) return "";
+  var lend = m.lend || {};
+  var h = "<div class='card'><h3 style='margin-top:0'>Lending &amp; borrowing</h3>";
+h += "<h4 style='margin:14px 0 0'>Borrowing</h4>";
     h += meshSwitchRow("mesh-borrow", m.borrowEnabled, "Borrow from my paired machines (automatic)", "Borrow from paired machines — automatic when a lender is reachable, with this off switch");
     if (m.borrowEnabled && !meshPrivacyAcked) {
       h += "<p style='font-size:12px;border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:8px'>Borrowing sends this chat's full context — including your Soul and Memory pages and recent conversation — to the lending machine, whose model reads it to write the reply. It is encrypted on the way and the lender keeps none of it, but that machine's operator owns the machine it runs on. Only borrow from machines you trust with the conversation.</p>";
     }
     h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:6px'><label style='font-size:12px'>Grace when a lender is busy <input id='mesh-grace' type='number' min='0' max='30000' step='100' value='" + (m.graceMs != null ? m.graceMs : 2000) + "' aria-label='Borrow grace in milliseconds' style='width:96px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:4px;padding:8px'> ms</label></div>" +
       "<p style='color:var(--dim);font-size:12px'>If a lender is busy, this machine waits up to the grace for it to free up, then answers locally. A freed lender serves the next request — never a half-written reply.</p>";
-    h += "<h4 style='margin:14px 0 0'>Lending</h4>";
+h += "<h4 style='margin:14px 0 0'>Lending</h4>";
     // Build 6 (#86): on the DHD-door view (viaDhd) with lending
     // off, the switch renders LOCKED — the bridge refuses a
     // remote turn-on, so the control shows the lock and the
@@ -7051,42 +7164,41 @@ function meshCardHtml() {
       ? "<p style='color:var(--dim);font-size:12px'>On: this machine lends only after " + (lend.idleAfterSeconds != null ? lend.idleAfterSeconds : 60) + " seconds of quiet. Turn it off and it lends without waiting to be idle.</p>"
       : "<p style='color:var(--dim);font-size:12px'>Off: this machine lends without waiting to be idle — borrowed generations run alongside your own work, and your own replies may slow down. The caps above still apply, and lending still serves one borrowed generation at a time.</p>";
     if (m.lendEnabled) h += "<p><button type='button' class='ghost' id='mesh-stop' aria-label='Stop lending now — ends lending and aborts any borrowed generation in flight' style='min-height:44px;color:#f87171;border-color:#f87171'>Stop lending now</button></p>";
-    h += "<h4 style='margin:14px 0 0'>Paired machines</h4>";
-    if (m.peers && m.peers.length) {
-      m.peers.forEach(function (p) {
-        var reachDot = p.reachable === true ? "#34d399" : p.reachable === false ? "#f87171" : "#9fb3c8";
-        h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
-          "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + reachDot + "'></span><b>" + esc(p.name) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.short || "") + "</span><span style='color:var(--dim);font-size:12px'>balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
-          (p.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(p.publicEndpoint) + "</span> — declared on its card</div>" : "") +
+  h += "</div>";
+  return h;
+}
+function meshPeerHtml(p, m) {
+  var status = p.reachable === false ? meshUnreachableText(p) : p.probeBusy ? "busy" : p.probeLending ? "lending" : p.reachable === true ? (p.probeIdle ? "idle" : "reachable") : "not checked yet";
+  var dot = p.reachable === false ? "#f87171" : p.probeBusy ? "#f5b544" : p.reachable === true ? "#34d399" : "#9fb3c8";
+  var t = p.tunnel || { enabled: false };
+  var road = p.reachable === true ? "direct road answers" : p.reachable === false ? "direct road dark" : "direct road not checked yet";
+  if (t.enabled) road += " · backup route on";
+  else if (meshTunnelArmed[p.nodeId]) road += " · backup route armed — fields to finish, in Roads below";
+  var h = "<div class='card'><div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'><span class='dot' style='background:" + dot + "'></span><b>" + esc(p.name) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(p.short || "") + "</span><span style='color:var(--dim);font-size:12px'>" + esc(status) + " · balance " + meshFmtSec(p.balanceSec) + "</span></div>" +
+    (meshCapLine(p.capabilities) ? "<div style='color:var(--dim);font-size:12px;margin-top:4px'>" + esc(meshCapLine(p.capabilities)) + "</div>" : "") +
+    (p.publicEndpoint ? "<div style='font-size:12px;color:var(--dim);margin-top:2px'>Public endpoint <span class='mono'>" + esc(p.publicEndpoint) + "</span> — declared on its card</div>" : "") +
           (p.reachable === false && p.lastProbeReason ? "<div style='font-size:12px;margin-top:4px'>" + esc(p.lastProbeReason) + "</div>" : "") +
           "<div style='display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap'><button class='switch' role='switch' aria-checked='" + (p.canBorrow ? "true" : "false") + "' data-mesh-borrow='" + esc(p.nodeId) + "' aria-label='Borrow from " + esc(p.name) + " — this machine borrows from it while this is on'><span class='knob'></span></button><span style='font-size:12px'>Can borrow from this machine</span>" +
           "<button type='button' class='ghost' data-mesh-remove='" + esc(p.nodeId) + "' aria-label='Remove the paired machine " + esc(p.name) + "' style='min-height:44px;margin-left:auto'>Remove</button></div>" +
-          meshTunnelHtml(p, m) + meshRelayHtml(p, m) + "</div>";
-      });
-    } else {
-      h += "<p style='color:var(--dim);font-size:12px'>No machines paired yet. Download your PNG card here, carry the file to the other machine, and bring its PNG card back to drop below.</p>";
-    }
-    h += "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'><button type='button' class='act' id='mesh-card-png' aria-label='Download my Mesh card as a PNG picture' style='min-height:44px'>Download PNG card</button></div>" +
-      "<p style='color:var(--dim);font-size:12px'>Your card is a picture: a face you can read — name, node, the offer — with the whole card riding inside the picture, the way chips travel. Pairing is the picture, only — there is no text card to copy or paste anymore. Send the file itself; for a chat app, put it inside a .zip first, because chat apps recompress pictures and strip the data out.</p>";
-    // Build 7 (spec section 13): the PNG import — a visible drop
-    // target plus an upload control, both feeding the one
-    // importer (wireMeshCard). Drag-and-drop is the desktop
-    // path; the upload button is the path that works everywhere,
-    // phones included: a 44px target, and the zone wraps its
-    // words instead of widening the page at 360-430px.
-    if (!m.certNoticeSeen) h += "<p style='color:var(--am);font-size:12px;margin-top:10px'>First pairing — one thing worth knowing before any trust is pinned: a Mesh door's certificate is <b>self-signed</b>. No authority vouches for it, and none should: the card you were handed <i>is</i> the trust. Importing it pins that machine's certificate fingerprint on this machine, and from then on this machine accepts that door only when it presents exactly that certificate — a different one is named, never quietly trusted.</p>";
-    h += "<div id='mesh-png-zone' style='margin-top:12px;border:1.5px dashed " + (meshPngDrag ? "var(--accent)" : "var(--line)") + ";border-radius:6px;padding:12px;text-align:center'>" +
-      "<p style='font-size:12px;margin:0'>Pair by picture — drop the other machine's PNG card here</p>" +
-      "<p style='margin:8px 0 0'><label for='mesh-png-file' class='act' style='display:inline-flex;align-items:center;min-height:44px;padding:0 14px;cursor:pointer'>Upload a PNG card</label>" +
-      "<input type='file' id='mesh-png-file' accept='image/png,.png' aria-label='Upload a Mesh PNG card file' style='display:none'></p>" +
-      "<p style='color:var(--dim);font-size:11px;margin:8px 0 0'>The picture must arrive as the original file — inside a .zip for chat apps, which recompress pictures and strip the card data out.</p>" +
-      (meshPngMsg ? "<p style='font-size:12px;margin:8px 0 0'>" + esc(meshPngMsg) + "</p>" : "") +
-      "</div>";
-    h += "<div style='display:flex;align-items:center;gap:8px;margin-top:10px'><input type='checkbox' id='mesh-ledger-backup' aria-label='Include the Mesh ledger in backups'" + (m.ledgerInBackup ? " checked" : "") + " style='width:20px;height:20px'><label for='mesh-ledger-backup' style='font-size:12px'>Include the Mesh ledger in backups (off by default — the ledger is metadata, but whose machines talked is yours)</label></div>";
-    h += "<p style='margin-top:10px'><button type='button' class='act' id='mesh-save' aria-label='Save Mesh name, public endpoint, grace, lending caps, and ledger choice' style='min-height:44px'>Save name, grace &amp; caps</button></p>";
-  }
-  h += "</div>";
+    "<div style='font-size:12px;color:var(--dim);margin-top:6px'>Road: " + esc(road) + "</div>" +
+    meshRelayHtml(p, m) + "</div>";
   return h;
+}
+function meshPeersHtml(m) {
+  if (!m.enabled) return "";
+  if (!m.peers || !m.peers.length) return "<div class='card'><h3 style='margin-top:0'>Peers</h3><p style='color:var(--dim);font-size:12px'>No machines paired yet. Download your PNG card at your door above, carry the file to the other machine, and bring its PNG card back to the drop zone there.</p></div>";
+  var h = "";
+  m.peers.forEach(function (p) { h += meshPeerHtml(p, m); });
+  return h;
+}
+function meshRoadsHtml(m) {
+  if (!m.enabled) return "";
+  var h = "<div class='card'><h3 style='margin-top:0'>Roads</h3>";
+  if (!m.peers || !m.peers.length) h += "<p style='color:var(--dim);font-size:12px'>No paired machines yet — the managed backup route is set per machine, here, once it is paired.</p>";
+  (m.peers || []).forEach(function (p) {
+    h += "<h4 style='margin:14px 0 0'>" + esc(p.name) + "</h4>" + meshTunnelHtml(p, m);
+  });
+  return h + "</div>";
 }
 function meshPngFileName() {
   // The download's file name, from this machine's Mesh name —
@@ -7689,18 +7801,18 @@ function applyBackgroundUpdate(u) {
       updater.state = "available";
       updater.latest = u.latest;
       updater.bgTag = u.latest;
-      if (view === "Updater") render();
+      if (view === "Settings" && settingsTab === "system") render();
     }
   } else if (updater.state === "available" && updater.bgTag && updater.bgTag === updater.latest) {
     // The background word now reports no update: a stale
     // "available" for that same tag clears.
     updater.state = "uptodate";
     updater.bgTag = "";
-    if (view === "Updater") render();
+    if (view === "Settings" && settingsTab === "system") render();
   }
 }
 function refreshUpdaterUi() {
-  if (view === "Updater") render();
+  if (view === "Settings" && settingsTab === "system") render();
   else renderStatus(null);
 }
 function checkForUpdates() {
@@ -8080,6 +8192,48 @@ function updaterChannelHtml() {
       ? "Edge: the newest build as soon as it is cut — pre-releases from the dev branch, tagged like v0.1.8e. Newer and less settled. Switching back to Stable never downgrades you; it waits for the next full release to pass what you run."
       : "Stable: full releases only, cut from main and tagged with the bare number, like v0.1.7. Edge pre-releases never appear on this channel.") + "</p></div>";
 }
+var updaterFoldOpen = false;
+function settingsUpdaterHtml() {
+  // 0.2.0e Build 10 (#196): the whole Updater, folded into
+  // Settings → System as its own collapsible dropdown — check,
+  // download, apply, status and the apply trace all travel; no
+  // updater UI is left anywhere else. The panel order inside
+  // the fold is the Updater view's own definitive order (Alex,
+  // 2026-11-09): status card, the warnings seat, the channel
+  // notices, the channel card, the notes surface, the actions,
+  // then the progress chain and the outcome cards. The Current
+  // Version Notes are NOT in the fold: they close the System
+  // menu, below it. The fold's open state is tracked
+  // (updaterFoldOpen) so the apply poll's re-renders never
+  // slam it shut mid-apply.
+  var h = "<details class='card' id='settings-updater'" + (updaterFoldOpen ? " open" : "") + " style='margin-top:10px'><summary style='cursor:pointer'><b>Updater</b> <span style='color:var(--dim)'>(check, download, install — and the record of the last apply)</span></summary>";
+  h += "<div class='card' style='margin-top:10px'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")" + (CONFIG.versionStatus === "edge" ? " · Build " + updater.currentBuildSeq : "") + "</span><br>" + updaterStatusHtml() + "</div>";
+  if (updater.state === "available") {
+    h += CONFIG.sudo
+      ? "<p style='color:#34d399;font-size:13px;margin:8px 0 0'>Sudo Mode is on — ready to update.</p>"
+      : "<p style='color:#f87171;font-size:13px;margin:8px 0 0'>⚠ <b>Enable Sudo Mode before updating.</b> The installer's system step needs root. Without it, an update can stall or finish without its system packages.</p>";
+  }
+  h += updaterChannelNoticeHtml();
+  h += updaterEdgeNoticeHtml();
+  h += updaterChannelHtml();
+  h += updaterNotesHtml();
+  h += "<div style='margin-top:10px'><button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "applying" ? " disabled" : "") + " style='min-height:44px'>" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
+  if (updater.state === "available") h += "<button class='ghost' id='up-apply' style='min-height:44px'>Download &amp; install v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
+  h += "</div>";
+  if (updater.state === "applying") h += updaterProgressHtml();
+  if (updater.state === "updated") h += updaterUpdatedHtml();
+  if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
+  return h + "</details>";
+}
+function wireUpdaterFold() {
+  var f = document.getElementById("settings-updater");
+  if (f) f.addEventListener("toggle", function () { updaterFoldOpen = f.open; });
+  var upCheck = document.getElementById("up-check");
+  if (upCheck) upCheck.onclick = function () { checkForUpdates(); };
+  var upApply = document.getElementById("up-apply");
+  if (upApply) upApply.onclick = function () { updaterFoldOpen = true; applyUpdate(); };
+  mainEl.querySelectorAll("[data-upchannel]").forEach(function (b) { b.onclick = function () { setUpdaterChannel(b.getAttribute("data-upchannel")); }; });
+}
 function updaterCurrentHtml() {
   // "About this release" (build .83): the current version's own
   // release page as a dropdown — everything the page offers:
@@ -8327,7 +8481,7 @@ function renderStatus(live) {
   if (sdet) sdet.addEventListener("toggle", function () { serversOpen = sdet.open; });
   wireStatusTabs(statusEl);
   var uw = document.getElementById("updater-warn");
-  if (uw) uw.onclick = function () { view = "Updater"; dockOpen = false; render(); };
+  if (uw) uw.onclick = function () { view = "Settings"; settingsTab = "system"; updaterFoldOpen = true; dockOpen = false; render(); };
   wireChatsPanel(statusEl);
   var psr = document.getElementById("page-stale-reload");
   if (psr) psr.onclick = function () { location.reload(); };
@@ -9202,6 +9356,15 @@ function render() {
   // stale state naming it lands on Chat; her voice lives in
   // Settings → Voice now.
   if (view === "Voice") view = "Chat";
+  // The Updater view folded into Settings → System in Build 10
+  // (#196): a stale state naming it lands on the System tab
+  // with the updater fold open.
+  if (view === "Updater") { view = "Settings"; settingsTab = "system"; updaterFoldOpen = true; }
+  // A portaled article reader from the previous render is
+  // taken down before the new view paints — it lives at <body>
+  // level, outside the view root's HTML (Build 10, #196).
+  document.querySelectorAll("body > #wire-reader, body > #wire-reader-shade").forEach(function (n) { n.remove(); });
+  if (!wireReader) document.body.classList.remove("reader-open");
   // Focus return for the chat composer: render() rebuilds the whole
   // view, which would strand the operator's cursor after every send.
   // If the composer held focus — or a send just asked for it back —
@@ -9251,7 +9414,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Updater") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -9502,15 +9665,10 @@ function render() {
   } else if (view === "DHD") {
     h += dhdHtml();
   } else if (view === "Mesh") {
-    // The Mesh page (build .86; order set in build .87 by Alex's
-    // ruling): the full Mesh controls FIRST — the same card
-    // Settings → System used to carry, wired by wireMeshCard
-    // exactly as before — and the roster BELOW them. Wherever
-    // the options and the roster coexist, options come first.
-    h += "<h3>Apex | Mesh</h3>";
-    h += meshCardHtml();
-    h += meshRosterHtml();
-    h += meshHealthHtml();
+    // The Mesh page (0.2.0e Build 10, #196): one calm column —
+    // posture sentence, Your door, Lending & borrowing, one
+    // card per peer, Roads, Health at the foot (meshPageHtml).
+    h += meshPageHtml();
   } else if (view === "Federation") {
     h += federationHtml();
   } else if (view === "RAG") {
@@ -9579,50 +9737,6 @@ function render() {
     }
   } else if (view === "ChipDeck") {
     h += deckHtml();
-  } else if (view === "Updater") {
-    // Panel order (Alex's definitive order, 2026-11-09
-    // 05:38 EST — supersedes every earlier composition,
-    // including the channel-last order): the SAME sequence
-    // in every state — (1) Current/status card, (2) warnings
-    // directly under it, (3) the Release channel card,
-    // (4) the patch-notes surfaces, (5) the actions block —
-    // the Check and Download & install buttons, directly
-    // under the notes — (6) below the buttons, the live
-    // progress chain while an apply runs AND the outcome
-    // cards (the updated result / update log and the manual
-    // fallback) once an apply has finished. No state splits
-    // the order. Verified against the rendered DOM per
-    // state, not the string order of this composition.
-    h += "<h3>Updater</h3><div class='card'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")" + (CONFIG.versionStatus === "edge" ? " · Build " + updater.currentBuildSeq : "") + "</span><br>" + updaterStatusHtml() + "</div>";
-    // The warnings seat. The Sudo Mode warning (build .81, #70):
-    // red, only while an update is on offer and Sudo Mode is off
-    // — field-proven on NeoArcadia (2026-11-08/09) that the
-    // installer's system step needs root, and without it an
-    // update can stall or finish without its system packages. A
-    // warning, never a lock: the button still works. Sudo Mode
-    // on swaps it for a quiet green ready line. The Edge preview
-    // notice (build .86) stacks in the same seat.
-    if (updater.state === "available") {
-      h += CONFIG.sudo
-        ? "<p style='color:#34d399;font-size:13px;margin:8px 0 0'>Sudo Mode is on — ready to update.</p>"
-        : "<p style='color:#f87171;font-size:13px;margin:8px 0 0'>⚠ <b>Enable Sudo Mode before updating.</b> The installer's system step needs root. Without it, an update can stall or finish without its system packages.</p>";
-    }
-    h += updaterChannelNoticeHtml();
-    h += updaterEdgeNoticeHtml();
-    h += updaterChannelHtml();
-    h += updaterNotesHtml();
-    if (CONFIG.backend === "live") h += updaterCurrentHtml();
-    h += "<div style='margin-top:10px'><button class='act' id='up-check'" + (CONFIG.backend !== "live" || updater.state === "checking" || updater.state === "applying" ? " disabled" : "") + " style='min-height:44px'>" + (updater.state === "checking" ? "Checking…" : "Check for updates") + "</button> ";
-    if (updater.state === "available") h += "<button class='ghost' id='up-apply' style='min-height:44px'>Download &amp; install v" + esc(updater.latest.replace(/^v/i, "")) + "</button>";
-    h += "</div>";
-    if (updater.state === "applying") h += updaterProgressHtml();
-    // The outcome cards: an apply that has finished leaves its
-    // record BELOW the actions block, in the same chain seat
-    // the live progress occupies while the apply runs — the
-    // updated result card (with the update log) and, on a
-    // failure with a staged package, the manual fallback.
-    if (updater.state === "updated") h += updaterUpdatedHtml();
-    if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
   } else if (view === "Guardian") {
     h += guardianHtml();
   } else if (view === "GitHub") {
@@ -9640,7 +9754,6 @@ function render() {
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface motion</h3><div style='display:flex;align-items:center;gap:8px'><button class='switch' id='motion-potato' role='switch' aria-checked='" + (CONFIG.motion === "potato" ? "true" : "false") + "' aria-label='Potato mode'><span class='knob'></span></button><span><b>Potato mode</b></span></div><p style='color:var(--dim)'>For low-power machines — turns off decorative animation across Apex. Menus, panes and views change instantly instead of traveling, and the Dark Liquid Glass theme's backdrop blur is suspended too (its colors stay). Off by default: the full motion language. The choice persists in your config like the theme, and rides the settings backup beside it." + ((window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ? " Your system asks for reduced motion — Apex honors that over this switch, either way." : "") + "</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface size</h3><p style='color:var(--dim)'>One scale for the whole interface — words and layout together, the way an operating system's display scale works, so nothing outgrows its row or its rail. (A separate text-size knob would multiply against this one and squeeze fixed rows at the big end; there is deliberately just the one.) Applies the moment you pick it, persists in your config beside the theme, and rides the settings backup with it.</p><div class='row' role='group' aria-label='UI scale'>" + [[1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]].map(function (o) { return "<button class='" + (Number(CONFIG.uiScale) === o[0] ? "act" : "ghost") + "' data-uiscale='" + o[0] + "' aria-pressed='" + (Number(CONFIG.uiScale) === o[0] ? "true" : "false") + "'>" + o[1] + "</button>"; }).join("") + "</div></div>";
-    if (settingsTab === "system") h += "<div class='card'><h3>Backend — always Live</h3><p style='color:var(--dim)'>This app always talks to the real bridge and llamafile — there is no backend switch. The llamafile Running state in the status column is the live signal. Startup can be changed in the app — from the status column's Servers → Boot row, or the Startup — at boot card below — and the choice the installer asked about (whether the llamafile server loads on app launch or at system boot) is the initial state, recorded in config/navi.config.json.</p></div>";
     if (settingsTab === "system") (function () {
       var b = bootStateCache;
       h += "<div class='card'><h3>Startup \u2014 at boot</h3>";
@@ -9654,34 +9767,10 @@ function render() {
       }
       h += "</div>";
     })();
-    // Apex | Node (build .59 as the Local server; renamed and
-    // relocated in the DHD round): the controls themselves live
-    // on the DHD page now (apexNodeCardHtml) — Settings → System
-    // keeps only this pointer, so no duplicate control exists.
-    if (settingsTab === "system") h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>" +
-      "<p style='color:var(--dim)'>The Apex | Node controls - the home-network door, its access code, and DHD beside it - live on the DHD page now, so everything about reaching Apex sits in one place.</p>" +
-      "<p><button type='button' class='act' id='pub-pointer' aria-label='Open the DHD page for the Apex | Node controls' style='min-height:44px'>Open the DHD page</button></p></div>";
     // The Door (Build 2, #173): the trusted-device list lives
     // here in Settings → System AND on the DHD page — one shared
     // renderer (doorDevicesCardHtml), one registry behind it.
     if (settingsTab === "system") h += doorDevicesCardHtml();
-    // Navi Mesh (build .86): the full controls live on the
-    // Mesh page now — Settings → System keeps only this summary
-    // pointer, the way the Apex | Node pointer relates to the DHD
-    // page. One line of state + the jump.
-    if (settingsTab === "system") (function () {
-      var m = meshViewState();
-      var line = !m.enabled ? "Off — Mesh pairs this machine with your others for pooled inference."
-        : m.lendingNow ? "On — lending now."
-        : m.borrowing ? "On — borrowing now."
-        : m.lendEnabled && m.borrowEnabled ? "On — lending when idle · borrowing automatic."
-        : m.lendEnabled ? "On — lending when idle."
-        : m.borrowEnabled ? "On — borrowing automatic."
-        : "On — borrowing and lending both off.";
-      h += "<div class='card'><h3>Apex | Mesh</h3>" +
-        "<p style='color:var(--dim)'>" + esc(line) + " Pairing, lending and borrowing controls, the roster of your machines, and the ledger all live on the Mesh page.</p>" +
-        "<p><button type='button' class='act' id='mesh-pointer' aria-label='Open the Mesh page' style='min-height:44px'>Open the Mesh page</button></p></div>";
-    })();
     // Hardware profile (build .34): what the installer detected on
     // this machine and the runtime settings it chose from it.
     if (settingsTab === "system") (function () {
@@ -9784,9 +9873,29 @@ function render() {
       h += "<div class='row' style='margin-top:8px'><input class='grow' id='cmd-custom' type='text' placeholder='Register your own — e.g. theharvester' aria-label='Custom command name'><button class='act' id='cmd-add'>Install custom</button></div>";
     }
     h += "</div>";
+    // 0.2.0e Build 10 (#196): the Updater folds into System as
+    // its own dropdown, and the Current Version Notes are the
+    // final block at the bottom of the System menu.
+    if (settingsTab === "system") h += settingsUpdaterHtml();
+    if (settingsTab === "system" && CONFIG.backend === "live") h += updaterCurrentHtml();
   }
   if (view === "Docs") docsCaptureNav();
   mainEl.innerHTML = h;
+  // Portal the article reader to <body> while it is open
+  // (Build 10, #196): outside the view root's scroll and
+  // animation ancestry, its fixed sheet anchors to the
+  // viewport on every door. The Build 9 shape rendered it
+  // inside the page-flow column — on a phone the shade
+  // painted the screen while the panel sat mid-document,
+  // off-screen: gray, and no article.
+  var _wrp = document.getElementById("wire-reader");
+  if (_wrp && _wrp.parentNode !== document.body) {
+    var _wrs = document.getElementById("wire-reader-shade");
+    if (_wrs) document.body.appendChild(_wrs);
+    document.body.appendChild(_wrp);
+    bindWireReaderClose();
+  }
+  document.body.classList.toggle("reader-open", !!_wrp);
   // Replay the view-entrance motion on every render so switching
   // views (and tabs) glides instead of snapping.
   mainEl.classList.remove("view-in");
@@ -10908,13 +11017,8 @@ function wire() {
     mainEl.querySelectorAll("[data-deckunpair]").forEach(function (b) { b.onclick = function () { deckPost("/api/mesh/peers/remove", { nodeId: b.getAttribute("data-deckunpair") }, function (j) { deckMsg = j.ok ? "Unpaired — the card picture stays in the binder; the pairing is gone." : "Unpair failed."; }); }; });
     mainEl.querySelectorAll("[data-deckragtoggle]").forEach(function (b) { b.onclick = function () { deckPost("/api/rag/toggle", { full_name: b.getAttribute("data-deckragtoggle"), active: !b.getAttribute("data-active") }, function (j) { deckMsg = j.ok ? "" : (j.error || "Toggle failed."); }); }; });
     mainEl.querySelectorAll("[data-deckragdelete]").forEach(function (b) { b.onclick = function () { deckPost("/api/rag/delete", { full_name: b.getAttribute("data-deckragdelete") }, function (j) { deckMsg = j.ok ? "Removed — the pack's documents and index are gone." : (j.error || "Remove failed."); }); }; });
-  } else if (view === "Updater") {
-    var upCheck = document.getElementById("up-check");
-    if (upCheck) upCheck.onclick = function () { checkForUpdates(); };
-    var upApply = document.getElementById("up-apply");
-    if (upApply) upApply.onclick = function () { applyUpdate(); };
-    mainEl.querySelectorAll("[data-upchannel]").forEach(function (b) { b.onclick = function () { setUpdaterChannel(b.getAttribute("data-upchannel")); }; });
   } else if (view === "Settings") {
+    if (settingsTab === "system") wireUpdaterFold();
     mainEl.querySelectorAll("[data-settab]").forEach(function (b) { b.onclick = function () { settingsTab = b.getAttribute("data-settab"); render(); }; });
     if (settingsTab === "operator" || settingsTab === "persona") {
       // The two memory files' wiring (Build 6, #110; the handlers
@@ -11113,11 +11217,7 @@ function wire() {
       bootFetching = true;
       fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bootFetching = false; if (j && j.boot) { bootStateCache = j.boot; if (view === "Settings" && settingsTab === "system") render(); } }).catch(function () { bootFetching = false; });
     }
-    var pubPointer = document.getElementById("pub-pointer");
-    if (pubPointer) pubPointer.onclick = function () { view = "DHD"; dockOpen = false; render(); };
     wireDoorDevices();
-    var meshPointer = document.getElementById("mesh-pointer");
-    if (meshPointer) meshPointer.onclick = function () { view = "Mesh"; dockOpen = false; render(); };
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
     var soulSave = document.getElementById("soul-save");
     if (soulSave) soulSave.onclick = function () { var ta = document.getElementById("soul-doc"); if (ta) CONFIG.soul = ta.value; savePersona(); };

@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-13.09"
+BRIDGE_BUILD = "2026-11-14.10"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 9
+SHIPPED_BUILD_SEQ = 10
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -23248,6 +23248,120 @@ def watchdog(started_mtime):
             pass
 
 
+def run_self_check():
+    # 0.2.0e Build 10 (#193, installer rebuild piece C): the
+    # product's own verdict on the install it is running from —
+    # never a version proxy. Three proofs, all against the live
+    # tree beside this file: (1) the stamps agree — the SHIPPED_VERSION
+    # file, the config's stamped version, and the stamps baked
+    # into this bridge are one build; (2) every payload file
+    # the package's MANIFEST.txt declares verifies by sha256
+    # against the bytes in place; (3) every runtime engine
+    # imports from THIS directory. The verdict lands in
+    # config/install-self-check.json and prints as one named
+    # sentence: SELF-CHECK OK / SELF-CHECK FAILED. Exit 0 only
+    # when all three proofs hold.
+    root = ROOT
+    problems = []
+    checked = 0
+    disk_version = ""
+    try:
+        with open(os.path.join(root, "VERSION"), encoding="utf-8") as f:
+            disk_version = f.read().strip()
+    except Exception:
+        problems.append("the SHIPPED_VERSION file is missing from this install")
+    try:
+        cfg = load_config()
+    except Exception:
+        cfg = {}
+    # The witnesses, the same ones the updater reads: the
+    # SHIPPED_VERSION file (number + status word), the config's stamped
+    # version/version_status, and the stamps baked into this
+    # bridge. All must name the same build.
+    if disk_version:
+        parts = disk_version.splitlines()[0].split() if disk_version.splitlines() else []
+        if not parts or parts[0] != SHIPPED_VERSION:
+            problems.append("the SHIPPED_VERSION file reads " + disk_version
+                            + " but this bridge is " + SHIPPED_VERSION)
+        elif len(parts) > 1 and parts[1] != SHIPPED_VERSION_STATUS:
+            problems.append("the SHIPPED_VERSION file's status word is " + parts[1]
+                            + " but this bridge is " + SHIPPED_VERSION_STATUS)
+    if cfg.get("version") and cfg.get("version") != SHIPPED_VERSION:
+        problems.append("the config's stamped version is " + str(cfg.get("version"))
+                        + " but this bridge is " + SHIPPED_VERSION)
+    if cfg.get("version_status") and cfg.get("version_status") != SHIPPED_VERSION_STATUS:
+        problems.append("the config's stamped version status is "
+                        + str(cfg.get("version_status")) + " but this bridge is "
+                        + SHIPPED_VERSION_STATUS)
+    man_path = os.path.join(root, "MANIFEST.txt")
+    entries = []
+    if os.path.isfile(man_path):
+        try:
+            with open(man_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) == 3 and parts[1] == "payload":
+                        entries.append((parts[0], parts[2]))
+        except Exception:
+            problems.append("MANIFEST.txt cannot be read in this install")
+    else:
+        problems.append("MANIFEST.txt is missing from this install — the payload cannot be verified")
+    for rel, want in entries:
+        if want == "-":
+            continue
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            problems.append(rel + " is missing from this install")
+            continue
+        h = hashlib.sha256()
+        try:
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+        except Exception:
+            problems.append(rel + " cannot be read in this install")
+            continue
+        if h.hexdigest() != want:
+            problems.append(rel + " does not match the digest its manifest declares")
+        else:
+            checked += 1
+    if os.path.isfile(man_path) and not entries:
+        problems.append("MANIFEST.txt declares no payload files")
+    for mod in ("guardian", "intel", "wire", "ctf", "bounties"):
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "selfcheck_" + mod, os.path.join(root, mod + ".py"))
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+        except Exception as e:
+            problems.append(mod + ".py does not import from this install ("
+                            + type(e).__name__ + ")")
+    ok = not problems
+    if ok:
+        body = ("the stamps agree (build " + BRIDGE_BUILD
+                + ", sequence " + str(SHIPPED_BUILD_SEQ) + "), all " + str(checked)
+                + " manifest payload files verify byte-for-byte, and every "
+                "runtime engine imports from this install.")
+        sentence = "Self-check passed: " + body
+    else:
+        body = "; ".join(problems) + "."
+        sentence = "Self-check FAILED: " + body
+    rec = {"ok": ok, "sentence": sentence, "build": BRIDGE_BUILD,
+           "buildSeq": SHIPPED_BUILD_SEQ, "version": SHIPPED_VERSION,
+           "payloadVerified": checked, "problems": problems,
+           "at": int(time.time())}
+    try:
+        with open(os.path.join(root, "config", "install-self-check.json"), "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=1)
+    except Exception:
+        pass
+    print(("SELF-CHECK OK: " if ok else "SELF-CHECK FAILED: ") + body, flush=True)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     # 0.2.0e Build 7: the access code's deliberate doors, for a
     # headless or container install where no dashboard is open
@@ -23281,6 +23395,13 @@ if __name__ == "__main__":
         else:
             print(ensure_access_code(_cfg))
         sys.exit(0)
+    # 0.2.0e Build 10 (#193): the install self-check — the
+    # installer runs this against the freshly promoted tree
+    # before it may call the install done, and an operator can
+    # run it any time: python3 bridge.py --self-check. It ends
+    # here, before any server starts.
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-check":
+        sys.exit(run_self_check())
     cfg = load_config()
     # Automatic profiling (Build 14, #157): a config with no
     # hardware profile profiles this machine once, here, before
