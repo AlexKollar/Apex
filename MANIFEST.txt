@@ -1,4 +1,4 @@
-# Apex — package manifest (0.2.0e Build 12)
+# Apex — package manifest (0.2.0)
 #
 # THE CONTRACT (#193): this manifest is the installer's
 # payload declaration — every file the package carries, its
@@ -15,11 +15,11 @@
 # itself).
 #
 # Format: <path><TAB><class><TAB><sha256>
-CHANGELOG.md	package-only	c99025cf1dd629788321d274912e7f11554c20aed5bc4c40568741ac0be248ad
+CHANGELOG.md	package-only	4b7ddebc52aed86a521444ec42b1222fa98a5834e5e8ebc2030a870296d91937
 MANIFEST.txt	payload	-
-README.md	package-only	66cf2eee1d2edfe5823841753cccdcffaeb9ea387b13912211c8a656b40e48a6
-VERSION	payload	547fd237a622fc965c8650530af6a44ba33079822b52576a1c2324b2d6b3369f
-app/index.html	payload	f93c45ac4020667f59c90c700ad735b5581d39f9bb77a66dde51a6c88c6b375e
+README.md	package-only	f6e61ba0a71987c6308a1ff049136785c6b6bd59c8d052b0e738311d8ed52348
+VERSION	payload	1f930dd1f133c1f97a94fe3acb8db34372cf4c01ffdb2b3ff4ca72f9494121e9
+app/index.html	payload	e07a12d0a60499caec9f974b1d310eee37e4932273d599cc851612eb57e4562a
 assets/icon.png	payload	dac486d9137641f60c557c5e5a62f3f266b27a2d181a896c5131b5c96c7b67b2
 assets/navi-apex.desktop	generated	616318c15b13a6d21a5529d0ead6e304893cff09a957db892171467a637849bf
 assets/navi-apex.icns	package-only	d982911bcec80df448136a87e8a5689e54e3c9406fca342d751e76a8b509c489
@@ -27,7 +27,7 @@ assets/navi-apex.ico	package-only	5f33c5fdd97c2e82d818d418c8407743a66fc9fb927286
 assets/navi-portrait.jpg	payload	5c791e0da7f16935d5a310c0a61ccc2427ff3a7e622ffe33ab08cbeb2333283a
 assets/icon-180.png	payload	bcdbd981d306f2420144d2904ff9ac142e45e46635eec99c0339d7e8377f2b9d
 assets/favicon-32.png	payload	435447a11b5cdb9bf7a3d89386460f43c688147763816e11db1b1632ef2073c0
-bridge.py	payload	1ad8904dbd85b5924ee6dd59ba520666e85e45906cad15b9f1ed4db0556581ff
+bridge.py	payload	43102edc92ae83f576f2ced2c80459fc381bcd76c225e15765faf163532d7628
 guardian.py	payload	da6adc811c80ece1d09dba33ca994d75e8af498104a667d63b438cb2d4148fae
 intel.py	payload	c8f217e12a8c495c09c081cc5e78334b7895b879f2f0c15b63bfe60ae24098b4
 wire.py	payload	5b3ddb04150cd7496db95de2fbfdb6d398dc254ff2099510946694347ac9d88e
@@ -35,7 +35,7 @@ ctf.py	payload	a6a0cbc133ceaec49a12173b8f6bb55d0e066f0de60f3b40243d430c72e91360
 bounties.py	payload	fb01dd7af4b0cc30c7a720432ef9ed87e07e730024eec7c9d5397d1e1fd67b42
 chips/README.md	package-only	a48c25a2779852ff86d6ddeb7f5fadfae3fcc4534a87d203372cbd43fc6febd5
 config/memory.md	seed-config	e724b20d73971c4848e98f064d1383e43072013a2203f13a8cd37e6cd7f81a52
-config/navi.config.json	seed-config	3ab9837356dd41ad66dd2993b1888f79196beae26b0d40efbbbd660a936f7c17
+config/navi.config.json	seed-config	f56663a9f7a0b3f868433ad163e509223ba65e2bb62362a3a654cbda306ae430
 config/github-signin.json	seed-config	4d7e8699302fd06805dbde15240b2a5ebabfccb7ea8bf3d316ed4a2624af3726
 config/soul.md	seed-config	d448288be58cc64852be0a883d9e808830b9373ea58fbb09f67af72334ef52ad
 docs/DHD.md	payload	9514e332afb41e9a97ec95cc655763bcf9f12e3d9c68f7d3a3b7353759797e2b
