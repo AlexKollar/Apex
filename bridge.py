@@ -390,16 +390,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.2.0"
-SHIPPED_VERSION_STATUS = "stable"
+SHIPPED_VERSION = "0.3.0"
+SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.12"
+BRIDGE_BUILD = "2026-11-14.01"
 # Edge build sequence (build .86): this package is its Edge
-# version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
+# version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 12
+SHIPPED_BUILD_SEQ = 1
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -10600,6 +10600,14 @@ def trace(event, detail=""):
         line = _stamp() + " [" + str(STATE.get("step")) + "] " + event
         if detail:
             line += " — " + str(detail)
+        # The stage folder rides inside the tree the installer
+        # swaps: after a same-home install it sits parked with
+        # the previous tree, and the diary must not go silent
+        # at exactly the steps (relaunch, confirmation) it
+        # exists to record. Recreate the folder and write on.
+        _tdir = os.path.dirname(path)
+        if _tdir:
+            os.makedirs(_tdir, exist_ok=True)
         with open(path, "a") as f:
             f.write(line + "\\n")
             f.flush()
@@ -11006,12 +11014,60 @@ def main():
           "target " + str(job.get("targetLabel"))
           + ", target build " + str(job.get("targetBuildSeq")))
 
+    # v0.3.0e Build 1 (#205): takeover mode. When the staged
+    # package's bootstrap spawned this helper, it takes an apply
+    # over from the helper the RUNNING (older) build started:
+    # the installer that old helper ran handed off and exited
+    # instead of installing. Arm first — the marker file is what
+    # the handing-off installer waits for — then wait for the
+    # old helper to finish its own bookkeeping and die. Two
+    # helpers never work the same apply at once, and this one
+    # signals nobody: it only ever waits. (The invariant is
+    # untouched: no step of an apply signals any process in its
+    # own ancestry — a predecessor is not an ancestor.)
+    _wait_pid = job.get("takeoverWaitPid")
+    if _wait_pid:
+        trace("takeover-armed",
+              "the incoming build's helper takes this apply over "
+              "from helper pid " + str(_wait_pid)
+              + " — the old helper is never signalled; it is "
+              "waited out")
+        _marker = job.get("takeoverMarker")
+        if _marker:
+            try:
+                with open(_marker, "w") as _mf:
+                    _mf.write(str(os.getpid()))
+            except Exception:
+                pass
+        _t0 = time.time()
+        while not _pid_gone(int(_wait_pid)) and time.time() - _t0 < 180:
+            time.sleep(0.5)
+        trace("takeover-proceed",
+              "the previous helper is gone (waited "
+              + str(int(time.time() - _t0)) + "s); the apply "
+              "continues under the incoming build's machinery")
+
     env = dict(os.environ)
     env["NAVI_HOME"] = root
+    if job.get("bootstrap"):
+        # The installer checks this before its own handoff: an
+        # apply the package's machinery already governs must not
+        # hand off a second time.
+        env["APEX_APPLY_BOOTSTRAPPED"] = "1"
     STATE["env"] = env
 
     def relaunch():
         try:
+            # The relaunch log lives in the stage folder, which
+            # the installer's swap parks with the previous tree
+            # on a same-home apply: without its folder recreated
+            # this open fails, the relaunch never starts, and a
+            # landed update records itself unconfirmed (the
+            # trace goes silent the same way — trace() recreates
+            # its own folder for the same reason).
+            _rdir = os.path.dirname(job["relaunchLog"])
+            if _rdir:
+                os.makedirs(_rdir, exist_ok=True)
             log = open(job["relaunchLog"], "ab")
             subprocess.Popen(
                 ["bash", os.path.join(root, "start.sh")],
@@ -11540,7 +11596,7 @@ def _run_update_apply(cfg):
                 ROOT, "voice", "venv", "bin", "python"))
             else "no")
         command = (
-            "cd " + pkg_dir + " && ./install.sh --startup "
+            "cd " + pkg_dir + " && bash install.sh --startup "
             + fb_startup + " --voice " + fb_voice)
         # Downloading (Build 4 — the refresh-identity repair).
         # A package already downloaded beside the app — including
@@ -11750,41 +11806,108 @@ def _run_update_apply(cfg):
             }
             job_path = os.path.join(stage_root, "apply-job.json")
             helper_path = os.path.join(stage_root, "apply-helper.py")
-            # Build 12 (#201): decide HOW the helper is spawned
-            # before the job is written — the mode rides the job
-            # and the record, and is announced as the step log's
-            # first line, ahead of the helper's own first entry,
-            # so the trace always says which protection this run
-            # actually has (see _apply_helper_spawn_argv).
-            spawn_argv, spawn_mode, spawn_note = \
-                _apply_helper_spawn_argv(helper_path, job_path, tag_dir)
-            job["spawnMode"] = spawn_mode
-            with open(job_path, "w") as f:
-                json.dump(job, f)
-            with open(helper_path, "w") as f:
-                f.write(APPLY_HELPER_PY)
-            os.chmod(helper_path, 0o755)
-            try:
-                with open(job["traceLog"], "a") as tf:
-                    tf.write(time.strftime(
-                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                        + " [starting] helper-spawn — " + spawn_note
-                        + "\n")
-            except Exception:
-                pass
-            logf = open(os.path.join(stage_root, "apply.log"), "ab")
-            try:
-                proc = subprocess.Popen(
-                    spawn_argv,
-                    cwd=stage_root, stdin=subprocess.DEVNULL,
-                    stdout=logf, stderr=subprocess.STDOUT,
-                    start_new_session=True, close_fds=True)
-            finally:
-                logf.close()
-            record["helperPid"] = proc.pid
-            record["helperSpawn"] = spawn_mode
-            record["traceLog"] = job["traceLog"]
-            _write_update_result(record)
+            # v0.3.0e Build 1 (#205, the bootstrap patch): when
+            # the staged package carries its own apply machinery
+            # (apply-bootstrap.py + apply-helper.py beside the
+            # payload), the PACKAGE's bootstrap spawns the
+            # package's helper — the apply is governed by the
+            # incoming build's machinery from its first step, not
+            # by this bridge's spawner, whose protection a pull
+            # can never inherit for the pull that installs it
+            # (incident 22). The job carries the bootstrap flag,
+            # so the helper marks the installer's environment and
+            # the installer's own handoff stays out of the way.
+            pkg_boot = os.path.join(pkg_dir, "apply-bootstrap.py")
+            pkg_helper = os.path.join(pkg_dir, "apply-helper.py")
+            use_bootstrap = (os.path.isfile(pkg_boot)
+                             and os.path.isfile(pkg_helper))
+            boot_ok = False
+            boot_mode = ""
+            boot_note = ""
+            boot_pid = None
+            if use_bootstrap:
+                job["bootstrap"] = True
+                job["spawnMode"] = "package-bootstrap"
+                with open(job_path, "w") as f:
+                    json.dump(job, f)
+                try:
+                    br = subprocess.run(
+                        [sys.executable, pkg_boot, job_path],
+                        capture_output=True, text=True, timeout=90)
+                    verdict = json.loads(
+                        (br.stdout or "").strip().splitlines()[-1])
+                    boot_ok = bool(verdict.get("ok"))
+                    boot_mode = str(verdict.get("mode") or "")
+                    boot_note = str(verdict.get("note") or "")
+                    boot_pid = verdict.get("helperPid")
+                except Exception as e:
+                    boot_ok = False
+                    boot_note = ("the package bootstrap could not "
+                                 "run: " + str(e))
+                if boot_ok:
+                    try:
+                        with open(job["traceLog"], "a") as tf:
+                            tf.write(time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                                + " [starting] helper-spawn — the "
+                                "staged package's bootstrap spawned "
+                                "its own helper (" + boot_mode
+                                + "): " + boot_note + "\n")
+                    except Exception:
+                        pass
+                    record["helperPid"] = boot_pid
+                    record["helperSpawn"] = ("package-bootstrap/"
+                                              + boot_mode)
+                    record["traceLog"] = job["traceLog"]
+                    _write_update_result(record)
+            if not boot_ok:
+                # The legacy path — and the bootstrap's failure
+                # fallback, named as such on the record. Build 12
+                # (#201): decide HOW the helper is spawned before
+                # the job is written — the mode rides the job and
+                # the record, and is announced as the step log's
+                # first line, ahead of the helper's own first
+                # entry, so the trace always says which
+                # protection this run actually has (see
+                # _apply_helper_spawn_argv).
+                spawn_argv, spawn_mode, spawn_note = \
+                    _apply_helper_spawn_argv(helper_path, job_path, tag_dir)
+                if use_bootstrap:
+                    spawn_note = ("the package bootstrap did not "
+                                  "arm (" + boot_note + ") — this "
+                                  "bridge's spawner carries the "
+                                  "apply instead: " + spawn_note)
+                    # job["bootstrap"] stays set: the embedded
+                    # helper is the package's own machinery
+                    # (byte-identical), so the installer's
+                    # handoff must stay out of its way too.
+                job["spawnMode"] = spawn_mode
+                with open(job_path, "w") as f:
+                    json.dump(job, f)
+                with open(helper_path, "w") as f:
+                    f.write(APPLY_HELPER_PY)
+                os.chmod(helper_path, 0o755)
+                try:
+                    with open(job["traceLog"], "a") as tf:
+                        tf.write(time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            + " [starting] helper-spawn — " + spawn_note
+                            + "\n")
+                except Exception:
+                    pass
+                logf = open(os.path.join(stage_root, "apply.log"), "ab")
+                try:
+                    proc = subprocess.Popen(
+                        spawn_argv,
+                        cwd=stage_root, stdin=subprocess.DEVNULL,
+                        stdout=logf, stderr=subprocess.STDOUT,
+                        start_new_session=True, close_fds=True)
+                finally:
+                    logf.close()
+                record["helperPid"] = proc.pid
+                record["helperSpawn"] = spawn_mode
+                record["traceLog"] = job["traceLog"]
+                _write_update_result(record)
         except Exception as e:
             fail("install",
                  "The update was staged but the install could not "
@@ -18199,6 +18322,13 @@ def _sync_merge_tombstones(local, remote):
 # lands as a dated sibling thread, never a silent merge.
 
 CHATS_DIR = os.path.join(ROOT, "config", "chats")
+
+# v0.3.0e Build 1 (#200): the main chat is a named seat, not a
+# deletable row. The page seeds it as id "1" ("Main session"); it
+# may be EMPTIED (/clear or /cls) but never deleted — not from the
+# page, not through the API, not by a wholesale replace, and never
+# by a sync tombstone.
+MAIN_CHAT_ID = "1"
 CHATS_UPLOADS_PATH = os.path.join(CHATS_DIR, "uploads.json")
 
 
@@ -18278,6 +18408,8 @@ def chat_delete(cid):
     cid = _chat_clean_id(cid)
     if cid is None:
         return False
+    if cid == MAIN_CHAT_ID:
+        return False
     try:
         os.remove(_chat_path(cid))
         # Build 3 (#177): the deletion is tombstoned, so a sync
@@ -18326,6 +18458,11 @@ def chats_replace_all(records, uploads):
     if os.path.isdir(CHATS_DIR):
         for name in sorted(os.listdir(CHATS_DIR)):
             if name.endswith(".json") and name != "uploads.json" and name[:-5] not in keep:
+                if name[:-5] == MAIN_CHAT_ID:
+                    # v0.3.0e Build 1 (#200): the main chat is
+                    # never dropped by a wholesale replace, and
+                    # never tombstoned.
+                    continue
                 try:
                     os.remove(os.path.join(CHATS_DIR, name))
                     # Build 3 (#177): a thread the writing window
@@ -18480,7 +18617,7 @@ def chats_converge(incoming, incoming_uploads=None):
 # session start (pull + converge each). No polling daemon; the
 # Mesh peer-contact trigger is phase 2, with the Mesh transport.
 
-SYNC_FORMAT = "navi-sync/1"
+SYNC_FORMAT = "navi-sync/2"
 SYNC_PREFIX = "sync/"
 _SYNC_LOCK = threading.Lock()
 _SYNC_DHD_SEEN = {}
@@ -18518,7 +18655,7 @@ def _sync_fail(status, step):
 
 def _sync_auth_error():
     return {"ok": False, "state": "auth", "kind": "auth", "route": "Backup repo",
-            "error": "Not signed in to GitHub — Quick Sync moves your chats and cases through your backup repo, so it needs the Operator sign-in. The badge in its slot points at the account; the sign-in is the key."}
+            "error": "Not signed in to GitHub — sync is anchored to your GitHub account, and this machine isn't signed in. Sign in with the account your other machines use (Settings → GitHub & Backup) and the round carries chats, Case Files, the ChipDeck, her Soul and memory book, and your seat under it. Nothing was sent anywhere."}
 
 
 def _sync_safe_rel(rel):
@@ -18557,7 +18694,498 @@ def _sync_case_files(slug):
     return out
 
 
-def sync_collect():
+# ---------------------------------------------------------------
+# Seat state (v0.3.0e Build 1, #200): what has always lived in the
+# PAGE's local storage rather than on disk — her memory entries,
+# the operator's picture and badge. The Sync Update carries them
+# in the sync set (sync/seat.json), anchored to the account like
+# everything else, so the conversation — and the face that
+# started it — can be picked up on any screen. The bridge keeps
+# the canonical merged copy here; a page pushes its state and
+# adopts the converged answer.
+SEAT_STATE_PATH = os.path.join(ROOT, "config", "seat-state.json")
+
+
+def _json_bytes(obj):
+    return json.dumps(obj, indent=2).encode()
+
+
+def _atomic_write(path, data):
+    # Write-then-rename, the pattern the codebase uses at every
+    # state file: a reader never sees a half-written file.
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+_SEAT_LOCK = threading.Lock()
+
+
+def _seat_clean_image(value):
+    # The same discipline the dashboard image fields answer to:
+    # a data-URL string under the cap, else "".
+    if not isinstance(value, str):
+        return ""
+    return _dashboard_image_field(value)
+
+
+def _seat_clean_entries(rows):
+    out = []
+    seen = set()
+    for row in (rows if isinstance(rows, list) else []):
+        if not isinstance(row, dict):
+            continue
+        t = str(row.get("t") or "").strip()
+        if not t:
+            continue
+        key = memory_fact_key(t)
+        if key in seen:
+            continue
+        seen.add(key)
+        o = str(row.get("o") or "manual")
+        if o not in ("auto", "manual", "seed", "sync"):
+            o = "manual"
+        out.append({"t": t[:600], "o": o})
+    return out
+
+
+def _seat_state_load():
+    try:
+        with open(SEAT_STATE_PATH, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    try:
+        picture_at = float(raw.get("pictureAt") or 0)
+    except Exception:
+        picture_at = 0
+    try:
+        badge_at = float(raw.get("badgeAt") or 0)
+    except Exception:
+        badge_at = 0
+    return {
+        "entries": _seat_clean_entries(raw.get("entries")),
+        "operatorPicture": _seat_clean_image(raw.get("operatorPicture")),
+        "operatorBadge": _seat_clean_image(raw.get("operatorBadge")),
+        "pictureAt": picture_at,
+        "badgeAt": badge_at,
+    }
+
+
+def _seat_state_save(state):
+    try:
+        _atomic_write(SEAT_STATE_PATH, _json_bytes(state))
+    except Exception:
+        pass
+
+
+def seat_state_payload():
+    return _seat_state_load()
+
+
+def _seat_merge(incoming):
+    # Merge a page's (or a sync set's) seat state into the stored
+    # one. Memory entries are append-shaped: the union by fact
+    # key, existing rows keep their origin. The picture and the
+    # badge are single values: last-writer-wins by the sender's
+    # stamp, and a first fill (stored empty) always lands.
+    # Returns (state, changes) with the movement counted.
+    if not isinstance(incoming, dict):
+        incoming = {}
+    with _SEAT_LOCK:
+        st = _seat_state_load()
+        have = {memory_fact_key(r["t"]) for r in st["entries"]}
+        added = 0
+        for row in _seat_clean_entries(incoming.get("entries")):
+            k = memory_fact_key(row["t"])
+            if k not in have:
+                st["entries"].append({"t": row["t"], "o": "sync"})
+                have.add(k)
+                added += 1
+        changes = {"entriesAdded": added, "pictureChanged": False,
+                   "badgeChanged": False}
+        for field, stamp_key, flag in (
+                ("operatorPicture", "pictureAt", "pictureChanged"),
+                ("operatorBadge", "badgeAt", "badgeChanged")):
+            val = _seat_clean_image(incoming.get(field))
+            if not val or val == st[field]:
+                continue
+            try:
+                stamp = float(incoming.get(stamp_key) or 0)
+            except Exception:
+                stamp = 0
+            if not st[field] or stamp >= st[stamp_key]:
+                st[field] = val
+                st[stamp_key] = stamp or time.time()
+                changes[flag] = True
+        _seat_state_save(st)
+        return st, changes
+
+
+def _sync_deck_collect(cfg):
+    # The ChipDeck as ONE sync unit (v0.3.0e Build 1, #200): the
+    # chips (cartridges + their install record), the RAG packs
+    # (files + their record), and the cards that tie machines
+    # together — this node's own pairing card, one re-drawn per
+    # paired peer, and a gateway card for every fedinet this node
+    # keeps. Cards carry identity and public halves only, exactly
+    # as they do in the backup; key material never rides.
+    files = {}
+    index = {}
+
+    def put(rel, data, mtime):
+        files[SYNC_PREFIX + "deck/" + rel] = data
+        index[rel] = {"sha": hashlib.sha256(data).hexdigest(),
+                      "size": len(data), "mtime": int(mtime)}
+
+    try:
+        raw = read_file(CHIP_INSTALLS_PATH)
+        if raw:
+            put("chips/installed.json", raw.encode(),
+                os.path.getmtime(CHIP_INSTALLS_PATH))
+    except Exception:
+        pass
+    for row in load_chip_installs():
+        local_file = row.get("local_file") if isinstance(row, dict) else None
+        if not local_file:
+            continue
+        base = os.path.basename(str(local_file))
+        path = os.path.join(CHIPS_DIR, base)
+        if os.path.isfile(path):
+            try:
+                with open(path, "rb") as f:
+                    put("chips/" + base, f.read(), os.path.getmtime(path))
+            except Exception:
+                continue
+    try:
+        raw = read_file(RAG_INSTALLS_PATH)
+        if raw:
+            put("rag-packs/installed.json", raw.encode(),
+                os.path.getmtime(RAG_INSTALLS_PATH))
+    except Exception:
+        pass
+    if os.path.isdir(RAG_PACKS_DIR):
+        for slug in sorted(os.listdir(RAG_PACKS_DIR)):
+            pdir = os.path.join(RAG_PACKS_DIR, slug)
+            if not os.path.isdir(pdir):
+                continue
+            for name in sorted(os.listdir(pdir)):
+                fpath = os.path.join(pdir, name)
+                if os.path.isfile(fpath):
+                    try:
+                        with open(fpath, "rb") as f:
+                            put("rag-packs/" + slug + "/" + name,
+                                f.read(), os.path.getmtime(fpath))
+                    except Exception:
+                        continue
+    now = time.time()
+    try:
+        png = build_mesh_card_png(cfg)
+        if png:
+            put("cards/own.png", png, now)
+    except Exception:
+        pass
+    for peer in mesh_settings(cfg)["borrow"]["peers"]:
+        try:
+            if not isinstance(peer, dict):
+                continue
+            png = build_mesh_peer_card_png(peer)
+            nid = re.sub(r"[^A-Za-z0-9_-]", "", str(peer.get("nodeId") or ""))[:12]
+            if png and nid:
+                put("cards/peer-" + nid + ".png", png, now)
+        except Exception:
+            continue
+    for fed in federation_settings(cfg):
+        try:
+            png = build_gateway_card_png(cfg, fed)
+            fid = re.sub(r"[^A-Za-z0-9_-]", "", str(fed.get("id") or ""))[:16]
+            if png and fid:
+                put("cards/gateway-" + fid + ".png", png, now)
+        except Exception:
+            continue
+    return files, index
+
+
+def _sync_deck_dest(rel):
+    # The landing path for a deck FILE, or None when the name is
+    # not one the deck deals in. Cards and install records are
+    # handled by their own paths and never land here.
+    parts = rel.split("/")
+    if len(parts) == 2 and parts[0] == "chips" and parts[1] not in ("", "installed.json"):
+        return os.path.join(CHIPS_DIR, os.path.basename(parts[1]))
+    if len(parts) == 3 and parts[0] == "rag-packs":
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", parts[1]):
+            return None
+        return os.path.join(RAG_PACKS_DIR, parts[1], os.path.basename(parts[2]))
+    return None
+
+
+def _sync_deck_merge_installs(rel, data, summary):
+    # installed.json records union-merge: a record this machine
+    # lacks is adopted whole; a record it holds keeps the local
+    # row (install facts are machine-local). Returns True when
+    # the local record file changed.
+    if rel == "chips/installed.json":
+        path, loader = CHIP_INSTALLS_PATH, load_chip_installs
+        keyf = lambda r: str(r.get("local_file") or r.get("name") or "")
+    elif rel == "rag-packs/installed.json":
+        path, loader = RAG_INSTALLS_PATH, load_rag_installs
+        keyf = lambda r: str(r.get("slug") or r.get("name") or "")
+    else:
+        return False
+    try:
+        remote = json.loads(data.decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not isinstance(remote, list):
+        return False
+    local = loader()
+    have = {keyf(r) for r in local if isinstance(r, dict)}
+    merged = list(local)
+    added = 0
+    for row in remote:
+        if not isinstance(row, dict):
+            continue
+        k = keyf(row)
+        if k and k not in have:
+            merged.append(row)
+            have.add(k)
+            added += 1
+    if added:
+        try:
+            _atomic_write(path, _json_bytes(merged))
+            summary["deckFilesPulled"] += 1
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _sync_apply_deck_card(cfg, name, data, summary, before_peers, before_feds):
+    # A card in the deck is not a file to copy — it is an act to
+    # perform. A pairing card pairs, idempotently, through the
+    # same validation an operator's own import walks; a gateway
+    # card admits this node to a fedinet it does not keep yet —
+    # admission and introduction only, never trust (Build 8's
+    # law), and never a fedinet already kept.
+    if name.startswith("gateway-"):
+        payload, _err = parse_gateway_card_png(data)
+        if not payload:
+            return
+        fed = payload.get("fedinet") if isinstance(payload.get("fedinet"), dict) else {}
+        fid = str(payload.get("fedinetId") or fed.get("id") or "")
+        if not fid or fid in before_feds:
+            return
+        got, err = _fed_import_gateway_payload(cfg, payload, trust_default=False)
+        if got and not err:
+            before_feds.add(fid)
+            summary["cardsImported"] += 1
+        return
+    peer, _err = parse_mesh_card_png(data)
+    if not peer:
+        return
+    nid = str(peer.get("nodeId") or "")
+    if not nid or nid == mesh_node_id():
+        return
+    if mesh_add_peer(cfg, peer) == "" and nid not in before_peers:
+        before_peers.add(nid)
+        summary["cardsImported"] += 1
+
+
+def _sync_apply_deck(cfg, fetched, summary):
+    files = fetched["files"]
+    raw = files.get(SYNC_PREFIX + "deck-index.json")
+    if raw is None:
+        return
+    try:
+        index = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(index, dict):
+        return
+    before_peers = {str(p.get("nodeId") or "")
+                    for p in mesh_settings(cfg)["borrow"]["peers"]
+                    if isinstance(p, dict)}
+    before_feds = {str(f.get("id") or "") for f in federation_settings(cfg)}
+    gateway_cards = []
+    for rel in sorted(index):
+        ent = index[rel]
+        if not isinstance(ent, dict):
+            continue
+        data = files.get(SYNC_PREFIX + "deck/" + rel)
+        if data is None:
+            continue
+        if rel.startswith("cards/"):
+            if rel.startswith("cards/gateway-"):
+                # Gateway cards land LAST, each on a freshly
+                # loaded config: the import saves the config
+                # itself, and a pairing add working from this
+                # round's earlier snapshot must not be able to
+                # save over the admission (and vice versa).
+                gateway_cards.append((rel.split("/", 1)[1], data))
+                continue
+            _sync_apply_deck_card(cfg, rel.split("/", 1)[1], data,
+                                  summary, before_peers, before_feds)
+            continue
+        if rel in ("chips/installed.json", "rag-packs/installed.json"):
+            _sync_deck_merge_installs(rel, data, summary)
+            continue
+        dest = _sync_deck_dest(rel)
+        if dest is None:
+            continue
+        remote_sha = str(ent.get("sha") or "")
+        try:
+            remote_mtime = int(ent.get("mtime") or 0)
+        except Exception:
+            remote_mtime = 0
+        if os.path.isfile(dest):
+            try:
+                with open(dest, "rb") as f:
+                    local_raw = f.read()
+                local_mtime = int(os.path.getmtime(dest))
+            except Exception:
+                continue
+            if hashlib.sha256(local_raw).hexdigest() == remote_sha:
+                continue
+            if local_mtime > remote_mtime:
+                continue
+            if local_mtime == remote_mtime:
+                # Same-second divergence: the arriving copy parks
+                # beside the local one, as a case file would.
+                stamp = time.strftime("%Y-%m-%d", time.localtime(remote_mtime or time.time()))
+                parked = dest + ".from-sync-" + stamp
+                n = 2
+                while os.path.exists(parked):
+                    parked = dest + ".from-sync-" + stamp + "-" + str(n)
+                    n += 1
+                try:
+                    _atomic_write(parked, data)
+                except Exception:
+                    pass
+                if "the ChipDeck" not in summary["eyes"]:
+                    summary["eyes"].append("the ChipDeck")
+                continue
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            _atomic_write(dest, data)
+            summary["deckFilesPulled"] += 1
+        except Exception:
+            continue
+    for name, data in gateway_cards:
+        _sync_apply_deck_card(load_config(), name, data,
+                              summary, before_peers, before_feds)
+
+
+_SYNC_DOCS = (("soul", "Soul"), ("memory", "memory book"))
+
+
+def _sync_doc_path(name):
+    return SOUL_PATH if name == "soul" else MEMORY_PATH
+
+
+def _sync_apply_docs(fetched, summary, state):
+    # Her Soul and her memory book converge per document — never
+    # a silent overwrite (v0.3.0e Build 1, #200). Same bytes:
+    # nothing. One side untouched since the last sync (its hash
+    # is the recorded one): the other side's text lands. Both
+    # changed: the newer text wins, the losing text is parked
+    # beside the document as a named conflict copy, and the
+    # document is named for the operator's eyes.
+    files = fetched["files"]
+    raw = files.get(SYNC_PREFIX + "docs-index.json")
+    if raw is None:
+        return
+    try:
+        index = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(index, dict):
+        return
+    doc_sync = state.get("docSync")
+    if not isinstance(doc_sync, dict):
+        doc_sync = {}
+    for name, label in _SYNC_DOCS:
+        data = files.get(SYNC_PREFIX + "docs/" + name + ".md")
+        ent = index.get(name)
+        if data is None or not isinstance(ent, dict):
+            continue
+        path = _sync_doc_path(name)
+        remote_sha = hashlib.sha256(data).hexdigest()
+        local_raw = b""
+        local_mtime = 0
+        if os.path.isfile(path):
+            try:
+                with open(path, "rb") as f:
+                    local_raw = f.read()
+                local_mtime = int(os.path.getmtime(path))
+            except Exception:
+                local_raw, local_mtime = b"", 0
+        local_sha = hashlib.sha256(local_raw).hexdigest() if local_raw else ""
+        last = str(doc_sync.get(name) or "")
+        if remote_sha == local_sha:
+            doc_sync[name] = remote_sha
+            continue
+        if local_sha == last:
+            try:
+                _atomic_write(path, data)
+                doc_sync[name] = remote_sha
+                summary["docsPulled"] += 1
+            except Exception:
+                pass
+            continue
+        if remote_sha == last:
+            continue
+        try:
+            remote_mtime = int(ent.get("mtime") or 0)
+        except Exception:
+            remote_mtime = 0
+        stamp = time.strftime("%Y-%m-%d", time.localtime())
+        base = os.path.splitext(path)[0] + ".from-sync-" + stamp
+        parked = base + ".md"
+        n = 2
+        while os.path.exists(parked):
+            parked = base + "-" + str(n) + ".md"
+            n += 1
+        if remote_mtime >= local_mtime:
+            loser = local_raw
+            try:
+                _atomic_write(path, data)
+                doc_sync[name] = remote_sha
+                summary["docsPulled"] += 1
+            except Exception:
+                continue
+        else:
+            loser = data
+            doc_sync[name] = local_sha
+        try:
+            _atomic_write(parked, loser)
+        except Exception:
+            pass
+        summary["eyes"].append("her " + label)
+    state["docSync"] = doc_sync
+
+
+def _sync_apply_seat(fetched, summary):
+    raw = fetched["files"].get(SYNC_PREFIX + "seat.json")
+    if raw is None:
+        return
+    try:
+        incoming = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(incoming, dict):
+        return
+    _st, changes = _seat_merge(incoming)
+    summary["entriesPulled"] += changes["entriesAdded"]
+    if changes["pictureChanged"] or changes["badgeChanged"]:
+        summary["seatChanged"] = True
+
+
+def sync_collect(cfg=None):
     # The local sync set as {path: bytes} plus the case index the
     # convergence reads the other side by.
     payload = chats_payload()
@@ -18586,9 +19214,39 @@ def sync_collect():
                 except Exception:
                     continue
     files[SYNC_PREFIX + "cases-index.json"] = json.dumps(index, indent=2).encode()
+    # The Sync Update's widened set (v0.3.0e Build 1, #200): the
+    # ChipDeck as one unit, her two documents, and the seat state
+    # — all anchored to the GitHub account, named in the
+    # manifest so a set from a different account is refused at
+    # the door, never half-applied.
+    if cfg is None:
+        cfg = load_config()
+    deck_files, deck_index = _sync_deck_collect(cfg)
+    files.update(deck_files)
+    files[SYNC_PREFIX + "deck-index.json"] = json.dumps(deck_index, indent=2).encode()
+    docs_index = {}
+    for name, _label in _SYNC_DOCS:
+        path = _sync_doc_path(name)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            files[SYNC_PREFIX + "docs/" + name + ".md"] = data
+            docs_index[name] = {"sha": hashlib.sha256(data).hexdigest(),
+                                "mtime": int(os.path.getmtime(path))}
+        except Exception:
+            continue
+    files[SYNC_PREFIX + "docs-index.json"] = json.dumps(docs_index, indent=2).encode()
+    files[SYNC_PREFIX + "seat.json"] = json.dumps(_seat_state_load(), indent=2).encode()
+    account = ""
+    try:
+        account = str((github_auth() or {}).get("login") or "")
+    except Exception:
+        account = ""
     manifest = {"format": SYNC_FORMAT, "app": "Apex",
                 "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
-                "chats": len(payload["chats"]), "cases": len(index)}
+                "account": account,
+                "chats": len(payload["chats"]), "cases": len(index),
+                "deckFiles": len(deck_index), "docs": len(docs_index)}
     files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
     return files, manifest, index
 
@@ -18650,10 +19308,18 @@ def sync_fetch(cfg):
     if SYNC_PREFIX + "manifest.json" in files:
         try:
             parsed = json.loads(files[SYNC_PREFIX + "manifest.json"].decode("utf-8", "replace"))
-            if isinstance(parsed, dict) and parsed.get("format") == SYNC_FORMAT:
+            if isinstance(parsed, dict) and parsed.get("format") in (SYNC_FORMAT, "navi-sync/1"):
                 manifest = parsed
         except Exception:
             manifest = None
+    if manifest is not None:
+        acct = str(manifest.get("account") or "")
+        if acct:
+            mine = str((github_auth() or {}).get("login") or "")
+            if mine and acct.lower() != mine.lower():
+                return None, {"ok": False, "kind": "auth", "state": "auth",
+                              "route": "Backup repo",
+                              "error": "That sync set belongs to a different GitHub account (" + acct + ") — sync is anchored to the account, and this machine is signed in as " + mine + ". Nothing crossed. Sign in with the account that owns the set, or let this machine start a set of its own."}
     return {"files": files, "manifest": manifest}, None
 
 
@@ -18665,6 +19331,12 @@ def _sync_apply_tombstones(tombs, summary):
     dropped = {"chats": set(), "cases": set(), "vault": set()}
     local_chats = {str(c["id"]): c for c in chats_all()}
     for cid, at in (tombs.get("chats") or {}).items():
+        if str(cid) == MAIN_CHAT_ID:
+            # v0.3.0e Build 1 (#200): the main chat cannot be
+            # deleted, so its tombstone can never land — drop it
+            # from the set rather than retry it every round.
+            dropped["chats"].add(str(cid))
+            continue
         rec = local_chats.get(str(cid))
         if rec is None:
             continue
@@ -18788,6 +19460,8 @@ def sync_apply(cfg, fetched):
     summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
                "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
                "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
+               "deckFilesPulled": 0, "cardsImported": 0, "docsPulled": 0,
+               "entriesPulled": 0, "seatChanged": False,
                "eyes": [], "caseEyes": []}
     files = fetched["files"]
     remote_tombs = {}
@@ -18849,10 +19523,17 @@ def sync_apply(cfg, fetched):
             if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
                 summary["eyes"].append(str(c.get("title") or c["id"]))
     _sync_apply_cases(fetched, merged, summary)
+    _sync_apply_deck(cfg, fetched, summary)
+    _sync_apply_docs(fetched, summary, state)
+    _sync_state_save(state)
+    _sync_apply_seat(fetched, summary)
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
                           + summary["removedNotes"] + summary["chatsAdded"]
                           + summary["chatsReplaced"] + summary["chatsSiblings"]
-                          + summary["casesAdded"] + summary["casesUpdated"])
+                          + summary["casesAdded"] + summary["casesUpdated"]
+                          + summary["deckFilesPulled"] + summary["cardsImported"]
+                          + summary["docsPulled"] + summary["entriesPulled"]
+                          + (1 if summary["seatChanged"] else 0))
     return summary
 
 
@@ -18904,6 +19585,11 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "pulledChats": pulled_chats,
         "pushedFiles": pushed_files,
         "caseFilesPulled": summary["caseFilesPulled"],
+        "deckFilesPulled": summary.get("deckFilesPulled", 0),
+        "cardsImported": summary.get("cardsImported", 0),
+        "docsPulled": summary.get("docsPulled", 0),
+        "entriesPulled": summary.get("entriesPulled", 0),
+        "seatChanged": bool(summary.get("seatChanged")),
         "removed": summary["removedChats"] + summary["removedCases"] + summary["removedNotes"],
         "needsEyes": eyes,
         "openIncluded": bool(open_chat_id) and str(open_chat_id) in collected_chats,
@@ -18990,16 +19676,47 @@ def _sync_mesh_round(cfg, open_chat_id):
         theirs = _mesh_sync_decode(payload)
         if theirs is None:
             continue
+        if _mesh_sync_foreign_account(payload):
+            continue
         summary = sync_apply(cfg, {
             "files": theirs,
             "manifest": payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {},
         })
+        # The exchange's first leg parked its own divergences on
+        # the LENDER — same operator, same eyes: the borrower's
+        # card names them too, or the lender's parked copies
+        # would wait for a round that machine never runs.
+        applied = payload.get("applied")
+        if isinstance(applied, dict):
+            for e in (applied.get("eyes") or []):
+                if e not in summary["eyes"]:
+                    summary["eyes"].append(e)
+            for s in (applied.get("caseEyes") or []):
+                if s not in summary["caseEyes"]:
+                    summary["caseEyes"].append(s)
+            summary["changed"] = (summary.get("changed") or 0) + (applied.get("changed") or 0)
         result = _sync_finish_summary(summary, len(files),
                                       open_chat_id, local_ids)
         result["route"] = "Mesh — " + peer["name"]
         result["pushedChats"] = 0
         return result
     return None
+
+
+def _mesh_sync_foreign_account(payload):
+    # The account anchor on the Mesh road (v0.3.0e Build 1,
+    # #200): a set whose manifest names a different GitHub
+    # account than this machine's sign-in is not applied — the
+    # peer is skipped and the round falls through, exactly as
+    # the repo door refuses such a set by name.
+    manifest = payload.get("manifest") if isinstance(payload, dict) else None
+    if not isinstance(manifest, dict):
+        return False
+    acct = str(manifest.get("account") or "")
+    if not acct:
+        return False
+    mine = str((github_auth() or {}).get("login") or "")
+    return bool(mine and acct.lower() != mine.lower())
 
 
 def _sync_mesh_pull(cfg):
@@ -19013,6 +19730,8 @@ def _sync_mesh_pull(cfg):
             continue
         theirs = _mesh_sync_decode(payload)
         if theirs is None:
+            continue
+        if _mesh_sync_foreign_account(payload):
             continue
         summary = sync_apply(cfg, {
             "files": theirs,
@@ -19176,15 +19895,14 @@ def sync_startup_pull():
     _sync_trigger_pull("app-start")
 
 
-def sync_note_dhd_session(device_key):
-    # DHD session start: the proxy calls this for every accepted
-    # request; a device whose last accepted request is older than
-    # the session gap (or which has never been seen) counts as a
-    # session starting, and the room is refreshed — once, with a
-    # global debounce so a door in heavy use pulls at most every
-    # debounce window.
+def _sync_note_session(trigger, key):
+    # A session starting at any seat refreshes the room — once,
+    # with a global debounce so a door in heavy use pulls at most
+    # every debounce window. A device (or window) whose last
+    # accepted note is older than the session gap, or which has
+    # never been seen, counts as a session starting.
     now = time.time()
-    key = str(device_key or "device")
+    key = str(key or "device")
     with _SYNC_DHD_LOCK:
         last = _SYNC_DHD_SEEN.get(key, 0)
         any_recent = any(now - v < _SYNC_TRIGGER_DEBOUNCE for v in _SYNC_DHD_SEEN.values())
@@ -19193,7 +19911,22 @@ def sync_note_dhd_session(device_key):
                 _SYNC_DHD_SEEN[key] = now
             return
         _SYNC_DHD_SEEN[key] = now
-    threading.Thread(target=_sync_trigger_pull, args=("dhd-session",), daemon=True).start()
+    threading.Thread(target=_sync_trigger_pull, args=(trigger,), daemon=True).start()
+
+
+def sync_note_dhd_session(device_key):
+    # DHD session start: the proxy calls this for every accepted
+    # request from an approved device.
+    _sync_note_session("dhd-session", device_key)
+
+
+def sync_note_app_session(seat_key):
+    # v0.3.0e Build 1 (#200): the desktop/app seat notes itself
+    # the same way. The bridge is long-lived (boot-armed), so its
+    # own app-start pull can be hours stale by the time a window
+    # opens; the page notes the seat and the room refreshes for
+    # it — the desk side of "pick it up where you left off".
+    _sync_note_session("app-session", "seat:" + str(seat_key or "window"))
 
 
 # --- Boot mode (0.1.9e Build 12, issue #142) -------------------------
@@ -23058,7 +23791,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "chat": saved})
         elif self.path == "/api/chats/delete":
             data = self._body()
-            self._send(200, {"ok": chat_delete(data.get("id"))})
+            if str(data.get("id") or "").strip() == MAIN_CHAT_ID:
+                # v0.3.0e Build 1 (#200): refused BY NAME — the
+                # main chat is emptied, never deleted.
+                self._send(200, {"ok": False, "error":
+                                 "The main chat can't be deleted — "
+                                 "empty it with /clear or /cls."})
+            else:
+                self._send(200, {"ok": chat_delete(data.get("id"))})
         elif self.path == "/api/cases/create":
             data = self._body()
             detail, err = case_create(data.get("name"), data.get("client"), data.get("scope"))
@@ -23289,8 +24029,31 @@ class Handler(BaseHTTPRequestHandler):
             # converge, push — riding the Operator identity. The
             # open thread's id rides along so the card can say
             # whether the thread on screen was in the round.
+            # v0.3.0e Build 1 (#200): the page's seat state rides
+            # along too, and the converged seat state answers, so
+            # the window adopts what the round settled.
             data = self._body()
-            self._send(200, sync_round(load_config(), "button", str(data.get("openChatId") or "")))
+            if isinstance(data.get("seat"), dict):
+                _seat_merge(data.get("seat"))
+            result = sync_round(load_config(), "button", str(data.get("openChatId") or ""))
+            if isinstance(result, dict):
+                result["seat"] = seat_state_payload()
+            self._send(200, result)
+        elif self.path == "/api/sync/seat":
+            # v0.3.0e Build 1 (#200): a seat notes itself. The
+            # page sends its seat state as a window opens (and as
+            # it changes); the bridge merges it, notes the session
+            # under the same gap/debounce discipline the DHD door
+            # uses — which is what fires the refresh pull for a
+            # long-lived bridge — and answers with the converged
+            # seat state and the sync state's clock, so the page
+            # can adopt and re-read when a pull lands.
+            data = self._body()
+            if isinstance(data.get("seat"), dict):
+                _seat_merge(data.get("seat"))
+            sync_note_app_session(data.get("seatKey"))
+            self._send(200, {"ok": True, "seat": seat_state_payload(),
+                             "sync": sync_state_payload()})
         elif self.path == "/api/github/backup":
             data = self._body()
             dash = data.get("dashboard") if isinstance(data.get("dashboard"), dict) else None

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Apex installer — 0.2.0e Build 11 (#193, #198): the manifest-
-# driven, stage-and-swap installer, now with the homecoming
-# (the default home is the operator's ~/.local/share/navi-apex,
-# and a legacy /opt tree is migrated to it, state and Mesh
-# identity byte-for-byte, then parked in place) and the
-# permissions doctrine (law D below). Four laws, learned from
-# nineteen field incidents (files/installer-audit.md):
+# Apex installer — v0.3.0e Build 1 (#205): the manifest-driven,
+# stage-and-swap installer, with the homecoming (the default
+# home is the operator's ~/.local/share/navi-apex, and a legacy
+# /opt tree is migrated to it, state and Mesh identity
+# byte-for-byte, then parked in place), the permissions
+# doctrine (law D below), and the bootstrap handoff (law E).
+# Five laws, learned from the field incidents
+# (files/installer-audit.md):
 #
 #   A) The payload is a CONTRACT, not a habit. MANIFEST.txt
 #      declares every file this package carries, its class and
@@ -52,6 +53,20 @@
 #      doctrine is that it never needs to, except for
 #      irreplaceable state — and there the stop comes first,
 #      complete, with its remedy attached.
+#   E) The incoming build governs its own installation
+#      (v0.3.0e Build 1, #205). A pull is executed end-to-end
+#      by the RUNNING build's machinery, so no spawner fix can
+#      protect the pull that installs it (incident 22: the
+#      fixed helper died inside the old bridge's unit the
+#      moment the old bridge stopped). When this installer is
+#      run mid-apply by an older build's helper, its FIRST act
+#      — before anything is stopped — is the bootstrap
+#      handoff: the package's own bootstrap spawns the
+#      package's helper in takeover mode (outside the old
+#      unit, waiting the old helper out, signalling nobody)
+#      and this process exits having installed nothing. If
+#      the handoff cannot arm, the ordinary install carries
+#      on: a handoff can never strand an apply.
 #
 # What an install preserves, untouched as ever: the llamafile,
 # installed chips and RAG packs, the Vault, DHD certificates,
@@ -437,6 +452,52 @@ echo "   Installing into: $INSTALL_DIR (as $OPERATOR; placement is unprivileged)
 if [ -n "$LEGACY_MIGRATION" ]; then
   echo "   Homecoming: the legacy install at $LEGACY_DIR is migrating to this home —"
   echo "   all operator state carried, the Mesh identity byte-for-byte; the legacy tree is parked, never deleted."
+fi
+
+# --- The bootstrap handoff (v0.3.0e Build 1, #205; law E) -----
+# This runs before anything is stopped, and only when every
+# condition proves an older build's apply is genuinely in
+# flight: the package carries its bootstrap pair; the apply
+# job beside the package names THIS package directory; the
+# install's own update record says an apply is working at the
+# installing step. APEX_APPLY_BOOTSTRAPPED in the environment
+# means the package's machinery already governs this apply
+# (the steady state) — no second handoff. Any failure falls
+# through to the ordinary install below.
+if [ -z "${APEX_APPLY_BOOTSTRAPPED:-}" ] && [ -f "$SRC_DIR/apply-bootstrap.py" ] && [ -f "$SRC_DIR/apply-helper.py" ]; then
+  _apex_job="$(dirname "$SRC_DIR")/apply-job.json"
+  if [ -f "$_apex_job" ]; then
+    # The check's "no" is a designed answer (exit 1), and this
+    # script runs under set -e: the substitution is guarded so
+    # a "no" lands in the variable instead of ending the
+    # installer — the fall-through below is the promise.
+    _apex_handoff="$(python3 - "$_apex_job" "$SRC_DIR" "$INSTALL_DIR" <<'EOF_PY'
+import json, os, sys
+try:
+    job = json.load(open(sys.argv[1]))
+    if os.path.realpath(str(job.get("pkgDir") or "")) != os.path.realpath(sys.argv[2]):
+        raise SystemExit(1)
+    rec = json.load(open(os.path.join(sys.argv[3], "config", "update-result.json")))
+    if rec.get("state") != "working" or rec.get("step") != "installing":
+        raise SystemExit(1)
+    print("go")
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(1)
+EOF_PY
+)" || _apex_handoff=""
+    if [ "$_apex_handoff" = "go" ]; then
+      echo "== Bootstrap handoff: an older build's helper is running this install —"
+      echo "   the package's own machinery takes the apply over before anything stops."
+      if python3 "$SRC_DIR/apply-bootstrap.py" "$_apex_job" "$PPID"; then
+        echo "   Handoff complete: the incoming build's helper owns the apply now;"
+        echo "   this installer exits having installed nothing, by design (law E)."
+        exit 0
+      fi
+      echo "   The handoff did not arm — the ordinary install carries on from here."
+    fi
+  fi
 fi
 
 # With no --startup choice, an interactive run on a real terminal
