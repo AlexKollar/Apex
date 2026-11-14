@@ -175,29 +175,56 @@ CARRY_DIR="$PARENT_DIR/.apex-carry"
 # and a legacy tree stands at LEGACY_DIR. It runs at most once:
 # the new home records it (config/migration.json), and a later
 # run that finds the record treats the parked tree as expected
-# scenery — a plain same-home upgrade. If BOTH homes somehow
-# hold a live install and no migration was ever recorded, the
-# new home is canonical: nothing is carried, the situation is
-# named in the output, and the legacy tree is left untouched.
-# A custom --dir target never migrates — the homecoming
-# belongs to the default home alone.
+# scenery — a plain same-home upgrade. If BOTH homes hold a
+# live install and a completed migration is PROVEN by its
+# marker, the new home is canonical: nothing is carried, the
+# situation is named in the output, and the legacy tree is
+# left untouched. A custom --dir target never migrates — the
+# homecoming belongs to the default home alone.
+#
+# Build 12 (#201) — the interrupted home. A migration is
+# complete only when a marker proves it: the new home's own
+# record (config/migration.json), or the legacy tree's machine
+# marker (.apex-migration.json) naming this home as its
+# destination; both are written at the park, the migration's
+# last act. A live-looking tree at the new home with NO
+# marker is the remains of a migration that died between the
+# swap and the park — an INTERRUPTED home, never canonical,
+# never converged onto. The migration runs again and state is
+# carried from the legacy tree; the interrupted tree is
+# renamed aside by the swap like any previous tree.
 LEGACY_MIGRATION=""
 LEGACY_STATE_BOTH=""
+LEGACY_STATE_INTERRUPTED=""
+MIGRATION_PROVEN=""
+if [ -f "$INSTALL_DIR/config/migration.json" ]; then
+  MIGRATION_PROVEN=1
+elif [ -f "$LEGACY_DIR/.apex-migration.json" ] \
+     && grep -qF "\"to\": \"$INSTALL_DIR\"" "$LEGACY_DIR/.apex-migration.json" 2>/dev/null; then
+  MIGRATION_PROVEN=1
+fi
 if [ "$INSTALL_DIR" = "$DEFAULT_HOME" ] && [ "$LEGACY_DIR" != "$INSTALL_DIR" ] \
    && [ -f "$LEGACY_DIR/bridge.py" ]; then
-  if [ -f "$INSTALL_DIR/config/migration.json" ]; then
-    :
+  if [ -n "$MIGRATION_PROVEN" ]; then
+    if [ -f "$INSTALL_DIR/bridge.py" ]; then
+      LEGACY_STATE_BOTH=1
+    fi
   elif [ -f "$INSTALL_DIR/bridge.py" ]; then
-    LEGACY_STATE_BOTH=1
+    LEGACY_MIGRATION=1
+    LEGACY_STATE_INTERRUPTED=1
   else
     LEGACY_MIGRATION=1
   fi
 fi
 # The tree this install carries state FROM: the install's own
 # tree on an upgrade, the legacy tree on a migration, nothing
-# on a true first install.
+# on a true first install. An interrupted home is never a
+# foundation (#201): its state, if any, came from a copy that
+# was never proven — the legacy tree carries again, whole.
 FOUNDATION_SRC=""
-if [ -f "$INSTALL_DIR/bridge.py" ]; then
+if [ -n "$LEGACY_STATE_INTERRUPTED" ]; then
+  FOUNDATION_SRC="$LEGACY_DIR"
+elif [ -f "$INSTALL_DIR/bridge.py" ]; then
   FOUNDATION_SRC="$INSTALL_DIR"
 elif [ -n "$LEGACY_MIGRATION" ]; then
   FOUNDATION_SRC="$LEGACY_DIR"
@@ -376,6 +403,11 @@ fi
 if [ -n "$LEGACY_STATE_BOTH" ]; then
   echo "    note: both the legacy tree at $LEGACY_DIR and the new home at $INSTALL_DIR hold Apex installs."
   echo "          The new home is canonical — nothing is carried from the legacy tree, and it is left parked, untouched."
+fi
+if [ -n "$LEGACY_STATE_INTERRUPTED" ]; then
+  echo "    note: the tree standing at $INSTALL_DIR carries no migration record — it is an interrupted"
+  echo "          migration's remains, not a canonical home. The migration runs again: state is carried"
+  echo "          from the legacy tree, and the interrupted tree is set aside by the swap."
 fi
 
 # --- Staging must be creatable before anything stops (#198) ---
@@ -701,6 +733,72 @@ stop_bridge() {
   echo "       End that process with:  kill -9 $holder" >&2
   echo "       then run this installer again." >&2
   return 1
+}
+
+# PIDs of llamafile processes whose working directory is $1 —
+# the model server belonging to an install: its command line
+# names the binary (navi.llamafile) or its launcher script
+# (run-llamafile.sh), and both run from the install root.
+llamafile_pids_in_dir() {
+  python3 - "$1" <<'PYEOF' 2>/dev/null || true
+import os, sys
+try:
+    root = os.path.realpath(sys.argv[1])
+except Exception:
+    sys.exit(0)
+found = []
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    try:
+        if os.path.realpath(os.readlink("/proc/" + name + "/cwd")) != root:
+            continue
+        with open("/proc/" + name + "/cmdline", "rb") as f:
+            raw = f.read()
+        cmd = " ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0])))
+        if "navi.llamafile" in cmd or "run-llamafile" in cmd:
+            found.append(name)
+    except Exception:
+        pass
+print(" ".join(found))
+PYEOF
+}
+
+# stop_llamafile <dir>: end the model server belonging to
+# <dir>, BY PID — never through its systemd unit. Build 12
+# (#201) states the invariant the whole apply now keeps: an
+# apply may end a process only by its proven pid, one at a
+# time; a unit stop is a group-shaped signal that cannot tell
+# the target apart from the apply's own ancestry, and it is
+# never used. Best-effort with a named warning — a survivor
+# holds the model port, and the remedy is one command, said
+# out loud.
+stop_llamafile() {
+  local dir="$1" pids="" p=""
+  pids="$(llamafile_pids_in_dir "$dir")"
+  [ -n "$pids" ] || return 0
+  echo "    stopping the running model server (pid(s): $pids) — by pid, as the invariant requires"
+  for p in $pids; do kill "$p" 2>/dev/null || true; done
+  local waited=0 alive=""
+  while [ "$waited" -lt 10 ]; do
+    alive=""
+    for p in $pids; do bridge_pid_gone "$p" || alive="$alive $p"; done
+    if [ -z "$alive" ]; then
+      echo "    the previous model server is stopped"
+      return 0
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  echo "    the model server did not stop on a polite signal — ending it by force"
+  for p in $pids; do kill -9 "$p" 2>/dev/null || true; done
+  sleep 1
+  alive=""
+  for p in $pids; do bridge_pid_gone "$p" || alive="$alive $p"; done
+  if [ -n "$alive" ]; then
+    echo "    WARNING: the previous model server (pid(s):$alive) did not stop and still holds the model port." >&2
+    echo "             The install continues — the new model server cannot bind while it lives. End it with:  kill -9$alive" >&2
+  fi
+  return 0
 }
 
 # --- Which Linux family is this? (build .70, issue #48) ---
@@ -1045,9 +1143,14 @@ if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
     echo "ERROR: the previous install's bridge could not be stopped — aborting before anything is carried." >&2
     exit 1
   fi
+  # Build 12 (#201): the old model server ends BY PID and the
+  # unit's paperwork is retired without stopping anything —
+  # `disable --now` here was the same group-shaped signal the
+  # homecoming leg below is rid of.
+  stop_llamafile "$OLD_DIR" || true
   UNIT_FILE="$HOME/.config/systemd/user/navi-llamafile.service"
   if [ -f "$UNIT_FILE" ] && grep -q "$OLD_DIR" "$UNIT_FILE"; then
-    systemctl --user disable --now navi-llamafile.service 2>/dev/null || true
+    systemctl --user disable navi-llamafile.service 2>/dev/null || true
     rm -f "$UNIT_FILE"
     systemctl --user daemon-reload 2>/dev/null || true
     echo "    old boot service (pointing at $OLD_DIR) disabled and removed"
@@ -1071,28 +1174,53 @@ if [ -d "$OLD_DIR" ] && [ "$OLD_DIR" != "$INSTALL_DIR" ]; then
 fi
 
 # --- The homecoming migration: the legacy tree goes quiet ------
-# Boot services pointing at the legacy tree are retired first
-# (they would resurrect its bridge mid-carry — Restart=on-
-# failure is doing exactly what it promises); this install
-# re-registers services against the new home after the swap.
-# Then the legacy bridge and window are stopped with the proven
-# machinery, so state is copied from a quiet tree, never raced.
+# Build 12 (#201) — the ORDER of this leg is a safety property,
+# not a preference. THE NO-ANCESTRY-SIGNALLING INVARIANT: an
+# apply may end exactly one process by signal — the bridge it
+# replaces, by its proven pid, through the stop machinery
+# above. It may never use a group-shaped signal — a systemd
+# unit stop, a process-group kill, a cgroup kill — because
+# those cannot tell the bridge apart from the apply's own
+# ancestry: the apply helper descends from the bridge, and
+# this installer descends from the helper. Build 11's first
+# unattended pull is the proof by counterexample: this leg
+# retired the legacy units with `disable --now`, stopping the
+# bridge's unit signalled the bridge, the helper and the
+# installer together, and both field machines' migrations died
+# in their opening seconds, before a byte was carried.
+#
+# So: the legacy bridge, model server and window are stopped
+# BY PID first. Only then is the units' paperwork retired —
+# disable + remove + reload, stopping nothing — because a unit
+# left defined would resurrect its bridge mid-carry
+# (Restart=on-failure keeps its promises), and a carry is
+# copied from a quiet tree, never raced. A final stop proof
+# after the retirement closes the window: if anything did come
+# back while the paperwork was being retired, it is stopped by
+# pid now, with no definition left to resurrect it again. This
+# install re-registers services against the new home after the
+# swap.
 if [ -n "$LEGACY_MIGRATION" ]; then
   echo "==> The homecoming: carrying the legacy install at $LEGACY_DIR into $INSTALL_DIR"
-  for _u in navi-bridge.service navi-llamafile.service; do
-    _uf="$HOME/.config/systemd/user/$_u"
-    if [ -f "$_uf" ] && grep -q "$LEGACY_DIR" "$_uf"; then
-      systemctl --user disable --now "$_u" 2>/dev/null || true
-      rm -f "$_uf"
-      echo "    boot service $_u (pointing at the legacy tree) retired — services are re-registered against the new home below"
-    fi
-  done
-  systemctl --user daemon-reload 2>/dev/null || true
   if ! stop_bridge "$LEGACY_DIR"; then
     echo "ERROR: the legacy install's bridge could not be stopped — aborting before anything is carried." >&2
     exit 1
   fi
+  stop_llamafile "$LEGACY_DIR" || true
   stop_shell "$LEGACY_DIR" || true
+  for _u in navi-bridge.service navi-llamafile.service; do
+    _uf="$HOME/.config/systemd/user/$_u"
+    if [ -f "$_uf" ] && grep -q "$LEGACY_DIR" "$_uf"; then
+      systemctl --user disable "$_u" 2>/dev/null || true
+      rm -f "$_uf"
+      echo "    boot service $_u (pointing at the legacy tree) retired — its processes were already stopped by pid above; services are re-registered against the new home below"
+    fi
+  done
+  systemctl --user daemon-reload 2>/dev/null || true
+  if ! stop_bridge "$LEGACY_DIR"; then
+    echo "ERROR: the legacy install's bridge could not be stopped after its services were retired — aborting before anything is carried." >&2
+    exit 1
+  fi
 fi
 
 # --- Stage assembly (piece B) ----------------------------------

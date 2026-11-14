@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.11"
+BRIDGE_BUILD = "2026-11-14.12"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.2.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 11
+SHIPPED_BUILD_SEQ = 12
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -11374,6 +11374,73 @@ _update_apply_lock = threading.Lock()
 _update_apply_state = {"running": False}
 
 
+def _apply_helper_spawn_argv(helper_path, job_path, tag_dir):
+    # Build 12 (#201) — the helper escape, and the invariant it
+    # serves. THE NO-ANCESTRY-SIGNALLING INVARIANT: an apply may
+    # end exactly one process by signal — the bridge it replaces,
+    # by its proven pid, through the installer's stop machinery.
+    # It may never use a group-shaped signal — a systemd unit
+    # stop, a process-group kill, a cgroup kill — because those
+    # mechanisms cannot tell the bridge apart from the apply's
+    # own ancestry: the helper descends from the bridge, and the
+    # installer descends from the helper. Incident 21 is the
+    # tuition: v0.2.0e — Build 11's first unattended pull died
+    # within two seconds on both field machines when the
+    # installer's homecoming retired the bridge's boot unit with
+    # `systemctl --user disable --now` — stopping the unit
+    # signalled every process in it (the bridge, the helper and
+    # the installer together; a new session is not an escape
+    # from a cgroup), and the migration never ran.
+    #
+    # The installer's half of the fix is ordering: it stops the
+    # bridge by pid and retires the unit files without stopping
+    # anything. This is the bridge's half: the helper is spawned
+    # OUTSIDE this bridge's systemd unit, in a transient scope
+    # of its own via systemd-run, so no stop of the bridge's
+    # unit — this installer's, a future installer's, an
+    # operator's — can ever reach it. In scope mode systemd-run
+    # leaves a waiting parent whose lifetime tracks the
+    # helper's, so the pid recorded on the apply record keeps
+    # its meaning for the panel and the watchdog. Where no
+    # scope can be had (no systemd-run, or no user manager
+    # answers — the Docker shape), the spawn falls back to the
+    # plain own-session spawn and SAYS SO, in the step log and
+    # on the record: on such a machine the installer's ordering
+    # is the protection, and nothing pretends otherwise.
+    # Returns (argv, mode, note).
+    base = [sys.executable, helper_path, job_path]
+    sd = shutil.which("systemd-run")
+    if sd:
+        probe = None
+        try:
+            probe = subprocess.run(
+                [sd, "--user", "--scope", "--collect", "-q",
+                 "/bin/true"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=10)
+        except Exception:
+            probe = None
+        if probe is not None and probe.returncode == 0:
+            unit = ("apex-apply-"
+                    + re.sub(r"[^0-9A-Za-z_-]+", "-", str(tag_dir))
+                    + "-" + str(os.getpid()))
+            argv = [sd, "--user", "--scope", "--collect", "-q",
+                    "--unit=" + unit, "--"] + base
+            return (argv, "systemd-run-scope",
+                    "the apply helper runs in its own transient "
+                    "scope (" + unit + ".scope), outside this "
+                    "bridge's systemd unit — a stop of the "
+                    "bridge's unit during the install cannot "
+                    "signal it (#201).")
+    return (base, "plain-session",
+            "systemd-run could not give the apply helper a scope "
+            "of its own here (not installed, or no user manager "
+            "answers), so it runs plainly in its own session, "
+            "inside this bridge's unit — the installer's "
+            "ordering is this run's protection: it stops the "
+            "bridge by pid and never stops its unit (#201).")
+
+
 def _run_update_apply(cfg):
     # The apply worker (build .56): download -> verify -> stage on
     # this thread, writing each step into the update record, then
@@ -11683,21 +11750,39 @@ def _run_update_apply(cfg):
             }
             job_path = os.path.join(stage_root, "apply-job.json")
             helper_path = os.path.join(stage_root, "apply-helper.py")
+            # Build 12 (#201): decide HOW the helper is spawned
+            # before the job is written — the mode rides the job
+            # and the record, and is announced as the step log's
+            # first line, ahead of the helper's own first entry,
+            # so the trace always says which protection this run
+            # actually has (see _apply_helper_spawn_argv).
+            spawn_argv, spawn_mode, spawn_note = \
+                _apply_helper_spawn_argv(helper_path, job_path, tag_dir)
+            job["spawnMode"] = spawn_mode
             with open(job_path, "w") as f:
                 json.dump(job, f)
             with open(helper_path, "w") as f:
                 f.write(APPLY_HELPER_PY)
             os.chmod(helper_path, 0o755)
+            try:
+                with open(job["traceLog"], "a") as tf:
+                    tf.write(time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        + " [starting] helper-spawn — " + spawn_note
+                        + "\n")
+            except Exception:
+                pass
             logf = open(os.path.join(stage_root, "apply.log"), "ab")
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, helper_path, job_path],
+                    spawn_argv,
                     cwd=stage_root, stdin=subprocess.DEVNULL,
                     stdout=logf, stderr=subprocess.STDOUT,
                     start_new_session=True, close_fds=True)
             finally:
                 logf.close()
             record["helperPid"] = proc.pid
+            record["helperSpawn"] = spawn_mode
             record["traceLog"] = job["traceLog"]
             _write_update_result(record)
         except Exception as e:
