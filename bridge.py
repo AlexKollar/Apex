@@ -408,11 +408,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.04"
+BRIDGE_BUILD = "2026-11-15.05"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 4
+SHIPPED_BUILD_SEQ = 5
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -19198,6 +19198,15 @@ def _chat_normalize(rec):
     case_ref = rec.get("case")
     if isinstance(case_ref, str) and re.match(r"^[a-z0-9][a-z0-9-]*$", case_ref):
         out["case"] = case_ref
+    # Import provenance (v0.3.0e Build 5, #218): a chat minted by
+    # convergence as another conversation's imported copy carries
+    # that conversation's id in "fromSyncOf". It is the record's
+    # sync identity — convergence, dedupe, and the tombstones all
+    # key on it — so it survives normalization exactly like the
+    # case binding does.
+    origin_ref = rec.get("fromSyncOf")
+    if isinstance(origin_ref, str) and _chat_clean_id(origin_ref):
+        out["fromSyncOf"] = origin_ref
     return out
 
 
@@ -19236,17 +19245,34 @@ def chats_all():
     return out
 
 
-def chat_delete(cid):
+def chat_delete(cid, _record=True):
     cid = _chat_clean_id(cid)
     if cid is None:
         return False
     if cid == MAIN_CHAT_ID:
         return False
+    rec = None
+    try:
+        with open(_chat_path(cid), encoding="utf-8") as f:
+            rec = _chat_normalize(json.load(f))
+    except Exception:
+        rec = None
     try:
         os.remove(_chat_path(cid))
         # Build 3 (#177): the deletion is tombstoned, so a sync
         # with another machine's older copy cannot resurrect it.
-        sync_record_tombstone("chats", cid)
+        # Build 5 (#218): the tombstone is recorded for the
+        # conversation as well as the id — an imported copy can
+        # be re-derived under a different id by an older build's
+        # convergence, and the conversation key is what refuses
+        # its return. (_record=False is the sync apply path: the
+        # merged tombstone set it applies already carries both,
+        # and re-recording would creep the deletion time forward
+        # on every seat that applies it.)
+        if _record:
+            sync_record_tombstone("chats", cid)
+            if rec is not None:
+                sync_record_tombstone("chats", _chat_conv_tomb_key(rec))
         return True
     except Exception:
         return False
@@ -19295,12 +19321,22 @@ def chats_replace_all(records, uploads):
                     # never dropped by a wholesale replace, and
                     # never tombstoned.
                     continue
+                dropped_rec = None
+                try:
+                    with open(os.path.join(CHATS_DIR, name), encoding="utf-8") as f:
+                        dropped_rec = _chat_normalize(json.load(f))
+                except Exception:
+                    dropped_rec = None
                 try:
                     os.remove(os.path.join(CHATS_DIR, name))
                     # Build 3 (#177): a thread the writing window
                     # dropped is a deletion like any other — it is
                     # tombstoned so sync cannot bring it back.
+                    # Build 5 (#218): its conversation is tombstoned
+                    # with it, for the same reason as chat_delete.
                     sync_record_tombstone("chats", name[:-5])
+                    if dropped_rec is not None:
+                        sync_record_tombstone("chats", _chat_conv_tomb_key(dropped_rec))
                 except Exception:
                     pass
     if uploads is not None:
@@ -19334,18 +19370,134 @@ def _chat_merge_verdict(cur, rec):
     return "sibling"
 
 
+def _chat_origin(rec):
+    # The conversation a record belongs to, for sync identity
+    # (Build 5, #218): a minted import carries its origin in
+    # fromSyncOf; a legacy minted sibling (Build 4 and earlier)
+    # carries it in its id ("<origin>-sync-<stamp>"); anything
+    # else is its own origin.
+    o = rec.get("fromSyncOf")
+    if isinstance(o, str) and _chat_clean_id(o):
+        return o
+    cid = str(rec.get("id") or "")
+    if "-sync-" in cid:
+        base = cid.split("-sync-", 1)[0]
+        if _chat_clean_id(base):
+            return base
+    return cid
+
+
+def _chat_conv_key(rec):
+    # A conversation's identity across seats and rounds: its
+    # origin id plus its birth stamp. Two seats' main chats are
+    # both id "1" but were born at different moments — different
+    # conversations, and this key is what can tell them apart.
+    created = rec.get("createdAt")
+    return (_chat_origin(rec), created if isinstance(created, (int, float)) else 0)
+
+
+def _chat_conv_tomb_key(rec):
+    origin, created = _chat_conv_key(rec)
+    return "conv:" + origin + "|" + repr(created)
+
+
+def _chat_sibling_id(rec):
+    # The deterministic import identity (Build 5, #218): the
+    # same foreign conversation derives the same sibling id on
+    # every round and on every seat, so a tombstone, a dedupe,
+    # and the next convergence all recognize it. Build 4 and
+    # earlier minted a fresh timestamp id per import event —
+    # an identity nothing could recognize twice, which is
+    # exactly how deleted "(from sync)" copies kept coming
+    # back under new names.
+    origin, created = _chat_conv_key(rec)
+    digest = hashlib.sha256((origin + "|" + repr(created)).encode()).hexdigest()[:10]
+    return origin + "-sync-" + digest
+
+
+def _chat_local_maps(rows):
+    local = {str(r["id"]): r for r in rows}
+    by_conv = {}
+    for r in rows:
+        by_conv.setdefault(_chat_conv_key(r), r)
+    return local, by_conv
+
+
+def _chats_dedupe_imports():
+    # Build 5 (#218): a seat that ran Build 4 or earlier can
+    # hold several minted copies of ONE imported conversation
+    # (a fresh timestamp id per round — Alex's store held
+    # three copies of one main session, two byte-identical).
+    # Group minted imports by conversation identity; where the
+    # copies form one lineage (each a prefix of the richest),
+    # keep the richest and remove the rest, tombstoning the
+    # removed ids so the other seat's copies of them are
+    # refused at the door. Copies that genuinely diverged (no
+    # prefix relation) both survive, as they always have.
+    rows = chats_all()
+    groups = {}
+    for r in rows:
+        if str(r["id"]) == MAIN_CHAT_ID:
+            continue
+        if "-sync-" not in str(r["id"]) and not r.get("fromSyncOf"):
+            continue
+        groups.setdefault(_chat_conv_key(r), []).append(r)
+    removed = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: (len(r.get("messages") or []), r.get("updatedAt") or 0))
+        richest = group[-1]
+        for r in group[:-1]:
+            if _chat_msgs_prefix(r, richest):
+                try:
+                    os.remove(_chat_path(str(r["id"])))
+                    sync_record_tombstone("chats", str(r["id"]))
+                    removed += 1
+                except Exception:
+                    pass
+    return removed
+
+
+def _chat_write_as(rec, target):
+    # Land rec's thread under target's identity: the target
+    # keeps its id, its title, and its import provenance — the
+    # incoming conversation continues the copy that already
+    # represents it here, instead of minting another.
+    out = dict(rec)
+    out["id"] = target["id"]
+    out["title"] = target.get("title") or rec.get("title") or "Chat"
+    if target.get("fromSyncOf"):
+        out["fromSyncOf"] = target["fromSyncOf"]
+    else:
+        out.pop("fromSyncOf", None)
+    return chat_write(out)
+
+
 def chats_converge_preview(incoming):
     summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0}
     rows = chats_all()
-    local = {str(r["id"]): r for r in rows}
+    local, by_conv = _chat_local_maps(rows)
     held_keys = {_chat_msgs_key(r) for r in rows}
     for raw in (incoming or []):
         rec = _chat_normalize(raw)
         if rec is None:
             continue
         cur = local.get(str(rec["id"]))
+        if cur is not None and _chat_conv_key(cur) != _chat_conv_key(rec):
+            cur = None  # same id, different conversation (two seats' mains)
         if cur is None:
+            rep = by_conv.get(_chat_conv_key(rec))
+            if rep is not None and str(rep["id"]) != str(rec["id"]):
+                cur = rep
+        if cur is None and str(rec["id"]) not in local:
             summary["added"] += 1
+        elif cur is None:
+            holder = local.get(str(rec["id"]))
+            if holder is not None and _chat_msgs_prefix(rec, holder):
+                summary["kept"] += 1
+            else:
+                summary["siblings"] += 1  # the id is held by another conversation
         else:
             v = _chat_merge_verdict(cur, rec)
             if v == "sibling" and _chat_msgs_key(rec) in held_keys:
@@ -19358,43 +19510,104 @@ def chats_converge(incoming, incoming_uploads=None):
     # Merging a FOREIGN copy (backup restore / badge sync) into
     # this store — see the section header for the rules. Returns a
     # summary the caller can speak out loud.
-    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "uploads": 0}
+    # Build 5 (#218): identity is by CONVERSATION (origin id +
+    # createdAt — see _chat_conv_key), not by chat id alone and
+    # never by import event. A foreign copy whose id is held by a
+    # different conversation (two seats' main chats) is judged
+    # against its own conversation's representative here; a fork
+    # parks under the deterministic _chat_sibling_id; and the
+    # store first dedupes the timestamp-id copies older builds
+    # minted of a single conversation.
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "uploads": 0,
+               "deduped": _chats_dedupe_imports()}
     rows = chats_all()
-    local = {str(r["id"]): r for r in rows}
+    local, by_conv = _chat_local_maps(rows)
     held_keys = {_chat_msgs_key(r) for r in rows}
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     day = time.strftime("%Y-%m-%d", time.localtime())
     for raw in (incoming or []):
         rec = _chat_normalize(raw)
         if rec is None:
             continue
+        key = _chat_conv_key(rec)
         cur = local.get(str(rec["id"]))
+        if cur is not None and _chat_conv_key(cur) != key:
+            # The id is taken by a DIFFERENT conversation (the
+            # standing case: two seats' main chats, both id "1").
+            # This record is judged against its own conversation's
+            # representative below, never against the id's holder.
+            cur = None
         if cur is None:
-            chat_write(rec)
+            rep = by_conv.get(key)
+            if rep is not None and str(rep["id"]) != str(rec["id"]):
+                # This conversation already has a representative
+                # here — an imported copy minted by an earlier
+                # round, under whatever id that round gave it.
+                # Converge into it: identity by conversation,
+                # not by import event (Build 5, #218).
+                cur = rep
+        if cur is None and str(rec["id"]) not in local:
+            saved = chat_write(rec)
+            if saved is not None:
+                local[str(saved["id"])] = saved
+                by_conv.setdefault(_chat_conv_key(saved), saved)
+                held_keys.add(_chat_msgs_key(saved))
             summary["added"] += 1
             continue
-        verdict = _chat_merge_verdict(cur, rec)
+        if cur is None:
+            # No representative, but the id itself is held by a
+            # different conversation — the record parks as this
+            # conversation's sibling below; it never writes
+            # under the held id. One exception: a record the
+            # holder already contains line for line (an older
+            # generation of the holder's own thread, arriving
+            # under a rewritten birth stamp) is simply kept —
+            # parking it would duplicate content the holder
+            # already has.
+            holder = local.get(str(rec["id"]))
+            if holder is not None and _chat_msgs_prefix(rec, holder):
+                summary["kept"] += 1
+                continue
+            verdict = "sibling"
+        else:
+            verdict = _chat_merge_verdict(cur, rec)
         if verdict == "sibling" and _chat_msgs_key(rec) in held_keys:
             # The same diverged copy was already converged once and
             # its sibling is on file — a repeated sync of the same
             # backup must not mint a fresh sibling every time.
             verdict = "kept"
         if verdict == "replaced":
-            chat_write(rec)
+            if str(cur["id"]) == str(rec["id"]):
+                saved = chat_write(rec)
+            else:
+                saved = _chat_write_as(rec, cur)
+            if saved is not None:
+                local[str(saved["id"])] = saved
+                held_keys.add(_chat_msgs_key(saved))
             summary["replaced"] += 1
         elif verdict == "kept":
             summary["kept"] += 1
         else:
+            # A genuine fork parks as a sibling — under the
+            # conversation's deterministic import id (Build 5,
+            # #218), so the next round recognizes this exact
+            # copy instead of minting another.
             sib = dict(rec)
-            base = str(rec["id"]) + "-sync-" + stamp
+            base = _chat_sibling_id(rec)
             nid = base
             n = 2
             while os.path.exists(_chat_path(nid)):
+                holder = local.get(nid)
+                if holder is not None and _chat_msgs_key(holder) == _chat_msgs_key(rec):
+                    break  # this exact copy is already parked here
                 nid = base + "-" + str(n)
                 n += 1
             sib["id"] = nid
-            sib["title"] = (str(rec.get("title") or "Chat") + " (from sync " + day + ")")[:200]
-            chat_write(sib)
+            sib["fromSyncOf"] = key[0]
+            sib["title"] = (str(rec.get("title") or "Chat").split(" (from sync ")[0] + " (from sync " + day + ")")[:200]
+            saved = chat_write(sib)
+            if saved is not None:
+                local[str(saved["id"])] = saved
+                held_keys.add(_chat_msgs_key(saved))
             summary["siblings"] += 1
     if incoming_uploads is not None:
         def _up_key(r):
@@ -19409,7 +19622,7 @@ def chats_converge(incoming, incoming_uploads=None):
                 summary["uploads"] += 1
         if summary["uploads"]:
             chats_save_uploads(list(merged.values()))
-    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"]
+    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"] + summary["deduped"]
     return summary
 
 
@@ -20180,7 +20393,7 @@ def _sync_apply_tombstones(tombs, summary):
         if rec is None:
             continue
         if (rec.get("updatedAt") or 0) <= at:
-            if chat_delete(cid):
+            if chat_delete(cid, _record=False):
                 summary["removedChats"] += 1
         else:
             dropped["chats"].add(str(cid))
@@ -20298,6 +20511,7 @@ def sync_apply(cfg, fetched):
     # summary the card speaks.
     summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
                "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
+               "chatsDeduped": 0,
                "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
                "deckFilesPulled": 0, "cardsImported": 0, "docsPulled": 0,
                "entriesPulled": 0, "seatChanged": False,
@@ -20330,22 +20544,49 @@ def sync_apply(cfg, fetched):
     # it — it is the resurrection the tombstone exists to refuse.
     # (The phase above only deletes copies that exist locally;
     # without this filter, convergence would faithfully re-add
-    # every deleted thread from the other machine's store.) A
-    # remote copy stamped NEWER than the deletion is genuine
-    # later work: it converges in, and the tombstone drops.
+    # every deleted thread from the other machine's store.)
+    # Build 5 (#218): a tombstone covers its CONVERSATION as
+    # well as its id (the "conv:" keys chat_delete records), and
+    # a remote copy stamped NEWER than the newest applicable
+    # tombstone is genuine later work — but it does not restore
+    # the deleted identity. It converges into the conversation's
+    # surviving representative when one lives here; otherwise it
+    # lands as a NEW chat (a revival generation under a fresh
+    # deterministic id), and the deleted copy stays deleted.
+    # The tombstones themselves are kept: they are the record
+    # of the operator's act, pruned only by the standing
+    # 90-day rule in _sync_tombstones_pruned.
     chat_tombs = merged.get("chats") or {}
     if chat_tombs:
+        _local_by_id, _local_by_conv = _chat_local_maps(chats_all())
+        _day = time.strftime("%Y-%m-%d", time.localtime())
         kept = []
         for raw in remote_chats:
             rec = _chat_normalize(raw)
             if rec is None:
                 continue
-            at = chat_tombs.get(str(rec["id"]))
-            if at is not None and (rec.get("updatedAt") or 0) <= at:
+            _ats = [chat_tombs.get(str(rec["id"])),
+                    chat_tombs.get(_chat_conv_tomb_key(rec))]
+            _ats = [a for a in _ats if a is not None]
+            if not _ats:
+                kept.append(raw)
                 continue
-            if at is not None:
-                dropped["chats"].add(str(rec["id"]))
-            kept.append(raw)
+            newest = max(_ats)
+            if (rec.get("updatedAt") or 0) <= newest:
+                continue
+            if str(rec["id"]) in _local_by_id:
+                kept.append(raw)
+                continue
+            _rep = _local_by_conv.get(_chat_conv_key(rec))
+            if _rep is not None and str(_rep["id"]) != str(rec["id"]):
+                kept.append(raw)
+                continue
+            revival = dict(raw)
+            revival["id"] = _chat_sibling_id(rec) + "-r" + str(int(newest))
+            revival["fromSyncOf"] = _chat_origin(rec)
+            _base = str(rec.get("title") or "Chat").split(" (from sync ")[0]
+            revival["title"] = (_base + " (from sync " + _day + ")")[:200]
+            kept.append(revival)
         remote_chats = kept
     for kind in ("chats", "cases", "vault"):
         for key in dropped[kind]:
@@ -20357,6 +20598,7 @@ def sync_apply(cfg, fetched):
     summary["chatsAdded"] = conv["added"]
     summary["chatsReplaced"] = conv["replaced"]
     summary["chatsSiblings"] = conv["siblings"]
+    summary["chatsDeduped"] = conv.get("deduped", 0)
     if conv["siblings"]:
         for c in chats_all():
             if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
@@ -20369,6 +20611,7 @@ def sync_apply(cfg, fetched):
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
                           + summary["removedNotes"] + summary["chatsAdded"]
                           + summary["chatsReplaced"] + summary["chatsSiblings"]
+                          + summary["chatsDeduped"]
                           + summary["casesAdded"] + summary["casesUpdated"]
                           + summary["deckFilesPulled"] + summary["cardsImported"]
                           + summary["docsPulled"] + summary["entriesPulled"]
