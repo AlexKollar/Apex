@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <style>
-  :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
+  :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --blue:#58a6ff; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   /* Curated themes (Settings): the same variables, eleven palettes.
      Nocturne Row is the default (issue #118); the others swap the
      whole variable set on <body data-theme>, so every view — selects and
@@ -15,7 +15,7 @@
      family: Polar Night backgrounds, Snow Storm text, Frost accents,
      muted Aurora highlights. Code and terminal surfaces stay dark
      in the light theme (their text is pinned light below). */
-  body[data-theme="light"] { color-scheme:light; --bg:#e8edf1; --panel:#f7fafc; --panel2:#eef3f6; --line:#b3c3cf; --text:#12212b; --dim:#43586a; --cy:#0284c7; --am:#b45309; --red:#dc2626; --green:#059669; --ver-alpha:#dc2626; --ver-beta:#b45309; --ver-stable:#0284c7; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
+  body[data-theme="light"] { color-scheme:light; --bg:#e8edf1; --panel:#f7fafc; --panel2:#eef3f6; --line:#b3c3cf; --text:#12212b; --dim:#43586a; --cy:#0284c7; --blue:#1d6fd1; --am:#b45309; --red:#dc2626; --green:#059669; --ver-alpha:#dc2626; --ver-beta:#b45309; --ver-stable:#0284c7; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   body[data-theme="light"] .hlayer { --syn-cmd:#047857; --syn-bad:#b91c1c; --syn-flag:#0369a1; --syn-str:#92400e; --syn-path:#1d4ed8; --syn-kw:#a21caf; --syn-num:#6d28d9; --syn-op:#9d174d; }
   body[data-theme="light"] .ed-code pre, body[data-theme="light"] .hlayer { color:#e6f1f5; }
   body[data-theme="light"] .ed-gutter, body[data-theme="light"] .ed-mini pre { color:#9fb3c8; }
@@ -791,6 +791,24 @@
      carrier segment elides first; the fedinet and the
      answerer always survive. */
   .meshpill.fedpill { color:var(--green); border-color:color-mix(in srgb, var(--green) 55%, transparent); background:color-mix(in srgb, var(--green) 12%, transparent); }
+  /* The route pill (v0.4.1e, #228): the composer's one route
+     control. Its face IS the bridge's stored route for the
+     chat — Local neutral, Mesh blue, Federation green in the
+     fedinet's name, and a mode whose access was lost reads
+     Not Available in amber rather than claiming a road that
+     is not there. */
+  .modehint .routepill { font-weight:700; min-height:32px; padding:4px 12px; }
+  .modehint .routepill-mesh { border-color:color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); background:color-mix(in srgb, var(--blue) 10%, transparent); }
+  .modehint .routepill-fed { border-color:color-mix(in srgb, var(--green) 60%, transparent); color:var(--green); background:color-mix(in srgb, var(--green) 10%, transparent); }
+  .modehint .routepill-na { border-color:color-mix(in srgb, var(--am) 60%, transparent); color:var(--am); }
+  .modehint .route-msg { font-size:11px; color:var(--am); }
+  @media (max-width:800px) { .modehint .routepill { min-height:44px; } }
+  /* The Wire's own tab bar (v0.4.1e, #230): the four families
+     as pages inside The Wire, one tap apart, ≥44px targets. */
+  .wiretabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .wiretabs button { min-height:44px; padding:8px 16px; font-weight:700; }
+  .wiretabs button .wt-count { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; font-weight:400; color:var(--dim); margin-left:6px; }
+  .wiretabs button.act .wt-count { color:inherit; }
   .meshpill.fedpill .fedseg-elide { display:none; }
   @media (max-width:800px) {
     .meshpill.fedpill .fedseg-mid { display:none; }
@@ -828,11 +846,9 @@
   .card:hover { border-color:#2e4356; }
   @keyframes view-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
   #view-root.view-in { animation:view-in var(--motion-view) ease both; }
-  /* Navi's typing indicator + presence pulse */
-  @keyframes navi-typing { 0%,60%,100% { transform:translateY(0); opacity:.35; } 30% { transform:translateY(-3px); opacity:1; } }
-  .tdots { display:inline-flex; gap:3px; align-items:center; }
-  .tdots i { width:6px; height:6px; border-radius:50%; background:var(--cy); animation:navi-typing 1.1s ease-in-out infinite; }
-  .tdots i:nth-child(2) { animation-delay:.15s; } .tdots i:nth-child(3) { animation-delay:.3s; }
+  /* Presence pulse (the typing indicator that used to share
+     this note was removed in v0.4.1e, #228 — the top banner
+     carries no typing state anymore). */
   @keyframes navi-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
   .pdot { animation:navi-pulse 2.2s ease-in-out infinite; }
   /* Chip Studio code editor: highlighted pre behind a transparent
@@ -1649,10 +1665,91 @@ try { var savedChatMode = localStorage.getItem("navi.chatMode"); if (savedChatMo
 function persistChatMode() { try { localStorage.setItem("navi.chatMode", chatMode); } catch (e) {} }
 // Navi Mesh (Ring 1, build .85): the per-chat local-only escape —
 // when latched, this chat session never borrows a paired machine.
-// Persisted per chat session exactly like the chat-mode latch.
-var meshLocal = false;
-try { meshLocal = localStorage.getItem("navi.meshLocal") === "1"; } catch (e) {}
-function persistMeshLocal() { try { localStorage.setItem("navi.meshLocal", meshLocal ? "1" : "0"); } catch (e) {} }
+// The chat's route (v0.4.1e, #228): the composer's pill is
+// the route control, and the BRIDGE is its one source of
+// truth — this page holds only the bridge's last answer for
+// the active chat (chatRoute), renders the face from it, and
+// asks the bridge to flip. Face, stored state, and the view
+// after a reload agree because all three read the same
+// answer; a refusal lands in chatRouteMsg ON the pill row and
+// the face does not move. (The pre-#228 "This chat only"
+// latch kept its state in this page's localStorage and could
+// disagree with the road the bridge actually took; that
+// latch is retired, and the bridge still honors a meshLocal
+// field from an older page caught mid-update.)
+var chatRoute = null;        // the bridge's /api/chat/route answer for chatRouteChatId
+var chatRouteChatId = null;  // the chat that answer belongs to
+var chatRouteMsg = "";       // a flip refusal, in the bridge's words, shown on the pill row
+function refreshChatRoute() {
+  var cid = activeChatId;
+  if (CONFIG.backend !== "live" || cid === null || cid === undefined) return;
+  chatRouteChatId = cid;
+  fetch("/api/chat/route?chatId=" + encodeURIComponent(cid)).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok && String(activeChatId) === String(cid)) { chatRoute = j; if (view === "Chat") render(); }
+  }).catch(function () {});
+}
+function routeStops() {
+  // The stops a flip can land on, in cycle order, computed
+  // from the bridge's access table: Local always; Mesh when a
+  // paired machine can be borrowed from; one stop per joined
+  // federation with a borrowable member. A mode without
+  // access is never a stop — it cannot be flipped into.
+  var stops = [{ mode: "local" }];
+  var avail = (chatRoute && chatRoute.available) || { mesh: false, fedinets: [] };
+  if (avail.mesh) stops.push({ mode: "mesh" });
+  (avail.fedinets || []).forEach(function (f) { stops.push({ mode: "federation", fedinetId: f.id, name: f.name }); });
+  return stops;
+}
+function routePillHtml() {
+  if (!chatRoute) return "<button type='button' id='chat-route-pill' class='routepill' disabled aria-label='Loading this chat's route from the bridge'>Route…</button>";
+  var eff = chatRoute.effective || { mode: "local" };
+  var stored = chatRoute.route || null;
+  var avail = chatRoute.available || { mesh: false, fedinets: [] };
+  var cls = "routepill", face = "", label = "";
+  if (eff.mode === "mesh") {
+    if (stored && stored.mode === "mesh" && !avail.mesh) {
+      face = "Mesh Not Available"; cls += " routepill-na";
+      label = "This chat's route is the Mesh, but no paired machine can be borrowed from right now — replies answer locally until one can. Press to choose another route.";
+    } else {
+      face = "Connected to Mesh"; cls += " routepill-mesh";
+      label = "Route: Connected to Mesh — this chat's model work borrows over the pairwise Mesh. Press to change the route.";
+    }
+  } else if (eff.mode === "federation") {
+    var fed = null;
+    (avail.fedinets || []).forEach(function (f) { if (f.id === eff.fedinetId) fed = f; });
+    if (fed) {
+      face = fed.name; cls += " routepill-fed";
+      label = "Route: " + fed.name + " — this chat's model work borrows through that federation. Press to change the route.";
+    } else {
+      face = "Federation Not Available"; cls += " routepill-na";
+      label = "This chat's federation route is not available right now — replies answer locally. Press to choose another route.";
+    }
+  } else {
+    face = "Use Local Resources";
+    label = "Route: Use Local Resources — this chat's model work runs on this machine. Press to change the route.";
+  }
+  var h = "<button type='button' id='chat-route-pill' class='" + cls + "' aria-label='" + esc(label) + "' title='" + esc(label) + "'>" + esc(face) + "</button>";
+  if (chatRouteMsg) h += "<span class='route-msg' role='status'>" + esc(chatRouteMsg) + "</span>";
+  return h;
+}
+function cycleChatRoute() {
+  if (!chatRoute) return;
+  var stops = routeStops();
+  var eff = chatRoute.effective || { mode: "local" };
+  var idx = -1;
+  for (var i = 0; i < stops.length; i++) {
+    if (stops[i].mode === eff.mode && (eff.mode !== "federation" || stops[i].fedinetId === eff.fedinetId)) { idx = i; break; }
+  }
+  var next = stops[(idx + 1) % stops.length];
+  if (!next) return;
+  if (next.mode === eff.mode && next.fedinetId === eff.fedinetId) return;
+  chatRouteMsg = "";
+  fetch("/api/chat/route", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: activeChatId, route: next }) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) { chatRoute = j; chatRouteChatId = activeChatId; }
+    else chatRouteMsg = (j && j.error) || "The bridge refused that route — the route is unchanged.";
+    render();
+  }).catch(function () { chatRouteMsg = "The bridge did not answer — the route is unchanged."; render(); });
+}
 var meshBorrowNoticed = false;  // the first-borrow notice fires once per page session
 var meshPrivacyAcked = false;   // the first-enable borrowing privacy copy, seen and saved past
 try { meshPrivacyAcked = localStorage.getItem("navi.meshPrivacyAck") === "1"; } catch (e) {}
@@ -1778,8 +1875,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-15.06";
-var SHIPPED_BUILD_SEQ = 6;
+var BRIDGE_BUILD = "2026-11-15.07";
+var SHIPPED_BUILD_SEQ = 7;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2884,6 +2981,16 @@ function intelItemHtml(it, sel) {
 // open in the in-app reader where extraction works; where it
 // cannot, the fallback is named, never faked.
 var intelTab = "home";
+// The selected Wire tab survives reload (v0.4.1e, #230):
+// every operator-driven tab change routes through
+// setIntelTab, which persists it; boot restores it here.
+// Retired keys (dashboard, cves) still normalize inside
+// threatIntelHtml, as before.
+try { intelTab = localStorage.getItem("navi.intelTab") || "home"; } catch (e) {}
+function setIntelTab(t) {
+  intelTab = t;
+  try { localStorage.setItem("navi.intelTab", t); } catch (e) {}
+}
 var wireState = null, wireFetching = false, wireMsg = "";
 var ctfState = null, ctfFetching = false, ctfMsg = "";
 var bountyState = null, bountyFetching = false, bountyMsg = "";
@@ -2935,8 +3042,8 @@ function threatIntelHtml() {
   // Retired keys land somewhere honest: the old Dashboard key
   // is the board itself now; the old CVEs scope folded into
   // the Center family.
-  if (intelTab === "dashboard") intelTab = "home";
-  if (intelTab === "cves") intelTab = "center";
+  if (intelTab === "dashboard") setIntelTab("home");
+  if (intelTab === "cves") setIntelTab("center");
   if (CONFIG.backend !== "live") {
     return "<h3>Home — The Wire</h3><div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>";
   }
@@ -2946,6 +3053,11 @@ function threatIntelHtml() {
     // the view (the nav is the way out), so no back row there.
     var fh = "";
     if (view === "ThreatIntel") fh += "<div class='row' style='margin-bottom:10px'><button class='ghost' data-tic-go='home' style='min-height:40px'>\u2190 Home — the board</button></div>";
+    // The family pages carry the Wire's tab bar (#230): the
+    // four families switch in place, inside The Wire — no
+    // bounce to Home or the Center to read a family's list.
+    // In the CTFBoard view the bar rides without the back row.
+    if (["news", "cve", "kev", "ctfs"].indexOf(intelTab) !== -1) fh += wireTabsHtml();
     if (intelTab === "cve") fh += wireKindHtml("cve");
     else if (intelTab === "kev") fh += wireKindHtml("kev");
     else if (intelTab === "ctfs") fh += ctfTabHtml();
@@ -2955,19 +3067,64 @@ function threatIntelHtml() {
     if (wireReader) fh += wireReaderHtml();
     return fh;
   }
-  intelTab = "home";
+  setIntelTab("home");
   var h = "<h3>Home — The Wire</h3>";
   h += "<p style='color:var(--dim)'>The fused awareness board: the situation at a glance, and each family — News (news only), CVE, KEV, the CTF board, the bounty board, and the Center — one tap away on its card. Each carries the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
   h += homeSurfaceHtml();
   if (wireReader) h += wireReaderHtml();
   return h;
 }
+function homeBriefHtml() {
+  // Navi's Brief (v0.4.1e, #230): Home's second resident —
+  // her summary of the picture, composed ONLY from data
+  // this page already holds: the wire's store, the Center's
+  // counts, the CTF board's lists, the Mesh state the frame
+  // polls, her model's state, and whether a call is live.
+  // No new pipelines, no assistant machinery: when a store
+  // has not answered yet, its line is simply absent rather
+  // than invented — and if nothing has answered, the brief
+  // says she is still gathering.
+  var hour = new Date().getHours();
+  var greet = hour < 5 ? "Still up" : hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
+  var lines = [];
+  if (wireState && wireState.items) {
+    var n = 0, c = 0, k = 0;
+    wireState.items.forEach(function (it) { if (it.kind === "news") n++; else if (it.kind === "cve") c++; else if (it.kind === "kev") k++; });
+    var dead = (wireState.sources || []).filter(function (x) { return !!x.error; }).length;
+    lines.push("The wire holds " + n + (n === 1 ? " headline" : " headlines") + ", " + c + " new CVEs and " + k + " KEV additions" + (dead ? " — and " + dead + (dead === 1 ? " feed is" : " feeds are") + " not answering; the News page names " + (dead === 1 ? "it" : "them") : " — every feed answering") + ".");
+  }
+  if (intelState && intelState.kevTotal !== undefined) {
+    lines.push("The Center's catalog holds " + (intelState.kevTotal || 0) + " known-exploited vulnerabilities; " + (intelState.matchedCount || 0) + " matched to you, with " + ((intelState.queue || []).length) + " in the queue.");
+  }
+  if (ctfState && ctfState.ok !== false) {
+    var run = ctfState.running || [], up = ctfState.upcoming || [];
+    if (run.length) lines.push(run.length + (run.length === 1 ? " CTF is" : " CTFs are") + " running now — " + run[0].title + (run.length > 1 ? " and " + (run.length - 1) + " more" : "") + ".");
+    else if (up.length) lines.push("Next on the CTF board: " + up[0].title + ", starting " + ticLocal(up[0].start) + ".");
+  }
+  if (meshState) {
+    if (meshState.enabled) {
+      var pn = (meshState.peers || []).length;
+      lines.push("The Mesh is on — " + pn + (pn === 1 ? " machine" : " machines") + " paired with this one.");
+    } else {
+      lines.push("The Mesh is off — she is answering from this machine alone.");
+    }
+  }
+  if (callState && callState !== "idle") lines.push("You are on a call with her right now — she is " + callState + ".");
+  lines.push(llama && llama.status === "running" ? "Her model is up — she is here." : "Her model is not running — she answers in command-line mode until it is back.");
+  var h = "<div class='card' id='tic-brief' style='margin-bottom:12px'><h3 style='margin-top:0'>Navi's Brief</h3><div class='small dim' style='margin-bottom:6px'>" + greet + ". Here is the picture as she holds it — the board below carries the rows; this is her read of them.</div>";
+  if (!lines.length) h += "<div class='small'>Still gathering — the wire has not answered yet. The board below fills in as it does.</div>";
+  else h += lines.map(function (l) { return "<div class='small' style='margin:3px 0'>" + esc(l) + "</div>"; }).join("");
+  return h + "</div>";
+}
 function homeSurfaceHtml() {
-  // The residents of Home, in order. Today there is one: the
-  // board. Later residents append here — the surface is a
-  // host (#213 addendum), so nothing below this line needs to
-  // change when Home grows.
+  // The residents of Home, in order. The board was the first
+  // (#213); Navi's Brief is the second (v0.4.1e, #230) and
+  // rides ahead of it — her read of the picture first, the
+  // rows below. Later residents append here — the surface is
+  // a host, so nothing below this line needs to change when
+  // Home grows.
   var h = "";
+  h += homeBriefHtml();
   h += homeBoardHtml();
   return h;
 }
@@ -3040,7 +3197,7 @@ function ticDashboardHtml() {
     h += "<p class='mono' style='font-size:11px;color:var(--dim)'>" + esc(ctfState.staleness || "") + "</p>";
     var evs = (ctfState.running || []).concat(ctfState.upcoming || []).slice(0, 3);
     if (!evs.length) h += "<p style='color:var(--dim)'>Nothing on the board in the window.</p>";
-    evs.forEach(function (e) { h += "<div style='margin-top:6px'><b>" + esc(e.title) + "</b><div class='mono' style='font-size:11px;color:var(--dim)'>" + (e.start * 1000 <= Date.now() ? "running now · ends " + esc(ticLocal(e.finish)) : "starts " + esc(ticLocal(e.start))) + " · " + esc(e.format || "") + "</div></div>"; });
+    evs.forEach(function (e, i) { h += "<div style='margin-top:6px'><button type='button' class='ghost tic-ev-read' data-ctf-read='" + i + "' aria-label='Read this event in the reader' style='text-align:left;min-height:40px'><b>" + esc(e.title) + "</b></button><div class='mono' style='font-size:11px;color:var(--dim)'>" + (e.start * 1000 <= Date.now() ? "running now · ends " + esc(ticLocal(e.finish)) : "starts " + esc(ticLocal(e.start))) + " · " + esc(e.format || "") + "</div></div>"; });
   }
   h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='ctfs' style='min-height:40px'>Open the board</button></div></div>";
   // -- Bounties
@@ -3086,6 +3243,27 @@ function wireFeedsCardHtml(s) {
   h += "<div class='row' style='margin-top:8px;gap:8px;flex-wrap:wrap'><input id='wire-feed-name' type='text' placeholder='Feed name — e.g. My Lab Blog' aria-label='Name for the new feed' style='min-height:44px;flex:1 1 160px'><input id='wire-feed-url' type='url' placeholder='https://example.org/feed.xml' aria-label='URL of the new feed' style='min-height:44px;flex:2 1 240px'><button class='act' id='wire-feed-add' style='min-height:44px'>Add feed</button></div>";
   return h + "</div>";
 }
+function wireTabsHtml() {
+  // The Wire's tab bar (v0.4.1e, #230): the four families as
+  // PAGES inside The Wire — News, CVEs, KEVs, CTFs — one tap
+  // apart at the top of every family page, each tab carrying
+  // its family's count from the stores the page already
+  // holds. The selected tab is intelTab, persisted across
+  // reloads by setIntelTab, so the tab you left is the tab
+  // you return to. The Center and Bounties are not wire
+  // families — they keep their own doors (Home's cards, the
+  // nav) and no tab here pretends otherwise.
+  var counts = { news: 0, cve: 0, kev: 0, ctfs: 0 };
+  if (wireState && wireState.items) wireState.items.forEach(function (it) { if (counts[it.kind] !== undefined) counts[it.kind]++; });
+  if (ctfState) counts.ctfs = (ctfState.running || []).length + (ctfState.upcoming || []).length;
+  var tabs = [["news", "News"], ["cve", "CVEs"], ["kev", "KEVs"], ["ctfs", "CTFs"]];
+  var h = "<div class='wiretabs' role='tablist' aria-label='The Wire — families'>";
+  tabs.forEach(function (t) {
+    var cur = intelTab === t[0];
+    h += "<button type='button' role='tab' aria-selected='" + (cur ? "true" : "false") + "' class='" + (cur ? "act" : "ghost") + "' data-tic-go='" + t[0] + "' aria-label='The Wire — " + t[1] + "'>" + t[1] + " <span class='wt-count'>" + counts[t[0]] + "</span></button>";
+  });
+  return h + "</div>";
+}
 function wireTabHtml() {
   var h = "";
   if (wireMsg) h += "<p style='font-size:13px'>" + esc(wireMsg) + "</p>";
@@ -3111,10 +3289,9 @@ function wireTabHtml() {
   var items = (s.items || []).filter(function (it) { return it.kind === "news"; });
   if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>No news on the wire yet — the first fetch brings the headlines. A feed that does not answer is named in Feed health above, never silently missing.</p></div>";
   items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
-  // The wire's other families (Build 4, #213): with the tab
-  // strip gone, the News view carries the doors to the CVE and
-  // KEV families so nothing the strip pointed at is stranded.
-  h += "<div class='row' style='margin-top:12px;gap:8px;flex-wrap:wrap'><button class='ghost' data-tic-go='cve' style='min-height:40px'>The wire's newest CVEs \u2192</button><button class='ghost' data-tic-go='kev' style='min-height:40px'>KEV additions \u2192</button></div>";
+  // The wire's other families are one tap away on the tab
+  // bar at the top of this view (v0.4.1e, #230) — the Build 4
+  // door row that stood here is retired; the bar supersedes it.
   return h;
 }
 function wireKindHtml(kind) {
@@ -3129,9 +3306,9 @@ function wireKindHtml(kind) {
   if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The wire is unavailable.") + "</div>";
   var items = (s.items || []).filter(function (it) { return it.kind === kind; });
   if (kind === "cve") {
-    h += "<div class='card'><b>New CVEs — from the wire (NVD)</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " on the wire right now. These are the NVD's newest, as headlines — the Center's graded queue (CVSS, EPSS, matched records) lives on the <b>Center</b> tab.</p><div class='row' style='margin-top:8px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
+    h += "<div class='card'><b>New CVEs — from the wire (NVD)</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " on the wire right now. These are the NVD's newest, as headlines, and each opens in the reader. This page stands on its own inside The Wire — the Center's graded queue (CVSS, EPSS, matched records) is its own surface, reached from Home.</p></div>";
   } else {
-    h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p><div class='row' style='margin-top:8px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
+    h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p></div>";
   }
   if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>Nothing in this family on the wire right now.</p></div>";
   items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
@@ -3178,17 +3355,41 @@ function wireReaderHtml() {
   // below it — no sticky header inside the scroll box, so the
   // bar can never ride over or clip the headline (see the
   // #wire-reader CSS note).
-  h += "<div class='wire-reader-head'><div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + " · read in Apex, extracted from the original</span><button class='ghost' id='wire-reader-close-top' aria-label='Close the article reader' style='min-height:40px;flex:0 0 auto'>Close</button></div></div>";
+  h += "<div class='wire-reader-head'><div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.source || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + (j.kind === "record" ? " · read in Apex — the listing as the board carries it" : " · read in Apex, extracted from the original") + "</span><button class='ghost' id='wire-reader-close-top' aria-label='Close the article reader' style='min-height:40px;flex:0 0 auto'>Close</button></div></div>";
   h += "<div class='wire-reader-body'>";
   h += "<h3 style='margin:8px 0'>" + esc(j.title || it.title || "Article") + "</h3>";
   (j.paragraphs || []).forEach(function (p) { h += "<p style='font-size:14px;line-height:1.55;margin-top:8px'>" + esc(p) + "</p>"; });
   h += "<div class='row' style='margin-top:14px;gap:8px'><a class='act' href='" + esc(it.link || "#") + "' target='_blank' rel='noopener' style='min-height:40px;text-decoration:none;display:inline-flex;align-items:center;padding:0 14px'>Open original</a><button class='ghost' id='wire-reader-close' style='min-height:40px'>Close</button></div>";
   return h + "</div></div>";
 }
-function ctfEventHtml(e) {
+function ctfEventByIdx(i) {
+  // The board's combined order (running, then upcoming) —
+  // the same order ctfTabHtml and Home's "Next CTFs" card
+  // render in, so an index names one event everywhere.
+  if (!ctfState) return null;
+  return (ctfState.running || []).concat(ctfState.upcoming || [])[i] || null;
+}
+function openCtfReader(e) {
+  // CTF information opens in the same reader as every other
+  // family (v0.4.1e, #230 — one reading surface, uniform):
+  // the event's listing as the board carries it, composed
+  // from the fields the board already holds. The reader's
+  // Open-original fallback reaches the event's own page,
+  // exactly as it does for the wire's items.
+  if (!e) return;
+  var paras = [];
+  paras.push((e.format || "Format unlisted") + " · " + (e.onsite ? "On-site — " + (e.location || "place unlisted") : "Online") + (e.weight ? " · weight " + e.weight : "") + (e.restrictions ? " · " + e.restrictions : ""));
+  paras.push(ticLocal(e.start) + " → " + ticLocal(e.finish) + " (your timezone)");
+  if (e.organizers && e.organizers.length) paras.push("Run by " + e.organizers.join(", ") + ".");
+  if (e.description) paras.push(e.description);
+  if (e.prizes) paras.push("Prizes: " + e.prizes);
+  wireReader = { kind: "record", item: { source: "CTFtime — the board's listing", link: e.ctftimeUrl || e.url || "", published: e.start }, title: e.title, paragraphs: paras };
+  render();
+}
+function ctfEventHtml(e, idx) {
   var h = "<div class='card' style='margin-top:10px'><div style='display:flex;gap:12px;align-items:flex-start'>";
   if (e.logo) h += "<img src='" + esc(e.logo) + "' alt='' style='width:44px;height:44px;object-fit:contain;border-radius:8px;background:var(--panel2)'>";
-  h += "<div style='flex:1'><b style='font-size:15px'>" + esc(e.title) + "</b>";
+  h += "<div style='flex:1'><button type='button' class='ghost tic-ev-read' data-ctf-read='" + idx + "' aria-label='Read this event in the reader' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(e.title) + "</b></button>";
   h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(e.format || "format unlisted") + " · " + (e.onsite ? "on-site · " + esc(e.location || "") : "online") + (e.weight ? " · weight " + esc(e.weight) : "") + (e.restrictions ? " · " + esc(e.restrictions) : "") + "</div>";
   h += "<div class='mono' style='font-size:12px;margin-top:2px'>" + esc(ticLocal(e.start)) + " → " + esc(ticLocal(e.finish)) + " <span style='color:var(--dim)'>(your timezone)</span></div>";
   if (e.organizers && e.organizers.length) h += "<div style='font-size:12px;color:var(--dim);margin-top:2px'>by " + esc(e.organizers.join(", ")) + "</div>";
@@ -3210,10 +3411,10 @@ function ctfTabHtml() {
   h += "<label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='ctf-enabled'" + (s.enabled ? " checked" : "") + "> Board enabled</label></div>";
   h += "<h3>Running now</h3>";
   if (!s.running || !s.running.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing is running right now.</p></div>";
-  (s.running || []).forEach(function (e) { h += ctfEventHtml(e); });
+  (s.running || []).forEach(function (e, i) { h += ctfEventHtml(e, i); });
   h += "<h3>Upcoming</h3>";
   if (!s.upcoming || !s.upcoming.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing upcoming in the window the board carries.</p></div>";
-  (s.upcoming || []).slice(0, 30).forEach(function (e) { h += ctfEventHtml(e); });
+  (s.upcoming || []).slice(0, 30).forEach(function (e, i) { h += ctfEventHtml(e, (s.running || []).length + i); });
   return h;
 }
 function bountiesTabHtml() {
@@ -3246,8 +3447,9 @@ function bountiesTabHtml() {
   return h + "</div>";
 }
 function wireAwareness() {
-  if (view === "CTFBoard" && intelTab !== "ctfs") intelTab = "ctfs";
-  mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-go"); render(); }; });
+  if (view === "CTFBoard" && intelTab !== "ctfs") setIntelTab("ctfs");
+  mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { setIntelTab(b.getAttribute("data-tic-go")); render(); }; });
+  mainEl.querySelectorAll("[data-ctf-read]").forEach(function (b) { b.onclick = function () { openCtfReader(ctfEventByIdx(Number(b.getAttribute("data-ctf-read")))); }; });
   mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
   bindWireReaderClose();
@@ -5024,7 +5226,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
   "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. Since Build 4 the CLI latch is <b>CLI Mode</b> itself: latching CLI opens (or resumes) this chat's standing shell session and your lines type into it; latching Navi brings the conversation back while the session stays alive behind the toggle. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
-  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Above every view sits her <b>presence bar</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. The bar is part of the frame, not of any one page: it stays over Chat, Settings, Docs — everywhere — and at its top right sits the status column's <b>pane button</b>, wearing the panel glyph. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's doors are the frame's own now: the <b>pane button</b> at the presence bar's top right — on every page, at every width — and the panel button in the phone's top bar. Those are the only two doors; every one drives the one column state and raises the rail in place wherever you are; the phone's top bar itself is pinned, so the doors are there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
+  "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Above every view sits her <b>presence bar</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), in a call with you, or away when her model is stopped. (Since v0.4.1e the bar carries no typing indicator — while she thinks, the living line simply stands.) The bar is part of the frame, not of any one page: it stays over Chat, Settings, Docs — everywhere — and at its top right sits the status column's <b>pane button</b>, wearing the panel glyph. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's doors are the frame's own now: the <b>pane button</b> at the presence bar's top right — on every page, at every width — and the panel button in the phone's top bar. Those are the only two doors; every one drives the one column state and raises the rail in place wherever you are; the phone's top bar itself is pinned, so the doors are there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode (v0.3.0e — Build 3)</h4>" +
   "<p>Sudo mode lets the commands Navi runs execute as root — and since Build 3 it runs on <b>sudo's own credential timestamp</b>, not on anything Apex holds. You arm it in <b>Settings → System</b>: flip the switch and a masked prompt appears on that same card; the password is fed <b>once</b> to <span class='mono'>sudo -v</span> and then forgotten by the page and the bridge alike — <b>never stored, logged or synced, anywhere</b>. What persists is one on/off flag in the config and sudo's own timestamp. While the timestamp lives, her elevated commands run as <span class='mono'>sudo -n</span> (never prompting); when it lapses, the status column and the Settings card read <b>Expired</b>, and elevated commands <b>refuse honestly</b> — naming the expiry — until you re-warm. Disarming (from Settings or the status column) flips the flag and kills the timestamp with <span class='mono'>sudo -k</span>: instant and total. The status column no longer owns the switch; it <b>reads</b> the state — Armed or Expired while the feature is on, and absent entirely while it is off. <b>Every elevated command Navi runs is on the record</b>: an append-only audit (<span class='mono'>config/sudo-audit.jsonl</span> — timestamp, the command as run, the chat it served, its exit status), viewable read-only on the Settings card. The audit deliberately does <b>not</b> ride Sync. One honest cost: on a machine whose sudo asks a fingerprint reader before the password, each fresh <span class='mono'>sudo -n</span> still runs PAM — but it fails fast instead of waiting the reader out, and the arm's one <span class='mono'>sudo -v</span> pays the full conversation once per timestamp window. The DHD prerequisite installer rides the same timestamp now: arm sudo mode first if a DHD step needs root.</p></div>" +
@@ -5270,7 +5472,7 @@ var DOC_PAGES = [
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
   "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
   "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
-  "<li><b>This chat only</b>, beside the composer, holds one chat session on this machine — no borrow is attempted for it at all. It stays latched for the session, like the CLI/Navi latch.</li></ul>" +
+  "<li><b>The route pill</b>, beside the composer, is the chat's route control (v0.4.1e, #228) — one pill, three roads, its face read from the bridge's stored route for the chat, so the face, the store, and a reload can never disagree. <b>Use Local Resources</b> (neutral): model work runs on this machine, no borrow attempted. <b>Connected to Mesh</b> (blue): model work borrows over the pairwise Mesh, from hand-paired machines. The <b>federation's name</b> (green): model work borrows through that fedinet, from its members. Pressing the pill cycles the roads you have access to; a road you don't reads <b>Not Available</b> and cannot be flipped into, and a flip the bridge refuses is answered on the pill itself, in words, with the route unchanged. A chat never routed by hand keeps the historical behavior — automatic borrowing across every borrowable peer.</li></ul>" +
   "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set on the Mesh page) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
     "<div class='doc-sec'><h4>Lending — automatic when idle, off means off</h4>" +
   "<p>Lending can only be turned <b>on</b> from the lending machine's own dashboard, <b>in person</b>, at that machine. It cannot be armed through the DHD door. Turning it off works from anywhere you are signed in — and <b>Stop lending now</b> ends lending and aborts a borrowed generation already running, mid-flight, at once.</p>" +
@@ -5537,7 +5739,7 @@ var DOC_PAGES = [
   "<li><b>She answers without using my pack.</b> Only packs switched <b>on</b> feed her answers. Check the switch on the Packs tab. When a pack does help, the small label under her message names the pack and the document — no label means no pack was used for that answer.</li>" +
   "<li><b>The call will not start.</b> A call needs her voice installed and switched on, and her model connected. Settings → Voice names the missing piece — fix that one thing and try again.</li>" +
   "<li><b>Dark Liquid Glass looks solid, not frosted.</b> That is the design working as intended, not a bug: where your system cannot do backdrop blur, the theme falls back to the same colors, solid and fully readable. If scrolling ever feels stuttery on weak built-in graphics while the glass theme is on, pick any other theme in Settings → Appearance — the flat themes cost the graphics chip almost nothing.</li>" +
-  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted in Settings → Voice at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests, so the break is somewhere in that chain and the fix is still being worked on; it is <b>not fixed yet</b>. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — Settings → Voice shows what this window's own mic requests did this session, which helps narrow it down. Since v0.3.0e — Build 6, the window also <b>reports that reading to the bridge on every push-to-talk attempt</b> — it lands in the bridge's log (start.log) with the attempt, so the evidence accumulates where the next fix can be aimed from it.</li></ul></div>" },
+  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted in Settings → Voice at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests; the field evidence — the window's own mic reading said granted, with no audio arriving — put the break below permission, in WebKit's media-capture settings, and the fix for that layer ships in <b>v0.4.1e</b>, compile-verified. It stays a known issue here until the operator's field bench confirms she hears him in the window. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — Settings → Voice shows what this window's own mic requests did this session, which helps narrow it down. Since v0.3.0e — Build 6, the window also <b>reports that reading to the bridge on every push-to-talk attempt</b> — it lands in the bridge's log (start.log) with the attempt, so the evidence accumulates in the open; it is the record the v0.4.1e fix was aimed from.</li></ul></div>" },
   { id: "glossary", title: "Glossary — the words we use", related: ["getting-started", "chips-guide"], html:
     "<div class='doc-sec'><h4>Glossary — the words we use, in plain words</h4>" +
   "<p>Every special word in this wiki, explained once, in the order you are most likely to meet it. If a page ever uses a word that is not clear, it should be in this list.</p>" +
@@ -5852,7 +6054,7 @@ function liveChat(text, speak) {
     if (!String(content).trim()) return;
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
-  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
+  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
     .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, chatId: activeChatId }; });
@@ -6186,8 +6388,8 @@ function navBtn(id, label, iconName, targetView) {
     // and the rail's single selected entry always agree \u2014
     // Home lands on the board; The Wire lands on its head
     // family when the board is what's showing.
-    if (id === "nav-Home") intelTab = "home";
-    else if (id === "nav-child-apps-The Wire" && intelTab === "home") intelTab = "news";
+    if (id === "nav-Home") setIntelTab("home");
+    else if (id === "nav-child-apps-The Wire" && intelTab === "home") setIntelTab("news");
     goView(targetView);
   };
   return b;
@@ -6406,11 +6608,13 @@ setTimeout(cyclePresence, 120000 + Math.random() * 120000);
 // status pane's living line (presenceText above), so the two
 // surfaces can never tell different stories. The pane keeps
 // its own line and dot exactly as they were; this adds the
-// state variants the pane never rendered: typing, in a call,
-// away, simulated.
+// state variants the pane never rendered: in a call, away,
+// simulated. (v0.4.1e, #228: there is no typing variant — the
+// top banner no longer carries a "Navi is typing…" indicator
+// at all; while she thinks, the bar simply keeps the living
+// line, like the pane.)
 function presenceState() {
   if (call) return { text: "In a call with you", dot: "#34d399", pulse: true, typing: false };
-  if (naviThinking) return { text: "", dot: "#34d399", pulse: false, typing: true };
   if (CONFIG.backend !== "live") return { text: "Simulated (mock mode)", dot: "#f5b544", pulse: false, typing: false };
   if (llama.status === "running") return { text: presenceText, dot: "#34d399", pulse: true, typing: false };
   return { text: "Navi is not here — her model is disconnected.", dot: "#9fb3c8", pulse: false, typing: false };
@@ -6423,8 +6627,8 @@ function presenceState() {
 // restored to its pre-#123 form (#115's button, Build 6): the
 // panel glyph with aria-pressed, in the persistent top right on
 // every page. presenceState() stays the single source for the
-// dot, the line and the typing dots; the status column's own
-// presence line inside the pane is untouched.
+// dot and the line; the status column's own presence line
+// inside the pane is untouched.
 var presenceBarEl = document.getElementById("presence-bar");
 var chatStatusToggleBtn = null;
 function renderPresenceBar() {
@@ -6450,7 +6654,7 @@ function renderPresenceBar() {
       caseChip = "<button class='ghost' id='presence-case-chip' aria-label='Open the case this chat belongs to' style='min-height:44px;padding:4px 10px;font-size:12px;white-space:nowrap'>⚖ Case: " + esc(cname) + "</button>";
     }
   }
-  presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + (pres.typing ? "typing<span class='tdots' aria-hidden='true'><i></i><i></i><i></i></span>" : esc(pres.text)) + "</div></div></div>"
+  presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + esc(pres.text) + "</div></div></div>"
     + caseChip
     + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
   chatStatusToggleBtn = document.getElementById("chat-status-toggle");
@@ -7195,6 +7399,15 @@ function meshLineHtml(mesh) {
     if (line) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(line + " — answered locally") + "</div>";
   }
   if (mesh.fellBack) {
+    // v0.4.1e (#228): the chat's ROUTE found no lender in its
+    // field — the line blames the route, not a machine that
+    // was never asked.
+    if (mesh.reason === "route-unavailable") {
+      var rl = mesh.routeMode === "federation"
+        ? "No member of " + (mesh.routeName || "that federation") + " is in this chat's route right now"
+        : "No paired machine is in this chat's Mesh route right now";
+      return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(rl + " — answered locally") + "</div>";
+    }
     var why = mesh.reason === "busy" ? " was busy"
       : mesh.reason === "cap" ? " is at its lending cap for the hour"
       : mesh.reason === "idle" ? " is not idle yet"
@@ -10007,7 +10220,7 @@ function voiceHomeHtml() {
     var vEnabled = voiceState ? voiceState.enabled : true;
     var sttOk = CONFIG.backend !== "live" || (voiceState && voiceState.stt.available);
     var ttsOk = CONFIG.backend !== "live" || (voiceState && voiceState.tts.available);
-    h += "<p style='color:var(--dim)'>She hears you and answers out loud — the whole loop on this machine, on CPU, nothing sent anywhere. You speak; <b>faster-whisper</b> turns it into text; her model answers with her persona, CLI access, and chips intact; <b>" + (vc.tts_engine === "piper" ? "Piper" : "Kokoro") + "</b> speaks it back, sentence by sentence as it arrives.</p>";
+    h += "<p style='color:var(--dim)'>She hears you and answers out loud — the whole loop on this machine, nothing sent anywhere. You speak; <b>faster-whisper</b> turns it into text; her model answers with her persona, CLI access, and chips intact; <b>" + (vc.tts_engine === "piper" ? "Piper" : "Kokoro") + "</b> speaks it back, sentence by sentence as it arrives.</p>";
     if (voiceMsg) h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>" + esc(voiceMsg) + "</div>";
     // The call panel.
     h += "<div class='card'>";
@@ -10031,6 +10244,17 @@ function voiceHomeHtml() {
     h += "<div style='display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;margin-bottom:12px'>" + pipe.map(function (n, i) {
       return (i ? "<span style='align-self:center;color:var(--dim)'>→</span>" : "") + "<div class='card' style='margin:0;padding:8px 10px;border-color:" + (n[2] ? "#34d399" : "#f87171") + "'><span class='dot' style='background:" + (n[2] ? "#34d399" : "#f87171") + "'></span><b style='font-size:12px'>" + esc(n[0]) + "</b><br><span style='color:var(--dim);font-size:11px'>" + esc(n[1]) + "</span></div>";
     }).join("") + "</div>";
+    // v0.4.1e (#229): the device verdicts, in the open — the
+    // strip above says the engines are installed; this says
+    // which hardware speech actually runs on, proven by
+    // execution at warmup, and a fallen-back stage names its
+    // reason in the operator's words (never a raw CUDA error).
+    if (CONFIG.backend === "live" && voiceState && voiceState.tts && voiceState.tts.device) {
+      var tdev = voiceState.tts.device;
+      if (tdev.state === "fallen-back") h += "<div class='card' style='border-color:#f5b544'><b>Speech is on the CPU — the graphics card cannot be used.</b><br><span style='color:var(--dim)'>" + esc(tdev.detail || "") + "</span></div>";
+      else if (tdev.state === "executing") h += "<p style='color:var(--dim);font-size:12px'>Speech device: <b style='color:var(--text)'>" + esc(tdev.name || "graphics card") + "</b>" + (tdev.capability ? " (compute capability " + esc(tdev.capability) + ")" : "") + " — executing, proven by a real operation at warmup.</p>";
+      else if (tdev.detail) h += "<p style='color:var(--dim);font-size:12px'>Speech device: " + esc(tdev.detail) + "</p>";
+    }
   h += voiceSettingsHtml();
     if (CONFIG.backend === "live" && voiceState && (!sttOk || !ttsOk)) {
       h += "<div class='card' style='border-color:#f5b544'><b>Her voice isn't installed yet.</b><br><span style='color:var(--dim)'>" + esc((!sttOk && voiceState.stt.detail) || "") + ((!sttOk && !ttsOk) ? "<br>" : "") + esc((!ttsOk && voiceState.tts.detail) || "") + "</span><br><span style='color:var(--dim)'>The speech engines are optional on purpose — the bridge stays dependency-free until you want her voice. The installer offers them at the voice step (an isolated venv), or: <span class='mono'>python3 -m pip install -r requirements-voice.txt</span>. Models download once, on first use, into voice/models/ — and that folder survives updates and reinstalls like her chips and her Soul/Memory.</span></div>";
@@ -10039,7 +10263,7 @@ function voiceHomeHtml() {
     // Known issue (field report, 2026-11-07): the microphone in the
     // desktop window. Noted here at the operator's request — the
     // note stays until the fix lands, and it never claims it has.
-    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The underlying fix is still being worked on; it is <b>not</b> fixed yet, and this note stays on the Voice page until it is. The same entry lives in the wiki's Troubleshooting page. <b>New in v0.3.0e — Build 6:</b> this window now reports its mic reading to the bridge on every push-to-talk attempt — the reading below also lands in the bridge's log (start.log, beside the app), so this window's mic state is on record even when nobody is watching this line; that record is what the next fix attempt will be aimed with.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
+    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The fix ships in <b>v0.4.1e</b>: her shell now switches WebKit's media-capture settings on explicitly — the layer below permission, where the field evidence pointed (a mic request granted, and the stream delivering nothing). The change is compile-verified; this note stays on the Voice page until the field confirms she hears you in the window, and it will say so plainly if the bench disagrees. The same entry lives in the wiki's Troubleshooting page. <b>New in v0.3.0e — Build 6:</b> this window reports its mic reading to the bridge on every push-to-talk attempt — the reading below also lands in the bridge's log (start.log, beside the app). That record is what aimed the v0.4.1e fix: the window's own reading said the request was granted, which is how the break was known to sit below permission, in the capture settings the fix now turns on.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
     if (CONFIG.backend !== "live") {
       h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>Mock mode: this call is simulated — her lines are spoken by your browser's built-in voice and answered by the mock brain. Switch the backend to Live in Settings for the real local engines (faster-whisper + Kokoro).</div>";
     }
@@ -10431,7 +10655,7 @@ function render() {
       }
       if (m.operation) h += operationCardHtml(m.operation);
       if (m.shell) h += shellEventsHtml(m.shell.events);
-      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with the route pill beside the composer set to “Use Local Resources”, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       if (m.who === "NAVI") h += caseFilingsHtml(m);
@@ -10473,10 +10697,11 @@ function render() {
     // an empty thread as in a full one. What remains of the
     // old construction is the history note the row carries.
     var clearChatBtn = "<span id='hist-note'></span>";
-    // Navi Mesh (build .85): the per-chat local-only escape rides
-    // the hint row beside the mode latch — a pressed state, kept
-    // per chat session like the latch itself.
-    var meshLocalBtn = "<button type='button' id='chat-mesh-local' aria-pressed='" + (meshLocal ? "true" : "false") + "' aria-label='This chat only: keep it on this machine — while on, this chat never borrows a paired machine' title='This chat only: keep it on this machine' style='" + (meshLocal ? "border-color:var(--cy);color:var(--cy)" : "") + "'>This chat only" + (meshLocal ? " ●" : "") + "</button>";
+    // Navi Mesh (build .85's escape, v0.4.1e #228's control):
+    // the route pill rides the hint row beside the mode latch —
+    // one pill, three roads, its face rendered from the
+    // bridge's stored route for this chat (routePillHtml).
+    var meshLocalBtn = routePillHtml();
     h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
       : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
@@ -11124,8 +11349,9 @@ function wire() {
       fetch("/api/workflows").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { wfData = j; if (view === "Chat") render(); }).catch(function () {});
     }
     mainEl.querySelectorAll("details[data-fold]").forEach(function (d) { d.addEventListener("toggle", function () { chatFoldState[d.getAttribute("data-fold")] = d.open; }); });
-    var meshLocalBtnEl = document.getElementById("chat-mesh-local");
-    if (meshLocalBtnEl) meshLocalBtnEl.onclick = function () { meshLocal = !meshLocal; persistMeshLocal(); render(); };
+    var routePillEl = document.getElementById("chat-route-pill");
+    if (routePillEl) routePillEl.onclick = function () { cycleChatRoute(); };
+    if (CONFIG.backend === "live" && String(chatRouteChatId) !== String(activeChatId)) refreshChatRoute();
     var micBtn = document.getElementById("chat-mic");
     if (micBtn) micBtn.onclick = function () { pttToggle("chat"); };
     var chatCallBtn = document.getElementById("chat-call");

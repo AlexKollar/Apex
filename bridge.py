@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.3.0"
+SHIPPED_VERSION = "0.4.1"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-15.06"
+BRIDGE_BUILD = "2026-11-15.07"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 6
+SHIPPED_BUILD_SEQ = 7
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -7633,12 +7633,14 @@ def _mesh_relay_probe(relay, dest_id):
     return "consent" if data.get("consent") else "no-consent"
 
 
-def mesh_try_borrow(messages, cfg, ms):
+def mesh_try_borrow(messages, cfg, ms, route=None):
     # The borrower (spec section 2): first reachable peer only —
     # Ring 1 never races lenders. Returns (reply, mesh-payload) on
     # a mesh-served answer, or (None, mesh-payload) describing the
     # local fallback the caller is about to run. (None, None) when
-    # Mesh does not apply at all.
+    # Mesh does not apply at all. `route` (v0.4.1e, #228) is the
+    # chat's stored route: it narrows the lender field below, once
+    # the borrower's own list is sanitized.
     peers = ms["borrow"]["peers"]
     if not peers:
         return None, None
@@ -7652,6 +7654,24 @@ def mesh_try_borrow(messages, cfg, ms):
         messages = _chat_sanitize_messages(messages)
     except Exception:
         return None, None
+    # v0.4.1e (#228): the route narrows the field — a Mesh route
+    # borrows from hand-paired machines only; a Federation route
+    # from that fedinet's members only. A route whose field is
+    # empty answers locally WITH THE ROUTE NAMED on the payload,
+    # so the line under the reply blames the route, not a machine
+    # that was never asked.
+    if route:
+        _mode = route.get("mode")
+        if _mode == "mesh":
+            peers = [p for p in peers if not p.get("viaFedinet")]
+        elif _mode == "federation":
+            _fid = route.get("fedinetId") or ""
+            peers = [p for p in peers if p.get("viaFedinet") == _fid]
+        if not peers:
+            return None, {"servedBy": "local", "fellBack": True,
+                          "reason": "route-unavailable",
+                          "routeMode": _mode,
+                          "routeName": route.get("name") or ""}
     if not mesh_node_id():
         ok, _err = mesh_ensure_identity(cfg)
         if not ok:
@@ -7845,6 +7865,162 @@ def mesh_try_borrow(messages, cfg, ms):
         with MESH_LOCK:
             MESH_STATE["borrow_out"] = False
             MESH_STATE["borrow_peer"] = ""
+
+
+# -- Chat routes (v0.4.1e, #228) --------------------------------
+# The composer's route pill is the chat's route control, and
+# this store is its one source of truth — the switch gate in
+# structural form, the same shape the Federation page uses: the
+# pill's face renders from the bridge's answer, a flip is a
+# request the bridge validates against the access the operator
+# actually has, and a refusal changes nothing and says why on
+# the pill itself. A route is per chat:
+#   local      — model work runs on this machine; no borrow is
+#                attempted at all (the old "This chat only").
+#   mesh       — model work borrows over the pairwise Mesh:
+#                hand-paired machines only, never a fedinet's.
+#   federation — model work borrows through one fedinet: only
+#                that fedinet's members are candidates, and the
+#                pill wears the fedinet's name in green.
+# A chat with NO stored route keeps the historical behavior —
+# automatic borrowing across every borrowable peer — so nothing
+# changes for a chat the operator has never routed by hand, and
+# the pill's face for such a chat is the effective default the
+# bridge computes below, never a page-side guess.
+
+CHAT_ROUTES_PATH = os.path.join(ROOT, "config", "chat-routes.json")
+_chat_routes_lock = threading.Lock()
+
+
+def _chat_route_clean(raw):
+    if not isinstance(raw, dict):
+        return None
+    mode = raw.get("mode")
+    if mode == "local":
+        return {"mode": "local"}
+    if mode == "mesh":
+        return {"mode": "mesh"}
+    if mode == "federation":
+        fid = str(raw.get("fedinetId") or "")[:80]
+        if not fid:
+            return None
+        return {"mode": "federation", "fedinetId": fid,
+                "name": str(raw.get("name") or "")[:80]}
+    return None
+
+
+def _chat_routes_load():
+    try:
+        with open(CHAT_ROUTES_PATH) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            out = {}
+            for k, v in data.items():
+                c = _chat_route_clean(v)
+                if c is not None:
+                    out[str(k)[:80]] = c
+            return out
+    except Exception:
+        pass
+    return {}
+
+
+def chat_route_get(chat_id):
+    if not chat_id:
+        return None
+    with _chat_routes_lock:
+        return _chat_routes_load().get(str(chat_id)[:80])
+
+
+def _chat_route_store(chat_id, route):
+    with _chat_routes_lock:
+        routes = _chat_routes_load()
+        if route is None:
+            routes.pop(str(chat_id)[:80], None)
+        else:
+            routes[str(chat_id)[:80]] = route
+        try:
+            os.makedirs(os.path.dirname(CHAT_ROUTES_PATH),
+                        exist_ok=True)
+            with open(CHAT_ROUTES_PATH, "w") as f:
+                json.dump(routes, f, indent=2)
+        except Exception:
+            pass
+
+
+def chat_route_availability(cfg):
+    # Access, in the bridge's own words: Mesh is available when
+    # borrowing is on and at least one HAND-PAIRED machine can be
+    # borrowed from; a federation stop exists for each joined
+    # fedinet with at least one borrowable member on the roster.
+    # A mode without access is named Not Available by the pill
+    # and refused here — the two can never disagree, because
+    # both read this one computation.
+    ms = mesh_settings(cfg)
+    peers = []
+    if ms["enabled"] and ms["borrow"]["enabled"]:
+        peers = [p for p in ms["borrow"]["peers"] if p.get("canBorrow")]
+    mesh_ok = any(not p.get("viaFedinet") for p in peers)
+    fed_names = {}
+    for f in federation_settings(cfg):
+        fed_names[f["id"]] = f.get("name") or f["id"]
+    feds = []
+    seen = set()
+    for p in peers:
+        fid = p.get("viaFedinet")
+        if fid and fid in fed_names and fid not in seen:
+            seen.add(fid)
+            feds.append({"id": fid, "name": fed_names[fid]})
+    return {"mesh": mesh_ok, "fedinets": feds}
+
+
+def chat_route_answer(cfg, chat_id):
+    # Everything the pill renders from: the stored route (or
+    # None), the effective face when nothing is stored — Mesh
+    # when any borrow road exists, Local when none does, the
+    # historical defaults named rather than guessed — and the
+    # access table. One answer, three readers (face, flip,
+    # reload), so the three-way contract holds by construction.
+    stored = chat_route_get(chat_id)
+    avail = chat_route_availability(cfg)
+    effective = stored
+    if effective is None:
+        if avail["mesh"] or avail["fedinets"]:
+            effective = {"mode": "mesh"}
+        else:
+            effective = {"mode": "local"}
+    return {"ok": True, "chatId": str(chat_id or "")[:80],
+            "route": stored, "effective": effective,
+            "available": avail}
+
+
+def chat_route_set(cfg, chat_id, raw):
+    # A flip, validated. Returns (answer, None) on success — the
+    # answer carries the route the bridge actually stored — or
+    # (None, (reason, sentence)) on refusal, with the store
+    # untouched: the pill keeps its old face and shows the
+    # sentence, never a silent snap-back.
+    route = _chat_route_clean(raw)
+    if route is None:
+        return None, ("route-shape", "That is not a route the pill offers.")
+    avail = chat_route_availability(cfg)
+    if route["mode"] == "mesh" and not avail["mesh"]:
+        return None, ("mesh-not-available",
+                      "Mesh is not available: no paired machine can "
+                      "be borrowed from right now.")
+    if route["mode"] == "federation":
+        match = None
+        for f in avail["fedinets"]:
+            if f["id"] == route["fedinetId"]:
+                match = f
+        if match is None:
+            return None, ("federation-not-available",
+                          "That federation is not available: it is "
+                          "not joined here, or no member of it can "
+                          "be borrowed from right now.")
+        route["name"] = match["name"]
+    _chat_route_store(chat_id, route)
+    return chat_route_answer(cfg, chat_id), None
 
 
 def mesh_probe_reason(kind):
@@ -18274,6 +18450,138 @@ def _decode_detail(exc):
             "-r requirements-voice.txt")
 
 
+# -- CUDA execution probe (v0.4.1e, #229) ----------------------
+# Device selection used to probe PRESENCE: torch reported a
+# CUDA device on NeoArcadia, so Kokoro's pipeline loaded onto
+# it — and the first real generation died with "CUDA error: no
+# kernel image is available for execution on the device",
+# because the installed wheels carry no kernels for the card's
+# architecture (a Tesla V100, Volta, compute capability 7.0).
+# The raw CUDA string was the operator-facing speech failure.
+# This probe EXECUTES: a tiny real tensor operation on the
+# device, synchronized, its result checked. The verdict is
+# cached per interpreter, like the other voice probes, and a
+# generation-time CUDA failure rewrites it (the self-healing
+# path in synthesize_wav) so the next line goes to the CPU.
+
+
+def _voice_cuda_probe():
+    # Returns (state, info): state is "absent" (no torch, or
+    # torch sees no CUDA device), "executing" (a real operation
+    # ran on the device), or "failed" (a device is present but
+    # execution died). info carries the device name, the compute
+    # capability as "7.0"-style text, and the raw exception when
+    # failed — the raw string is kept for the record, never used
+    # as the operator's sentence (see _cuda_fallback_sentence).
+    if "cuda-exec" in _engine_probes:
+        return _engine_probes["cuda-exec"]
+    verdict = ("absent", {})
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info = {}
+            try:
+                info["name"] = str(torch.cuda.get_device_name(0))
+            except Exception:
+                info["name"] = "CUDA device"
+            try:
+                _maj, _min = torch.cuda.get_device_capability(0)
+                info["capability"] = str(_maj) + "." + str(_min)
+            except Exception:
+                info["capability"] = ""
+            try:
+                _t = torch.zeros(8, device="cuda")
+                _t = _t + 1
+                torch.cuda.synchronize()
+                if float(_t.sum().item()) != 8.0:
+                    raise RuntimeError(
+                        "the device returned a wrong result for a "
+                        "trivial operation")
+                verdict = ("executing", info)
+            except Exception as e:
+                info["error"] = type(e).__name__ + ": " + str(e)
+                verdict = ("failed", info)
+    except Exception:
+        verdict = ("absent", {})
+    _engine_probes["cuda-exec"] = verdict
+    return verdict
+
+
+def _cuda_fallback_sentence(info):
+    # The operator's sentence for a fallen-back stage: the
+    # device is named, its architecture is named, the
+    # consequence is named — and the raw CUDA error never
+    # appears in it. The probe's raw error rides the status as
+    # a separate field, for the record.
+    name = info.get("name") or "the graphics card"
+    cap = info.get("capability") or ""
+    return ("A graphics card is present (" + name
+            + (", compute capability " + cap if cap else "")
+            + "), but the installed speech wheels carry no "
+              "kernels for its architecture, so real work on it "
+              "fails. This stage runs on the CPU instead — fully "
+              "working, a little slower to start.")
+
+
+def _voice_stage_devices(vc):
+    # Per-stage device verdicts, present / executing /
+    # fallen-back, riding the same status surface as hearing
+    # (#229: transcription and synthesis can disagree, so each
+    # stage carries its own). Transcription's verdict is CPU by
+    # construction: _stt_model loads faster-whisper on CPU int8
+    # — no CUDA path exists on that stage to probe, and the
+    # status says so rather than implying a choice was made.
+    stt = {"device": "cpu", "state": "cpu",
+           "detail": "Transcription runs on the CPU by design "
+                     "(faster-whisper, int8); it never selects "
+                     "the graphics card."}
+    if vc["tts_engine"] != "kokoro":
+        tts = {"device": "cpu", "state": "cpu",
+               "detail": "Piper speaks on the CPU."}
+        return {"stt": stt, "tts": tts}
+    state, info = _voice_cuda_probe()
+    if state == "executing":
+        tts = {"device": "cuda", "state": "executing",
+               "name": info.get("name") or "",
+               "capability": info.get("capability") or "",
+               "detail": None}
+    elif state == "failed":
+        tts = {"device": "cpu", "state": "fallen-back",
+               "name": info.get("name") or "",
+               "capability": info.get("capability") or "",
+               "detail": _cuda_fallback_sentence(info),
+               "error": info.get("error") or ""}
+    else:
+        tts = {"device": "cpu", "state": "cpu",
+               "detail": "No CUDA device is present; speech runs "
+                         "on the CPU."}
+    return {"stt": stt, "tts": tts}
+
+
+def _kokoro_device(vc):
+    # The device Kokoro is ASKED for: CUDA only when the
+    # execution probe proved the device can compute.
+    state, _info = _voice_cuda_probe()
+    return "cuda" if state == "executing" else "cpu"
+
+
+def _is_cuda_error(exc):
+    return "cuda" in (type(exc).__name__ + ": " + str(exc)).lower()
+
+
+def _voice_cuda_mark_failed(exc):
+    # A generation-time CUDA failure rewrites the probe verdict
+    # and drops the cached pipeline: the next line is built on
+    # the CPU. (The probe is a warmup-time truth; this keeps it
+    # true after the field disagrees.)
+    state, info = _voice_cuda_probe()
+    info = dict(info)
+    info["error"] = type(exc).__name__ + ": " + str(exc)
+    _engine_probes["cuda-exec"] = ("failed", info)
+    with _voice_lock:
+        _voice_cache.pop("kokoro", None)
+
+
 def _unavailable_message(label, pkg, exc):
     # What the loaders raise on failure — the same distinction the
     # availability probe reports, so a speak failure and the status
@@ -18432,6 +18740,10 @@ def voice_status(cfg):
     disc = (discover_kokoro_voices(vc["tts_voice"])
             if vc["tts_engine"] == "kokoro"
             else discover_piper_voices(vc["tts_voice"]))
+    # v0.4.1e (#229): per-stage device verdicts ride the same
+    # surface — present / executing / fallen-back, with the
+    # fallback's reason in the operator's words.
+    _devs = _voice_stage_devices(vc)
     return {
         "enabled": vc["enabled"],
         "config": vc,
@@ -18444,6 +18756,7 @@ def voice_status(cfg):
             "detail": (_engine_detail("faster_whisper", stt_exc)
                        if not stt_ok else _decode_detail(dec_exc)),
             "decode_ok": dec_ok,
+            "device": _devs["stt"],
         },
         "mic_report": dict(_MIC_REPORT),
         "tts": {
@@ -18451,6 +18764,7 @@ def voice_status(cfg):
             "voice": vc["tts_voice"],
             "available": tts_ok,
             "detail": _engine_detail(engine_pkg, tts_exc),
+            "device": _devs["tts"],
         },
         "voices": disc["voices"],
         "voices_source": disc["source"],
@@ -18582,7 +18896,26 @@ def _kokoro_pipeline(vc):
             except Exception as e:
                 raise VoiceUnavailable(_unavailable_message("Kokoro", "kokoro", e))
             lang = "b" if vc["tts_voice"].startswith("b") else "a"
-            _voice_cache[key] = KPipeline(lang_code=lang)
+            # v0.4.1e (#229): the pipeline is built on the
+            # device the EXECUTION probe proved — never on mere
+            # presence. A Kokoro too old to take a device
+            # argument keeps its default, and when that default
+            # would be a proven-broken card, the loaded model is
+            # moved to the CPU after construction.
+            device = _kokoro_device(vc)
+            try:
+                _voice_cache[key] = KPipeline(lang_code=lang,
+                                              device=device)
+            except TypeError:
+                _voice_cache[key] = KPipeline(lang_code=lang)
+                if device == "cpu":
+                    try:
+                        _model = getattr(_voice_cache[key],
+                                         "model", None)
+                        if _model is not None:
+                            _model.to("cpu")
+                    except Exception:
+                        pass
         return _voice_cache[key]
 
 
@@ -18654,13 +18987,31 @@ def synthesize_wav(text, vc):
         return _piper_wav(text, vc)
     pipeline = _kokoro_pipeline(vc)
     samples = []
-    for _g, _p, audio in pipeline(text, voice=vc["tts_voice"], speed=float(vc["rate"])):
-        if audio is None:
-            continue
-        try:
-            samples.extend(float(x) for x in audio)
-        except TypeError:
-            samples.append(float(audio))
+    try:
+        for _g, _p, audio in pipeline(text, voice=vc["tts_voice"], speed=float(vc["rate"])):
+            if audio is None:
+                continue
+            try:
+                samples.extend(float(x) for x in audio)
+            except TypeError:
+                samples.append(float(audio))
+    except VoiceUnavailable:
+        raise
+    except Exception as e:
+        # v0.4.1e (#229): a CUDA failure at generation time —
+        # the probe said the card could compute and the field
+        # disagreed — is named in the operator's words, never
+        # relayed raw, and it rewrites the probe verdict so the
+        # next line is built on the CPU.
+        if _is_cuda_error(e):
+            _state, _info = _voice_cuda_probe()
+            _voice_cuda_mark_failed(e)
+            raise VoiceUnavailable(
+                "Her voice could not use the graphics card for "
+                "that line. " + _cuda_fallback_sentence(_info)
+                + " The next line will be spoken from the CPU.")
+        raise VoiceUnavailable("Kokoro could not speak that line: "
+                               + str(e))
     if not samples:
         raise VoiceUnavailable("Kokoro produced no audio for that line.")
     return _pitch_shift_wav(_samples_to_wav(samples, 24000), vc)
@@ -23246,6 +23597,14 @@ class Handler(BaseHTTPRequestHandler):
                 })
         elif self.path == "/api/voice/calls":
             self._send(200, {"calls": load_voice_calls()})
+        elif self.path.split("?")[0] == "/api/chat/route":
+            # v0.4.1e (#228): the route pill reads its face from
+            # here — the stored route, the effective default, and
+            # the access table, in one answer.
+            _q = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            _cid = (_q.get("chatId") or [""])[0]
+            self._send(200, chat_route_answer(load_config(), _cid))
         elif self.path == "/api/operator/badge-info":
             # Issue #116: the fact an Operator Badge may carry about
             # this install beyond the operator's own profile: the
@@ -24428,6 +24787,13 @@ class Handler(BaseHTTPRequestHandler):
                         errors["decode"] = _decode_detail(dec_exc)
                 try:
                     if vc["tts_engine"] == "kokoro":
+                        # v0.4.1e (#229): warmup runs the CUDA
+                        # EXECUTION probe beside the decode probe,
+                        # before the pipeline is built on its
+                        # verdict — a fallen-back verdict is a
+                        # working state with a named reason, not
+                        # a warmup error.
+                        _voice_cuda_probe()
                         _kokoro_pipeline(vc)
                     else:
                         _piper_load(vc)
@@ -24573,6 +24939,26 @@ class Handler(BaseHTTPRequestHandler):
                 state["call"] = None
                 save_voice_state(state)
                 self._send(200, {"ok": True, "call": call})
+        elif self.path == "/api/chat/route":
+            # v0.4.1e (#228): a route flip, validated against the
+            # access the operator actually has (chat_route_set).
+            # The answer carries the route the bridge stored; a
+            # refusal carries its reason word and its sentence,
+            # and the store is untouched — the pill degrades on
+            # its own face, never a silent snap-back.
+            data = self._body()
+            _cid = str(data.get("chatId") or "")[:80]
+            if not _cid:
+                self._send(200, {"ok": False, "reason": "no-chat",
+                                 "error": "That flip named no chat."})
+                return
+            _ans, _ref = chat_route_set(cfg, _cid, data.get("route"))
+            if _ref is not None:
+                self._send(200, {"ok": False, "reason": _ref[0],
+                                 "error": _ref[1],
+                                 "route": chat_route_get(_cid)})
+            else:
+                self._send(200, _ans)
         elif self.path == "/api/chat":
             data = self._body()
             messages = data.get("messages", [])
@@ -25099,10 +25485,19 @@ class Handler(BaseHTTPRequestHandler):
                 # at all.
                 _mesh_payload = None
                 reply = None
-                if not data.get("meshLocal"):
+                # v0.4.1e (#228): the route that governs is the
+                # bridge's STORED route for this chat — the same
+                # store the composer's pill renders from, so the
+                # face and the road cannot disagree. meshLocal
+                # stays honored as a per-request Local from an
+                # older page caught mid-update.
+                _route = chat_route_get(str(data.get("chatId") or ""))
+                if data.get("meshLocal"):
+                    _route = {"mode": "local"}
+                if not (_route and _route.get("mode") == "local"):
                     _ms = mesh_settings(cfg)
                     if _ms["enabled"] and _ms["borrow"]["enabled"] and _ms["borrow"]["peers"]:
-                        reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms)
+                        reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms, route=_route)
                 if reply is None:
                     # Build 8 (#154): owner preemption — the
                     # owner's own work starting takes the machine

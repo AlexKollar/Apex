@@ -105,7 +105,18 @@ fn wait_for_bridge() {
 #[cfg(target_os = "linux")]
 fn grant_media_permissions(window: &WebviewWindow) {
     let _ = window.with_webview(|webview| {
-        use webkit2gtk::{PermissionRequestExt, WebViewExt};
+        use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
+        // The layer below permission (#6, the Build 6 gamble,
+        // applied only once compile-verified): a default
+        // WebKitGTK build can leave media capture itself off
+        // in Settings, in which case allowing every permission
+        // request still yields no microphone. Turn capture on
+        // explicitly for this webview — the only page it ever
+        // loads is the operator's own local dashboard.
+        if let Some(settings) = webview.inner().settings() {
+            settings.set_enable_media_stream(true);
+            settings.set_enable_webrtc(true);
+        }
         webview.inner().connect_permission_request(|_view, request| {
             request.allow();
             true
