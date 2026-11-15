@@ -2354,6 +2354,31 @@ else
   echo "    Navi still launches: start.sh falls back to the dashboard in your browser."
 fi
 
+# v0.4.2e (#233): the window's end state, verified on disk and
+# NAMED before this install calls itself done. A binary standing
+# beside start.sh whose build stamp does not cover the installed
+# shell sources is a window the launcher will refuse — the exact
+# state a v0.4.1e pull produced while reporting success, learned
+# by its operator at the next launch. Whatever road the build
+# above took, the install ends by reading the disk — binary,
+# stamp, sources — and saying the verdict out loud. (An apply's
+# helper reads the same disk state and fails the apply's record
+# on it; a hand install gets the words here, in the open.)
+if [ -x "$INSTALL_DIR/navi-apex-shell" ]; then
+  SHELL_END_HASH="$(shell_sources_hash "$INSTALL_DIR/shell")"
+  SHELL_END_STAMP=""
+  if [ -f "$INSTALL_DIR/navi-apex-shell.stamp" ]; then SHELL_END_STAMP="$(cat "$INSTALL_DIR/navi-apex-shell.stamp")"; fi
+  if [ -n "$SHELL_END_HASH" ] && [ "$SHELL_END_STAMP" = "$SHELL_END_HASH" ]; then
+    echo "    window verified: the binary beside start.sh is stamped for the shell sources installed with it."
+  else
+    echo "  *** THE WINDOW BESIDE start.sh DOES NOT MATCH ITS SOURCES — its build stamp" >&2
+    echo "  *** does not cover the shell sources this install just laid down, so the" >&2
+    echo "  *** launcher will refuse it and open the browser instead (issue #233)." >&2
+    echo "  *** The shell build log (shell/shell-build.log) carries the cause; fix it" >&2
+    echo "  *** and re-run this installer — the window is the only step missing." >&2
+  fi
+fi
+
 if [ -n "${VOICE_FAIL:-}" ]; then
   echo "" >&2
   echo "  *** REMINDER: HER VOICE DID NOT INSTALL — failed step: $VOICE_FAIL" >&2

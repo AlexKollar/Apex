@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.1"
+SHIPPED_VERSION = "0.4.2"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-15.07"
+BRIDGE_BUILD = "2026-11-15.08"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 7
+SHIPPED_BUILD_SEQ = 8
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -7501,16 +7501,69 @@ def _mesh_borrow_via_relay(relay, dest, messages):
     return ("stage", "relay-dark", {})
 
 
-def _mesh_route_fields(peer):
+def peer_fedinet_id(cfg, peer, fedinets=None):
+    # v0.4.2e (#234): the ONE federation recognition every reader
+    # shares — the route pill's availability, the status rail's
+    # FediNet line, the answer badges, the borrow's own road
+    # choice. A peer belongs to a fedinet by ROSTER MEMBERSHIP,
+    # never by the stamp its record happened to be created with:
+    # the stored viaFedinet when it names a fedinet this node
+    # still belongs to, else the node's place on a joined
+    # fedinet's signed roster — an ordinary member entry, or the
+    # fedinet's gateway itself (the gateway is a member of its
+    # own fedinet and never appears as an ordinary roster entry,
+    # which is exactly how a hand-paired gateway record stayed
+    # invisible to the federation in the field: neondrip's
+    # records all carried "viaFedinet": "" because the pairing
+    # predated Rockport Mesh and no adoption ever landed).
+    # Returns the fedinet's id, or "" when the peer is this
+    # node's own pairwise business only.
+    if fedinets is None:
+        fedinets = federation_settings(cfg)
+    fid = str((peer or {}).get("viaFedinet") or "")
+    if fid and any(f["id"] == fid for f in fedinets):
+        return fid
+    nid = str((peer or {}).get("nodeId") or "")
+    if not nid:
+        return ""
+    for f in fedinets:
+        if nid == f["gatewayNodeId"] or _fed_member(f, nid) is not None:
+            return f["id"]
+    return ""
+
+
+def _peer_federation_made(peer):
+    # A record the federation itself created (roster
+    # materialization, a gateway card's introduction): autoPaired
+    # is its birthmark. A hand pairing the federation later
+    # marked keeps autoPaired as it stood — the federation marked
+    # the record, it did not make it — so a dual-hat machine (a
+    # hand pairing that is also a roster member) counts for BOTH
+    # roads: it is borrowed from as a Mesh peer when the Mesh
+    # road is chosen, and recognized as a federation member when
+    # the federation road is. Only a federation-MADE record is
+    # excluded from the Mesh road, exactly as the stamp
+    # partition had it.
+    return bool((peer or {}).get("autoPaired"))
+
+
+def _mesh_route_fields(peer, federation_leg=True):
     # v0.3.0e Build 2 (#203): the federation leg of a served
     # borrow's recorded route — the fedinet under which this
-    # borrow was authorized, named from the peer's viaFedinet
-    # stamp (the federation that made the pairing) resolved
-    # against the federation state. Pairwise peers carry no
-    # stamp and get no fields: the pill renders the RECORDED
-    # route only, and a route with no federation leg is a
-    # pairwise route, never dressed up as one.
-    fed_id = str((peer or {}).get("viaFedinet") or "")
+    # borrow was authorized, named from the peer's federation
+    # recognition (v0.4.2e, #234: peer_fedinet_id — roster
+    # membership, not the record's stamp) resolved against the
+    # federation state. A peer with no federation recognition
+    # gets no fields: the pill renders the RECORDED route only,
+    # and a route with no federation leg is a pairwise route,
+    # never dressed up as one. federation_leg=False is the
+    # caller's word that the road actually taken was the
+    # pairwise Mesh (an explicit Mesh route that a dual-hat
+    # machine served): the recorded route is the road taken,
+    # not every road the machine could have offered.
+    if not federation_leg:
+        return {}
+    fed_id = peer_fedinet_id(load_config(), peer or {})
     if not fed_id:
         return {}
     try:
@@ -7522,7 +7575,7 @@ def _mesh_route_fields(peer):
     return {"fedinet": fed["name"], "fedinetId": fed["id"]}
 
 
-def _mesh_relay_fallback(dest, messages, ms):
+def _mesh_relay_fallback(dest, messages, ms, federation_leg=True):
     # The relay road for one dark destination. Returns
     # mesh_try_borrow's own return shapes — (reply, payload) on a
     # relayed answer, (None, payload) when the attempt settles it
@@ -7566,7 +7619,7 @@ def _mesh_relay_fallback(dest, messages, ms):
             return outcome[1], {"servedBy": "mesh", "node": dest["name"],
                                 "fellBack": False,
                                 "viaRelay": relay["name"], "path": "relay",
-                                **_mesh_route_fields(dest)}
+                                **_mesh_route_fields(dest, federation_leg)}
         if outcome[0] == "dropped":
             return None, {
                 "servedBy": "local", "fellBack": True,
@@ -7633,14 +7686,16 @@ def _mesh_relay_probe(relay, dest_id):
     return "consent" if data.get("consent") else "no-consent"
 
 
-def mesh_try_borrow(messages, cfg, ms, route=None):
+def _mesh_try_borrow_inner(messages, cfg, ms, route=None):
     # The borrower (spec section 2): first reachable peer only —
     # Ring 1 never races lenders. Returns (reply, mesh-payload) on
     # a mesh-served answer, or (None, mesh-payload) describing the
     # local fallback the caller is about to run. (None, None) when
     # Mesh does not apply at all. `route` (v0.4.1e, #228) is the
     # chat's stored route: it narrows the lender field below, once
-    # the borrower's own list is sanitized.
+    # the borrower's own list is sanitized. mesh_try_borrow (the
+    # wrapper after this function) is the public door; this is
+    # the engine it drives.
     peers = ms["borrow"]["peers"]
     if not peers:
         return None, None
@@ -7660,18 +7715,31 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
     # empty answers locally WITH THE ROUTE NAMED on the payload,
     # so the line under the reply blames the route, not a machine
     # that was never asked.
+    # v0.4.2e (#234): membership is RECOGNIZED, not stamped —
+    # peer_fedinet_id reads the roster, so a hand-paired gateway
+    # is a federation road; and the Mesh field is the hand
+    # pairings (a federation-MADE record is not one), so a
+    # dual-hat machine stands in both fields, as it should.
+    # v0.4.2e (#231): with NO stored route the field is ORDERED
+    # by the automatic precedence — federation-recognized
+    # machines first, in their stored order, then the rest — so
+    # the first reachable machine is the precedence's answer.
+    _fed_leg = not (route and route.get("mode") == "mesh")
     if route:
         _mode = route.get("mode")
         if _mode == "mesh":
-            peers = [p for p in peers if not p.get("viaFedinet")]
+            peers = [p for p in peers if not _peer_federation_made(p)]
         elif _mode == "federation":
             _fid = route.get("fedinetId") or ""
-            peers = [p for p in peers if p.get("viaFedinet") == _fid]
+            peers = [p for p in peers if peer_fedinet_id(cfg, p) == _fid]
         if not peers:
             return None, {"servedBy": "local", "fellBack": True,
                           "reason": "route-unavailable",
                           "routeMode": _mode,
                           "routeName": route.get("name") or ""}
+    else:
+        peers = sorted(peers,
+                       key=lambda p: 0 if peer_fedinet_id(cfg, p) else 1)
     if not mesh_node_id():
         ok, _err = mesh_ensure_identity(cfg)
         if not ok:
@@ -7769,7 +7837,7 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
                 with MESH_LOCK:
                     MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                 mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
+                return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer, _fed_leg)}
             if outcome[0] == "dropped":
                 # R3 FUSION: the notice is data; the caller runs a
                 # FRESH local reply — two models' prose is never
@@ -7785,7 +7853,7 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
                     # relay road gets its chance before the local
                     # fallback speaks. Any other error kind keeps
                     # today's behavior exactly.
-                    served = _mesh_relay_fallback(peer, messages, ms)
+                    served = _mesh_relay_fallback(peer, messages, ms, _fed_leg)
                     if served is not None:
                         return served
                 return None, {"servedBy": "local", "fellBack": True, "reason": outcome[1], "node": name}
@@ -7822,7 +7890,7 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
                             with MESH_LOCK:
                                 MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                             mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer, _fed_leg)}
                         if outcome[0] == "dropped":
                             return None, {
                                 "servedBy": "local", "fellBack": True, "reason": "lender-dropped", "node": name,
@@ -7848,7 +7916,7 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
                             with MESH_LOCK:
                                 MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                             mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer, _fed_leg)}
                         break
                 return None, {"servedBy": "local", "fellBack": True, "reason": "busy", "node": name}
             return None, {"servedBy": "local", "fellBack": True, "reason": reason, "node": name}
@@ -7857,7 +7925,7 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
             # dark — the relay road is tried last, and only for
             # the first dark destination in card order (Ring 1
             # never races lenders, on any road).
-            served = _mesh_relay_fallback(relay_target, messages, ms)
+            served = _mesh_relay_fallback(relay_target, messages, ms, _fed_leg)
             if served is not None:
                 return served
         return None, {"servedBy": "local", "fellBack": True, "reason": last_reason}
@@ -7865,6 +7933,38 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
         with MESH_LOCK:
             MESH_STATE["borrow_out"] = False
             MESH_STATE["borrow_peer"] = ""
+
+
+def mesh_try_borrow(messages, cfg, ms, route=None):
+    # The borrower's public door — _mesh_try_borrow_inner does
+    # the work; this wrapper keeps the automatic road honest
+    # (v0.4.2e, #231). With NO stored route the precedence
+    # prefers the fedinet: when the answer nevertheless came
+    # from a lower road — a Mesh peer served, or every road
+    # fell back to local — the payload names the road that was
+    # preferred (autoFellFrom / autoFedinet), so the line under
+    # the reply records the fallback instead of letting the
+    # answer pose as the first choice. An explicit route never
+    # carries the mark: its roads name themselves through the
+    # route fields and the route-unavailable line.
+    reply, payload = _mesh_try_borrow_inner(messages, cfg, ms,
+                                            route=route)
+    if route is not None or not isinstance(payload, dict):
+        return reply, payload
+    try:
+        feds = chat_route_availability(cfg)["fedinets"]
+    except Exception:
+        feds = []
+    if not feds:
+        return reply, payload
+    if payload.get("servedBy") == "mesh" \
+            and not payload.get("fedinet"):
+        payload = dict(payload, autoFellFrom="federation",
+                       autoFedinet=feds[0]["name"])
+    elif payload.get("fellBack"):
+        payload = dict(payload, autoFellFrom="federation",
+                       autoFedinet=feds[0]["name"])
+    return reply, payload
 
 
 # -- Chat routes (v0.4.1e, #228) --------------------------------
@@ -7882,11 +7982,13 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
 #   federation — model work borrows through one fedinet: only
 #                that fedinet's members are candidates, and the
 #                pill wears the fedinet's name in green.
-# A chat with NO stored route keeps the historical behavior —
-# automatic borrowing across every borrowable peer — so nothing
-# changes for a chat the operator has never routed by hand, and
-# the pill's face for such a chat is the effective default the
-# bridge computes below, never a page-side guess.
+# A chat with NO stored route rides the AUTOMATIC precedence
+# (v0.4.2e, #231): the fedinet first, then the Mesh, then
+# local, falling back down the chain as availability changes —
+# and the pill's face for such a chat is that effective
+# default, computed below by the bridge, never a page-side
+# guess, and marked as automatic so it can never be mistaken
+# for a route the operator chose.
 
 CHAT_ROUTES_PATH = os.path.join(ROOT, "config", "chat-routes.json")
 _chat_routes_lock = threading.Lock()
@@ -7949,25 +8051,36 @@ def _chat_route_store(chat_id, route):
 
 
 def chat_route_availability(cfg):
-    # Access, in the bridge's own words: Mesh is available when
-    # borrowing is on and at least one HAND-PAIRED machine can be
-    # borrowed from; a federation stop exists for each joined
-    # fedinet with at least one borrowable member on the roster.
-    # A mode without access is named Not Available by the pill
-    # and refused here — the two can never disagree, because
-    # both read this one computation.
+    # Access, in the bridge's own words — the ONE computation
+    # the pill, the rail, and the badges all read (v0.4.2e,
+    # #234). Mesh is available when borrowing is on and at
+    # least one HAND-PAIRED machine can be borrowed from (a
+    # federation-MADE record is not a hand pairing; a dual-hat
+    # machine — hand-paired AND a roster member — is, and
+    # counts for both roads). A federation stop exists for each
+    # joined fedinet with at least one borrowable member,
+    # membership RECOGNIZED from the roster (peer_fedinet_id),
+    # never from the stamp a record was created with: the
+    # field's hand-paired gateway carried "viaFedinet": "" and
+    # the federation was invisible to this computation while
+    # the rail — which reads the same joined fedinets from
+    # federation_settings — correctly showed it. A mode
+    # without access is named Not Available by the pill and
+    # refused here — the two can never disagree, because both
+    # read this one computation.
     ms = mesh_settings(cfg)
     peers = []
     if ms["enabled"] and ms["borrow"]["enabled"]:
         peers = [p for p in ms["borrow"]["peers"] if p.get("canBorrow")]
-    mesh_ok = any(not p.get("viaFedinet") for p in peers)
+    fedinets = federation_settings(cfg)
+    mesh_ok = any(not _peer_federation_made(p) for p in peers)
     fed_names = {}
-    for f in federation_settings(cfg):
+    for f in fedinets:
         fed_names[f["id"]] = f.get("name") or f["id"]
     feds = []
     seen = set()
     for p in peers:
-        fid = p.get("viaFedinet")
+        fid = peer_fedinet_id(cfg, p, fedinets)
         if fid and fid in fed_names and fid not in seen:
             seen.add(fid)
             feds.append({"id": fid, "name": fed_names[fid]})
@@ -7976,21 +8089,33 @@ def chat_route_availability(cfg):
 
 def chat_route_answer(cfg, chat_id):
     # Everything the pill renders from: the stored route (or
-    # None), the effective face when nothing is stored — Mesh
-    # when any borrow road exists, Local when none does, the
-    # historical defaults named rather than guessed — and the
-    # access table. One answer, three readers (face, flip,
-    # reload), so the three-way contract holds by construction.
+    # None), the effective face when nothing is stored — the
+    # AUTOMATIC precedence (v0.4.2e, #231): the first fedinet
+    # with a borrowable member, then the Mesh, then Local —
+    # and the access table. "automatic" says which kind of
+    # effective this is: True when it came from the precedence
+    # (nothing stored), False when it is the operator's own
+    # stored choice, so the pill's face can mark the one and
+    # never dress it as the other. One answer, three readers
+    # (face, flip, reload), so the three-way contract holds
+    # by construction.
     stored = chat_route_get(chat_id)
     avail = chat_route_availability(cfg)
     effective = stored
+    automatic = False
     if effective is None:
-        if avail["mesh"] or avail["fedinets"]:
+        automatic = True
+        if avail["fedinets"]:
+            f0 = avail["fedinets"][0]
+            effective = {"mode": "federation",
+                         "fedinetId": f0["id"], "name": f0["name"]}
+        elif avail["mesh"]:
             effective = {"mode": "mesh"}
         else:
             effective = {"mode": "local"}
     return {"ok": True, "chatId": str(chat_id or "")[:80],
             "route": stored, "effective": effective,
+            "automatic": automatic,
             "available": avail}
 
 
@@ -10371,6 +10496,43 @@ class ShellSession:
         with self.lock:
             return self._tail[-limit:]
 
+    def wait_settled(self, quiet=0.5, cap=4.0, floor=0.9):
+        # A newborn session's startup output — the shell's
+        # banner, the distro's welcome mat — lands over the
+        # first moments of its life, while an input typed at
+        # once is emitted into the record immediately and the
+        # banner flushes in BEHIND it: the field shape that
+        # buried an uptime answer under thirty lines of Bazzite
+        # MOTD (v0.4.2e, #232). Wait until the stream has been
+        # quiet for `quiet` seconds — no new events, nothing
+        # waiting to flush — at most `cap`, so the banner takes
+        # its place at the session's opening, before any driven
+        # line. The `floor` is the session's minimum age before
+        # quiet counts at all: a banner still on its way (a
+        # login script that sleeps before it prints) is silent
+        # too, and silence that young proves nothing. Returns
+        # True when the stream settled, False on the cap (the
+        # caller types anyway; a slow shell is still a shell).
+        started = time.time()
+        deadline = started + cap
+        last_seq = -1
+        quiet_since = None
+        while time.time() < deadline:
+            with self.lock:
+                seq = self.seq
+                pending = bool(self._pending)
+            if seq == last_seq and not pending:
+                if quiet_since is None:
+                    quiet_since = time.time()
+                elif time.time() - quiet_since >= quiet \
+                        and time.time() - started >= floor:
+                    return True
+            else:
+                last_seq = seq
+                quiet_since = None
+            time.sleep(0.05)
+        return False
+
     # -- output path ------------------------------------------------
     def _on_data(self, text):
         if not text:
@@ -10604,16 +10766,27 @@ _SHELL_BLOCK_OPEN = re.compile(r"\[\[shell\]\]", re.I)
 
 SHELL_TEACHING = (
     "Interactive shell: this chat can hold ONE live terminal "
-    "session. When a step needs a stateful shell — answering a "
-    "prompt, working in a REPL or an interactive tool, anything "
-    "where the next move depends on the terminal's answer — end "
-    "your reply with a block:\n[[shell]]\neach line to type, "
-    "exactly as typed\n[[/shell]]\nThe lines are typed into the "
-    "session badged as yours, its output streams into the thread, "
-    "and you will see its tail on your next turn. One-shot "
-    "commands do not need the session; they run as they always "
-    "have. Elevation never rides the session: sudo inside it "
-    "prompts in-terminal.")
+    "session, and it is a tool in your hand — never your voice. "
+    "Conversation is answered in conversation: a question you "
+    "can answer in words is answered in words, and a remark "
+    "gets a reply, not a command. Drive the shell only when a "
+    "step needs a stateful shell — answering a prompt, working "
+    "in a REPL or an interactive tool, anything where the next "
+    "move depends on the terminal's answer — or when the "
+    "operator has asked for machine work. When you do drive, "
+    "SPEAK FIRST in the same reply: a sentence in your own "
+    "words saying what you are running and why, then end the "
+    "reply with the block:\n[[shell]]\neach line to type, "
+    "exactly as typed\n[[/shell]]\nA reply that is only a "
+    "block is a failed reply — he asked you, not the terminal. "
+    "The lines are typed into the session badged as yours, its "
+    "output streams into the thread, and you will see its tail "
+    "on your next turn: when that output answers his question, "
+    "your next reply says what it showed, in your own words — "
+    "the result, never the session's banner or scaffolding. "
+    "One-shot commands do not need the session; they run as "
+    "they always have. Elevation never rides the session: sudo "
+    "inside it prompts in-terminal.")
 
 
 def extract_shell_block(reply, chat_id):
@@ -10642,6 +10815,7 @@ def extract_shell_block(reply, chat_id):
     drove = []
     drove_any = False
     out = reply
+    settled = False
     for _ in range(3):
         m = _SHELL_BLOCK.search(out)
         if not m:
@@ -10652,7 +10826,21 @@ def extract_shell_block(reply, chat_id):
         while lines and lines[-1] == "":
             lines.pop()
         for ln in lines[:20]:
-            if chat_id is not None and shell_session_input(
+            if chat_id is None:
+                continue
+            if not settled:
+                # v0.4.2e (#232): a drive that BIRTHS the
+                # session waits for the startup stream to
+                # settle before its first line is typed, so
+                # the banner precedes the drive in the record
+                # instead of flooding it.
+                settled = True
+                if shell_session_get(chat_id) is None:
+                    try:
+                        shell_session_open(chat_id).wait_settled()
+                    except Exception:
+                        pass
+            if shell_session_input(
                     chat_id, ln + "\n", "navi", create=True):
                 drove.append(ln)
         drove_any = True
@@ -10664,6 +10852,67 @@ def extract_shell_block(reply, chat_id):
     if not drove_any:
         return reply, None
     return out, {"lines": drove}
+
+
+def _strip_shell_blocks(text):
+    # The [[shell]] markup removed WITHOUT driving anything —
+    # for a text that must never reach a session (the prose
+    # guard's re-ask, below). The same consumption shapes as
+    # extract_shell_block: paired blocks out, an unterminated
+    # block cut at its opening token.
+    if not text:
+        return text
+    out = _SHELL_BLOCK.sub("", text)
+    mo = _SHELL_BLOCK_OPEN.search(out)
+    if mo:
+        out = out[:mo.start()]
+    return out.strip()
+
+
+def prose_guard(reply, drove, messages, endpoint, model):
+    """v0.4.2e (#232): a model turn must still ANSWER. The
+    field shape, twice in one afternoon: a conversational
+    question answered with a bare [[shell]] block (extraction
+    left the prose empty and the terminal block stood as the
+    whole reply), and a machine question answered by reading
+    an injected brief back. When the cleaned reply is empty,
+    she is re-asked ONCE — the failure named, every [[...]]
+    block forbidden in the re-ask (a shell block in it is
+    stripped, never driven) — and if the re-ask still says
+    nothing, a plain bridge sentence names what was run, so
+    the operator is never handed a hollow reply and left to
+    guess what happened. A reply with any prose at all passes
+    through untouched. Returns the reply text to ship."""
+    if (reply or "").strip():
+        return reply
+    lines = list((drove or {}).get("lines") or [])
+    note = "Your previous reply to the operator "
+    if lines:
+        note += ("drove this chat's shell ("
+                 + ", ".join("`" + ln + "`" for ln in lines)
+                 + ") but ")
+    note += ("said nothing in words. Answer him now, in prose, "
+             "in character: say what you ran and what it is "
+             "for, or answer his question directly. Do NOT emit "
+             "a [[shell]] block or any other [[...]] block in "
+             "this reply.")
+    again = None
+    try:
+        again = llamafile_chat(
+            list(messages) + [{"role": "system", "content": note}],
+            endpoint, model)
+    except Exception:
+        again = None
+    if again:
+        again = _strip_shell_blocks(strip_citation_footer(again))
+        if (again or "").strip():
+            return again
+    if lines:
+        return ("I ran " + ", ".join("`" + ln + "`" for ln in lines)
+                + " in this chat's shell — its output is in the "
+                  "thread, and I'll speak to what it shows.")
+    return ("That one came back empty on my side — ask me again "
+            "and I'll answer properly.")
 
 
 def shell_session_brief(chat_id):
@@ -11976,6 +12225,86 @@ def read_installed_build_seq(root):
     return None
 
 
+def _shell_window_state(root):
+    # v0.4.2e (#233): the apply's own verdict on the installed
+    # standalone window, read from DISK after the installer
+    # exits — never from the installer's exit code. Returns
+    # (state, reason):
+    #   "ok"      — the binary's build stamp covers the
+    #               installed shell sources, or no binary
+    #               stands beside start.sh at all (the
+    #               designed browser-fallback installs retire
+    #               theirs, and the launcher falls back
+    #               without complaint).
+    #   "stale"   — a binary stands there whose stamp does not
+    #               cover the installed sources: exactly the
+    #               state start.sh refuses at the next launch,
+    #               and the state v0.4.1e's pull produced while
+    #               reporting success.
+    #   "unknown" — the sources cannot be hashed here, so
+    #               nothing can be proven either way. Named in
+    #               the trace, never silently passed, never
+    #               failed on suspicion.
+    # The hash is the installer's own pipeline (shell_sources_
+    # hash in install.sh): sha256sum of the source files, the
+    # listing hashed again — replicated call for call so the
+    # two can never drift into different answers.
+    shell_dir = os.path.join(root, "shell")
+    binary = os.path.join(root, "navi-apex-shell")
+    if not os.path.isfile(binary):
+        return "ok", ""
+    files = ["Cargo.toml", "build.rs", "src/main.rs",
+             "tauri.conf.json"]
+    if os.path.isfile(os.path.join(shell_dir, "icons", "icon.png")):
+        files.append("icons/icon.png")
+    files.append("README.md")
+    for f in files:
+        if not os.path.isfile(os.path.join(shell_dir, f)):
+            return "unknown", ("the installed shell sources are "
+                               "incomplete (" + f + " is missing), "
+                               "so the window's build stamp cannot "
+                               "be verified")
+    try:
+        p1 = subprocess.run(["sha256sum"] + files, cwd=shell_dir,
+                            capture_output=True, text=True,
+                            timeout=60)
+        if p1.returncode != 0 or not p1.stdout:
+            return "unknown", ("sha256sum could not hash the "
+                               "installed shell sources")
+        p2 = subprocess.run(["sha256sum"], input=p1.stdout,
+                            capture_output=True, text=True,
+                            timeout=60)
+        parts = (p2.stdout or "").split()
+        digest = parts[0] if p2.returncode == 0 and parts else ""
+    except Exception as e:
+        return "unknown", ("the shell sources could not be "
+                           "hashed here: " + str(e))
+    if not digest:
+        return "unknown", ("the shell sources could not be "
+                           "hashed here")
+    stamp = ""
+    try:
+        with open(os.path.join(root, "navi-apex-shell.stamp")) as f:
+            stamp = f.read().strip()
+    except Exception:
+        stamp = ""
+    if not stamp:
+        return "stale", ("the window binary beside start.sh "
+                         "carries no build stamp "
+                         "(navi-apex-shell.stamp is missing), so "
+                         "the launcher will refuse it as "
+                         "unverifiable and open the browser "
+                         "instead")
+    if stamp != digest:
+        return "stale", ("the window binary beside start.sh was "
+                         "built from older shell sources — its "
+                         "build stamp does not cover the shell "
+                         "sources this update installed, so the "
+                         "launcher will refuse it and open the "
+                         "browser instead")
+    return "ok", ""
+
+
 def _pid_alive(pid):
     try:
         os.kill(pid, 0)
@@ -12440,6 +12769,34 @@ def main():
             env["NAVI_HOME"] = root
     except Exception:
         pass
+
+    # v0.4.2e (#233): the shell-window verdict, read from disk
+    # (see _shell_window_state). An apply is NOT confirmed
+    # while the installed window binary is one the launcher
+    # will refuse: v0.4.1e's pull laid new shell sources over a
+    # binary built from older ones, the install reported
+    # success, and the operator learned it at the next launch,
+    # from a launcher log. A stale verdict fails the apply
+    # HERE — in the record the panel shows, with the reason in
+    # words — whatever the installer's exit code claimed.
+    _shell_state, _shell_reason = _shell_window_state(root)
+    trace("shell-window",
+          _shell_state
+          + ((" — " + _shell_reason) if _shell_reason else ""))
+    if _shell_state == "stale":
+        fail("install",
+             "The update installed, but her standalone window "
+             "did not come with it: " + _shell_reason + ". The "
+             "update is not confirmed. The installer's shell "
+             "build log is at shell/shell-build.log in the "
+             "install folder — the Rust toolchain and the "
+             "WebKitGTK development packages are the usual "
+             "causes. Fix the cause and run the update again, "
+             "or use the manual fallback below, which re-runs "
+             "its installer by hand.")
+        relaunch()
+        STATE["stop_beat"] = True
+        return
 
     tail_failure = ""
     if code != 0:
@@ -25362,6 +25719,14 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if guardian_settings(cfg)["enabled"]:
                     _system_prompt += "\n\n[Guardian — this machine right now]\n" + GUARDIAN.context_block()
+                    # v0.4.2e (#232): the brief is BACKGROUND, and
+                    # it is framed as such in the prompt itself —
+                    # in the field an uptime question was answered
+                    # with this block read back verbatim, because
+                    # nothing told her it was not a reply.
+                    _system_prompt += ("\n(The Guardian brief above is background for questions "
+                                       "about this machine — answer from it in your own words, "
+                                       "and never read it back as your reply.)")
             except Exception:
                 pass
             # Case Files (Build 15, #161): while a case is open
@@ -25553,6 +25918,28 @@ class Handler(BaseHTTPRequestHandler):
                         reply, data.get("chatId"))
                 except Exception:
                     _shell_drove = None
+                # v0.4.2e (#232): the prose guard — a turn
+                # whose prose came back empty (a bare shell
+                # drive is the field shape) is re-asked once,
+                # and never ships hollow. When the hollow turn
+                # was a lender's, the words that replace it are
+                # this machine's, and the record says so: the
+                # mesh payload is rewritten to the local
+                # fallback shape with the #224 reason word, so
+                # the pill never attributes local prose to the
+                # lender.
+                try:
+                    _pre_guard = reply
+                    reply = prose_guard(reply, _shell_drove, messages,
+                                        endpoint, model)
+                    if reply != _pre_guard and _mesh_payload \
+                            and _mesh_payload.get("servedBy") == "mesh":
+                        _mesh_payload = {
+                            "servedBy": "local", "fellBack": True,
+                            "reason": "lender-error",
+                            "node": _mesh_payload.get("node") or ""}
+                except Exception:
+                    pass
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload

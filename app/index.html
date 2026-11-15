@@ -801,6 +801,7 @@
   .modehint .routepill-mesh { border-color:color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); background:color-mix(in srgb, var(--blue) 10%, transparent); }
   .modehint .routepill-fed { border-color:color-mix(in srgb, var(--green) 60%, transparent); color:var(--green); background:color-mix(in srgb, var(--green) 10%, transparent); }
   .modehint .routepill-na { border-color:color-mix(in srgb, var(--am) 60%, transparent); color:var(--am); }
+  .modehint .routepill-auto { border-style:dashed; }
   .modehint .route-msg { font-size:11px; color:var(--am); }
   @media (max-width:800px) { .modehint .routepill { min-height:44px; } }
   /* The Wire's own tab bar (v0.4.1e, #230): the four families
@@ -1705,11 +1706,23 @@ function routePillHtml() {
   var eff = chatRoute.effective || { mode: "local" };
   var stored = chatRoute.route || null;
   var avail = chatRoute.available || { mesh: false, fedinets: [] };
+  // v0.4.2e (#231): an effective route the bridge computed
+  // from the automatic precedence (nothing stored) is marked
+  // as what it is — an "Auto · " prefix and a dashed border —
+  // so an automatic face can never be mistaken for a route
+  // the operator chose, nor a chosen face for the default.
+  // The bridge's answer carries the distinction ("automatic");
+  // the face only renders it.
+  var auto = !!chatRoute.automatic;
   var cls = "routepill", face = "", label = "";
+  if (auto) cls += " routepill-auto";
   if (eff.mode === "mesh") {
     if (stored && stored.mode === "mesh" && !avail.mesh) {
       face = "Mesh Not Available"; cls += " routepill-na";
       label = "This chat's route is the Mesh, but no paired machine can be borrowed from right now — replies answer locally until one can. Press to choose another route.";
+    } else if (auto) {
+      face = "Auto · Mesh"; cls += " routepill-mesh";
+      label = "Automatic route: the Mesh — no federation road is available, so the automatic precedence (federation, then Mesh, then local) puts this chat on the pairwise Mesh. Press to choose a route yourself.";
     } else {
       face = "Connected to Mesh"; cls += " routepill-mesh";
       label = "Route: Connected to Mesh — this chat's model work borrows over the pairwise Mesh. Press to change the route.";
@@ -1718,12 +1731,17 @@ function routePillHtml() {
     var fed = null;
     (avail.fedinets || []).forEach(function (f) { if (f.id === eff.fedinetId) fed = f; });
     if (fed) {
-      face = fed.name; cls += " routepill-fed";
-      label = "Route: " + fed.name + " — this chat's model work borrows through that federation. Press to change the route.";
+      face = (auto ? "Auto · " : "") + fed.name; cls += " routepill-fed";
+      label = auto
+        ? "Automatic route: " + fed.name + " — the automatic precedence (federation, then Mesh, then local) puts this chat on the federation while a member can be borrowed from. Press to choose a route yourself."
+        : "Route: " + fed.name + " — this chat's model work borrows through that federation. Press to change the route.";
     } else {
       face = "Federation Not Available"; cls += " routepill-na";
       label = "This chat's federation route is not available right now — replies answer locally. Press to choose another route.";
     }
+  } else if (auto) {
+    face = "Auto · Local";
+    label = "Automatic route: local — no federation or Mesh road is available, so the automatic precedence (federation, then Mesh, then local) answers on this machine. Press to choose a route yourself.";
   } else {
     face = "Use Local Resources";
     label = "Route: Use Local Resources — this chat's model work runs on this machine. Press to change the route.";
@@ -1875,8 +1893,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-15.07";
-var SHIPPED_BUILD_SEQ = 7;
+var BRIDGE_BUILD = "2026-11-15.08";
+var SHIPPED_BUILD_SEQ = 8;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -5231,7 +5249,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Sudo mode (v0.3.0e — Build 3)</h4>" +
   "<p>Sudo mode lets the commands Navi runs execute as root — and since Build 3 it runs on <b>sudo's own credential timestamp</b>, not on anything Apex holds. You arm it in <b>Settings → System</b>: flip the switch and a masked prompt appears on that same card; the password is fed <b>once</b> to <span class='mono'>sudo -v</span> and then forgotten by the page and the bridge alike — <b>never stored, logged or synced, anywhere</b>. What persists is one on/off flag in the config and sudo's own timestamp. While the timestamp lives, her elevated commands run as <span class='mono'>sudo -n</span> (never prompting); when it lapses, the status column and the Settings card read <b>Expired</b>, and elevated commands <b>refuse honestly</b> — naming the expiry — until you re-warm. Disarming (from Settings or the status column) flips the flag and kills the timestamp with <span class='mono'>sudo -k</span>: instant and total. The status column no longer owns the switch; it <b>reads</b> the state — Armed or Expired while the feature is on, and absent entirely while it is off. <b>Every elevated command Navi runs is on the record</b>: an append-only audit (<span class='mono'>config/sudo-audit.jsonl</span> — timestamp, the command as run, the chat it served, its exit status), viewable read-only on the Settings card. The audit deliberately does <b>not</b> ride Sync. One honest cost: on a machine whose sudo asks a fingerprint reader before the password, each fresh <span class='mono'>sudo -n</span> still runs PAM — but it fails fast instead of waiting the reader out, and the arm's one <span class='mono'>sudo -v</span> pays the full conversation once per timestamp window. The DHD prerequisite installer rides the same timestamp now: arm sudo mode first if a DHD step needs root.</p></div>" +
     "<div class='doc-sec'><h4>Shell sessions — the full shell (CLI Mode, Build 3)</h4>" +
-  "<p>One-shot commands are half the story. Each chat can hold <b>one standing interactive session</b> — a real shell on a real terminal (a PTY), living in the bridge, keyed to the chat. Open one by latching the composer's <b>CLI</b> toggle (the old <span class='mono'>&gt;_</span> button retired in Build 4 — the toggle is the door, and the composer's lines type into the session while it is latched); it survives messages and window reloads, and everything it does streams into the thread as a terminal record: lines typed are <b>badged by author</b> — OPERATOR or NAVI — because Navi can drive the same session. When a step needs a stateful shell (answering a prompt, a REPL, an interactive tool), she types into it herself and sees its output on her next turn. A program that takes the <b>full screen</b> (an editor, a monitor) renders on a real terminal grid in a pane above the composer on the desktop — click the pane and type to the program. On a phone there is no pane: the session streams into the thread instead, and the session header says so — an honest degradation, named, not a squeezed pretend-terminal. Since Build 5 there is exactly <b>one input</b>: the composer — the session's live status and its Close live in a header above the composer (or in the pane's head while a program holds the screen), and latching CLI always <b>brings the session forward</b> — the thread scrolled to its record, the composer focused — however long it sat behind the Navi latch. Sessions end when you close them, when the shell exits, or after <b>30 minutes without input</b> — the thread notes the closing and its reason either way. If the bridge restarts, the session is gone and the record says exactly that; nothing fakes continuity. Elevation never rides the session: it runs under its own session id, so sudo inside it prompts in-terminal like any terminal, and sudo mode's timestamp does not leak into it. Sessions are local to the seat whose bridge holds them — a reply borrowed over the Mesh does not move your shell.</p></div>" +
+  "<p>One-shot commands are half the story. Each chat can hold <b>one standing interactive session</b> — a real shell on a real terminal (a PTY), living in the bridge, keyed to the chat. Open one by latching the composer's <b>CLI</b> toggle (the old <span class='mono'>&gt;_</span> button retired in Build 4 — the toggle is the door, and the composer's lines type into the session while it is latched); it survives messages and window reloads, and everything it does streams into the thread as a terminal record: lines typed are <b>badged by author</b> — OPERATOR or NAVI — because Navi can drive the same session. When a step needs a stateful shell (answering a prompt, a REPL, an interactive tool), she types into it herself and sees its output on her next turn. The shell is a tool in her hand, never her voice (v0.4.2e, #232): conversation is answered in conversation, when she does drive she says what she is running and why in the same reply, and a turn that would otherwise come back as nothing but terminal output is re-asked once so you always get an answer in words — with the result spoken, not the session's banner. A program that takes the <b>full screen</b> (an editor, a monitor) renders on a real terminal grid in a pane above the composer on the desktop — click the pane and type to the program. On a phone there is no pane: the session streams into the thread instead, and the session header says so — an honest degradation, named, not a squeezed pretend-terminal. Since Build 5 there is exactly <b>one input</b>: the composer — the session's live status and its Close live in a header above the composer (or in the pane's head while a program holds the screen), and latching CLI always <b>brings the session forward</b> — the thread scrolled to its record, the composer focused — however long it sat behind the Navi latch. Sessions end when you close them, when the shell exits, or after <b>30 minutes without input</b> — the thread notes the closing and its reason either way. If the bridge restarts, the session is gone and the record says exactly that; nothing fakes continuity. Elevation never rides the session: it runs under its own session id, so sudo inside it prompts in-terminal like any terminal, and sudo mode's timestamp does not leak into it. Sessions are local to the seat whose bridge holds them — a reply borrowed over the Mesh does not move your shell.</p></div>" +
     "<div class='doc-sec'><h4>Output cards — the thread folds itself</h4>" +
   "<p>When the conversation moves on, the bulky parts of earlier exchanges fold into small cards so the thread stays readable: a terminal block folds into a card whose line shows the command in its colors, how it ended (like <span class='mono'>exit 0</span>), and the first line of its output; a long reply from Navi — 500 characters or more, eight lines or more, or one containing a code block — folds into a card labeled <b>Navi reply</b> with its first line and its size. Click a card to open it and read the whole thing; click again to fold it. The card you are still in — everything from your last message onward — never folds. Folding is only about looks: nothing is deleted, the whole history stays in the thread and on disk, and Navi still sees the full output as her context, exactly as before. Clearing the chat clears the cards with it.</p></div>" +
     "<div class='doc-sec'><h4>Your command shows once</h4>" +
@@ -5468,11 +5486,13 @@ var DOC_PAGES = [
   "<p><b>Which addresses a card carries.</b> A card's addresses are harvested by <i>interface</i>, not by address range: only the addresses bound to the machine's physical Ethernet/Wi-Fi interfaces are minted — never loopback, never a container bridge or its tails, never a VM bridge, tunnel, or VPN adapter. A 10.x address on the physical card is a legitimate LAN address and rides; a 192.168.x on a container bridge does not. If a machine has no plausible physical-LAN address and no declared endpoint, the card <b>refuses to mint</b> and says why in plain words. A peer record's entries may each carry their own port — <span class='mono'>host:port</span> — while a bare host inherits the record's port, so one record can speak LAN at home and a public door away. The <b>Public endpoint</b> on the Mesh page is the address you type for exactly that: never harvested, it rides your card beside the LAN addresses and lands in each peer's record as a host:port entry; it is the one address Apex ever shows, because you typed it for publication.</p></div>" +
     "<div class='doc-sec'><h4>Borrowing — automatic, with off switches</h4>" +
   "<p>Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with its <i>via &lt;name&gt;</i> pill. The first borrowed reply of a session also raises a notice card in the thread, so borrowing never starts silently.</p>" +
-  "<p><b>The Fedinet route pill (v0.3.0e — Build 2, #203).</b> When the answer travelled inside a federation — the borrow was authorized under a fedinet's roster and trust — the pill turns the <b>federation green</b> and reads the whole recorded route: <i>Fedinet Name &gt; Answered by Name</i>, with the carrier as the middle segment when a relay carried it (<i>Fedinet Name &gt; Carrier &gt; Answered by Name</i>; the relay is one hop by law, so there is at most one). The pill renders the route the bridge <b>recorded</b>, never an inference: a borrow with no federation leg keeps the plain cyan <i>via &lt;name&gt;</i> pill, and local answers stay unbadged. On a phone the route truncates from the middle out — the fedinet and the answerer always survive; the carrier elides first.</p>" +
+  "<p><b>The Fedinet route pill (v0.3.0e — Build 2, #203).</b> When the answer travelled inside a federation — the borrow was authorized under a fedinet's roster and trust — the pill turns the <b>federation green</b> and reads the whole recorded route: <i>Fedinet Name &gt; Answered by Name</i>, with the carrier as the middle segment when a relay carried it (<i>Fedinet Name &gt; Carrier &gt; Answered by Name</i>; the relay is one hop by law, so there is at most one). The pill renders the route the bridge <b>recorded</b>, never an inference: a borrow with no federation leg keeps the plain cyan <i>via &lt;name&gt;</i> pill, and local answers stay unbadged. Since v0.4.2e (#234) the recorded leg follows roster recognition: a borrow from a machine whose node stands on the fedinet's roster records the federation leg even when that machine was paired by hand before the fedinet existed — while a borrow you explicitly routed over the Mesh records the pairwise road it actually took. On a phone the route truncates from the middle out — the fedinet and the answerer always survive; the carrier elides first.</p>" +
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
   "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
   "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
-  "<li><b>The route pill</b>, beside the composer, is the chat's route control (v0.4.1e, #228) — one pill, three roads, its face read from the bridge's stored route for the chat, so the face, the store, and a reload can never disagree. <b>Use Local Resources</b> (neutral): model work runs on this machine, no borrow attempted. <b>Connected to Mesh</b> (blue): model work borrows over the pairwise Mesh, from hand-paired machines. The <b>federation's name</b> (green): model work borrows through that fedinet, from its members. Pressing the pill cycles the roads you have access to; a road you don't reads <b>Not Available</b> and cannot be flipped into, and a flip the bridge refuses is answered on the pill itself, in words, with the route unchanged. A chat never routed by hand keeps the historical behavior — automatic borrowing across every borrowable peer.</li></ul>" +
+  "<li><b>The route pill</b>, beside the composer, is the chat's route control (v0.4.1e, #228) — one pill, three roads, its face read from the bridge's stored route for the chat, so the face, the store, and a reload can never disagree. <b>Use Local Resources</b> (neutral): model work runs on this machine, no borrow attempted. <b>Connected to Mesh</b> (blue): model work borrows over the pairwise Mesh, from hand-paired machines. The <b>federation's name</b> (green): model work borrows through that fedinet, from its members. Pressing the pill cycles the roads you have access to; a road you don't reads <b>Not Available</b> and cannot be flipped into, and a flip the bridge refuses is answered on the pill itself, in words, with the route unchanged.</li>" +
+  "<li><b>The automatic precedence (v0.4.2e, #231).</b> A chat you have never routed by hand rides the automatic precedence: <b>the fedinet first, then the Mesh, then local</b>, falling back down the chain as roads empty — and the pill <i>shows</i> that default rather than hiding it: an automatic face carries an <b>Auto ·</b> prefix and a dashed border (<i>Auto · Rockport Mesh</i>, <i>Auto · Mesh</i>, <i>Auto · Local</i>), so it can never be mistaken for a route you chose, and a route you chose never wears the mark. The face tracks availability as it changes, and when an answer falls back below the road the precedence preferred, the line under the reply says so. Pressing the pill on an automatic chat stores the next road as your own choice, and from then on your choice wins over the precedence.</li>" +
+  "<li><b>Recognition by roster (v0.4.2e, #234).</b> A machine is a federation road because its node stands on a fedinet's signed roster — a member entry, or the fedinet's gateway itself — never because of how its pairing record happened to be created. A machine you paired by hand before its fedinet existed is recognized the same as one the roster materialized, and it counts for both roads: your Mesh pairing when the Mesh road is chosen, the federation's member when the federation road is. The pill, the status column's FediNet line, and the green answer pill all read this one recognition.</li></ul>" +
   "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set on the Mesh page) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
     "<div class='doc-sec'><h4>Lending — automatic when idle, off means off</h4>" +
   "<p>Lending can only be turned <b>on</b> from the lending machine's own dashboard, <b>in person</b>, at that machine. It cannot be armed through the DHD door. Turning it off works from anywhere you are signed in — and <b>Stop lending now</b> ends lending and aborts a borrowed generation already running, mid-flight, at once.</p>" +
@@ -7372,6 +7392,10 @@ function meshLineHtml(mesh) {
   // local replies carry nothing at all — absence means local.
   if (!mesh) return "";
   if (mesh.servedBy === "mesh") {
+    // v0.4.2e (#231): the automatic precedence preferred the
+    // federation and a Mesh machine answered instead — the
+    // fallback names itself under the reply, beside the pill.
+    if (mesh.autoFellFrom === "federation") return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc((mesh.autoFedinet || "The federation") + " had no member answering — this reply came over the Mesh instead") + "</div>";
     // 0.2.0e Build 7 (#154): the pill names the machine that
     // ANSWERED; the road it took gets its own quiet line.
     // Build 2 (#203): a federation answer's pill carries the
@@ -7399,6 +7423,15 @@ function meshLineHtml(mesh) {
     if (line) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(line + " — answered locally") + "</div>";
   }
   if (mesh.fellBack) {
+    // v0.4.2e (#231): every road the automatic precedence
+    // tried came up empty — the line names the road that was
+    // preferred, so the local answer never poses as the
+    // precedence's first choice. (The relay branch above
+    // keeps its own stage line: it is the more actionable
+    // fact when a carrier was involved.)
+    if (mesh.autoFellFrom === "federation" && mesh.reason !== "lender-error") {
+      return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc("The automatic route tried " + (mesh.autoFedinet || "the federation") + " first and fell back — answered locally") + "</div>";
+    }
     // v0.4.1e (#228): the chat's ROUTE found no lender in its
     // field — the line blames the route, not a machine that
     // was never asked.

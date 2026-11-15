@@ -273,6 +273,86 @@ def read_installed_build_seq(root):
     return None
 
 
+def _shell_window_state(root):
+    # v0.4.2e (#233): the apply's own verdict on the installed
+    # standalone window, read from DISK after the installer
+    # exits — never from the installer's exit code. Returns
+    # (state, reason):
+    #   "ok"      — the binary's build stamp covers the
+    #               installed shell sources, or no binary
+    #               stands beside start.sh at all (the
+    #               designed browser-fallback installs retire
+    #               theirs, and the launcher falls back
+    #               without complaint).
+    #   "stale"   — a binary stands there whose stamp does not
+    #               cover the installed sources: exactly the
+    #               state start.sh refuses at the next launch,
+    #               and the state v0.4.1e's pull produced while
+    #               reporting success.
+    #   "unknown" — the sources cannot be hashed here, so
+    #               nothing can be proven either way. Named in
+    #               the trace, never silently passed, never
+    #               failed on suspicion.
+    # The hash is the installer's own pipeline (shell_sources_
+    # hash in install.sh): sha256sum of the source files, the
+    # listing hashed again — replicated call for call so the
+    # two can never drift into different answers.
+    shell_dir = os.path.join(root, "shell")
+    binary = os.path.join(root, "navi-apex-shell")
+    if not os.path.isfile(binary):
+        return "ok", ""
+    files = ["Cargo.toml", "build.rs", "src/main.rs",
+             "tauri.conf.json"]
+    if os.path.isfile(os.path.join(shell_dir, "icons", "icon.png")):
+        files.append("icons/icon.png")
+    files.append("README.md")
+    for f in files:
+        if not os.path.isfile(os.path.join(shell_dir, f)):
+            return "unknown", ("the installed shell sources are "
+                               "incomplete (" + f + " is missing), "
+                               "so the window's build stamp cannot "
+                               "be verified")
+    try:
+        p1 = subprocess.run(["sha256sum"] + files, cwd=shell_dir,
+                            capture_output=True, text=True,
+                            timeout=60)
+        if p1.returncode != 0 or not p1.stdout:
+            return "unknown", ("sha256sum could not hash the "
+                               "installed shell sources")
+        p2 = subprocess.run(["sha256sum"], input=p1.stdout,
+                            capture_output=True, text=True,
+                            timeout=60)
+        parts = (p2.stdout or "").split()
+        digest = parts[0] if p2.returncode == 0 and parts else ""
+    except Exception as e:
+        return "unknown", ("the shell sources could not be "
+                           "hashed here: " + str(e))
+    if not digest:
+        return "unknown", ("the shell sources could not be "
+                           "hashed here")
+    stamp = ""
+    try:
+        with open(os.path.join(root, "navi-apex-shell.stamp")) as f:
+            stamp = f.read().strip()
+    except Exception:
+        stamp = ""
+    if not stamp:
+        return "stale", ("the window binary beside start.sh "
+                         "carries no build stamp "
+                         "(navi-apex-shell.stamp is missing), so "
+                         "the launcher will refuse it as "
+                         "unverifiable and open the browser "
+                         "instead")
+    if stamp != digest:
+        return "stale", ("the window binary beside start.sh was "
+                         "built from older shell sources — its "
+                         "build stamp does not cover the shell "
+                         "sources this update installed, so the "
+                         "launcher will refuse it and open the "
+                         "browser instead")
+    return "ok", ""
+
+
 def _pid_alive(pid):
     try:
         os.kill(pid, 0)
@@ -737,6 +817,34 @@ def main():
             env["NAVI_HOME"] = root
     except Exception:
         pass
+
+    # v0.4.2e (#233): the shell-window verdict, read from disk
+    # (see _shell_window_state). An apply is NOT confirmed
+    # while the installed window binary is one the launcher
+    # will refuse: v0.4.1e's pull laid new shell sources over a
+    # binary built from older ones, the install reported
+    # success, and the operator learned it at the next launch,
+    # from a launcher log. A stale verdict fails the apply
+    # HERE — in the record the panel shows, with the reason in
+    # words — whatever the installer's exit code claimed.
+    _shell_state, _shell_reason = _shell_window_state(root)
+    trace("shell-window",
+          _shell_state
+          + ((" — " + _shell_reason) if _shell_reason else ""))
+    if _shell_state == "stale":
+        fail("install",
+             "The update installed, but her standalone window "
+             "did not come with it: " + _shell_reason + ". The "
+             "update is not confirmed. The installer's shell "
+             "build log is at shell/shell-build.log in the "
+             "install folder — the Rust toolchain and the "
+             "WebKitGTK development packages are the usual "
+             "causes. Fix the cause and run the update again, "
+             "or use the manual fallback below, which re-runs "
+             "its installer by hand.")
+        relaunch()
+        STATE["stop_beat"] = True
+        return
 
     tail_failure = ""
     if code != 0:
