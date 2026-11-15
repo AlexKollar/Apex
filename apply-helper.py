@@ -114,6 +114,26 @@ def write_result(patch):
             except Exception:
                 rec = {}
             rec.update(patch)
+            # v0.3.0e Build 2 (#208): a record must never argue
+            # with itself. The merge above only ever ADDS keys,
+            # so a previous attempt's error/failedAt/tailFailure
+            # survived into a later attempt that recovered to done — the
+            # field record for the v0.3.0e Build 1 pull read
+            # state=done while still carrying the earlier wedge
+            # error and its failedAt stamp. A verdict owns its
+            # record: done clears the failure fields outright,
+            # and a fresh working attempt clears a previous
+            # attempt's, so what the panel reads is always THIS
+            # attempt's truth.
+            if patch.get("state") == "done":
+                rec.pop("error", None)
+                rec.pop("failedAt", None)
+                rec.pop("tailFailure", None)
+            elif patch.get("state") == "working":
+                rec.pop("error", None)
+                rec.pop("failedAt", None)
+                rec.pop("tailFailure", None)
+                rec.pop("tailFailure", None)
             tmp = result_path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(rec, f)
@@ -373,6 +393,76 @@ def _holder_remedy(port):
             "otherwise launch the app again from its menu entry.")
 
 
+def _find_install_bridge(root):
+    # v0.3.0e Build 2 (#208): find THIS install's bridge by the
+    # installer's own proof discipline — the pid file the bridge
+    # itself writes (bridge.pid), verified against the process
+    # table, and a working-directory scan for a bridge.py whose
+    # cwd is the install home. Whoever supervises the bridge —
+    # the systemd user unit or the desktop app (start.sh's
+    # supervise loop) — the process it runs is the same shape:
+    # bridge.py, cwd = install home. Returns a proven pid or
+    # None. A pid counts only when BOTH proofs hold (bridge.py
+    # in its command line AND its cwd the install root): the
+    # same bar the socket path has always used.
+    home = os.path.realpath(root)
+    candidates = []
+    try:
+        with open(os.path.join(root, "bridge.pid")) as f:
+            pid = int((f.read() or "").strip() or 0)
+        if pid:
+            candidates.append(pid)
+    except Exception:
+        pass
+    try:
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                candidates.append(int(name))
+    except Exception:
+        pass
+    seen = set()
+    for pid in candidates:
+        if pid in seen or pid == os.getpid():
+            continue
+        seen.add(pid)
+        if _pid_gone(pid):
+            continue
+        if "bridge.py" in _pid_cmdline(pid) and _pid_cwd(pid) == home:
+            return pid
+    return None
+
+
+def _stop_proven_bridge(holder, port, desc):
+    # The escalation both identification paths share: SIGTERM
+    # (the bridge's polite exit — the installer's stop does the
+    # same), wait for the process to be gone AND the port free,
+    # then SIGKILL and wait again. Returns True when the port
+    # is clear.
+    trace("wedge-clear",
+          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
+    try:
+        os.kill(holder, signal.SIGTERM)
+    except Exception:
+        pass
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
+            return True
+        time.sleep(0.5)
+    try:
+        os.kill(holder, signal.SIGKILL)
+    except Exception:
+        pass
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def clear_wedged_bridge(root, port, tgt_seq):
     # Build .91 (issue #91): before relaunching, prove the OLD
     # bridge is actually gone — not merely that its pid file is.
@@ -388,6 +478,19 @@ def clear_wedged_bridge(root, port, tgt_seq):
     # reported, never touched. Escalation mirrors the installer:
     # SIGTERM, wait for death AND a free port, SIGKILL, wait
     # again. Returns (ok, holder_pid, holder_desc).
+    #
+    # v0.3.0e Build 2 (#208): identification no longer rests on
+    # the socket alone. The v0.3.0e Build 1 field pull wedged
+    # exactly here: the port answered, the socket named no
+    # readable process, and the old text declared the holder
+    # unidentifiable and told the operator to kill it by hand —
+    # while the holder was this install's own bridge, run by
+    # the desktop app, findable the whole time by the pid file
+    # and the working-directory proof the installer itself
+    # uses. When the socket cannot name the holder, the helper
+    # now looks the bridge up the installer's way before it
+    # ever says "unidentifiable" — and when it truly cannot
+    # identify anything, the failure names every proof it ran.
     if _port_answers_expected(port, tgt_seq):
         return (True, None, "")
     holder = _port_holder_pid(port)
@@ -395,37 +498,31 @@ def clear_wedged_bridge(root, port, tgt_seq):
         try:
             sock = socket.create_connection(("127.0.0.1", port), timeout=2)
             sock.close()
-            return (False, None,
-                    "something is listening on the port but its process could not be identified")
         except Exception:
             return (True, None, "")
+        found = _find_install_bridge(root)
+        if found is None:
+            return (False, None,
+                    "something is listening on the port but its process "
+                    "could not be identified — the socket named no readable "
+                    "process, the install's pid file (bridge.pid) named no "
+                    "live bridge, and no bridge.py process runs from this "
+                    "install home")
+        holder = found
+        cmd = _pid_cmdline(holder)
+        desc = ("process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
+                + " — the install's own bridge, found by its pid file / "
+                "working directory after the socket named no process")
+        if _stop_proven_bridge(holder, port, desc):
+            return (True, holder, desc)
+        return (False, holder, desc)
     cmd = _pid_cmdline(holder)
     desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
     owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
     if not owned:
         return (False, holder, desc + " — not this install's bridge, so it was not touched")
-    trace("wedge-clear",
-          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
-    try:
-        os.kill(holder, signal.SIGTERM)
-    except Exception:
-        pass
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    try:
-        os.kill(holder, signal.SIGKILL)
-    except Exception:
-        pass
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
+    if _stop_proven_bridge(holder, port, desc):
+        return (True, holder, desc)
     return (False, holder, desc)
 
 
@@ -434,17 +531,32 @@ def _install_log_last_step(log_path):
     # name its steps; the last banner in the log is the step the
     # run had reached when it failed — the tail step a nonzero
     # exit is reported with when the build itself landed.
+    #
+    # v0.3.0e Build 2 (#208): the step is NEVER "an unnamed
+    # step" again — the v0.3.0e Build 1 field record carried
+    # exactly that phrase as its tailFailure, a name that names
+    # nothing. When no banner survives, the log's last ERROR
+    # line names the failure in the installer's own words; when
+    # even that is absent, the fallback names the phase plainly
+    # (a post-placement closing step) instead of shrugging.
     try:
         with open(log_path, "rb") as f:
             text = f.read().decode("utf-8", "replace")
     except Exception:
-        return "an unnamed step"
+        return "the installer's closing steps (its log could not be read)"
     last = ""
+    last_error = ""
     for line in text.splitlines():
         line = line.strip()
-        if line.startswith("==>"):
+        if line.startswith("==>") or line.startswith("== "):
             last = line.lstrip("=> ").strip()
-    return last or "an unnamed step"
+        elif line.startswith("ERROR") or " — FAILED" in line:
+            last_error = line
+    if last:
+        return last
+    if last_error:
+        return "the step that reported: " + last_error
+    return "the installer's closing steps (its log names no step banner for the failure)"
 
 
 def version_label(number, status):
@@ -579,6 +691,26 @@ def main():
         why = str(e)
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
+    # v0.3.0e Build 2 (#208): the bootstrap handoff's verdict,
+    # quoted into the trace. The Build 1 installer gate decided
+    # in silence — a declined handoff left no named trace in
+    # the record, the install log, or here, so the field could
+    # not say afterwards WHY the incoming build's machinery did
+    # not govern its own pull. The installer now writes its
+    # verdict (go / no / refused, with the reason) beside the
+    # job; the helper quotes it into the step log, the diary
+    # the operator actually reads.
+    try:
+        _verdict_path = os.path.join(
+            os.path.dirname(os.path.abspath(job_path)),
+            "apply-handoff-verdict.json")
+        with open(_verdict_path) as _vf:
+            _verdict = json.load(_vf)
+        trace("handoff-verdict",
+              str(_verdict.get("verdict") or "?") + " — "
+              + str(_verdict.get("reason") or ""))
+    except Exception:
+        pass
 
     # 0.2.0e Build 11 (#198): the homecoming adoption. When the
     # installer migrated Apex to its new home, it left a machine

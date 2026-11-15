@@ -750,6 +750,18 @@
      color-mix re-derives the ground from the theme's cyan where
      the engine supports it. */
   .meshpill { display:inline-flex; align-items:center; gap:5px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--cy); border:1px solid rgba(34,211,238,.45); border-color:color-mix(in srgb, var(--cy) 55%, transparent); border-radius:999px; padding:2px 9px; background:rgba(34,211,238,.10); background:color-mix(in srgb, var(--cy) 12%, transparent); }
+  /* Build 2 (#203): the Fedinet route pill — the same pill,
+     gone federation green, reading the recorded route:
+     Fedinet > carrier (when one carried it) > Answered by.
+     On a phone the route truncates from the middle out: the
+     carrier segment elides first; the fedinet and the
+     answerer always survive. */
+  .meshpill.fedpill { color:var(--green); border-color:color-mix(in srgb, var(--green) 55%, transparent); background:color-mix(in srgb, var(--green) 12%, transparent); }
+  .meshpill.fedpill .fedseg-elide { display:none; }
+  @media (max-width:800px) {
+    .meshpill.fedpill .fedseg-mid { display:none; }
+    .meshpill.fedpill .fedseg-elide { display:inline; }
+  }
   pre.out { background:#000; border:1px solid var(--line); border-radius:4px; padding:8px; white-space:pre-wrap; overflow:auto; }
   .ac-wrap { position:relative; }
   .ac { position:absolute; left:0; right:0; bottom:calc(100% + 4px); background:var(--panel); border:1px solid var(--cy); border-radius:4px; overflow:hidden; z-index:20; box-shadow:0 8px 24px rgba(0,0,0,.5); }
@@ -1732,8 +1744,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-14.01";
-var SHIPPED_BUILD_SEQ = 1;
+var BRIDGE_BUILD = "2026-11-14.02";
+var SHIPPED_BUILD_SEQ = 2;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2780,6 +2792,7 @@ function renderBootStatus(boot) {
 var casesState = null, casesFetching = false;
 var caseDetailState = null, caseDetailFetching = false;
 var caseMsg = "", caseReportState = null, caseDragOver = false;
+var caseEditOpen = false, caseEditMsg = "";
 var caseDeleteArm = "";   // Build 15 (#163): the slug whose delete confirm is showing, if any
 var caseListDeleteArm = "";   // Build 3 (#177): the same arm, on the cases LIST — the detail card's delete existed since #163, but the list (where cases are actually scanned) had none, which is how the operator came to report case deletion as missing
 var caseOpenSlug = "";
@@ -3303,7 +3316,37 @@ function caseFilesHtml() {
     if (caseReportState && caseReportState.slug === d.slug) {
       h += "<div class='card' style='border-color:var(--cy)'><b>Report exported</b> — saved as <span class='mono'>report.md</span> in the case folder" + (caseReportState.withheld ? ", with <b>" + caseReportState.withheld + " internal note" + (caseReportState.withheld === 1 ? "" : "s") + " withheld and counted</b> in the document itself" : "") + ". <button class='ghost' id='cf-report-dl' style='min-height:44px'>Download report.md</button><details style='margin-top:6px'><summary style='color:var(--dim);font-size:12px;cursor:pointer'>Read the report</summary><pre class='exec mono' style='margin-top:6px;padding:8px 10px;font-size:12px;white-space:pre-wrap;word-break:break-word'>" + esc(caseReportState.text) + "</pre></details></div>";
     }
+    // Build 2 (#199): the grown-up manifest — summary first,
+    // then the fields, then the edit fold that writes them.
+    if (d.summary) h += "<p style='margin:6px 0'><b>Summary:</b> " + esc(d.summary) + "</p>";
+    h += "<p class='mono' style='color:var(--dim);font-size:12px;margin:2px 0'>type " + esc(d.type || "investigation") + " · priority " + esc(d.priority || "normal") + (d.owner ? " · owner " + esc(d.owner) : "") + (d.tags && d.tags.length ? " · tags " + esc(d.tags.join(", ")) : "") + (d.related && d.related.length ? " · related " + esc(d.related.join(", ")) : "") + (d.status === "closed" ? " · closed " + esc(d.closed || "") + (d.outcome ? " — outcome: " + esc(d.outcome) : "") : "") + "</p>";
+    h += "<div class='row' style='margin-top:6px'><label style='font-size:13px'><input type='checkbox' id='cf-sensitive-toggle'" + (d.sensitive ? " checked" : "") + "> Sensitive case — its name and summary stay off the DHD list, and Sync badges it</label></div>";
+    if (caseEditMsg) h += "<p style='font-size:13px;color:" + (caseEditMsg.indexOf("could not") === -1 && caseEditMsg.indexOf("refused") === -1 ? "var(--green)" : "#f87171") + "'>" + esc(caseEditMsg) + "</p>";
+    h += "<div class='row' style='margin-top:4px'><button class='ghost' id='cf-edit-toggle' style='min-height:44px'>" + (caseEditOpen ? "Close the editor" : "Edit the case") + "</button></div>";
+    if (caseEditOpen) {
+      h += "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'>"
+        + "<div class='row'><input class='grow' id='cf-e-summary' type='text' placeholder='Summary — one line' aria-label='Edit summary' value='" + esc(d.summary || "") + "'></div>"
+        + "<div class='row' style='margin-top:6px'><select id='cf-e-type' aria-label='Edit type'>" + ["incident", "investigation", "research", "hunt", "locate"].map(function (t) { return "<option value='" + t + "'" + (d.type === t ? " selected" : "") + ">" + t + "</option>"; }).join("") + "</select>"
+        + "<select id='cf-e-priority' aria-label='Edit priority'>" + ["low", "normal", "high", "critical"].map(function (t) { return "<option value='" + t + "'" + (d.priority === t ? " selected" : "") + ">" + t + " priority</option>"; }).join("") + "</select>"
+        + "<select id='cf-e-status' aria-label='Edit status'>" + ["open", "closed"].map(function (t) { return "<option value='" + t + "'" + (d.status === t ? " selected" : "") + ">" + t + "</option>"; }).join("") + "</select></div>"
+        + "<div class='row' style='margin-top:6px'><input class='grow' id='cf-e-tags' type='text' placeholder='Tags — comma separated' aria-label='Edit tags' value='" + esc((d.tags || []).join(", ")) + "'><input class='grow' id='cf-e-owner' type='text' placeholder='Owner' aria-label='Edit owner' value='" + esc(d.owner || "") + "'></div>"
+        + "<div class='row' style='margin-top:6px'><input class='grow' id='cf-e-related' type='text' placeholder='Related cases — slugs, comma separated' aria-label='Edit related' value='" + esc((d.related || []).join(", ")) + "'><input class='grow' id='cf-e-outcome' type='text' placeholder='Outcome — when closing: the one-line disposition' aria-label='Edit outcome' value='" + esc(d.outcome || "") + "'></div>"
+        + "<div class='row' style='margin-top:6px'><button class='act' id='cf-edit-save' style='min-height:44px'>Save the case</button></div></div>";
+    }
     h += "</div>";
+    if (d.unverified) {
+      h += "<div class='card' style='border-color:var(--am)'><b>" + d.unverified + " unverified " + (d.unverified === 1 ? "entry awaits" : "entries await") + " review</b> — logged by Navi as leads. Promote what holds, strike what doesn't; a strike is noted in the timeline.</div>";
+    }
+    // Wire matches (Build 2, #199): awareness flowing in —
+    // badged as MATCHES against the case's observables and
+    // entities, never as findings.
+    if (d.wireMatches && d.wireMatches.length) {
+      h += "<div class='card'><h3>Wire matches</h3><p style='color:var(--dim);font-size:12px'>Stories and CVEs matching this case's observables or entities. A match is a lead to check — <b>not a finding</b>.</p>";
+      d.wireMatches.forEach(function (w) {
+        h += "<div style='margin-top:6px'><span class='mono' style='font-size:11px;color:var(--am)'>MATCH</span> <b>" + esc(w.title) + "</b><br><span style='color:var(--dim);font-size:12px'>" + esc(w.kind || "") + " · matched “" + esc(w.term) + "”" + (w.sourceLabel ? " · " + esc(w.sourceLabel) : "") + (w.kev ? " · <span style='color:#f87171'>KEV</span>" : "") + "</span>" + (w.link ? " <a href='" + esc(w.link) + "' target='_blank' rel='noreferrer' style='color:var(--cy);font-size:12px'>Open ↗</a>" : "") + "</div>";
+      });
+      h += "</div>";
+    }
     // Findings
     h += "<div class='card'><h3>Findings</h3>";
     h += "<div class='row'><input class='grow' id='cf-f-title' type='text' placeholder='Finding title — e.g. Expired TLS certificate on the portal' aria-label='Finding title'></div>";
@@ -3312,14 +3355,69 @@ function caseFilesHtml() {
     h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-f-add' style='min-height:44px'>File the finding</button>" + (lastChatExec ? " <button class='ghost' id='cf-file-exec' style='min-height:44px'>File the latest chat output as a finding</button>" : "") + "</div>";
     if (!d.findings.length) h += "<p style='color:var(--dim)'>No findings yet.</p>";
     d.findings.forEach(function (f) {
-      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div></div>";
+      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div>"
+        + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
+        + "</div>";
+    });
+    h += "</div>";
+    // Entities (Build 2, #199): the cast register. Navi's
+    // auto-logged entries wear their LEAD badge and their
+    // provenance; review is one tap.
+    h += "<div class='card'><h3>Entities</h3>";
+    h += "<div class='row'><input class='grow' id='cf-ent-name' type='text' placeholder='Name — a person, org, account, system, or place' aria-label='Entity name'><select id='cf-ent-type' aria-label='Entity type'><option value='person'>person</option><option value='org'>org</option><option value='account'>account</option><option value='system'>system</option><option value='place'>place</option><option value='other'>other</option></select><input class='grow' id='cf-ent-role' type='text' placeholder='Role in the case' aria-label='Entity role'></div>";
+    h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-ent-add' style='min-height:44px'>Add the entity</button></div>";
+    if (!(d.entities || []).length) h += "<p style='color:var(--dim)'>No entities yet — the cast assembles here.</p>";
+    (d.entities || []).forEach(function (e) {
+      var f = e.fields || {};
+      h += "<div class='card' style='margin-top:8px'><b>" + esc(e.heading) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(f.type || "other") + "</span>" + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>LOGGED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>")
+        + (f.role ? "<br><span style='font-size:13px'>" + esc(f.role) + "</span>" : "")
+        + (f.aliases ? "<br><span style='color:var(--dim);font-size:12px'>aliases: " + esc(f.aliases) + "</span>" : "")
+        + (f.identifiers ? "<br><span style='color:var(--dim);font-size:12px'>identifiers: " + esc(f.identifiers) + "</span>" : "")
+        + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed || "") + (f.source ? " · " + esc(f.source) : "") + "</span>"
+        + (e.body ? "<div style='margin-top:4px;white-space:pre-wrap'>" + esc(e.body) + "</div>" : "")
+        + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='entities' data-cf-key='" + esc(e.key) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='entities' data-cf-key='" + esc(e.key) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
+        + "</div>";
+    });
+    h += "</div>";
+    // Observables (Build 2, #199): the IOC register — also
+    // the Wire/TIC case-terms source.
+    h += "<div class='card'><h3>Observables</h3>";
+    h += "<div class='row'><input class='grow' id='cf-obs-value' type='text' placeholder='Value — an IP, domain, URL, hash, file, wallet…' aria-label='Observable value'><select id='cf-obs-kind' aria-label='Observable kind'><option value='ip'>ip</option><option value='domain'>domain</option><option value='url'>url</option><option value='hash'>hash</option><option value='file'>file</option><option value='wallet'>wallet</option><option value='other'>other</option></select><input class='grow' id='cf-obs-ctx' type='text' placeholder='Context — where it was seen' aria-label='Observable context'></div>";
+    h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-obs-add' style='min-height:44px'>Add the observable</button></div>";
+    if (!(d.observables || []).length) h += "<p style='color:var(--dim)'>No observables yet. What lands here feeds the Wire's case matching.</p>";
+    (d.observables || []).forEach(function (e) {
+      var f = e.fields || {};
+      h += "<div class='card' style='margin-top:8px'><span class='mono'><b>" + esc(e.heading) + "</b></span> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(f.kind || "other") + "</span>" + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>LOGGED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>")
+        + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed || "") + (f.source ? " · " + esc(f.source) : "") + "</span>"
+        + (e.body ? "<div style='margin-top:4px;white-space:pre-wrap'>" + esc(e.body) + "</div>" : "")
+        + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='observables' data-cf-key='" + esc(e.key) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='observables' data-cf-key='" + esc(e.key) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
+        + "</div>";
+    });
+    h += "</div>";
+    // Tasks (Build 2, #199): next steps — Navi proposes, the
+    // operator checks off.
+    h += "<div class='card'><h3>Tasks</h3>";
+    h += "<div class='row'><input class='grow' id='cf-task-text' type='text' placeholder='A next step — e.g. Pull the mailbox audit log' aria-label='Task text'></div>";
+    h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-task-add' style='min-height:44px'>Add the task</button></div>";
+    if (!(d.tasks || []).length) h += "<p style='color:var(--dim)'>No tasks yet.</p>";
+    (d.tasks || []).forEach(function (e) {
+      var f = e.fields || {};
+      var done = String(f.done || "").toLowerCase() === "yes";
+      h += "<div class='row' style='margin-top:6px'><span class='grow' style='font-size:13px;" + (done ? "color:var(--dim);text-decoration:line-through" : "") + "'>" + esc(e.heading) + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>PROPOSED BY NAVI</span>" : "") + "</span><button class='ghost' data-cf-review='tasks' data-cf-key='" + esc(e.key) + "' data-cf-action='" + (done ? "reopen" : "done") + "' style='min-height:44px'>" + (done ? "Reopen" : "Done") + "</button></div>";
     });
     h += "</div>";
     // Evidence
     h += "<div class='card'><h3>Evidence</h3>";
     h += "<div id='cf-drop' tabindex='0' role='button' aria-label='Drop evidence files here or activate to upload' style='border:1px dashed " + (caseDragOver ? "var(--accent)" : "var(--line)") + ";border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer'><b>" + (caseDragOver ? "Drop the evidence to file it" : "Drag files here") + "</b><br><span style='color:var(--dim);font-size:12px'>anything the case needs to keep — or click to upload</span><input id='cf-files' type='file' multiple style='display:none' aria-label='Upload evidence files'></div>";
     if (!d.evidence.length) h += "<p style='color:var(--dim)'>No evidence files yet.</p>";
-    d.evidence.forEach(function (ev) { h += "<div class='row' style='margin-top:6px'><span class='mono grow' style='font-size:12px'>" + esc(ev.name) + "</span><span style='color:var(--dim);font-size:12px'>" + ev.size + " bytes</span></div>"; });
+    d.evidence.forEach(function (ev) {
+      h += "<div style='margin-top:8px'><div class='row'><span class='mono grow' style='font-size:12px'>" + esc(ev.name) + "</span><span style='color:var(--dim);font-size:12px'>" + ev.size + " bytes</span></div>"
+        + (ev.sha256 ? "<div class='mono' style='color:var(--dim);font-size:11px;word-break:break-all'>SHA-256 " + esc(ev.sha256) + "</div>" : "<div style='color:var(--am);font-size:12px'>Not yet in the custody register — no hash on file.</div>")
+        + (ev.description ? "<div style='font-size:13px;margin-top:2px'>" + esc(ev.description) + "</div>" : "")
+        + (ev.acquired ? "<div style='color:var(--dim);font-size:12px'>Acquired: " + esc(ev.acquired) + "</div>" : "")
+        + (ev.custody ? "<div style='color:var(--dim);font-size:12px'>Custody: " + esc(ev.custody) + "</div>" : "")
+        + "</div>";
+    });
     h += "</div>";
     // Timeline
     h += "<div class='card'><h3>Timeline</h3>";
@@ -3348,11 +3446,18 @@ function caseFilesHtml() {
   }
   // The list (cold start lands here, always — #114's rule).
   if (!casesState && !casesFetching) refreshCases();
-  h += "<div class='card'><h3>Open a case</h3><div class='row'><input class='grow' id='cf-name' type='text' placeholder='Case name — e.g. Q3 external assessment' aria-label='Case name'></div><div class='row' style='margin-top:6px'><input class='grow' id='cf-client' type='text' placeholder='Client' aria-label='Case client'><input class='grow' id='cf-scope' type='text' placeholder='Scope — e.g. external, one host' aria-label='Case scope'></div><div class='row' style='margin-top:6px'><button class='act' id='cf-create' style='min-height:44px'>Create the case</button></div></div>";
+  h += "<div class='card'><h3>Open a case</h3><div class='row'><input class='grow' id='cf-name' type='text' placeholder='Case name — e.g. Q3 external assessment' aria-label='Case name'></div><div class='row' style='margin-top:6px'><input class='grow' id='cf-client' type='text' placeholder='Client' aria-label='Case client'><input class='grow' id='cf-scope' type='text' placeholder='Scope — e.g. external, one host' aria-label='Case scope'></div>"
+    + "<div class='row' style='margin-top:6px'><input class='grow' id='cf-summary' type='text' placeholder='Summary — one line: what this case is and where it stands' aria-label='Case summary'></div>"
+    + "<div class='row' style='margin-top:6px'><select id='cf-type' aria-label='Case type'><option value='incident'>Incident</option><option value='investigation' selected>Investigation</option><option value='research'>Research</option><option value='hunt'>Hunt</option><option value='locate'>Locate</option></select><select id='cf-priority' aria-label='Case priority'><option value='low'>Low priority</option><option value='normal' selected>Normal priority</option><option value='high'>High priority</option><option value='critical'>Critical priority</option></select><input class='grow' id='cf-tags' type='text' placeholder='Tags — comma separated' aria-label='Case tags'><label style='color:var(--dim);font-size:13px'><input type='checkbox' id='cf-sensitive'> Sensitive</label></div>"
+    + "<div class='row' style='margin-top:6px'><button class='act' id='cf-create' style='min-height:44px'>Create the case</button></div></div>";
   if (casesFetching && !casesState) h += "<p style='color:var(--dim)'>Reading the cases from the desk…</p>";
   (casesState || []).forEach(function (c) {
     var delArm = caseListDeleteArm === c.slug;
-    h += "<div class='card' style='margin-top:8px'><b>" + esc(c.name) + "</b>" + (caseOpenSlug === c.slug ? " <span class='mono' style='font-size:11px;color:#34d399'>OPEN</span>" : "") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(c.client || "—") + " · " + esc(c.status) + " · opened " + esc(c.opened) + "</span><br><span style='color:var(--dim);font-size:12px'>" + c.findings + " finding" + (c.findings === 1 ? "" : "s") + " · " + c.evidence + " evidence · " + c.timeline + " timeline</span><div class='row' style='margin-top:6px'><button class='act' data-case-open='" + esc(c.slug) + "' style='min-height:44px'>Open the case</button>" +
+    h += "<div class='card' style='margin-top:8px'><b>" + esc(c.name) + "</b>" + (caseOpenSlug === c.slug ? " <span class='mono' style='font-size:11px;color:#34d399'>OPEN</span>" : "") + (c.sensitive ? " <span class='mono' style='font-size:11px;color:#f87171'>SENSITIVE</span>" : "") + (c.priority && c.priority !== "normal" ? " <span class='mono' style='font-size:11px;color:" + caseSevColor(c.priority === "critical" ? "critical" : c.priority === "high" ? "high" : "low") + "'>" + esc(c.priority.toUpperCase()) + "</span>" : "") + (c.unverified ? " <span class='mono' style='font-size:11px;color:var(--am)'>" + c.unverified + " UNVERIFIED</span>" : "")
+      + (c.summary ? "<br><span style='font-size:13px'>" + esc(c.summary) + "</span>" : "")
+      + "<br><span style='color:var(--dim);font-size:12px'>" + esc(c.client || "—") + " · " + esc(c.status) + (c.type ? " · " + esc(c.type) : "") + " · opened " + esc(c.opened) + (c.status === "closed" && c.outcome ? " · outcome: " + esc(c.outcome) : "") + "</span>"
+      + (c.tags && c.tags.length ? "<br><span style='color:var(--dim);font-size:12px'>tags: " + esc(c.tags.join(", ")) + "</span>" : "")
+      + "<br><span style='color:var(--dim);font-size:12px'>" + c.findings + " finding" + (c.findings === 1 ? "" : "s") + " · " + c.evidence + " evidence · " + c.timeline + " timeline" + (typeof c.entities === "number" ? " · " + c.entities + " entities · " + c.observables + " observables · " + c.tasksOpen + " open tasks" : "") + "</span><div class='row' style='margin-top:6px'><button class='act' data-case-open='" + esc(c.slug) + "' style='min-height:44px'>Open the case</button>" +
       (delArm ? "" : "<button class='ghost' data-case-del='" + esc(c.slug) + "' style='min-height:44px;color:#f87171'>Delete</button>") + "</div>" +
       (delArm ? "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'><span style='color:#f5b544;font-size:12px'>Delete <b>" + esc(c.name) + "</b>? That removes the case and every file it owns in the Vault — " + c.findings + " finding" + (c.findings === 1 ? "" : "s") + ", " + c.evidence + " evidence file" + (c.evidence === 1 ? "" : "s") + ", " + c.timeline + " timeline entr" + (c.timeline === 1 ? "y" : "ies") + " — and its tied chat. The deletion travels with Sync, so it won't come back from your other machine; copies inside backups already taken stay in those backups.</span><div class='row' style='margin-top:6px'><button class='act' data-case-del-yes='" + esc(c.slug) + "' data-case-name='" + esc(c.name) + "' style='min-height:44px;background:#f87171;border-color:#f87171;color:#14100f'>Delete the case</button><button class='ghost' data-case-del-no='1' style='min-height:44px'>Keep it</button></div></div>" : "") +
       "</div>";
@@ -3388,9 +3493,95 @@ function wireCaseFiles() {
     var name = (document.getElementById("cf-name") || {}).value || "";
     var client = (document.getElementById("cf-client") || {}).value || "";
     var scope = (document.getElementById("cf-scope") || {}).value || "";
-    casePost("/api/cases/create", { name: name, client: client, scope: scope }, function (j) {
+    var fields = {
+      summary: (document.getElementById("cf-summary") || {}).value || "",
+      type: (document.getElementById("cf-type") || {}).value || "investigation",
+      priority: (document.getElementById("cf-priority") || {}).value || "normal",
+      tags: (document.getElementById("cf-tags") || {}).value || "",
+      sensitive: !!((document.getElementById("cf-sensitive") || {}).checked),
+    };
+    casePost("/api/cases/create", { name: name, client: client, scope: scope, fields: fields }, function (j) {
       if (j.ok) { caseMsg = "Case opened — it lives at cases/" + j.case.slug + "/ on the desk, with its own chat on the Chats tab."; casesState = null; caseDetailState = j.case; hydrateChatsFromServer(); }
       else caseMsg = j.error || "The case could not be opened.";
+      render();
+    });
+  });
+  // Build 2 (#199): the sensitive switch — the switch gate's
+  // three-way contract: the flip posts to the bridge, the
+  // detail re-reads the STORED value, and the re-render shows
+  // what the bridge holds. A refusal lands as a message on
+  // this same card and the checkbox re-renders from the
+  // stored state — never a silent snap-back.
+  var sensToggle = document.getElementById("cf-sensitive-toggle");
+  if (sensToggle && caseDetailState) sensToggle.onchange = function () {
+    var slug = caseDetailState.slug;
+    var want = !!sensToggle.checked;
+    casePost("/api/cases/update", { case: slug, fields: { sensitive: want ? "yes" : "no" } }, function (j) {
+      if (j.ok && j.case) {
+        caseDetailState = j.case; casesState = null;
+        caseEditMsg = j.case.sensitive === want
+          ? (want ? "Sensitive is on — the bridge stored it; the DHD list now redacts this case and Sync badges it." : "Sensitive is off — the bridge stored it.")
+          : "The bridge stored a different value than the flip asked for — showing what it holds.";
+      } else {
+        caseEditMsg = "The sensitive change could not be saved: " + (j.error || "the bridge didn't answer") + " — the switch shows the stored state.";
+      }
+      render();
+    });
+  };
+  bind("cf-edit-toggle", function () { caseEditOpen = !caseEditOpen; caseEditMsg = ""; render(); });
+  bind("cf-edit-save", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    var fields = {
+      summary: (document.getElementById("cf-e-summary") || {}).value || "",
+      type: (document.getElementById("cf-e-type") || {}).value || "investigation",
+      priority: (document.getElementById("cf-e-priority") || {}).value || "normal",
+      status: (document.getElementById("cf-e-status") || {}).value || "open",
+      tags: (document.getElementById("cf-e-tags") || {}).value || "",
+      owner: (document.getElementById("cf-e-owner") || {}).value || "",
+      related: (document.getElementById("cf-e-related") || {}).value || "",
+      outcome: (document.getElementById("cf-e-outcome") || {}).value || "",
+    };
+    casePost("/api/cases/update", { case: slug, fields: fields }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; casesState = null; caseEditOpen = false; caseEditMsg = "Saved — the case shows what the bridge stored."; }
+      else caseEditMsg = "The case could not be saved: " + (j.error || "the bridge didn't answer");
+      render();
+    });
+  });
+  // Build 2 (#199): one-tap review + register adds.
+  mainEl.querySelectorAll("[data-cf-review]").forEach(function (b) { b.onclick = function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/review", { case: slug, register: b.getAttribute("data-cf-review"), key: b.getAttribute("data-cf-key"), action: b.getAttribute("data-cf-action") }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; caseMsg = "Review recorded."; }
+      else caseMsg = j.error || "The review could not be recorded.";
+      render();
+    });
+  }; });
+  bind("cf-ent-add", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/register", { case: slug, register: "entities", heading: (document.getElementById("cf-ent-name") || {}).value || "", fields: { type: (document.getElementById("cf-ent-type") || {}).value || "other", role: (document.getElementById("cf-ent-role") || {}).value || "" }, body: "" }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; caseMsg = "Entity added — confirmed, as your own filing."; }
+      else caseMsg = j.error || "The entity could not be added.";
+      render();
+    });
+  });
+  bind("cf-obs-add", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/register", { case: slug, register: "observables", heading: (document.getElementById("cf-obs-value") || {}).value || "", fields: { kind: (document.getElementById("cf-obs-kind") || {}).value || "other" }, body: (document.getElementById("cf-obs-ctx") || {}).value || "" }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; caseMsg = "Observable added — it now feeds the Wire's case matching."; }
+      else caseMsg = j.error || "The observable could not be added.";
+      render();
+    });
+  });
+  bind("cf-task-add", function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    casePost("/api/cases/register", { case: slug, register: "tasks", heading: (document.getElementById("cf-task-text") || {}).value || "", fields: {}, body: "" }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; caseMsg = "Task added."; }
+      else caseMsg = j.error || "The task could not be added.";
       render();
     });
   });
@@ -4561,6 +4752,12 @@ var DOC_PAGES = [
   "<p>Every case has <b>its own chat</b>, made the first time the case is opened and returned to ever after — one case, one canonical thread, riding the same server-side store as every other chat (it survives machines the way chats now do). It is listed on the Chats tab with a CASE tag, and <b>Open the case chat</b> on the case page walks you straight into it. The chat is a reference, not a container: the case's content stays in the Vault's plain files.</p>" +
   "<p>While a case is open, <b>Navi can file her own findings</b> into it — conclusions she reaches, in her own words, filed under her own name (the finding's frontmatter says so, the case page marks it FILED BY NAVI, and a line lands in the timeline). It is never silent: the filing happens in the thread where she reached the conclusion, and the receipt — the finding's title and its path — hangs on her message there. She files nothing from unrelated chats and nothing without that receipt.</p>" +
   "<p>The <b>open case is visible</b>: the status column carries it (CASE, in the stats), and in the case's own chat a chip above the thread names it — tap it to jump to the case. Closing the case (making another one open, or none) clears both.</p></div>" +
+    "<div class='doc-sec'><h4>Case awareness — the file grows up (v0.3.0e — Build 2, #199)</h4>" +
+  "<p>The manifest carries the fields an investigation actually triages by: a one-line <b>summary</b> (it makes the case list scannable, and it is the first thing Navi reads), a <b>type</b> (incident / investigation / research / hunt / locate), a <b>priority</b>, freeform <b>tags</b>, an <b>owner</b>, <b>related</b> case slugs, and — when a case closes — a <b>closed</b> date with a one-line <b>outcome</b>. Older cases read with safe defaults; nothing already filed changes meaning. A case can be marked <b>sensitive</b>: through the DHD door its list entry shows as present-and-sensitive with its counts, but its name, summary, client and scope stay home, and Sync's case index badges it as sensitive.</p>" +
+  "<p>Four <b>registers</b> ride in the case folder as plain markdown, in the timeline's own idiom: <span class='mono'>entities.md</span> (the cast — people, orgs, accounts, systems, places, each with its role), <span class='mono'>observables.md</span> (the IOC register — IPs, domains, URLs, hashes, files, wallets), <span class='mono'>evidence.md</span> (the custody register, below), and <span class='mono'>tasks.md</span> (next steps — Navi proposes, you check off). Being plain files in the folder, they ride Sync, backups and DHD exactly as the rest of the case does. The observables register is also the <b>Wire's case-terms source</b>: matching reads the values an investigator actually wrote down — observables, entity names, tags — not words scraped from the manifest.</p>" +
+  "<p><b>Evidence has a chain of custody now.</b> When a file is filed as evidence, the bridge computes its <b>SHA-256 at filing time</b> and writes its register entry in the same act — description, when/from/how it was acquired, and a custody note. Files filed before the register existed are backfilled on first sight, and the entry says so honestly: the hash is the file's hash as found, its acquisition unrecorded.</p>" +
+  "<p><b>Navi logs as she sees it.</b> In a case's own chat — only there — she may end a reply with a structured log block naming the new, specific, checkable details the work surfaced: entities, observables, events, leads, tasks. The block never renders; the bridge parses, validates, dedupes and writes it — she never edits files. Everything she logs lands <b>unverified</b> (state: <i>lead</i>), badged LOGGED BY NAVI with its provenance (the message it answers, the timestamp). Findings carry the same state: yours default to confirmed, hers to lead. <b>One tap promotes or strikes</b> an unverified entry in the case view; a strike removes the entry and <i>notes the strike in the timeline</i> — an audit trail, not a memory hole. Her own case brief labels the states back to her: she may reason from leads, never cite them as established. Caps keep a talkative turn from flooding the file: at most six log entries and two findings per reply. A detail belonging to a <i>different</i> case is flagged on her message in chat, never written across.</p>" +
+  "<p><b>Awareness flows in.</b> A Wire story or a KEV CVE matching one of the case's observables or entities is surfaced two ways: in the case chat, the matched records ride her context <b>named as matches, not findings</b>; in the case view, a <b>Wire matches</b> card badges them the same way. A match is a lead to check — the product never promotes it to a finding on its own.</p></div>" +
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
@@ -4571,7 +4768,7 @@ var DOC_PAGES = [
   "<p><b>The Wire</b> (in the menu's <b>Apex | Apps</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
   "<p>The page is <b>freshness first</b>: a strip up top says who gathered the picture and how old every source is — <i>fresh</i> under 12 hours, <i>aging</i> under 48, <i>stale</i> beyond — because a stale picture presented as fresh is worse than none. Below it, the <b>triage queue</b> (your matches first, then what's newly exploited, then the loudest new disclosures), <b>the record</b> (one CVE in full: description, products, references, EPSS history), and <b>Navi's brief</b> — the same standing summary she carries into chat. On a phone the arrangement is its own: one column, brief first.</p></div>" +
     "<div class='doc-sec'><h4>Matching — declared, local, honest</h4>" +
-  "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>words from your open cases</b>. A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case words are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
+  "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>your cases' registers</b> — their observables, entity names and tags (since v0.3.0e — Build 2, the values an investigator wrote down, not words scraped from the manifest). A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case terms are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
     "<div class='doc-sec'><h4>Navi's three depths of knowing</h4>" +
   "<p><b>The standing brief</b> rides her chat context on every turn — bounded (roughly 700 tokens), always carrying its freshness stamps, so she answers “what's the picture?” from the store and dates it when she does. <b>Deliberate lookup</b>: type <span class='mono'>intel: openssl</span>, or ask <i>“what do we know about CVE-2024-3094?”</i>, and the answer comes straight from the store without a model round-trip — including when the honest answer is “not in the store.” <b>The seam</b>: name a CVE ID or a watched product in ordinary chat and that record is pulled into her context for that reply only. In a <b>case chat</b>, the case's own matched records ride along — and from the Center's record view, a record can be <b>filed straight into the open case</b> as a finding, its citation (the CVE ID and the digest's stamp) written into the note so case exports carry it.</p></div>" +
     "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
@@ -4653,6 +4850,7 @@ var DOC_PAGES = [
   "<p><b>Which addresses a card carries.</b> A card's addresses are harvested by <i>interface</i>, not by address range: only the addresses bound to the machine's physical Ethernet/Wi-Fi interfaces are minted — never loopback, never a container bridge or its tails, never a VM bridge, tunnel, or VPN adapter. A 10.x address on the physical card is a legitimate LAN address and rides; a 192.168.x on a container bridge does not. If a machine has no plausible physical-LAN address and no declared endpoint, the card <b>refuses to mint</b> and says why in plain words. A peer record's entries may each carry their own port — <span class='mono'>host:port</span> — while a bare host inherits the record's port, so one record can speak LAN at home and a public door away. The <b>Public endpoint</b> on the Mesh page is the address you type for exactly that: never harvested, it rides your card beside the LAN addresses and lands in each peer's record as a host:port entry; it is the one address Apex ever shows, because you typed it for publication.</p></div>" +
     "<div class='doc-sec'><h4>Borrowing — automatic, with off switches</h4>" +
   "<p>Once Mesh is on and a lender is paired and reachable, borrowing happens by itself: a chat request goes to the first reachable lender, and the reply arrives with its <i>via &lt;name&gt;</i> pill. The first borrowed reply of a session also raises a notice card in the thread, so borrowing never starts silently.</p>" +
+  "<p><b>The Fedinet route pill (v0.3.0e — Build 2, #203).</b> When the answer travelled inside a federation — the borrow was authorized under a fedinet's roster and trust — the pill turns the <b>federation green</b> and reads the whole recorded route: <i>Fedinet Name &gt; Answered by Name</i>, with the carrier as the middle segment when a relay carried it (<i>Fedinet Name &gt; Carrier &gt; Answered by Name</i>; the relay is one hop by law, so there is at most one). The pill renders the route the bridge <b>recorded</b>, never an inference: a borrow with no federation leg keeps the plain cyan <i>via &lt;name&gt;</i> pill, and local answers stay unbadged. On a phone the route truncates from the middle out — the fedinet and the answerer always survive; the carrier elides first.</p>" +
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
   "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
   "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
@@ -4696,6 +4894,9 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Deep trust, and its guardrails</h4>" +
   "<p>With a fedinet's <b>trust-by-default</b> on, its signed roster <b>auto-pairs and auto-lends</b> on this node — deep trust, against the gateway's signature, never against a claim. The guardrails are the operator's own, per fedinet: the <b>new-member tick</b> (a member who joins after your trust baseline lends only while it stands; unticked, they are pairing-only for you), a <b>per-member untrust</b> that always wins, a per-member lend tick for named exceptions, an hourly <b>borrow cap</b>, and <b>owner preemption</b> — your own work takes the machine from a federation borrow mid-flight (the borrower is answered <i>preempted</i>, by name; a hand-made pairing's borrow is never preempted). One flip of trust-by-default off ends all auto-lending; pairings already made stay pairings.</p>" +
   "<p><b>Staleness is a posture, not an error.</b> A roster last verified more than <b>72 hours</b> ago degrades its fedinet to pairing-only, with the sentence on the Federation page saying so, until a sync lands. Syncs ride the Mesh door directly, or — when the direct road is dark — <b>via relay</b>, on Build 7's three ticks and one-hop rule. <b>Expulsion</b> is a signed roster revision: it lands at the next sync, removes the federation's own records for the departed node, and never touches a pairing made by hand.</p></div>" +
+    "<div class='doc-sec'><h4>The status column: the law, and the FediNet sections (v0.3.0e — Build 2, #204)</h4>" +
+  "<p><b>Anything turned off in Settings does not show in the status bar at all.</b> Off is absent — no greyed placeholder, no teaser row, and no dot in the collapsed Servers header either. The Mesh row, the DHD row, the Apex | Node row and the Voice row all obey it; a feature mid-switch still shows its switching state, because that is the flip's own feedback. The law governs visibility only, one-directionally — and any Settings toggle added later inherits it.</p>" +
+  "<p>Under the Servers list, above Sudo Mode, each fedinet this node belongs to gets its own line: <b>FediNet: &lt;Name&gt;</b> — the name in the <b>federation green</b> when the fedinet is reachable, <b>red</b> when its gateway cannot be reached, read from the federation machinery's own state (the roster's freshness and the gateway's probe verdict), never a cosmetic guess. A roster past its 72-hour freshness window — the pairing-only degradation above — shows <b>amber</b>, the named middle state. A node in no fedinet gets the one line: <i>You are not federated.</i> The section refreshes on the status column's own cadence; the phone arrangement carries it in the same relative position.</p></div>" +
     "<div class='doc-sec'><h4>The doors: DHD tiers & crown acts</h4>" +
   "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
@@ -5138,6 +5339,27 @@ function memoryReceiptHtml(m, idx) {
     return h + "</div>";
   }).join("");
 }
+function caseLogHtml(m) {
+  // Build 2 (#199): the receipt for Navi's case logging — what
+  // she wrote into the case's registers from this reply, every
+  // entry badged UNVERIFIED (it lands as a lead until the
+  // operator reviews it in Case Files), plus the cross-case
+  // flags: a detail that matches another case is NAMED here
+  // and never written across.
+  if (!m.caseLog) return "";
+  var h = "";
+  var entries = m.caseLog.entries || [];
+  if (entries.length) {
+    h += "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Logged to the case</b> <span style='color:var(--am)'>unverified — review in Case Files</span></div>"
+      + entries.map(function (e) {
+        return "<div style='font-size:13px;margin-top:2px'><span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(e.kind.toUpperCase()) + "</span> “" + esc(e.label) + "” <span class='mono' style='font-size:11px;color:var(--am)'>LEAD</span></div>";
+      }).join("") + "</div>";
+  }
+  (m.caseLog.flags || []).forEach(function (f) {
+    h += "<div class='card' style='margin-top:8px;padding:8px 10px;border-color:var(--am)'><div style='font-size:13px'><b>Cross-case detail:</b> “" + esc(f.value) + "” also appears in <b>" + esc(f.caseName || f.case) + "</b> — flagged here, not written across. Mention it to Navi if the cases connect.</div></div>";
+  });
+  return h;
+}
 function caseFilingsHtml(m) {
   // Build 15 (#161): the receipt for Navi's own case filings —
   // what she filed, into which case, at which path. Filed in
@@ -5209,7 +5431,7 @@ function liveChat(text, speak) {
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, chatId: activeChatId }; });
+    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, chatId: activeChatId }; });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -5827,6 +6049,11 @@ function wireLlama() {
 }
 function renderLocalNetwork() {
   var ps = publicState || CONFIG.publicServer || { enabled: false, activePublic: false, pending: false, lanUrl: "", accessCode: "" };
+  // Build 2 (#204): the status-bar law — the Apex | Node
+  // (local server) row shows only while the feature is on,
+  // live, or mid-switch (the flip's own feedback); switched
+  // off and settled, the row is ABSENT. Off = no trace.
+  if (!ps.enabled && !ps.activePublic && !ps.pending) return "";
   // Build .65: the ON face — the face line, the address, the code —
   // stands only on a live report that the answering bridge is
   // serving the LAN right now. The saved choice alone no longer
@@ -6242,6 +6469,10 @@ function dhdViewState() {
 }
 function renderDhdStatus() {
   var d = dhdViewState();
+  // Build 2 (#204): the status-bar law — DHD off means the
+  // DHD row is ABSENT from the status column, not an "Off"
+  // placeholder. Off = no trace.
+  if (!d.active) return "";
   var dot = d.status === "healthy" ? "#34d399" : (d.status === "degraded" || d.status === "starting") ? "#f5b544" : "#9fb3c8";
   var line = !d.active ? "Off - no public door" : d.status === "degraded" ? "On - domain saved, certificate pending" : d.publicVerified ? "On - " + d.domain + ", reachable anywhere" : "On - listening, outside reach unverified";
   var h = "<div class='stat'><span class='dot" + (d.active ? " pdot" : "") + "' style='background:" + dot + "'></span><span style='color:var(--dim)'>APEX DHD</span><br>" +
@@ -6437,6 +6668,23 @@ function meshPillHtml(mesh) {
   // The Mesh attribution pill itself (Build 3), BARE since
   // Build 8 (#88): pillRow() owns the one row under a reply and
   // puts this pill first in it, ahead of any source pills.
+  //
+  // Build 2 (#203): when the answer travelled inside a
+  // federation — the bridge records the fedinet the borrow was
+  // authorized under on the payload — the pill turns the
+  // federation green and reads the whole recorded route:
+  // "Fedinet > Answered by Name", with the carrier as the
+  // middle segment when a relay carried it ("Fedinet >
+  // Carrier > Answered by Name"). It renders the recorded
+  // route only: no federation stamp, no green, and the
+  // pairwise pill below keeps its exact old shape.
+  if (mesh.fedinet) {
+    var mid = mesh.viaRelay
+      ? "<span class='fedseg fedseg-mid'> &gt; " + esc(mesh.viaRelay) + "</span><span class='fedseg fedseg-elide' aria-hidden='true'> &gt; \u2026</span>"
+      : "";
+    var label = "Answered by " + (mesh.node || "a paired machine") + " via the " + mesh.fedinet + " fedinet" + (mesh.viaRelay ? ", carried by " + mesh.viaRelay : "");
+    return "<span class='meshpill fedpill' aria-label='" + esc(label) + "'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>" + esc(mesh.fedinet) + mid + " &gt; Answered by " + esc(mesh.node || "a paired machine") + "</span>";
+  }
   return "<span class='meshpill' aria-label='Answered by " + esc(mesh.node || "a paired machine") + " via Apex | Mesh'><svg aria-hidden='true' focusable='false' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + meshGlyphSvg() + "</svg>via " + esc(mesh.node || "a paired machine") + "</span>";
 }
 function pillRow(mesh, sources) {
@@ -6471,7 +6719,10 @@ function meshLineHtml(mesh) {
   if (mesh.servedBy === "mesh") {
     // 0.2.0e Build 7 (#154): the pill names the machine that
     // ANSWERED; the road it took gets its own quiet line.
-    if (mesh.viaRelay) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>via relay " + esc(mesh.viaRelay) + "</div>";
+    // Build 2 (#203): a federation answer's pill carries the
+    // carrier itself, so the separate line would say the same
+    // thing twice — it stands down for fedinet routes only.
+    if (mesh.viaRelay && !mesh.fedinet) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>via relay " + esc(mesh.viaRelay) + "</div>";
     return "";
   }
   if (mesh.notice) return "<div style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(mesh.notice) + "</div>";
@@ -6784,6 +7035,10 @@ function wireFederation() {
 }
 function renderMeshStatus() {
   var m = meshViewState();
+  // Build 2 (#204): the status-bar law — Mesh off in Settings
+  // means the Mesh row is ABSENT from the status column, not
+  // greyed, not a placeholder. Off = no trace.
+  if (!m.enabled) return "";
   var dot = meshDotColor(m);
   var line = "Off";
   if (m.enabled) {
@@ -7607,6 +7862,9 @@ function callBlockReason() {
   return "";
 }
 function renderVoiceStatus() {
+  // Build 2 (#204): the status-bar law — voice off in
+  // Settings means no VOICE row in the status column at all.
+  if (CONFIG.backend === "live" && voiceState && !voiceState.enabled) return "";
   var inCall = !!call;
   var avail = CONFIG.backend === "live" && voiceState ? (voiceState.stt.available && voiceState.tts.available) : null;
   var label = CONFIG.backend !== "live" ? "Simulated (mock mode)" : inCall ? "In a call with you" : voiceState && !voiceState.enabled ? "Off" : avail === false ? "Engines not installed" : "On — she can be called";
@@ -8435,7 +8693,14 @@ function serversSummaryDots() {
   var llamaDot = llama.status === "running" ? "#34d399" : "#9fb3c8";
   var meshDot = meshDotColor(meshViewState());
   function dot(c) { return "<span class='dot' style='background:" + c + ";margin-left:6px'></span>"; }
-  return dot(llamaDot) + dot(nodeDot) + dot(meshDot) + dot(dhdDot);
+  // Build 2 (#204): the header's dots obey the same law as
+  // the rows — a feature that is off leaves no dot behind.
+  // The engine (Navi) has no off switch and always reports.
+  var out = dot(llamaDot);
+  if (ps.enabled || ps.activePublic || ps.pending) out += dot(nodeDot);
+  if (meshViewState().enabled) out += dot(meshDot);
+  if (d.active) out += dot(dhdDot);
+  return out;
 }
 function wireStatusTabs(root) {
   if (!root) return;
@@ -8522,6 +8787,36 @@ function chatsPanelHtml() {
   return h;
 }
 
+var federationState = null;
+function renderFederationStatus(live) {
+  // Build 2 (#204): the FediNet sections — under the Servers
+  // list, above Sudo Mode, exactly where the decree puts
+  // them. One line per fedinet this node belongs to, the name
+  // colored by the federation machinery's own verdict
+  // (bridge-side, in the status payload): green when the
+  // fedinet is reachable, red when it cannot connect, amber
+  // for the named middle states — a roster past its 72-hour
+  // freshness window (pairing-only until a sync lands), or a
+  // gateway no probe has checked yet. Not a member of any
+  // fedinet: the one line the decree names. Mock mode has no
+  // federation truth to read, so the section stays absent
+  // there rather than inventing one.
+  if (CONFIG.backend !== "live") return "";
+  if (live && Array.isArray(live.federation)) federationState = live.federation;
+  if (!federationState) return "";
+  var feds = federationState;
+  if (!feds.length) {
+    return "<div class='stat'><span style='color:var(--dim)'>You are not federated.</span></div>";
+  }
+  return feds.map(function (f) {
+    var color = f.state === "ok" ? "var(--green)" : f.state === "down" ? "var(--red)" : "var(--am)";
+    var note = f.state === "stale" ? " title='Roster past its 72-hour freshness window — pairing-only until a roster sync lands'"
+      : f.state === "unknown" ? " title='The gateway has not been checked yet'"
+      : f.state === "down" ? " title='The fedinet\u2019s gateway cannot be reached'"
+      : " title='Reachable'";
+    return "<div class='stat'><span style='color:var(--dim)'>FediNet:</span> <span class='v mono' style='font-weight:700;color:" + color + "'" + note + ">" + esc(f.name) + "</span></div>";
+  }).join("");
+}
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
@@ -8570,6 +8865,7 @@ function renderStatus(live) {
     renderDhdStatus() +
     renderBootStatus(live && live.boot) +
     "</details></div>" +
+    renderFederationStatus(live) +
     renderSudo() +
     renderVoiceStatus() +
     stat("CASE", openCaseState ? openCaseState.name : "No case open", openCaseState ? "#34d399" : "#9fb3c8") +
@@ -9585,6 +9881,7 @@ function render() {
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       if (m.who === "NAVI") h += caseFilingsHtml(m);
+      if (m.who === "NAVI") h += caseLogHtml(m);
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
@@ -10141,6 +10438,10 @@ function sendChat(text) {
       // them before answering; the receipt hangs on this message,
       // in the thread where the filing happened.
       if (r.caseFilings && r.caseFilings.length) nm.caseFilings = r.caseFilings;
+      // Her case logging (Build 2, #199): the receipt for what
+      // she logged into the bound case's registers hangs on
+      // this message the same way.
+      if (r.caseLog) nm.caseLog = r.caseLog;
       messages.push(nm);
     }
     persist(); render(); if (CONFIG.backend !== "live" && CONFIG.speakReplies && r.text) mockSpeak(r.text);

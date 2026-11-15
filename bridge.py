@@ -395,11 +395,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.01"
+BRIDGE_BUILD = "2026-11-14.02"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 1
+SHIPPED_BUILD_SEQ = 2
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3411,6 +3411,9 @@ class _IntelUnavailable:
     def case_context(self, _terms):
         return ""
 
+    def case_matches(self, _terms):
+        return []
+
     def lookup(self, _query):
         return "The Wire is unavailable on this install (intel.py missing)."
 
@@ -3446,30 +3449,39 @@ def _intel_peers():
 
 
 def _intel_case_terms(cfg, slug):
-    d = _case_dir(slug)
-    if not d:
-        return []
-    text = ""
+    # v0.3.0e Build 2 (#199, prep Part 2): the case-terms source
+    # is the case's REGISTERS now — observables first (the IOC
+    # register is the watchlist-shaped source: exact values, not
+    # words scraped from prose), then entity names and aliases,
+    # then the case's tags. The Build 15 scrape of case.md +
+    # finding titles is retired: it fed the matcher every word
+    # of the manifest, stopwords and all, and called them case
+    # terms. A term here is a value an investigator actually
+    # wrote down. Multi-word entity names also contribute their
+    # words (the matcher is word-shaped), and observable values
+    # ride whole (an IP or domain matches as itself).
+    terms = []
+
+    def _add(value):
+        v = str(value or "").strip().lower()
+        if len(v) >= 3 and v not in terms:
+            terms.append(v)
+
     try:
-        md = os.path.join(d, "case.md")
-        if os.path.exists(md):
-            with open(md, encoding="utf-8") as f:
-                text += f.read()
-        fdir = os.path.join(d, "findings")
-        if os.path.isdir(fdir):
-            for name in sorted(os.listdir(fdir))[:12]:
-                if not name.lower().endswith(".md"):
-                    continue
-                try:
-                    with open(os.path.join(fdir, name), encoding="utf-8") as f:
-                        fm, _b = _fm_parse(f.read())
-                    text += " " + str(fm.get("title") or "")
-                except Exception:
-                    continue
+        for ob in _case_register(slug, "observables"):
+            _add(ob["heading"])
+        for en in _case_register(slug, "entities"):
+            _add(en["heading"])
+            for alias in str(en["fields"].get("aliases") or "").split(","):
+                _add(alias)
+            for word in re.findall(r"[a-z0-9][a-z0-9._-]{2,}", str(en["heading"]).lower()):
+                _add(word)
+        meta = _case_manifest(slug) or {}
+        for tag in str(meta.get("tags") or "").split(","):
+            _add(tag)
     except Exception:
         return []
-    words = set(w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9._-]{2,}", text))
-    return [{"term": w} for w in sorted(words)]
+    return [{"term": t} for t in terms]
 
 
 def _intel_case_terms_all():
@@ -6208,6 +6220,41 @@ def federation_payload(cfg, via_dhd=False):
     }
 
 
+def federation_status_slice(cfg):
+    # v0.3.0e Build 2 (#204): the status column's FediNet
+    # sections, as data — one entry per membership, its state
+    # the federation machinery's own verdict, never a cosmetic
+    # guess:
+    #   ok      — the roster is inside its freshness window and
+    #             the gateway road answers (this node IS the
+    #             gateway, or its probes of the gateway hold a
+    #             success).
+    #   stale   — the roster is past the 72-hour freshness
+    #             window: the machinery's own pairing-only
+    #             degradation, a named middle state.
+    #   down    — the gateway's probes hold a recorded failure:
+    #             the fedinet cannot be reached right now.
+    #   unknown — no probe of the gateway has completed yet.
+    # No memberships → the empty list; the column itself
+    # prints the decree's "You are not federated." line.
+    out = []
+    for fed in federation_settings(cfg):
+        if not _fed_roster_fresh(fed):
+            state = "stale"
+        elif fed["role"] == "gateway":
+            state = "ok"
+        else:
+            cache = MESH_STATE["probe_cache"].get(fed["gatewayNodeId"])
+            if cache is None:
+                state = "unknown"
+            elif cache[1] is None:
+                state = "down"
+            else:
+                state = "ok"
+        out.append({"name": fed["name"], "state": state})
+    return out
+
+
 def federation_import_invitation_file():
     # The preload story, as a file contract: a gateway card
     # waiting at config/federation/invitation.png — placed there
@@ -7125,6 +7172,27 @@ def _mesh_borrow_via_relay(relay, dest, messages):
     return ("stage", "relay-dark", {})
 
 
+def _mesh_route_fields(peer):
+    # v0.3.0e Build 2 (#203): the federation leg of a served
+    # borrow's recorded route — the fedinet under which this
+    # borrow was authorized, named from the peer's viaFedinet
+    # stamp (the federation that made the pairing) resolved
+    # against the federation state. Pairwise peers carry no
+    # stamp and get no fields: the pill renders the RECORDED
+    # route only, and a route with no federation leg is a
+    # pairwise route, never dressed up as one.
+    fed_id = str((peer or {}).get("viaFedinet") or "")
+    if not fed_id:
+        return {}
+    try:
+        _idx, fed = _fed_find(federation_settings(load_config()), fed_id)
+    except Exception:
+        return {}
+    if fed is None:
+        return {}
+    return {"fedinet": fed["name"], "fedinetId": fed["id"]}
+
+
 def _mesh_relay_fallback(dest, messages, ms):
     # The relay road for one dark destination. Returns
     # mesh_try_borrow's own return shapes — (reply, payload) on a
@@ -7168,7 +7236,8 @@ def _mesh_relay_fallback(dest, messages, ms):
                                 "via": relay["nodeId"], "path": "relay"})
             return outcome[1], {"servedBy": "mesh", "node": dest["name"],
                                 "fellBack": False,
-                                "viaRelay": relay["name"], "path": "relay"}
+                                "viaRelay": relay["name"], "path": "relay",
+                                **_mesh_route_fields(dest)}
         if outcome[0] == "dropped":
             return None, {
                 "servedBy": "local", "fellBack": True,
@@ -7341,7 +7410,7 @@ def mesh_try_borrow(messages, cfg, ms):
                 with MESH_LOCK:
                     MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                 mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+                return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
             if outcome[0] == "dropped":
                 # R3 FUSION: the notice is data; the caller runs a
                 # FRESH local reply — two models' prose is never
@@ -7394,7 +7463,7 @@ def mesh_try_borrow(messages, cfg, ms):
                             with MESH_LOCK:
                                 MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                             mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
                         if outcome[0] == "dropped":
                             return None, {
                                 "servedBy": "local", "fellBack": True, "reason": "lender-dropped", "node": name,
@@ -7420,7 +7489,7 @@ def mesh_try_borrow(messages, cfg, ms):
                             with MESH_LOCK:
                                 MESH_STATE["peer_dropped"].pop(peer["nodeId"], None)
                             mesh_ledger_append({"peer": peer["nodeId"], "direction": "borrowed", "wallMs": outcome[2], "outcome": "ok"})
-                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False}
+                            return outcome[1], {"servedBy": "mesh", "node": name, "fellBack": False, **_mesh_route_fields(peer)}
                         break
                 return None, {"servedBy": "local", "fellBack": True, "reason": "busy", "node": name}
             return None, {"servedBy": "local", "fellBack": True, "reason": reason, "node": name}
@@ -10648,6 +10717,26 @@ def write_result(patch):
             except Exception:
                 rec = {}
             rec.update(patch)
+            # v0.3.0e Build 2 (#208): a record must never argue
+            # with itself. The merge above only ever ADDS keys,
+            # so a previous attempt's error/failedAt/tailFailure
+            # survived into a later attempt that recovered to done — the
+            # field record for the v0.3.0e Build 1 pull read
+            # state=done while still carrying the earlier wedge
+            # error and its failedAt stamp. A verdict owns its
+            # record: done clears the failure fields outright,
+            # and a fresh working attempt clears a previous
+            # attempt's, so what the panel reads is always THIS
+            # attempt's truth.
+            if patch.get("state") == "done":
+                rec.pop("error", None)
+                rec.pop("failedAt", None)
+                rec.pop("tailFailure", None)
+            elif patch.get("state") == "working":
+                rec.pop("error", None)
+                rec.pop("failedAt", None)
+                rec.pop("tailFailure", None)
+                rec.pop("tailFailure", None)
             tmp = result_path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(rec, f)
@@ -10907,6 +10996,76 @@ def _holder_remedy(port):
             "otherwise launch the app again from its menu entry.")
 
 
+def _find_install_bridge(root):
+    # v0.3.0e Build 2 (#208): find THIS install's bridge by the
+    # installer's own proof discipline — the pid file the bridge
+    # itself writes (bridge.pid), verified against the process
+    # table, and a working-directory scan for a bridge.py whose
+    # cwd is the install home. Whoever supervises the bridge —
+    # the systemd user unit or the desktop app (start.sh's
+    # supervise loop) — the process it runs is the same shape:
+    # bridge.py, cwd = install home. Returns a proven pid or
+    # None. A pid counts only when BOTH proofs hold (bridge.py
+    # in its command line AND its cwd the install root): the
+    # same bar the socket path has always used.
+    home = os.path.realpath(root)
+    candidates = []
+    try:
+        with open(os.path.join(root, "bridge.pid")) as f:
+            pid = int((f.read() or "").strip() or 0)
+        if pid:
+            candidates.append(pid)
+    except Exception:
+        pass
+    try:
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                candidates.append(int(name))
+    except Exception:
+        pass
+    seen = set()
+    for pid in candidates:
+        if pid in seen or pid == os.getpid():
+            continue
+        seen.add(pid)
+        if _pid_gone(pid):
+            continue
+        if "bridge.py" in _pid_cmdline(pid) and _pid_cwd(pid) == home:
+            return pid
+    return None
+
+
+def _stop_proven_bridge(holder, port, desc):
+    # The escalation both identification paths share: SIGTERM
+    # (the bridge's polite exit — the installer's stop does the
+    # same), wait for the process to be gone AND the port free,
+    # then SIGKILL and wait again. Returns True when the port
+    # is clear.
+    trace("wedge-clear",
+          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
+    try:
+        os.kill(holder, signal.SIGTERM)
+    except Exception:
+        pass
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
+            return True
+        time.sleep(0.5)
+    try:
+        os.kill(holder, signal.SIGKILL)
+    except Exception:
+        pass
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _pid_gone(holder) and _port_holder_pid(port) is None:
+            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def clear_wedged_bridge(root, port, tgt_seq):
     # Build .91 (issue #91): before relaunching, prove the OLD
     # bridge is actually gone — not merely that its pid file is.
@@ -10922,6 +11081,19 @@ def clear_wedged_bridge(root, port, tgt_seq):
     # reported, never touched. Escalation mirrors the installer:
     # SIGTERM, wait for death AND a free port, SIGKILL, wait
     # again. Returns (ok, holder_pid, holder_desc).
+    #
+    # v0.3.0e Build 2 (#208): identification no longer rests on
+    # the socket alone. The v0.3.0e Build 1 field pull wedged
+    # exactly here: the port answered, the socket named no
+    # readable process, and the old text declared the holder
+    # unidentifiable and told the operator to kill it by hand —
+    # while the holder was this install's own bridge, run by
+    # the desktop app, findable the whole time by the pid file
+    # and the working-directory proof the installer itself
+    # uses. When the socket cannot name the holder, the helper
+    # now looks the bridge up the installer's way before it
+    # ever says "unidentifiable" — and when it truly cannot
+    # identify anything, the failure names every proof it ran.
     if _port_answers_expected(port, tgt_seq):
         return (True, None, "")
     holder = _port_holder_pid(port)
@@ -10929,37 +11101,31 @@ def clear_wedged_bridge(root, port, tgt_seq):
         try:
             sock = socket.create_connection(("127.0.0.1", port), timeout=2)
             sock.close()
-            return (False, None,
-                    "something is listening on the port but its process could not be identified")
         except Exception:
             return (True, None, "")
+        found = _find_install_bridge(root)
+        if found is None:
+            return (False, None,
+                    "something is listening on the port but its process "
+                    "could not be identified — the socket named no readable "
+                    "process, the install's pid file (bridge.pid) named no "
+                    "live bridge, and no bridge.py process runs from this "
+                    "install home")
+        holder = found
+        cmd = _pid_cmdline(holder)
+        desc = ("process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
+                + " — the install's own bridge, found by its pid file / "
+                "working directory after the socket named no process")
+        if _stop_proven_bridge(holder, port, desc):
+            return (True, holder, desc)
+        return (False, holder, desc)
     cmd = _pid_cmdline(holder)
     desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
     owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
     if not owned:
         return (False, holder, desc + " — not this install's bridge, so it was not touched")
-    trace("wedge-clear",
-          "wedged bridge " + desc + " — escalating: SIGTERM, then SIGKILL if it holds")
-    try:
-        os.kill(holder, signal.SIGTERM)
-    except Exception:
-        pass
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGTERM; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
-    try:
-        os.kill(holder, signal.SIGKILL)
-    except Exception:
-        pass
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if _pid_gone(holder) and _port_holder_pid(port) is None:
-            trace("wedge-clear", "holder gone after SIGKILL; the port is free")
-            return (True, holder, desc)
-        time.sleep(0.5)
+    if _stop_proven_bridge(holder, port, desc):
+        return (True, holder, desc)
     return (False, holder, desc)
 
 
@@ -10968,17 +11134,32 @@ def _install_log_last_step(log_path):
     # name its steps; the last banner in the log is the step the
     # run had reached when it failed — the tail step a nonzero
     # exit is reported with when the build itself landed.
+    #
+    # v0.3.0e Build 2 (#208): the step is NEVER "an unnamed
+    # step" again — the v0.3.0e Build 1 field record carried
+    # exactly that phrase as its tailFailure, a name that names
+    # nothing. When no banner survives, the log's last ERROR
+    # line names the failure in the installer's own words; when
+    # even that is absent, the fallback names the phase plainly
+    # (a post-placement closing step) instead of shrugging.
     try:
         with open(log_path, "rb") as f:
             text = f.read().decode("utf-8", "replace")
     except Exception:
-        return "an unnamed step"
+        return "the installer's closing steps (its log could not be read)"
     last = ""
+    last_error = ""
     for line in text.splitlines():
         line = line.strip()
-        if line.startswith("==>"):
+        if line.startswith("==>") or line.startswith("== "):
             last = line.lstrip("=> ").strip()
-    return last or "an unnamed step"
+        elif line.startswith("ERROR") or " — FAILED" in line:
+            last_error = line
+    if last:
+        return last
+    if last_error:
+        return "the step that reported: " + last_error
+    return "the installer's closing steps (its log names no step banner for the failure)"
 
 
 def version_label(number, status):
@@ -11113,6 +11294,26 @@ def main():
         why = str(e)
     trace("installer-exit",
           "code " + str(code) + ((", " + why) if why else ""))
+    # v0.3.0e Build 2 (#208): the bootstrap handoff's verdict,
+    # quoted into the trace. The Build 1 installer gate decided
+    # in silence — a declined handoff left no named trace in
+    # the record, the install log, or here, so the field could
+    # not say afterwards WHY the incoming build's machinery did
+    # not govern its own pull. The installer now writes its
+    # verdict (go / no / refused, with the reason) beside the
+    # job; the helper quotes it into the step log, the diary
+    # the operator actually reads.
+    try:
+        _verdict_path = os.path.join(
+            os.path.dirname(os.path.abspath(job_path)),
+            "apply-handoff-verdict.json")
+        with open(_verdict_path) as _vf:
+            _verdict = json.load(_vf)
+        trace("handoff-verdict",
+              str(_verdict.get("verdict") or "?") + " — "
+              + str(_verdict.get("reason") or ""))
+    except Exception:
+        pass
 
     # 0.2.0e Build 11 (#198): the homecoming adoption. When the
     # installer migrated Apex to its new home, it left a machine
@@ -19205,7 +19406,14 @@ def sync_collect(cfg=None):
             entries = _sync_case_files(slug)
             if entries is None:
                 continue
-            index[slug] = {"files": entries}
+            # Build 2 (#199): the index badges a sensitive case
+            # as sensitive — the receiving side (and any preview
+            # of what a sync carries) can see the flag without
+            # opening the manifest. The flag itself also rides
+            # case.md, so it survives the round trip either way.
+            _smeta = _case_manifest(slug) or {}
+            index[slug] = {"files": entries,
+                           "sensitive": str(_smeta.get("sensitive") or "").lower() in ("yes", "true", "1")}
             d = _case_dir(slug)
             for rel in entries:
                 try:
@@ -20201,21 +20409,83 @@ def _case_findings(slug):
                 # notes from before the marking existed are the
                 # operator's, which is what they always were.
                 "author": "navi" if str(meta.get("author") or "").lower() == "navi" else "operator",
+                # Build 2 (#199): the review state. Findings
+                # filed before it existed take the default their
+                # author implies — the operator's are confirmed,
+                # Navi's are leads — which is what they always
+                # were in practice.
+                "state": (str(meta.get("state") or "").lower()
+                          if str(meta.get("state") or "").lower() in ("lead", "confirmed")
+                          else ("lead" if str(meta.get("author") or "").lower() == "navi" else "confirmed")),
                 "body": body.strip(),
             })
     out.sort(key=lambda f: (CASE_SEVERITIES.index(f["severity"]), f["file"]))
     return out
 
 
+def _sha256_file(path):
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 256), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _evidence_register_sync(slug):
+    # Build 2 (#199): every file in evidence/ gets its custody
+    # register entry. Files filed before the register existed
+    # are backfilled on first sight — hash computed now and the
+    # entry says so honestly (acquired unknown, custody noting
+    # the backfill) — so the register the operator reviews is
+    # always the whole folder, and Sync carries it whole.
+    d = _case_dir(slug)
+    if not d:
+        return
+    edir = os.path.join(d, "evidence")
+    if not os.path.isdir(edir):
+        return
+    have = {e["key"] for e in _case_register(slug, "evidence")}
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    for name in sorted(os.listdir(edir)):
+        full = os.path.join(edir, name)
+        if not os.path.isfile(full) or _register_key(name) in have:
+            continue
+        _register_append(slug, "evidence", name, {
+            "sha256": _sha256_file(full),
+            "size": str(os.path.getsize(full)),
+            "acquired": "not recorded — the file predates the evidence register",
+            "custody": "Backfilled by the bridge when the register was introduced (v0.3.0e — Build 2); the hash is the file's hash as found.",
+            "author": "operator", "filed": now,
+        }, "")
+
+
 def _case_evidence(slug):
+    # Files on disk, joined with their custody register entries
+    # (description, acquired, custody note, and the SHA-256 the
+    # bridge computed at filing time). A file whose entry is
+    # missing (a read racing a backfill) still lists, hashless
+    # and plainly marked unregistered.
     d = _case_dir(slug)
     out = []
     edir = os.path.join(d, "evidence") if d else ""
+    reg = {e["key"]: e for e in _case_register(slug, "evidence")}
     if edir and os.path.isdir(edir):
         for name in sorted(os.listdir(edir)):
             full = os.path.join(edir, name)
             if os.path.isfile(full):
-                out.append({"name": name, "size": os.path.getsize(full)})
+                e = reg.get(_register_key(name))
+                f = e["fields"] if e else {}
+                out.append({
+                    "name": name, "size": os.path.getsize(full),
+                    "sha256": str(f.get("sha256") or ""),
+                    "description": (e["body"] if e else ""),
+                    "acquired": str(f.get("acquired") or ""),
+                    "custody": str(f.get("custody") or ""),
+                    "registered": e is not None,
+                })
     return out
 
 
@@ -20243,7 +20513,132 @@ def _case_timeline(slug):
     return out
 
 
+# --- Case registers (v0.3.0e Build 2, #199 — prep Part 2) -------
+# A case folder grows four registers beside findings/ and
+# evidence/: entities.md (the cast), observables.md (the IOC
+# register — and the Wire/TIC case-terms source), evidence.md
+# (the custody register for the files in evidence/), tasks.md
+# (next steps). Same house idiom as the timeline: a Markdown
+# file of `## ` entries with `- key: value` meta lines, so Sync,
+# backups and DHD keep carrying them with no new machinery.
+# Entries Navi logs (Leg 2) carry author: navi and land with
+# state: lead — unverified until the operator promotes them;
+# the review model lives in case_review below.
+CASE_TYPES = ["incident", "investigation", "research", "hunt", "locate"]
+CASE_PRIORITIES = ["low", "normal", "high", "critical"]
+CASE_REGISTERS = {
+    "entities": {"file": "entities.md", "title": "Entities",
+                 "fields": ["type", "role", "aliases", "identifiers",
+                            "state", "author", "filed", "source"]},
+    "observables": {"file": "observables.md", "title": "Observables",
+                    "fields": ["kind", "state", "author", "filed", "source"]},
+    "evidence": {"file": "evidence.md", "title": "Evidence register",
+                 "fields": ["sha256", "size", "acquired", "custody",
+                            "author", "filed"]},
+    "tasks": {"file": "tasks.md", "title": "Tasks",
+              "fields": ["done", "author", "filed", "source"]},
+}
+
+
+def _register_key(heading):
+    return " ".join(str(heading or "").split()).strip().lower()
+
+
+def _case_register(slug, name):
+    # One register, parsed: [{heading, key, fields, body}].
+    spec = CASE_REGISTERS.get(name)
+    d = _case_dir(slug)
+    if not spec or not d:
+        return []
+    try:
+        with open(os.path.join(d, spec["file"]), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return []
+    entries = []
+    cur = None
+    for ln in text.split("\n"):
+        if ln.startswith("## "):
+            cur = {"heading": ln[3:].strip(), "key": _register_key(ln[3:]),
+                   "fields": {}, "body": ""}
+            entries.append(cur)
+        elif cur is not None:
+            m = re.match(r"^- ([a-z0-9_]+): (.*)$", ln)
+            if m and not cur["body"]:
+                cur["fields"][m.group(1)] = m.group(2).strip()
+            else:
+                cur["body"] += ln + "\n"
+    for e in entries:
+        e["body"] = e["body"].strip()
+        if name in ("entities", "observables"):
+            st = str(e["fields"].get("state") or "").lower()
+            if st not in ("lead", "confirmed"):
+                # Entries filed before the review model existed
+                # are the operator's own record — confirmed, as
+                # they always were. Navi's entries always carry
+                # their state explicitly.
+                st = "lead" if str(e["fields"].get("author") or "").lower() == "navi" else "confirmed"
+            e["fields"]["state"] = st
+    return entries
+
+
+def _register_render(slug, name, entries):
+    spec = CASE_REGISTERS[name]
+    meta = _case_manifest(slug) or {}
+    lines = ["# " + spec["title"] + " — " + str(meta.get("title") or slug), ""]
+    for e in entries:
+        lines.append("## " + e["heading"])
+        for k in spec["fields"]:
+            v = e["fields"].get(k)
+            if v is not None and str(v) != "":
+                lines.append("- " + k + ": " + str(v))
+        if e.get("body"):
+            lines += ["", e["body"]]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _register_write(slug, name, entries):
+    d = _case_dir(slug)
+    if not d:
+        return False
+    spec = CASE_REGISTERS[name]
+    try:
+        with open(os.path.join(d, spec["file"]), "w", encoding="utf-8") as f:
+            f.write(_register_render(slug, name, entries))
+        return True
+    except Exception:
+        return False
+
+
+def _register_append(slug, name, heading, fields, body):
+    entries = _case_register(slug, name)
+    entries.append({"heading": heading, "key": _register_key(heading),
+                    "fields": dict(fields), "body": str(body or "").strip()})
+    return _register_write(slug, name, entries)
+
+
+def _case_tags(meta):
+    return [t.strip() for t in str((meta or {}).get("tags") or "").split(",") if t.strip()]
+
+
+def _case_related(meta):
+    return [t.strip() for t in str((meta or {}).get("related") or "").split(",") if t.strip()]
+
+
 def _case_head(slug, meta):
+    # Build 2 (#199): the manifest grew up — summary, type,
+    # priority, tags, sensitive, owner, related, closed +
+    # outcome. Every field defaults safely when an older
+    # case.md lacks it, so nothing already filed changes
+    # meaning: type reads investigation, priority normal,
+    # sensitive no, the rest empty.
+    ctype = str(meta.get("type") or "").lower()
+    if ctype not in CASE_TYPES:
+        ctype = "investigation"
+    prio = str(meta.get("priority") or "").lower()
+    if prio not in CASE_PRIORITIES:
+        prio = "normal"
     return {
         "slug": slug,
         "name": str(meta.get("title") or slug),
@@ -20251,10 +20646,30 @@ def _case_head(slug, meta):
         "scope": str(meta.get("scope") or ""),
         "status": str(meta.get("status") or "open"),
         "opened": str(meta.get("opened") or ""),
+        "summary": str(meta.get("summary") or ""),
+        "type": ctype,
+        "priority": prio,
+        "tags": _case_tags(meta),
+        "sensitive": str(meta.get("sensitive") or "").lower() in ("yes", "true", "1"),
+        "owner": str(meta.get("owner") or ""),
+        "related": _case_related(meta),
+        "closed": str(meta.get("closed") or ""),
+        "outcome": str(meta.get("outcome") or ""),
     }
 
 
-def cases_list_payload():
+def _case_unverified_count(slug):
+    # Everything awaiting the operator's review: Navi's
+    # unverified register entries + findings still at lead.
+    n = 0
+    for reg in ("entities", "observables"):
+        n += sum(1 for e in _case_register(slug, reg)
+                 if e["fields"].get("state") == "lead")
+    n += sum(1 for f in _case_findings(slug) if f["state"] == "lead")
+    return n
+
+
+def cases_list_payload(via_dhd=False):
     root = os.path.join(VAULT_DIR, "cases")
     cases = []
     if os.path.isdir(root):
@@ -20268,19 +20683,88 @@ def cases_list_payload():
             head["findings"] = len(_case_findings(slug))
             head["evidence"] = len(_case_evidence(slug))
             head["timeline"] = len(_case_timeline(slug))
+            head["entities"] = len(_case_register(slug, "entities"))
+            head["observables"] = len(_case_register(slug, "observables"))
+            head["tasksOpen"] = sum(
+                1 for e in _case_register(slug, "tasks")
+                if str(e["fields"].get("done") or "").lower() not in ("yes", "true", "1"))
+            head["unverified"] = _case_unverified_count(slug)
+            if via_dhd and head["sensitive"]:
+                # Build 2 (#199): a sensitive case gates its
+                # DHD list display — through the DHD door the
+                # case shows as present and sensitive, with its
+                # counts, but its name, summary, client and
+                # scope stay home. The local list is untouched.
+                head = dict(head)
+                head["name"] = "Sensitive case"
+                head["summary"] = ""
+                head["client"] = ""
+                head["scope"] = ""
+                head["tags"] = []
+                head["redacted"] = True
             cases.append(head)
     cases.sort(key=lambda c: c["slug"])
     return {"cases": cases}
+
+
+def _case_wire_matches(slug):
+    # Build 2 (#199, prep Part 3): Wire × cases. A Wire story
+    # or a KEV CVE matching one of the case's observables or
+    # entities — computed from the live Wire items and the
+    # intel store's matched records, returned as data and
+    # badged in the view as MATCHES, never findings.
+    out = []
+    terms = []
+    for ob in _case_register(slug, "observables"):
+        terms.append(str(ob["heading"]).lower())
+    for en in _case_register(slug, "entities"):
+        terms.append(str(en["heading"]).lower())
+    terms = [t for t in dict.fromkeys(terms) if len(t) >= 3]
+    if not terms:
+        return out
+    try:
+        for m in INTEL.case_matches(terms):
+            m = dict(m)
+            m["kind"] = "KEV CVE" if m.get("kev") else "CVE"
+            out.append(m)
+    except Exception:
+        pass
+    try:
+        state = WIRE.state()
+        for item in (state.get("items") or []):
+            hay = ((item.get("title") or "") + " " + (item.get("excerpt") or "")).lower()
+            for t in terms:
+                if re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", hay):
+                    out.append({
+                        "id": item.get("id") or item.get("link") or "",
+                        "title": item.get("title") or "",
+                        "term": t, "grade": "keyword",
+                        "kev": item.get("kind") == "kev",
+                        "kind": item.get("kind") or "news",
+                        "source": "wire",
+                        "sourceLabel": item.get("sourceLabel") or "",
+                        "link": item.get("link") or "",
+                    })
+                    break
+    except Exception:
+        pass
+    return out[:10]
 
 
 def case_detail_payload(slug):
     meta = _case_manifest(slug)
     if meta is None:
         return None
+    _evidence_register_sync(slug)
     detail = _case_head(slug, meta)
     detail["findings"] = _case_findings(slug)
     detail["evidence"] = _case_evidence(slug)
     detail["timeline"] = _case_timeline(slug)
+    detail["entities"] = _case_register(slug, "entities")
+    detail["observables"] = _case_register(slug, "observables")
+    detail["tasks"] = _case_register(slug, "tasks")
+    detail["unverified"] = _case_unverified_count(slug)
+    detail["wireMatches"] = _case_wire_matches(slug)
     # Build 15 (#161): the case's tied chat, when one exists —
     # looked up, never created, by a read.
     bound = case_chat_for(slug)
@@ -20288,7 +20772,7 @@ def case_detail_payload(slug):
     return detail
 
 
-def case_create(name, client, scope):
+def case_create(name, client, scope, fields=None):
     name = str(name or "").strip()
     if not name:
         return None, "A case needs a name."
@@ -20305,16 +20789,88 @@ def case_create(name, client, scope):
     today = time.strftime("%Y-%m-%d", time.localtime())
     os.makedirs(os.path.join(d, "findings"), exist_ok=True)
     os.makedirs(os.path.join(d, "evidence"), exist_ok=True)
+    fields = fields if isinstance(fields, dict) else {}
+    ctype = str(fields.get("type") or "").lower()
+    if ctype not in CASE_TYPES:
+        ctype = "investigation"
+    prio = str(fields.get("priority") or "").lower()
+    if prio not in CASE_PRIORITIES:
+        prio = "normal"
     vault_write("cases/" + slug + "/case.md", _fm_render([
         ("title", name), ("client", str(client or "")), ("scope", str(scope or "")),
         ("status", "open"), ("opened", today),
-    ], "# " + name + "\n\nThe case manifest. Findings live in `findings/`, evidence in `evidence/`, the story in `timeline.md`.\n"))
+        ("summary", str(fields.get("summary") or "")),
+        ("type", ctype), ("priority", prio),
+        ("tags", str(fields.get("tags") or "")),
+        ("sensitive", "yes" if fields.get("sensitive") else "no"),
+        ("owner", str(fields.get("owner") or "")),
+        ("related", str(fields.get("related") or "")),
+        ("closed", ""), ("outcome", ""),
+    ], "# " + name + "\n\nThe case manifest. Findings live in `findings/`, evidence in `evidence/`, the story in `timeline.md`; the registers — `entities.md`, `observables.md`, `evidence.md`, `tasks.md` — ride beside them.\n"))
     vault_write("cases/" + slug + "/timeline.md",
                "# Timeline — " + name + "\n\n## " + today + " — Case opened\n\nThe case was opened" + ((" for " + str(client) + ".") if client else ".") + "\n")
+    # Build 2 (#199): a case is born with its four registers.
+    for reg in ("entities", "observables", "evidence", "tasks"):
+        _register_write(slug, reg, [])
     return case_detail_payload(slug), None
 
 
-def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator"):
+# The manifest's writable fields, in frontmatter order — the
+# update door below rewrites case.md from these, preserving
+# the body verbatim. (title/client/scope ride the same door.)
+CASE_MANIFEST_FIELDS = [
+    "title", "client", "scope", "status", "opened", "summary",
+    "type", "priority", "tags", "sensitive", "owner", "related",
+    "closed", "outcome",
+]
+
+
+def case_update(slug, fields):
+    # Build 2 (#199): edit the manifest — summary, type,
+    # priority, tags, sensitive, owner, related, and the
+    # close-out pair (closed + outcome). Closing a case stamps
+    # the closed date when none is given; reopening clears it.
+    # The sensitive flag rides this same door: the Case Files
+    # toggle flips it here, the bridge stores it, and every
+    # read (list, DHD list, sync badge) shows the stored value
+    # — the switch gate's three-way contract.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    try:
+        with open(os.path.join(d, "case.md"), encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return None, "The case manifest could not be read."
+    meta, body = _fm_parse(text)
+    fields = fields if isinstance(fields, dict) else {}
+    for k in CASE_MANIFEST_FIELDS:
+        if k in fields:
+            meta[k] = str(fields[k] or "")
+    ctype = str(meta.get("type") or "").lower()
+    meta["type"] = ctype if ctype in CASE_TYPES else "investigation"
+    prio = str(meta.get("priority") or "").lower()
+    meta["priority"] = prio if prio in CASE_PRIORITIES else "normal"
+    meta["sensitive"] = "yes" if str(meta.get("sensitive") or "").lower() in ("yes", "true", "1") else "no"
+    if str(meta.get("status") or "").lower() == "closed":
+        if not str(meta.get("closed") or ""):
+            meta["closed"] = time.strftime("%Y-%m-%d", time.localtime())
+    else:
+        meta["closed"] = ""
+        meta["outcome"] = str(meta.get("outcome") or "") if str(meta.get("status") or "").lower() != "open" else ""
+    pairs = [(k, str(meta.get(k) or "")) for k in CASE_MANIFEST_FIELDS]
+    # Any frontmatter keys outside the known set ride along
+    # untouched after them — an update never eats a field it
+    # does not know.
+    for k, v in meta.items():
+        if k not in CASE_MANIFEST_FIELDS:
+            pairs.append((k, v))
+    with open(os.path.join(d, "case.md"), "w", encoding="utf-8") as f:
+        f.write(_fm_render(pairs, body))
+    return case_detail_payload(slug), None
+
+
+def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator", state=None):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
@@ -20348,10 +20904,17 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
         if sev not in CASE_SEVERITIES:
             sev = "info"
         fname = stamp + "-" + _case_slug(title) + ".md"
+        # Build 2 (#199): the review state rides the frontmatter
+        # — operator filings default confirmed, Navi's default
+        # lead (unverified), exactly the prep's model.
+        fstate = str(state or "").lower()
+        if fstate not in ("lead", "confirmed"):
+            fstate = "lead" if author == "navi" else "confirmed"
         content = _fm_render([
             ("title", title), ("severity", sev),
             ("internal", "yes" if internal else "no"), ("filed", now),
             ("author", "navi" if author == "navi" else "operator"),
+            ("state", fstate),
         ], "# " + title + "\n\n" + body.strip() + "\n")
     target_dir = os.path.join(d, sub)
     os.makedirs(target_dir, exist_ok=True)
@@ -20366,7 +20929,7 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
     return {"path": "cases/" + slug + "/" + sub + "/" + fname}, None
 
 
-def case_add_evidence(slug, filename, data):
+def case_add_evidence(slug, filename, data, description="", acquired="", custody=""):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
@@ -20384,7 +20947,22 @@ def case_add_evidence(slug, filename, data):
         n += 1
     with open(full, "wb") as f:
         f.write(data or b"")
-    return {"name": os.path.basename(full), "size": len(data or b"")}, None
+    saved = os.path.basename(full)
+    # Build 2 (#199): hash at intake — the SHA-256 is computed
+    # by the bridge from the bytes it just wrote, at filing
+    # time, and the custody register entry is written in the
+    # same act. Chain-of-custody lite: the difference between
+    # a folder of files and evidence.
+    digest = _sha256_file(full)
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    _register_append(slug, "evidence", saved, {
+        "sha256": digest,
+        "size": str(len(data or b"")),
+        "acquired": str(acquired or "").strip() or now + " — filed via Case Files",
+        "custody": str(custody or "").strip() or "Filed via Case Files; SHA-256 computed by the bridge at filing time.",
+        "author": "operator", "filed": now,
+    }, str(description or "").strip())
+    return {"name": saved, "size": len(data or b""), "sha256": digest}, None
 
 
 def case_report(slug):
@@ -20633,6 +21211,326 @@ def extract_finding_markers(reply, cfg):
     clean = FINDING_MARKER_RE.sub(_take, reply or "")
     clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
     return clean, filings
+
+
+def case_register_add(slug, register, heading, fields, body):
+    # Build 2 (#199): the operator's own register entries —
+    # filed confirmed (they are the operator's record, not a
+    # lead), authored operator. Duplicates by normalized
+    # heading are refused in words, never silently merged.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    if register not in ("entities", "observables", "tasks"):
+        return None, "Unknown register."
+    heading = " ".join(str(heading or "").split()).strip()
+    if not heading:
+        return None, "The entry needs a name."
+    if any(e["key"] == _register_key(heading) for e in _case_register(slug, register)):
+        return None, "That entry is already in the register."
+    fields = fields if isinstance(fields, dict) else {}
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    clean = {}
+    for k in CASE_REGISTERS[register]["fields"]:
+        if k in fields:
+            clean[k] = str(fields[k] or "")
+    clean["author"] = "operator"
+    clean["filed"] = now
+    clean.setdefault("source", "filed in Case Files")
+    if register in ("entities", "observables"):
+        clean["state"] = "confirmed"
+    if register == "tasks":
+        clean.setdefault("done", "no")
+    if not _register_append(slug, register, heading, clean, str(body or "")):
+        return None, "The entry could not be written."
+    return case_detail_payload(slug), None
+
+
+def case_review(slug, register, key, action):
+    # Build 2 (#199): the review model — one tap promotes an
+    # unverified entry (→ confirmed) or strikes it (→ gone,
+    # with the strike itself noted in the timeline: an audit
+    # trail, not a memory hole). Tasks take done/reopen
+    # instead. Returns the fresh detail payload.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    register = str(register or "")
+    key = _register_key(key)
+    action = str(action or "")
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    if register == "findings":
+        fdir = os.path.join(d, "findings")
+        fname = os.path.basename(str(key or ""))
+        full = os.path.join(fdir, fname)
+        if not os.path.isfile(full):
+            return None, "No such finding."
+        with open(full, encoding="utf-8") as f:
+            meta, body = _fm_parse(f.read())
+        title = str(meta.get("title") or fname)
+        if action == "promote":
+            meta["state"] = "confirmed"
+            pairs = [(k, meta[k]) for k in
+                     ("title", "severity", "internal", "filed", "author", "state")
+                     if k in meta]
+            with open(full, "w", encoding="utf-8") as f:
+                f.write(_fm_render(pairs, body))
+        elif action == "strike":
+            os.remove(full)
+            case_file_entry(slug, "timeline", "Finding struck on review — " + title,
+                            "The operator struck the finding `" + fname + "` (filed "
+                            + str(meta.get("filed") or "earlier") + ", author: "
+                            + str(meta.get("author") or "operator")
+                            + ") on review at " + now
+                            + ". The strike is recorded here; the finding itself is removed.")
+        else:
+            return None, "Unknown review action."
+        return case_detail_payload(slug), None
+    if register in ("entities", "observables"):
+        entries = _case_register(slug, register)
+        hit = next((e for e in entries if e["key"] == key), None)
+        if hit is None:
+            return None, "No such entry."
+        label = hit["heading"]
+        if action == "promote":
+            hit["fields"]["state"] = "confirmed"
+            _register_write(slug, register, entries)
+        elif action == "strike":
+            entries = [e for e in entries if e["key"] != key]
+            _register_write(slug, register, entries)
+            case_file_entry(slug, "timeline", "Struck on review — " + label,
+                            "The operator struck the unverified "
+                            + {"entities": "entity", "observables": "observable"}[register]
+                            + " entry “" + label + "” (logged by "
+                            + str(hit["fields"].get("author") or "navi") + ", filed "
+                            + str(hit["fields"].get("filed") or "earlier")
+                            + ") on review at " + now
+                            + ". The strike is recorded here; the entry itself is removed.")
+        else:
+            return None, "Unknown review action."
+        return case_detail_payload(slug), None
+    if register == "tasks":
+        entries = _case_register(slug, "tasks")
+        hit = next((e for e in entries if e["key"] == key), None)
+        if hit is None:
+            return None, "No such task."
+        if action == "done":
+            hit["fields"]["done"] = "yes"
+        elif action == "reopen":
+            hit["fields"]["done"] = "no"
+        else:
+            return None, "Unknown review action."
+        _register_write(slug, "tasks", entries)
+        return case_detail_payload(slug), None
+    return None, "Unknown register."
+
+
+# --- Navi logs as she sees it (Build 2, #199 — prep Part 1) ------
+# In a case's BOUND chat (only there), her reply may carry an
+# invisible structured log block:
+#
+#   [[case-log]]
+#   entity: <name> | <type> | <role in the case>
+#   observable: <value> | <kind> | <context line>
+#   event: <title> | <what happened>
+#   lead: <title> | <the claim, and its reasoning>
+#   task: <a next step>
+#   [[/case-log]]
+#
+# The bridge parses, validates, dedupes and writes — she never
+# edits files. Everything she logs lands UNVERIFIED (state:
+# lead), badged as hers in the case view, with provenance:
+# author navi, the filing timestamp, and the operator message
+# it answers. Caps: at most 6 log entries per reply (findings
+# keep their own cap of 2). A detail that belongs to a
+# DIFFERENT case is flagged in the reply's receipts, never
+# written across.
+CASELOG_RE = re.compile(r"\[\[case-log\]\](.*?)\[\[/case-log\]\]", re.I | re.S)
+CASELOG_ENTITY_TYPES = ["person", "org", "account", "system", "place", "other"]
+CASELOG_OBS_KINDS = ["ip", "domain", "url", "hash", "file", "wallet", "other"]
+CASELOG_MAX_ENTRIES = 6
+
+
+def extract_case_log(reply, slug, source_text=""):
+    # Returns (clean_reply, log) where log is None when nothing
+    # was logged (or no bound case), else {entries, flags,
+    # duplicates, dropped}. Blocks are stripped from the reply
+    # ALWAYS — a stray block outside a bound chat is dropped,
+    # never written anywhere.
+    blocks = CASELOG_RE.findall(reply or "")
+    clean = CASELOG_RE.sub("", reply or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    if not blocks or not slug or _case_manifest(slug) is None:
+        return clean, None
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    excerpt = " ".join(str(source_text or "").split())[:90]
+    source = "case chat" + ((" — reply to: “" + excerpt + "”") if excerpt else "")
+    written = []
+    flags = []
+    duplicates = 0
+    dropped = 0
+    ent_keys = {e["key"] for e in _case_register(slug, "entities")}
+    obs_keys = {e["key"] for e in _case_register(slug, "observables")}
+    task_keys = {e["key"] for e in _case_register(slug, "tasks")}
+    # Cross-case index, built once: a value another case holds
+    # is flagged, never copied across.
+    other_index = {}
+    try:
+        for c in cases_list_payload()["cases"]:
+            if c["slug"] == slug:
+                continue
+            for reg in ("entities", "observables"):
+                for e in _case_register(c["slug"], reg):
+                    other_index.setdefault(e["key"], (c["slug"], c["name"]))
+    except Exception:
+        other_index = {}
+    counts = {"entity": 0, "observable": 0, "event": 0, "lead": 0, "task": 0}
+
+    def _flag(value):
+        hit = other_index.get(_register_key(value))
+        if hit and not any(f["value"] == value for f in flags):
+            flags.append({"value": value, "case": hit[0], "caseName": hit[1]})
+
+    for block in blocks:
+        for raw_line in block.split("\n"):
+            line = raw_line.strip().lstrip("-").strip()
+            m = re.match(r"^(entity|observable|event|lead|task)\s*:\s*(.+)$", line, re.I)
+            if not m:
+                continue
+            kind = m.group(1).lower()
+            parts = [p.strip() for p in m.group(2).split("|")]
+            if sum(counts.values()) >= CASELOG_MAX_ENTRIES:
+                dropped += 1
+                continue
+            if kind == "entity":
+                name = parts[0] if parts else ""
+                if not name:
+                    continue
+                _flag(name)
+                if _register_key(name) in ent_keys:
+                    duplicates += 1
+                    continue
+                etype = (parts[1].lower() if len(parts) > 1 else "") or "other"
+                if etype not in CASELOG_ENTITY_TYPES:
+                    etype = "other"
+                role = parts[2] if len(parts) > 2 else ""
+                _register_append(slug, "entities", name, {
+                    "type": etype, "role": role, "aliases": "", "identifiers": "",
+                    "state": "lead", "author": "navi", "filed": now, "source": source,
+                }, "")
+                ent_keys.add(_register_key(name))
+                counts["entity"] += 1
+                written.append({"kind": "entity", "label": name, "state": "lead"})
+            elif kind == "observable":
+                value = parts[0] if parts else ""
+                if not value:
+                    continue
+                _flag(value)
+                if _register_key(value) in obs_keys:
+                    duplicates += 1
+                    continue
+                okind = (parts[1].lower() if len(parts) > 1 else "") or "other"
+                if okind not in CASELOG_OBS_KINDS:
+                    okind = "other"
+                ctx = parts[2] if len(parts) > 2 else ""
+                _register_append(slug, "observables", value, {
+                    "kind": okind, "state": "lead", "author": "navi",
+                    "filed": now, "source": source,
+                }, ctx)
+                obs_keys.add(_register_key(value))
+                counts["observable"] += 1
+                written.append({"kind": "observable", "label": value, "state": "lead"})
+            elif kind == "event":
+                title = parts[0] if parts else ""
+                if not title:
+                    continue
+                body = (parts[1] if len(parts) > 1 else "")
+                case_file_entry(slug, "timeline", title,
+                                (body + "\n\n" if body else "")
+                                + "Logged by Navi from the case chat — unverified.")
+                counts["event"] += 1
+                written.append({"kind": "event", "label": title, "state": "lead"})
+            elif kind == "lead":
+                title = parts[0] if parts else ""
+                if not title:
+                    continue
+                body = (parts[1] if len(parts) > 1 else "")
+                filed, err = case_file_entry(
+                    slug, "finding", title,
+                    (body + "\n\n" if body else "")
+                    + "Logged by Navi from the case chat as a lead — unverified.",
+                    "info", False, author="navi")
+                if not err:
+                    counts["lead"] += 1
+                    written.append({"kind": "lead", "label": title, "state": "lead"})
+            elif kind == "task":
+                text = parts[0] if parts else ""
+                if not text:
+                    continue
+                if _register_key(text) in task_keys:
+                    duplicates += 1
+                    continue
+                _register_append(slug, "tasks", text, {
+                    "done": "no", "author": "navi", "filed": now, "source": source,
+                }, "")
+                task_keys.add(_register_key(text))
+                counts["task"] += 1
+                written.append({"kind": "task", "label": text, "state": "lead"})
+    if written:
+        bits = [str(counts[k]) + " " + k + ("s" if counts[k] != 1 else "")
+                for k in ("entity", "observable", "event", "lead", "task") if counts[k]]
+        case_file_entry(slug, "timeline", "Navi logged case material",
+                        "From the case chat at " + now + ": " + ", ".join(bits)
+                        + ". Everything she logs lands unverified (state: lead) "
+                        "until the operator promotes or strikes it on review.")
+    if not written and not flags:
+        return clean, None
+    return clean, {"entries": written, "flags": flags,
+                   "duplicates": duplicates, "dropped": dropped}
+
+
+def _case_brief_block(slug):
+    # What Navi is told about the case whose chat she is in:
+    # the summary first, then the file's contents WITH their
+    # review states labeled — confirmed material she may cite
+    # as established; unverified material is leads: reason from
+    # them, never cite them as fact.
+    meta = _case_manifest(slug)
+    if meta is None:
+        return ""
+    head = _case_head(slug, meta)
+    lines = ["[Case — " + head["name"] + "]"]
+    if head["summary"]:
+        lines.append("Summary: " + head["summary"])
+    lines.append("Status: " + head["status"] + " · type: " + head["type"]
+                 + " · priority: " + head["priority"]
+                 + ((" · client: " + head["client"]) if head["client"] else ""))
+    ents = _case_register(slug, "entities")
+    if ents:
+        conf = [e for e in ents if e["fields"].get("state") == "confirmed"]
+        lead = [e for e in ents if e["fields"].get("state") != "confirmed"]
+        if conf:
+            lines.append("Entities (confirmed): " + "; ".join(
+                e["heading"] + ((" — " + e["fields"]["role"]) if e["fields"].get("role") else "")
+                for e in conf[:8]))
+        if lead:
+            lines.append("Entities (UNVERIFIED leads — reason from them, never cite as established): "
+                         + "; ".join(e["heading"] for e in lead[:8]))
+    obs = _case_register(slug, "observables")
+    if obs:
+        lines.append("Observables: " + "; ".join(
+            e["heading"] + ("" if e["fields"].get("state") == "confirmed" else " (lead)")
+            for e in obs[:10]))
+    tasks = [e for e in _case_register(slug, "tasks")
+             if str(e["fields"].get("done") or "").lower() not in ("yes", "true", "1")]
+    if tasks:
+        lines.append("Open tasks: " + "; ".join(e["heading"] for e in tasks[:6]))
+    finds = _case_findings(slug)
+    if finds:
+        lines.append("Findings: " + "; ".join(
+            f["title"] + (" (lead — unverified)" if f["state"] == "lead" else "")
+            for f in finds[:8]))
+    return "\n".join(lines)
 
 
 def case_delete(slug):
@@ -20980,6 +21878,10 @@ class Handler(BaseHTTPRequestHandler):
                 "openCase": open_case_payload(cfg),
                 "dhd": dhd_state_payload(cfg, self._client_is_loopback()),
                 "mesh": mesh_status_payload(cfg, (self.headers.get("X-Apex-Via") or "") == "dhd"),
+                # Build 2 (#204): the status column's FediNet
+                # sections — one per membership, state from the
+                # federation machinery itself.
+                "federation": federation_status_slice(cfg),
                 "boot": boot_mode_payload(),
             })
         elif self.path.startswith("/api/operations/"):
@@ -21191,7 +22093,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)[:160]})
         elif self.path == "/api/cases":
-            self._send(200, cases_list_payload())
+            self._send(200, cases_list_payload(
+                (self.headers.get("X-Apex-Via") or "") == "dhd"))
         elif self.path.split("?")[0] == "/api/cases/detail":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             _detail = case_detail_payload((qs.get("case") or [""])[0])
@@ -22763,6 +23666,31 @@ class Handler(BaseHTTPRequestHandler):
                         _system_prompt += "\n\n" + _cctx
                 except Exception:
                     pass
+                # Build 2 (#199): in the case's own room she
+                # works the file, not just the chat — the case
+                # brief (its contents WITH their review states)
+                # and the log block she may end a reply with.
+                # The block is stripped before the operator sees
+                # the reply; everything in it lands UNVERIFIED.
+                try:
+                    _cbrief = _case_brief_block(_bound_case)
+                    if _cbrief:
+                        _system_prompt += "\n\n" + _cbrief
+                    _system_prompt += (
+                        "\n\n[Logging this case as you work it]\n"
+                        "This conversation is the case room for the case above. When the work surfaces a new, specific, checkable detail — never chatter, never a restatement — you may log it by ending your reply with a block of exactly this form:\n"
+                        "[[case-log]]\n"
+                        "entity: <name> | <person|org|account|system|place> | <their role in the case>\n"
+                        "observable: <value> | <ip|domain|url|hash|file|wallet|other> | <a one-line context>\n"
+                        "event: <what happened> | <the detail>\n"
+                        "lead: <a claim worth checking> | <why it is worth checking>\n"
+                        "task: <a concrete next step>\n"
+                        "[[/case-log]]\n"
+                        "Use only the line kinds that apply; at most six lines per reply. Everything you log lands UNVERIFIED — the operator reviews it, promotes what holds, strikes what does not (a strike is noted in the timeline). Treat unverified material in the case brief above as leads: reason from them, never cite them as established. "
+                        "A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Never mention the block itself."
+                    )
+                except Exception:
+                    pass
             # The message seam: an exact CVE ID or a stack/case
             # term in the operator's own words pulls the record in
             # for THIS reply only.
@@ -22829,11 +23757,24 @@ class Handler(BaseHTTPRequestHandler):
                 # name before this payload returns, and ride back
                 # as data for the dashboard's receipt.
                 reply, _cfilings = extract_finding_markers(reply, cfg)
+                # Build 2 (#199): her case log block — bound
+                # case chats only; the block comes out of the
+                # reply, the entries land unverified in the
+                # case's registers, and the log rides back as
+                # data for the dashboard's receipt.
+                _clog = None
+                if _bound_case:
+                    try:
+                        reply, _clog = extract_case_log(reply, _bound_case, last or "")
+                    except Exception:
+                        _clog = None
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload
                 if _cfilings:
                     payload["caseFilings"] = _cfilings
+                if _clog:
+                    payload["caseLog"] = _clog
                 if _msaves:
                     payload["memorySaves"] = _msaves
                 if _mrefused:
@@ -23801,7 +24742,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": chat_delete(data.get("id"))})
         elif self.path == "/api/cases/create":
             data = self._body()
-            detail, err = case_create(data.get("name"), data.get("client"), data.get("scope"))
+            detail, err = case_create(data.get("name"), data.get("client"), data.get("scope"),
+                                      data.get("fields") if isinstance(data.get("fields"), dict) else None)
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
@@ -23824,11 +24766,51 @@ class Handler(BaseHTTPRequestHandler):
                 raw = base64.b64decode(str(data.get("dataBase64") or ""))
             except Exception:
                 raw = b""
-            saved, err = case_add_evidence(str(data.get("case") or ""), data.get("name"), raw)
+            saved, err = case_add_evidence(str(data.get("case") or ""), data.get("name"), raw,
+                                           str(data.get("description") or ""),
+                                           str(data.get("acquired") or ""),
+                                           str(data.get("custody") or ""))
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "evidence": saved})
+        elif self.path == "/api/cases/update":
+            # Build 2 (#199): the manifest edit door — summary,
+            # type, priority, tags, sensitive, owner, related,
+            # close-out. The sensitive toggle rides it too.
+            data = self._body()
+            detail, err = case_update(str(data.get("case") or ""),
+                                      data.get("fields") if isinstance(data.get("fields"), dict) else {})
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "case": detail})
+        elif self.path == "/api/cases/register":
+            # Build 2 (#199): the operator files a register
+            # entry (entity / observable / task) from the view.
+            data = self._body()
+            detail, err = case_register_add(
+                str(data.get("case") or ""), str(data.get("register") or ""),
+                data.get("heading"),
+                data.get("fields") if isinstance(data.get("fields"), dict) else {},
+                data.get("body"))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "case": detail})
+        elif self.path == "/api/cases/review":
+            # Build 2 (#199): one-tap review — promote or
+            # strike an unverified entry (findings, entities,
+            # observables), or check a task off / reopen it.
+            data = self._body()
+            detail, err = case_review(str(data.get("case") or ""),
+                                      str(data.get("register") or ""),
+                                      str(data.get("key") or ""),
+                                      str(data.get("action") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "case": detail})
         elif self.path == "/api/cases/report":
             data = self._body()
             text, withheld, err = case_report(str(data.get("case") or ""))

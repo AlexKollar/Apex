@@ -471,31 +471,101 @@ if [ -z "${APEX_APPLY_BOOTSTRAPPED:-}" ] && [ -f "$SRC_DIR/apply-bootstrap.py" ]
     # script runs under set -e: the substitution is guarded so
     # a "no" lands in the variable instead of ending the
     # installer — the fall-through below is the promise.
+    #
+    # v0.3.0e Build 2 (#208): the verdict is NAMED, never
+    # silent. Build 1's gate decided without leaving its
+    # reason anywhere the record or the trace preserves, so
+    # when the handoff declined on the Build 12 seat that
+    # pulled Build 1, the field could not say afterwards which
+    # proof failed. Now the check prints its reason, the
+    # installer writes the verdict beside the job
+    # (apply-handoff-verdict.json — the running helper quotes
+    # it into the apply trace), and a decline is echoed into
+    # the install log in plain words. The record proof also
+    # reads the record from the path the JOB itself carries
+    # (resultPath) before falling back to the path derived
+    # from --dir: the job is the apply's own paperwork, and a
+    # seat whose --dir was remapped (the homecoming) must not
+    # be able to point the gate at the wrong record. One proof
+    # is new with the verdict: the job's home must be the home
+    # this installer targets. On a migration apply they
+    # differ (the job's home is the legacy tree; the installer
+    # targets the new home), and a takeover must never govern
+    # a migration — the running helper's adoption machinery
+    # follows the move only when its own installer performs
+    # it, and an armed takeover leaves two helpers racing
+    # (the old one relaunching and confirming against the
+    # parked tree while the incoming one installs). The
+    # decline names the shape, and the running build's
+    # machinery carries the migration itself, as it always
+    # has.
     _apex_handoff="$(python3 - "$_apex_job" "$SRC_DIR" "$INSTALL_DIR" <<'EOF_PY'
 import json, os, sys
 try:
     job = json.load(open(sys.argv[1]))
     if os.path.realpath(str(job.get("pkgDir") or "")) != os.path.realpath(sys.argv[2]):
+        print("no: the apply job beside the package names a different package directory ("
+              + str(job.get("pkgDir") or "(none)") + ") than this installer ("
+              + sys.argv[2] + ")")
         raise SystemExit(1)
-    rec = json.load(open(os.path.join(sys.argv[3], "config", "update-result.json")))
+    if os.path.realpath(str(job.get("root") or "")) != os.path.realpath(sys.argv[3]):
+        print("no: the apply job's home (" + str(job.get("root") or "(none)")
+              + ") is not the home this installer targets (" + sys.argv[3]
+              + ") — a migration apply is carried by the running build's own "
+              "machinery, whose adoption follows the move; a takeover helper "
+              "starting from the old home cannot adopt a migration it did "
+              "not witness")
+        raise SystemExit(1)
+    rec_path = str(job.get("resultPath") or "")
+    if not rec_path:
+        rec_path = os.path.join(sys.argv[3], "config", "update-result.json")
+    try:
+        rec = json.load(open(rec_path))
+    except Exception:
+        print("no: the apply record at " + rec_path + " could not be read")
+        raise SystemExit(1)
     if rec.get("state") != "working" or rec.get("step") != "installing":
+        print("no: the apply record reads state=" + str(rec.get("state"))
+              + " step=" + str(rec.get("step"))
+              + ", not the working/installing of an apply in flight")
         raise SystemExit(1)
     print("go")
 except SystemExit:
     raise
-except Exception:
+except Exception as e:
+    print("no: the handoff check itself failed (" + str(e) + ")")
     raise SystemExit(1)
 EOF_PY
-)" || _apex_handoff=""
+)" || true
+    _apex_verdict_file="$(dirname "$_apex_job")/apply-handoff-verdict.json"
+    _apex_write_verdict() {
+      python3 - "$_apex_verdict_file" "$1" "$2" <<'EOF_PY' || true
+import json, sys, time
+try:
+    with open(sys.argv[1], "w") as f:
+        json.dump({"verdict": sys.argv[2], "reason": sys.argv[3],
+                   "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+except Exception:
+    pass
+EOF_PY
+    }
     if [ "$_apex_handoff" = "go" ]; then
       echo "== Bootstrap handoff: an older build's helper is running this install —"
       echo "   the package's own machinery takes the apply over before anything stops."
       if python3 "$SRC_DIR/apply-bootstrap.py" "$_apex_job" "$PPID"; then
+        _apex_write_verdict "go" "the gate's proofs all held and the incoming build's helper armed the takeover; the running build's installer exited having installed nothing, by design (law E)"
         echo "   Handoff complete: the incoming build's helper owns the apply now;"
         echo "   this installer exits having installed nothing, by design (law E)."
         exit 0
       fi
+      _apex_write_verdict "refused" "the gate's proofs held, but the package's bootstrap could not arm the incoming helper (its own output is in the apply log above); the running build's machinery carried the install itself"
       echo "   The handoff did not arm — the ordinary install carries on from here."
+    else
+      _apex_reason="${_apex_handoff#no: }"
+      [ "$_apex_reason" = "$_apex_handoff" ] && _apex_reason="the handoff check returned no verdict"
+      _apex_write_verdict "no" "$_apex_reason"
+      echo "== Bootstrap handoff: not taken — $_apex_reason."
+      echo "   The ordinary install carries on; the verdict is recorded beside the apply job."
     fi
   fi
 fi

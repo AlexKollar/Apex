@@ -873,7 +873,11 @@ class Intel:
     def case_context(self, terms):
         # In a case-bound chat, the case's own matched records
         # ride along (ranked, capped) — the join between the
-        # Center and Case Files.
+        # Center and Case Files. v0.3.0e Build 2 (#199): the
+        # header names them as what they are — MATCHES against
+        # the case's observables and entities, not findings.
+        # A match is a lead to check, and Navi is told to name
+        # it as one, never to cite it as established.
         words = [str(t or "").strip().lower() for t in (terms or [])]
         words = [w for w in words if len(w) >= 3 and w not in STOPWORDS]
         if not words:
@@ -888,8 +892,37 @@ class Intel:
         if not mine:
             return ""
         mine.sort(key=self._rank)
-        return ("[Threat intelligence — records matching this case]\n"
+        return ("[Threat intelligence — records MATCHING this case's observables or entities. "
+                "A match is not a finding: if one matters to the work, flag it to the operator "
+                "named as a match, never as an established fact.]\n"
                 + self._record_lines(mine[:4]))
+
+    def case_matches(self, terms):
+        # v0.3.0e Build 2 (#199): the structured form of
+        # case_context, for the case view's Wire-matches card —
+        # the same matched records, as data: id, title, the
+        # term that matched, the grade, and the KEV flag. The
+        # card badges them as matches, not findings.
+        words = [str(t or "").strip().lower() for t in (terms or [])]
+        words = [w for w in words if len(w) >= 3 and w not in STOPWORDS]
+        if not words:
+            return []
+        with self._db() as conn:
+            rows = conn.execute("SELECT * FROM cve WHERE matched IS NOT NULL").fetchall()
+        mine = []
+        for r in rows:
+            m = json.loads(r["matched"] or "{}") or {}
+            if m.get("via") == "case" and m.get("term") in words:
+                mine.append((r, m))
+        mine.sort(key=lambda pair: self._rank(pair[0]))
+        out = []
+        for r, m in mine[:8]:
+            out.append({
+                "id": r["id"], "title": r["title"] or r["id"],
+                "term": m.get("term") or "", "grade": m.get("grade") or "",
+                "kev": bool(r["kev"]), "source": "intel",
+            })
+        return out
 
     def lookup(self, query):
         # Layer 2: a deliberate lookup ("intel: …", "what do we
