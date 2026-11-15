@@ -1768,8 +1768,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-14.03";
-var SHIPPED_BUILD_SEQ = 3;
+var BRIDGE_BUILD = "2026-11-14.04";
+var SHIPPED_BUILD_SEQ = 4;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2873,7 +2873,7 @@ function intelItemHtml(it, sel) {
 // CTFs (the board), Bounties, and the Center itself. Articles
 // open in the in-app reader where extraction works; where it
 // cannot, the fallback is named, never faked.
-var intelTab = "news";
+var intelTab = "home";
 var wireState = null, wireFetching = false, wireMsg = "";
 var ctfState = null, ctfFetching = false, ctfMsg = "";
 var bountyState = null, bountyFetching = false, bountyMsg = "";
@@ -2904,48 +2904,67 @@ function ticLocal(ts) {
   if (!ts) return "";
   try { return new Date(ts * 1000).toLocaleString(); } catch (e) { return ""; }
 }
-// Build 3 (#210): the Dashboard tab retires \u2014 its surface is
-// fused into the home section above the strip (ticHomeHtml) \u2014
-// and the wire's families are re-laned: News carries news only,
-// the wire's CVE items get the CVE tab, its KEV items the KEV
-// tab. The Center's own graded queue lives on the Center tab
-// (and in the home section's highlights); the old "cves" scope
-// folds into it \u2014 nothing it showed is lost.
-var TIC_TABS = [["news", "News"], ["cve", "CVE"], ["kev", "KEV"], ["ctfs", "CTFs"], ["bounties", "Bounties"], ["center", "Center"]];
-function ticTabStrip() {
-  var h = "<div class='row' style='gap:6px;flex-wrap:wrap;margin:10px 0'>";
-  TIC_TABS.forEach(function (pair) {
-    var on = intelTab === pair[0];
-    h += "<button class='" + (on ? "act" : "ghost") + "' data-tic-tab='" + pair[0] + "' style='min-height:40px'" + (on ? " aria-current='true'" : "") + ">" + pair[1] + "</button>";
-  });
-  return h + "</div>";
-}
+// Build 3 (#210) fused the Dashboard and the Center into this
+// surface and re-laned the wire's families: News carries news
+// only, the wire's CVE items get their own family, its KEV
+// items likewise; the Center's graded queue is its own family.
+//
+// Build 4 (#213): Home is the BOARD only — the Situation
+// strip and the four glance cards, nothing else. The feed-
+// health pill field moved to the top of the News family; the
+// tab strip is gone — each family is its own view, reached
+// through the cards' Open buttons and the nav. Home itself is
+// built as a HOST surface: the board is its first resident,
+// not its permanent definition (Alex's addendum on #213 —
+// the homepage "will be a lot of things"), so residents are
+// composed in homeSurfaceHtml and later ones append there
+// without another surgery. Board-only is today's content
+// ruling, never an architectural cap.
+var TIC_FAMILIES = ["news", "cve", "kev", "ctfs", "bounties", "center"];
 function threatIntelHtml() {
-  // Retired tab keys land somewhere honest: the old Dashboard
-  // is the home section itself now; the old CVEs scope folded
-  // into the Center.
-  if (intelTab === "dashboard") intelTab = "news";
+  // Retired keys land somewhere honest: the old Dashboard key
+  // is the board itself now; the old CVEs scope folded into
+  // the Center family.
+  if (intelTab === "dashboard") intelTab = "home";
   if (intelTab === "cves") intelTab = "center";
+  if (CONFIG.backend !== "live") {
+    return "<h3>Home — The Wire</h3><div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>";
+  }
+  if (TIC_FAMILIES.indexOf(intelTab) !== -1) {
+    // A family view: the family's own content, with one way
+    // back to the board. In the CTFBoard view the family IS
+    // the view (the nav is the way out), so no back row there.
+    var fh = "";
+    if (view === "ThreatIntel") fh += "<div class='row' style='margin-bottom:10px'><button class='ghost' data-tic-go='home' style='min-height:40px'>\u2190 Home — the board</button></div>";
+    if (intelTab === "cve") fh += wireKindHtml("cve");
+    else if (intelTab === "kev") fh += wireKindHtml("kev");
+    else if (intelTab === "ctfs") fh += ctfTabHtml();
+    else if (intelTab === "bounties") fh += bountiesTabHtml();
+    else if (intelTab === "center") fh += ticCenterHtml("center");
+    else fh += wireTabHtml();
+    if (wireReader) fh += wireReaderHtml();
+    return fh;
+  }
+  intelTab = "home";
   var h = "<h3>Home — The Wire</h3>";
-  h += "<p style='color:var(--dim)'>The fused awareness home: the situation at a glance, feed health, and every family on its own tab — News (news only), CVE, KEV, the CTF board, the bounty board, and the Center. Each carries the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
-  if (CONFIG.backend !== "live") { h += "<div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
-  h += ticHomeHtml();
-  h += ticTabStrip();
-  if (intelTab === "cve") h += wireKindHtml("cve");
-  else if (intelTab === "kev") h += wireKindHtml("kev");
-  else if (intelTab === "ctfs") h += ctfTabHtml();
-  else if (intelTab === "bounties") h += bountiesTabHtml();
-  else if (intelTab === "center") h += ticCenterHtml("center");
-  else h += wireTabHtml();
+  h += "<p style='color:var(--dim)'>The fused awareness board: the situation at a glance, and each family — News (news only), CVE, KEV, the CTF board, the bounty board, and the Center — one tap away on its card. Each carries the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
+  h += homeSurfaceHtml();
   if (wireReader) h += wireReaderHtml();
   return h;
 }
-function ticHomeHtml() {
-  // The fusion (Build 3, #210): what the Dashboard and the
-  // Center's front door showed, on one surface — a situation
-  // strip, the glance cards (the Center card's top rows ARE
-  // the matching queue highlights), and feed health in its
-  // collapsible field. Nothing either surface showed is lost.
+function homeSurfaceHtml() {
+  // The residents of Home, in order. Today there is one: the
+  // board. Later residents append here — the surface is a
+  // host (#213 addendum), so nothing below this line needs to
+  // change when Home grows.
+  var h = "";
+  h += homeBoardHtml();
+  return h;
+}
+function homeBoardHtml() {
+  // The board (#213): the Situation strip and the four glance
+  // cards — the fusion of Build 3, kept whole. The glance
+  // cards' Open buttons are the doors to the family views.
   if (!wireState && !wireFetching) refreshWire();
   if (!intelState && !intelFetching) refreshIntel();
   var h = "<div class='card' id='tic-home'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>Situation</b><span class='mono' style='font-size:11px;color:var(--dim)'>one surface — the Center and the Dashboard, fused</span></div>";
@@ -2953,7 +2972,6 @@ function ticHomeHtml() {
   h += "<p style='font-size:13px;margin-top:2px'>" + (intelState ? esc(intelState.kevTotal || 0) + " known-exploited in the Center's catalog \u00b7 " + esc(intelState.matchedCount || 0) + " matched to you \u00b7 queue holds " + esc((intelState.queue || []).length) : "Gathering the Center\u2026") + "</p>";
   h += "</div>";
   h += ticDashboardHtml();
-  h += wirePillsHtml();
   return h;
 }
 var wirePillsOpen = true;
@@ -3064,7 +3082,12 @@ function wireTabHtml() {
   if (!wireState) { if (!wireFetching) refreshWire(); return h + "<div class='card'>Gathering the wire\u2026</div>"; }
   var s = wireState;
   if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The wire is unavailable.") + "</div>";
-  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>News — the wire</b><button class='act' id='wire-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching\u2026" : "Fetch now") + "</button></div>";
+  // Feed health lives here now (Build 4, #213): the pill field
+  // came off Home and sits at the top of the News view \u2014 its
+  // collapsed slim-row form, per-operator persisted state, and
+  // house motion carried over unchanged.
+  h += wirePillsHtml();
+  h += "<div class='card' style='margin-top:12px'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>News — the wire</b><button class='act' id='wire-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching\u2026" : "Fetch now") + "</button></div>";
   h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
   h += "<p style='font-size:12px;color:var(--dim)'>News only on this lane — the wire's CVE items live on the CVE tab, its KEV additions on the KEV tab, and feed health lives in the field at the top of this page.</p>";
   h += "<div class='row' style='margin-top:8px;gap:14px;align-items:center;flex-wrap:wrap'><label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='wire-enabled'" + (s.enabled ? " checked" : "") + "> Wire enabled</label>";
@@ -3078,6 +3101,10 @@ function wireTabHtml() {
   var items = (s.items || []).filter(function (it) { return it.kind === "news"; });
   if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>No news on the wire yet — the first fetch brings the headlines. A feed that does not answer is named in Feed health above, never silently missing.</p></div>";
   items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
+  // The wire's other families (Build 4, #213): with the tab
+  // strip gone, the News view carries the doors to the CVE and
+  // KEV families so nothing the strip pointed at is stranded.
+  h += "<div class='row' style='margin-top:12px;gap:8px;flex-wrap:wrap'><button class='ghost' data-tic-go='cve' style='min-height:40px'>The wire's newest CVEs \u2192</button><button class='ghost' data-tic-go='kev' style='min-height:40px'>KEV additions \u2192</button></div>";
   return h;
 }
 function wireKindHtml(kind) {
@@ -3094,7 +3121,7 @@ function wireKindHtml(kind) {
   if (kind === "cve") {
     h += "<div class='card'><b>New CVEs — from the wire (NVD)</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " on the wire right now. These are the NVD's newest, as headlines — the Center's graded queue (CVSS, EPSS, matched records) lives on the <b>Center</b> tab.</p><div class='row' style='margin-top:8px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
   } else {
-    h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p></div>";
+    h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p><div class='row' style='margin-top:8px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
   }
   if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>Nothing in this family on the wire right now.</p></div>";
   items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
@@ -3210,7 +3237,6 @@ function bountiesTabHtml() {
 }
 function wireAwareness() {
   if (view === "CTFBoard" && intelTab !== "ctfs") intelTab = "ctfs";
-  mainEl.querySelectorAll("[data-tic-tab]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-tab"); render(); }; });
   mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { intelTab = b.getAttribute("data-tic-go"); render(); }; });
   mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
@@ -4051,13 +4077,68 @@ function watchShellSession() {
 function shellPost(path, body) {
   return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json(); });
 }
-function wireShellUi() {
-  var open = document.getElementById("chat-shell");
-  if (open) open.onclick = function () {
-    if (shellUi.live) { var si = document.getElementById("shell-in"); if (si) si.focus(); return; }
-    var cols = Math.max(40, Math.min(200, Math.floor(window.innerWidth / 8)));
-    shellPost("/api/shell/session/open", { chatId: String(activeChatId), cols: cols, rows: 24 }).then(function () { shellUi.seq = 0; shellUi.chatId = String(activeChatId); shellPoll(); render(); }).catch(function () {});
+function shellSessionOpen() {
+  // Open (or return) this chat's standing session. Resolves
+  // with the bridge's state payload; REJECTS with the refusal's
+  // own words when the bridge will not open one, so callers can
+  // degrade honestly instead of swallowing the failure.
+  var cols = Math.max(40, Math.min(200, Math.floor(window.innerWidth / 8)));
+  return shellPost("/api/shell/session/open", { chatId: String(activeChatId), cols: cols, rows: 24 }).then(function (j) {
+    if (j && j.ok === false) throw new Error(j.error || "the bridge refused the session");
+    shellUi.seq = 0; shellUi.chatId = String(activeChatId); shellPoll(); render();
+    return j;
+  });
+}
+function shellNoteInThread(text) {
+  // A session-shaped note in the thread: the refusal, named in
+  // the terminal record's own voice, never a silent failure.
+  messages.push({ who: "SHELL", text: "", shell: { events: [{ kind: "note", author: null, text: text }], open: false }, ts: Date.now() });
+  persist(); render();
+}
+var shellOpenInFlight = false;
+function chatModeToggled(m) {
+  // Build 4 (#214): the composer's CLI latch IS CLI Mode now.
+  // Flipping to CLI opens (or resumes) this chat's standing
+  // session; flipping back to Navi just routes input to chat
+  // again \u2014 the session persists behind the toggle under
+  // its own close rules. The switch gate: if the bridge
+  // refuses the open, the flip degrades honestly \u2014 the latch
+  // reverts to Navi and the refusal is named in the thread.
+  if (m !== "cli") return;
+  if (CONFIG.backend !== "live" || view !== "Chat") return;
+  if (shellUi.live && shellUi.chatId === String(activeChatId)) return;
+  if (shellOpenInFlight) return;
+  shellOpenInFlight = true;
+  shellSessionOpen().then(function () { shellOpenInFlight = false; }).catch(function (e) {
+    shellOpenInFlight = false;
+    chatMode = "navi"; persistChatMode();
+    shellNoteInThread("The shell session could not be opened \u2014 " + (e && e.message ? e.message : "the bridge could not be reached") + ". The mode stayed with Navi.");
+  });
+}
+function sendLineToShellSession(text) {
+  // Build 4 (#214): a CLI-latched line is typed into the chat's
+  // standing session \u2014 the terminal record is its rendering,
+  // its input badged OPERATOR by the bridge's own event fold.
+  // A leading $ is the latch gesture, not part of the line.
+  // If the session cannot take the line, the failure is named
+  // in the thread and the line runs NOWHERE else \u2014 never a
+  // silent fallback to a one-shot or to Navi.
+  var line = String(text || "").replace(/^\$\s*/, "");
+  try { cliHistoryAppend(line); } catch (e) {}
+  var deliver = function () {
+    shellPost("/api/shell/session/input", { chatId: String(activeChatId), text: line + "\n" }).then(function (j) {
+      if (j && j.ok === false) shellNoteInThread("The line was not typed into the session \u2014 " + (j.error || "no live session") + " It was not run anywhere else.");
+      shellPoll();
+    }).catch(function () {
+      shellNoteInThread("The line could not reach the shell session \u2014 the bridge could not be reached. It was not run anywhere else.");
+    });
   };
+  if (shellUi.live && shellUi.chatId === String(activeChatId)) deliver();
+  else shellSessionOpen().then(deliver).catch(function (e) {
+    shellNoteInThread("The shell session could not be opened \u2014 " + (e && e.message ? e.message : "the bridge could not be reached") + ". The line was not run.");
+  });
+}
+function wireShellUi() {
   var send = document.getElementById("shell-send");
   var input = document.getElementById("shell-in");
   var sendLine = function () {
@@ -4886,14 +4967,14 @@ var DOC_PAGES = [
   "<p>On Linux she lives in <span class='mono'>~/.local/share/navi-apex</span> — your own data home, where no corner of her tree needs root to exist. Launch her from the application menu or <span class='mono'>./start.sh</span>. Builds before the homecoming (Build 11) lived in <span class='mono'>/opt/navi-apex</span>: the first Build 11 install migrates such a tree to the new home — every piece of state carried, the Mesh identity byte-for-byte — and parks the old tree in place with a marker (<span class='mono'>MIGRATED.txt</span>) naming the new home and the one command that removes it when you are ready. Every launch is check-first: the launcher probes the model server, and if navi.llamafile is already running — from boot, an earlier launch, or started by hand — it leaves it alone and just runs the app; only when nothing answers does it start the server itself, with <span class='mono'>./navi.llamafile --server --v2</span> and the hardware-profile flags from <span class='mono'>config/navi.config.json</span>. The launcher starts the bridge, verifies the thing answering on port " + BRIDGE_PORT + " is really this build — naming whatever else it finds by its page title — and only then opens the dashboard. During install you chose when the model server starts: <b>on app launch</b> (the bridge starts navi.llamafile when you press Connect) or <b>at system boot</b>. Server output lands in <span class='mono'>navi.llamafile.log</span> beside the app.</p></div>" },
   { id: "chat-cli", title: "Chat & CLI mode", related: ["chips-guide", "voice"], html:
     "<div class='doc-sec'><h4>Chat and CLI access</h4>" +
-  "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
+  "<p>Chat is <b>CLI-first</b>. Type a system command — anything whose first word is a command this machine has — and it runs immediately, no model call, no waiting on Navi to orchestrate it: the raw terminal output lands in the thread as a terminal block and becomes <b>context she reasons over</b>, so you can list a folder and then ask her about a file the listing showed. Everything else goes to Navi as conversation, including plain-language requests like “show me the contents of /home/name/”, where she runs the command and answers with the actual output attached. Under the composer sit two mode toggles — <b>CLI</b> and <b>Navi</b>: press one once and it latches, so every line you send goes that way until you press the other; the pill beside them shows which way the current line will go, and clicking the pill flips the latch. Since Build 4 the CLI latch is <b>CLI Mode</b> itself: latching CLI opens (or resumes) this chat's standing shell session and your lines type into it; latching Navi brings the conversation back while the session stays alive behind the toggle. A leading <span class='mono'>$</span> flips to a command, a leading <span class='mono'>&gt;</span> flips back to Navi — and either one re-latches the mode to match. Chips are untouched by the routing: they are her own purpose-built tools, run the same ways as ever.</p>" +
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
   "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Above every view sits her <b>presence bar</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. The bar is part of the frame, not of any one page: it stays over Chat, Settings, Docs — everywhere — and at its top right sits the status column's <b>pane button</b>, wearing the panel glyph. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's doors are the frame's own now: the <b>pane button</b> at the presence bar's top right — on every page, at every width — and the panel button in the phone's top bar. Those are the only two doors; every one drives the one column state and raises the rail in place wherever you are; the phone's top bar itself is pinned, so the doors are there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
     "<div class='doc-sec'><h4>Sudo mode (v0.3.0e — Build 3)</h4>" +
   "<p>Sudo mode lets the commands Navi runs execute as root — and since Build 3 it runs on <b>sudo's own credential timestamp</b>, not on anything Apex holds. You arm it in <b>Settings → System</b>: flip the switch and a masked prompt appears on that same card; the password is fed <b>once</b> to <span class='mono'>sudo -v</span> and then forgotten by the page and the bridge alike — <b>never stored, logged or synced, anywhere</b>. What persists is one on/off flag in the config and sudo's own timestamp. While the timestamp lives, her elevated commands run as <span class='mono'>sudo -n</span> (never prompting); when it lapses, the status column and the Settings card read <b>Expired</b>, and elevated commands <b>refuse honestly</b> — naming the expiry — until you re-warm. Disarming (from Settings or the status column) flips the flag and kills the timestamp with <span class='mono'>sudo -k</span>: instant and total. The status column no longer owns the switch; it <b>reads</b> the state — Armed or Expired while the feature is on, and absent entirely while it is off. <b>Every elevated command Navi runs is on the record</b>: an append-only audit (<span class='mono'>config/sudo-audit.jsonl</span> — timestamp, the command as run, the chat it served, its exit status), viewable read-only on the Settings card. The audit deliberately does <b>not</b> ride Sync. One honest cost: on a machine whose sudo asks a fingerprint reader before the password, each fresh <span class='mono'>sudo -n</span> still runs PAM — but it fails fast instead of waiting the reader out, and the arm's one <span class='mono'>sudo -v</span> pays the full conversation once per timestamp window. The DHD prerequisite installer rides the same timestamp now: arm sudo mode first if a DHD step needs root.</p></div>" +
     "<div class='doc-sec'><h4>Shell sessions — the full shell (CLI Mode, Build 3)</h4>" +
-  "<p>One-shot commands are half the story. Each chat can hold <b>one standing interactive session</b> — a real shell on a real terminal (a PTY), living in the bridge, keyed to the chat. Open one with the <span class='mono'>&gt;_</span> button beside the composer; it survives messages and window reloads, and everything it does streams into the thread as a terminal record: lines typed are <b>badged by author</b> — OPERATOR or NAVI — because Navi can drive the same session. When a step needs a stateful shell (answering a prompt, a REPL, an interactive tool), she types into it herself and sees its output on her next turn. A program that takes the <b>full screen</b> (an editor, a monitor) renders on a real terminal grid in a pane above the composer on the desktop — click the pane and type to the program. On a phone there is no pane: the session streams into the thread instead, and the bar says so — an honest degradation, named, not a squeezed pretend-terminal. Sessions end when you close them, when the shell exits, or after <b>30 minutes without input</b> — the thread notes the closing and its reason either way. If the bridge restarts, the session is gone and the record says exactly that; nothing fakes continuity. Elevation never rides the session: it runs under its own session id, so sudo inside it prompts in-terminal like any terminal, and sudo mode's timestamp does not leak into it. Sessions are local to the seat whose bridge holds them — a reply borrowed over the Mesh does not move your shell.</p></div>" +
+  "<p>One-shot commands are half the story. Each chat can hold <b>one standing interactive session</b> — a real shell on a real terminal (a PTY), living in the bridge, keyed to the chat. Open one by latching the composer's <b>CLI</b> toggle (the old <span class='mono'>&gt;_</span> button retired in Build 4 — the toggle is the door, and the composer's lines type into the session while it is latched); it survives messages and window reloads, and everything it does streams into the thread as a terminal record: lines typed are <b>badged by author</b> — OPERATOR or NAVI — because Navi can drive the same session. When a step needs a stateful shell (answering a prompt, a REPL, an interactive tool), she types into it herself and sees its output on her next turn. A program that takes the <b>full screen</b> (an editor, a monitor) renders on a real terminal grid in a pane above the composer on the desktop — click the pane and type to the program. On a phone there is no pane: the session streams into the thread instead, and the bar says so — an honest degradation, named, not a squeezed pretend-terminal. Sessions end when you close them, when the shell exits, or after <b>30 minutes without input</b> — the thread notes the closing and its reason either way. If the bridge restarts, the session is gone and the record says exactly that; nothing fakes continuity. Elevation never rides the session: it runs under its own session id, so sudo inside it prompts in-terminal like any terminal, and sudo mode's timestamp does not leak into it. Sessions are local to the seat whose bridge holds them — a reply borrowed over the Mesh does not move your shell.</p></div>" +
     "<div class='doc-sec'><h4>Output cards — the thread folds itself</h4>" +
   "<p>When the conversation moves on, the bulky parts of earlier exchanges fold into small cards so the thread stays readable: a terminal block folds into a card whose line shows the command in its colors, how it ended (like <span class='mono'>exit 0</span>), and the first line of its output; a long reply from Navi — 500 characters or more, eight lines or more, or one containing a code block — folds into a card labeled <b>Navi reply</b> with its first line and its size. Click a card to open it and read the whole thing; click again to fold it. The card you are still in — everything from your last message onward — never folds. Folding is only about looks: nothing is deleted, the whole history stays in the thread and on disk, and Navi still sees the full output as her context, exactly as before. Clearing the chat clears the cards with it.</p></div>" +
     "<div class='doc-sec'><h4>Your command shows once</h4>" +
@@ -5057,7 +5138,9 @@ var DOC_PAGES = [
   "<p>Build 3 fuses the <b>Center and the Dashboard into one surface</b> — and that surface is now <b>Home</b>: the first entry on the menu rail and the page Apex opens to. One page carries a <b>situation strip</b> (the wire's freshness and the Center's counts), the glance cards the Dashboard always showed (the Center card's top rows are the matching queue's highlights), <b>feed health</b>, and the tab set. The old Dashboard tab and the separate CVEs tab retire; everything they showed lives on here or on the Center tab.</p>" +
   "<p><b>News is news only.</b> The News tab carries news articles — nothing else. The wire's CVE items moved to their own <b>CVE tab</b> and its KEV additions to a <b>KEV tab</b>, same cards, same reader, same honest fallback; the families stay separated and no record is lost in the move. The Center's graded queue (CVSS, EPSS, your matches) is a different store and stays on the <b>Center tab</b> — the CVE tab's header says so, so the two never blur.</p>" +
   "<p><b>Your own feeds.</b> On the News tab you can add any <b>RSS or Atom feed</b> — a name and a URL. The bridge fetches and parses it <i>before</i> saving: unreachable, unparseable, or not-a-feed is <b>refused by name</b> and nothing is saved. A saved feed is first-class: its stories flow into News badged with your name for it, on the normal pull cadence, and if it later stops answering, its pill in Feed health names the failure instead of going silently stale. Feeds can be removed from the same card. They live in this install's config (<span class='mono'>navi.config.json</span>) and deliberately do <b>not</b> ride Sync — each seat keeps its own.</p>" +
-  "<p><b>Feed health, folded.</b> The source pills live in a collapsible field at the top of Home: collapsed, they cost one slim row that still names how many sources are not answering; expanded, the full pill set with each failure's sentence. The choice persists, per operator.</p></div>"
+  "<p><b>Feed health, folded.</b> The source pills live in a collapsible field at the top of Home: collapsed, they cost one slim row that still names how many sources are not answering; expanded, the full pill set with each failure's sentence. The choice persists, per operator.</p></div>" +
+  "<div class='doc-sec'><h4>Home is the board only (v0.3.0e \u2014 Build 4)</h4>" +
+  "<p>Build 4 narrows Home to the <b>board itself</b>: the situation strip and the four glance cards \u2014 Top News, Newest CVEs, Next CTFs, Bounties \u2014 and nothing else. The tab set retired, and <b>feed health moved to the top of the News view</b>, in the same collapsible field with the same persisted choice. Every family is now its own view, reached by the Open button on its glance card or through the menu; each carries a way back to the board, and the News view carries the doors to the CVE and KEV families, so nothing the tabs pointed at is stranded. Home is built as a host surface \u2014 the board is its first resident, not its last word. The menu rail also lights <b>exactly one entry</b> now: the board lights Home, a family lights The Wire.</p></div>"
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
@@ -5736,6 +5819,7 @@ function chatPlaceholder() {
   var narrow = false;
   try { narrow = window.innerWidth <= 800; } catch (e) {}
   if (call) return narrow ? "Type what you'd say…" : "You're on a call — type what you'd say…";
+  if (chatMode === "cli" && CONFIG.backend === "live") return narrow ? "Shell session…" : "Shell session — type a line, Enter sends it";
   if (llama.status !== "running" || chatMode === "cli") return narrow ? "Run a command…" : "Run a command — try: ls";
   return narrow ? "Ask Navi…" : "Ask Navi — try: show me the contents of /home/name/";
 }
@@ -5789,6 +5873,7 @@ function attachAutocomplete(input, opts) {
   function latchMode(m) {
     chatMode = m;
     persistChatMode();
+    chatModeToggled(m);
     input.placeholder = chatPlaceholder();
     var v = input.value;
     if (m === "cli" && (v.trim() === ">" || v.indexOf("> ") === 0)) input.value = v.replace(/^>\s*/, "");
@@ -5841,7 +5926,7 @@ function attachAutocomplete(input, opts) {
       var btn = opts.hintEl.querySelector("button.pill");
       if (btn) {
         var r = lineRoute();
-        btn.textContent = r.kind === "cli" ? "⏎ CLI — runs as a system command" : "⏎ Navi — goes to Navi";
+        btn.textContent = r.kind === "cli" ? (chatMode === "cli" && CONFIG.backend === "live" ? "⏎ CLI — types into the shell session" : "⏎ CLI — runs as a system command") : "⏎ Navi — goes to Navi";
         btn.className = r.kind === "cli" ? "pill cli" : "pill";
       }
       opts.hintEl.querySelectorAll("button[data-mode]").forEach(function (b) {
@@ -6031,7 +6116,16 @@ function navBtn(id, label, iconName, targetView) {
   b.id = id;
   b.setAttribute("aria-label", label);
   b.innerHTML = "<span class='ic'>" + navIcon(iconName || label) + "</span><span class='lbl'>" + label + "</span><span class='nav-tip' aria-hidden='true'>" + label + "</span>";
-  b.onclick = function () { goView(targetView); };
+  b.onclick = function () {
+    // Build 4 (#213/#216): the two entries onto the Wire
+    // surface land on their own ground, so the surface showing
+    // and the rail's single selected entry always agree \u2014
+    // Home lands on the board; The Wire lands on its head
+    // family when the board is what's showing.
+    if (id === "nav-Home") intelTab = "home";
+    else if (id === "nav-child-apps-The Wire" && intelTab === "home") intelTab = "news";
+    goView(targetView);
+  };
   return b;
 }
 function navGroupHeader(gid) {
@@ -6099,8 +6193,10 @@ function navGroupWrap(gid) {
 // direction; group contents are unchanged).
 // Build 3 (#210): Home \u2014 the fused Wire surface (the Center
 // and the Dashboard, one page) \u2014 sits at the very top of the
-// rail and is what the app opens to. It is the same view as
-// Apps \u2192 The Wire; both entries light when it is showing.
+// rail and is what the app opens to. Build 4 (#216): it shares
+// the surface with Apps \u2192 The Wire, but selection is singular
+// \u2014 the board lights Home alone, a family lights The Wire
+// alone (see syncNav).
 navMenu.appendChild(navBtn("nav-Home", "Home", "Home", "ThreatIntel"));
 navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
 var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
@@ -6133,10 +6229,19 @@ navMenu.appendChild(navUtil);
 var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
+  // Build 4 (#216): selection is SINGULAR. Home and The Wire
+  // are two entries onto one surface, but only one ever
+  // lights: the board lights Home; any family view lights
+  // The Wire (the families' entry); the CTFBoard view is the
+  // CTF family, so it lights The Wire too. (Build 3 lit both
+  // entries whenever the surface showed \u2014 the fusion never
+  // disentangled the two selected states.)
+  if (view === "ThreatIntel") want = (intelTab === "home") ? "nav-Home" : "nav-child-apps-The Wire";
+  else if (view === "CTFBoard") want = "nav-child-apps-The Wire";
   ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
-    if (el && (id === want || (id === "nav-Home" && (view === "ThreatIntel" || view === "CTFBoard")))) el.className = (el.className ? el.className + " " : "") + "on";
+    if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
   });
   ["network", "navi", "apps", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
@@ -10259,10 +10364,10 @@ function render() {
     // the hint row beside the mode latch — a pressed state, kept
     // per chat session like the latch itself.
     var meshLocalBtn = "<button type='button' id='chat-mesh-local' aria-pressed='" + (meshLocal ? "true" : "false") + "' aria-label='This chat only: keep it on this machine — while on, this chat never borrows a paired machine' title='This chat only: keep it on this machine' style='" + (meshLocal ? "border-color:var(--cy);color:var(--cy)" : "") + "'>This chat only" + (meshLocal ? " ●" : "") + "</button>";
-    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-shell' aria-label='Open a shell session in this chat' title='Shell session (CLI Mode)' style='min-height:44px;font-family:monospace;font-weight:700'>&gt;_</button>" : "") + "</div>" +
+    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
-      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
-      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
+      : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
+      : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
   } else if (view === "Chips") {
     h += "<h3>Chips</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='Chips sections' style='margin-bottom:10px'><button class='" + (chipsTab === "management" ? "act" : "ghost") + "' data-ctab='management' aria-label='Navi User Repo tab'>Navi User Repo (NUR)</button><button class='" + (chipsTab === "studio" ? "act" : "ghost") + "' data-ctab='studio' aria-label='Chip studio tab'>Chip Studio</button><button class='" + (chipsTab === "workflows" ? "act" : "ghost") + "' data-ctab='workflows' aria-label='Chip workflows tab'>Workflows</button></div>";
@@ -10747,6 +10852,16 @@ function sendChat(text) {
   if (text.charAt(0) === "$") chatMode = "cli";
   else if (text === ">" || text.indexOf("> ") === 0) chatMode = "navi";
   persistChatMode();
+  if (CONFIG.backend === "live" && chatMode === "cli" && !/^\s*\/(chip|rag)\b/i.test(text) && !isDhdChatIntent(text)) {
+    // Build 4 (#214): CLI Mode \u2014 a CLI-latched line types
+    // into this chat's standing shell session instead of
+    // running as a one-shot command. Chip invocations and DHD
+    // intents keep their own roads, exactly as they did under
+    // the old latch; a > prefix already flipped the latch back
+    // to Navi above, so it never reaches here.
+    sendLineToShellSession(text);
+    return;
+  }
   messages.push({ who: "YOU", text: text, exec: null, ts: Date.now() });
   persist(); render();
   try {

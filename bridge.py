@@ -408,11 +408,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.03"
+BRIDGE_BUILD = "2026-11-14.04"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 3
+SHIPPED_BUILD_SEQ = 4
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -5540,6 +5540,35 @@ def _fed_import_gateway_payload(cfg, payload, trust_default=False):
         _cfg2 = load_config()
         mesh_add_peer(_cfg2, peer)
         cfg = _cfg2
+    elif not str(existing.get("viaFedinet") or ""):
+        # Already paired here (by hand, before the federation):
+        # the record keeps its operator facts — relay ticks, the
+        # tunnel route — and gains only its federation
+        # provenance, exactly as the gateway's admit marks a
+        # hand-paired joiner. autoPaired stays False: the
+        # federation marked this record, it did not make it — an
+        # expulsion unmarks it again rather than deleting the
+        # pairing. (Build 4, #215: without this mark, the
+        # gateway's record on a dual-hat member stayed pairwise
+        # forever, and the member's borrows from its own gateway
+        # rendered the pairwise pill although the federation's
+        # roster is what pairs the two machines now. The stamp is
+        # laid surgically — mesh_add_peer replaces a record
+        # wholesale and would clobber the operator facts.)
+        _cfg2 = load_config()
+        _block = dict(_cfg2.get("mesh") or {})
+        _borrow = dict(_block.get("borrow") or {})
+        _peers = []
+        for _p in _borrow.get("peers") or []:
+            if isinstance(_p, dict) and str(_p.get("nodeId") or "") == peer["nodeId"]:
+                _p = dict(_p)
+                _p["viaFedinet"] = fed["id"]
+            _peers.append(_p)
+        _borrow["peers"] = _peers
+        _block["borrow"] = _borrow
+        _cfg2["mesh"] = _block
+        save_config(_cfg2)
+        cfg = _cfg2
     _federation_save(cfg, fedinets)
     return fed, ""
 
@@ -5758,6 +5787,21 @@ def federation_apply(cfg):
                     if rec.get(k) != peer.get(k):
                         rec[k] = peer[k]
                         changed = True
+            elif not rec.get("viaFedinet"):
+                # Build 4 (#215): a record that pre-dated the
+                # federation — hand-paired, then this node joined
+                # the roster — gains its federation provenance:
+                # marked, never autoPaired, operator facts
+                # untouched, the same mark the gateway's admit
+                # lays on a hand-paired joiner. The departure
+                # sweep above already unmarks such a record when
+                # the node leaves the roster; before this branch
+                # nothing on a member node ever laid the mark, so
+                # a dual-hat member's borrows rendered the
+                # pairwise pill although the federation's roster
+                # is what pairs the two machines now.
+                rec["viaFedinet"] = fed["id"]
+                changed = True
     if changed:
         cfg2 = load_config()
         block = dict(cfg2.get("mesh") or {})
