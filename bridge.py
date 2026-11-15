@@ -408,11 +408,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-15.05"
+BRIDGE_BUILD = "2026-11-15.06"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 5
+SHIPPED_BUILD_SEQ = 6
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -2874,6 +2874,51 @@ def mesh_record_repair(peer):
     }
 
 
+def mesh_card_refresh_repair(cfg, peer):
+    # (v0.3.0e — Build 6, #227) The subset wound, named: a
+    # federation-marked peer whose stored addresses are a
+    # PROPER SUBSET of the addresses its verified gateway card
+    # carries. The knock dials the record, never the card, so
+    # every road the record is missing is a road never tried —
+    # the first external join burned a day on exactly this (a
+    # hand-paired LAN-only record under a gateway whose card
+    # also named its public road). The heal is the card refresh
+    # the federation import performs (#227 part 2), offered in
+    # place under the health check's heal doctrine. Returns the
+    # repair offer, or None when the record carries every road
+    # its card names (or no verified card is on file).
+    fed_id = str(peer.get("viaFedinet") or "")
+    if not fed_id:
+        return None
+    fed = next((f for f in federation_settings(cfg)
+                if f.get("id") == fed_id
+                and f.get("gatewayNodeId") == peer.get("nodeId")), None)
+    payload = fed.get("gatewayCardPayload") if fed else None
+    if not isinstance(payload, dict):
+        return None
+    card_peer, _err = _fed_verify_gateway_card(payload)
+    if card_peer is None:
+        return None
+    have = {_mesh_addr_parts(a, peer.get("port")) for a in (peer.get("addresses") or [])}
+    want = {_mesh_addr_parts(a, card_peer.get("port")) for a in (card_peer.get("addresses") or [])}
+    if not have or not have < want:
+        return None
+    missing = len(want - have)
+    return {
+        "kind": "card-refresh",
+        "missingCount": missing,
+        "sentence": (peer["name"] + "'s record carries only some of the addresses "
+                     "its gateway card carries — " + str(missing) + " road"
+                     + ("s" if missing != 1 else "") + " the card names "
+                     + ("are" if missing != 1 else "is") + " missing here, and the knock "
+                     "dials this record, never the card, so those roads are never "
+                     "tried. The gateway card on file is signed and verified; heal "
+                     "it here: refresh the record's addresses, port, pin, and name "
+                     "from the card. The pairing's own facts — relay ticks, the "
+                     "tunnel route, its history — are kept exactly as they stand."),
+    }
+
+
 def mesh_repair_peer_record(cfg, node_id):
     # (ok, sentence): strip the junk entries from one peer's
     # stored record, in place. The record itself — name, pin,
@@ -2891,6 +2936,28 @@ def mesh_repair_peer_record(cfg, node_id):
         return False, "No paired machine with that identity is on this machine."
     rep = mesh_record_repair(target)
     if rep is None:
+        # (v0.3.0e — Build 6, #227): the second heal — a
+        # federation-marked record missing roads its verified
+        # gateway card carries is refreshed from that card.
+        crep = mesh_card_refresh_repair(cfg, target)
+        if crep is not None:
+            fed = next((f for f in federation_settings(cfg)
+                        if f.get("id") == str(target.get("viaFedinet") or "")), None)
+            payload = fed.get("gatewayCardPayload") if fed else None
+            card_peer, _err = _fed_verify_gateway_card(payload or {})
+            if card_peer is None:
+                return False, ("The gateway card on file for " + target["name"]
+                               + " no longer verifies — import a fresh gateway "
+                               "card from the Federation page and the record "
+                               "can be refreshed from it.")
+            if _mesh_peer_card_refresh(cfg, node_id, card_peer):
+                save_config(cfg)
+                return True, ("Refreshed — " + target["name"] + "'s record now "
+                              "carries every road its gateway card names: "
+                              "addresses, port, pin, and name from the verified "
+                              "card. The pairing's own facts — relay ticks, the "
+                              "tunnel route, its history — stand untouched.")
+            return False, "No paired machine with that identity is on this machine."
         return False, (target["name"] + "'s record holds at least one address that "
                        "could reach it — there is nothing to repair. A fresh card "
                        "is the cure for a record that needs changing.")
@@ -4143,6 +4210,11 @@ def mesh_parse_card(text):
         card = json.loads(text or "")
     except Exception:
         return None, "That does not look like a Mesh card — the card data is not in the shape a pairing card carries. Download a fresh PNG card from the other machine's Mesh page and try that picture."
+    if isinstance(card, dict) and card.get("gatewayCard") == 1:
+        # (v0.3.0e — Build 6, #227): a gateway card's payload is
+        # not a pairing card, and never becomes a hand-made
+        # pairing record — name it and name its door.
+        return None, "That is a federation gateway card, not a Mesh pairing card — gateway cards are imported on the Federation page, where the gateway's signature is checked; pairing cards pair one machine from the Mesh page."
     if not isinstance(card, dict) or card.get("meshCard") != 1:
         return None, "That does not look like a Mesh card — the card data is not in the shape a pairing card carries. Download a fresh PNG card from the other machine's Mesh page and try that picture."
     fp = str(card.get("certFingerprint") or "").strip().lower()
@@ -4190,6 +4262,16 @@ def mesh_add_peer(cfg, peer):
     # and the config is saved before the caller answers. Returns
     # an error string, or "" when the peer is in. The caller
     # probes at once (mesh_probe_peers_soon) after a success.
+    if isinstance(peer, dict) and (peer.get("gatewayCard") == 1
+                                   or isinstance(peer.get("gateway"), dict)):
+        # (v0.3.0e — Build 6, #227): the record-layer guard.
+        # Whatever path carried it here, a gateway card payload
+        # is not a pairing record and is never seated as one —
+        # the federation import, which checks the gateway's
+        # signature, is its only door.
+        return ("That is a federation gateway card, not a pairing record — "
+                "gateway cards are imported on the Federation page, where "
+                "the gateway's signature is checked; nothing was paired.")
     if peer["nodeId"] and peer["nodeId"] == mesh_node_id():
         return "That is this machine's own card — a machine does not pair with itself."
     block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
@@ -4549,6 +4631,7 @@ def parse_mesh_card_png(data):
     pos = 8
     payload = None
     saw_chip = False
+    saw_gateway = False
     while pos + 12 <= len(data):
         (length,) = struct.unpack(">I", data[pos:pos + 4])
         kind = data[pos + 4:pos + 8]
@@ -4566,10 +4649,23 @@ def parse_mesh_card_png(data):
                     payload = chunk_data[nul + 1:]
                 elif keyword == b"navi-chip":
                     saw_chip = True
+                elif keyword == b"navi-gateway-card":
+                    saw_gateway = True
         if kind == b"IEND":
             break
         pos += 8 + length + 4
     if payload is None:
+        if saw_gateway:
+            # (v0.3.0e — Build 6, #227): name the card for what
+            # it is — the mirror of the gateway parser's pairing
+            # refusal. A gateway card never becomes a hand-made
+            # pairing record.
+            return None, ("That picture is a federation gateway card, not a "
+                          "Mesh pairing card — a gateway card admits this "
+                          "machine to a fedinet and is imported on the "
+                          "Federation page, where the gateway's signature "
+                          "is checked; pairing cards pair one machine from "
+                          "the Mesh page.")
         if saw_chip:
             return None, MESH_CARD_PNG_IS_CHIP
         return None, MESH_CARD_PNG_NO_PAYLOAD
@@ -4685,6 +4781,10 @@ def mesh_busy():
 # in MESH_STATE so instant-off can close it mid-generation (R4).
 
 def mesh_lender_generate(messages, endpoint, model):
+    # Build 6 (#224): the same empty-content guard as the local
+    # builder — a hollow history entry must not kill a borrowed
+    # generation on this machine's model either.
+    messages = _chat_sanitize_messages(messages)
     name = served_model(endpoint) or model
     body = json.dumps({
         "model": name,
@@ -4792,6 +4892,17 @@ def mesh_handle_borrow(handler, body):
     messages = data.get("messages")
     if not isinstance(messages, list) or not messages:
         return 400, {"ok": False, "reason": "bad-request"}
+    # (v0.3.0e — Build 6, #224, the mesh pin): the inbound list is
+    # sanitized at the door — a partner's poisoned thread (an
+    # empty-content record stored mid-history) must never 400
+    # this node's model. The builder guard inside
+    # mesh_lender_generate stands behind this one; an all-hollow
+    # ask is refused with its own reason word, never a raw
+    # backend refusal relayed to the borrower.
+    try:
+        messages = _chat_sanitize_messages(messages)
+    except Exception:
+        return 200, {"ok": False, "reason": "empty-turn"}
     # 0.2.0e Build 7 (#154): a relayed ask declares its carrier
     # inside the signed body ("via"). The declaration can only
     # ADD a check, never remove one — the asker is authenticated
@@ -5477,6 +5588,14 @@ def _fed_verify_gateway_card(payload):
     # validate as a pairing card, and the signature over the
     # payload must verify against the gateway's own key — a card
     # anyone can print, but only the gateway can sign.
+    if isinstance(payload, dict) and payload.get("meshCard") == 1:
+        # (v0.3.0e — Build 6, #227): a pairing card offered as a
+        # gateway card is named, not read as damage — the mirror
+        # refusal, at the payload layer.
+        return None, ("That is a Mesh pairing card, not a gateway card — "
+                      "pairing cards pair one machine from the Mesh page; "
+                      "a gateway card comes from a fedinet gateway's "
+                      "Federation page.")
     gw = payload.get("gateway") if isinstance(payload.get("gateway"), dict) else None
     if gw is None:
         return None, "That gateway card carries no gateway — it is damaged."
@@ -5490,6 +5609,42 @@ def _fed_verify_gateway_card(payload):
                       "its gateway's key — the card was not signed by the "
                       "gateway it names, so nothing was imported.")
     return peer, ""
+
+
+def _mesh_peer_card_refresh(cfg, node_id, card_peer, fed_id=None):
+    # (v0.3.0e — Build 6, #227) Rewrite one stored peer record's
+    # card-claimed reachability — addresses, port,
+    # certFingerprint, name — from a VERIFIED card record, in
+    # place on cfg (the caller saves). Operator facts are never
+    # touched: relay ticks, the tunnel route, borrow posture,
+    # pair history, autoPaired — none of those are the card's to
+    # claim, exactly as #215 protects them. When fed_id is
+    # given, a record not yet stamped also gains its federation
+    # provenance (#215's mark; an already-stamped record keeps
+    # its stamp). Returns True when a record was found.
+    block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+    block = dict(block)
+    borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+    borrow = dict(borrow)
+    found = False
+    peers = []
+    for raw in borrow.get("peers") or []:
+        if isinstance(raw, dict) and str(raw.get("nodeId") or "") == node_id:
+            raw = dict(raw)
+            raw["addresses"] = list(card_peer.get("addresses") or [])
+            raw["port"] = card_peer.get("port")
+            raw["certFingerprint"] = card_peer.get("certFingerprint")
+            raw["name"] = card_peer.get("name")
+            if fed_id and not str(raw.get("viaFedinet") or ""):
+                raw["viaFedinet"] = fed_id
+            found = True
+        peers.append(raw)
+    if not found:
+        return False
+    borrow["peers"] = peers
+    block["borrow"] = borrow
+    cfg["mesh"] = block
+    return True
 
 
 def _fed_import_gateway_payload(cfg, payload, trust_default=False):
@@ -5540,35 +5695,38 @@ def _fed_import_gateway_payload(cfg, payload, trust_default=False):
         _cfg2 = load_config()
         mesh_add_peer(_cfg2, peer)
         cfg = _cfg2
-    elif not str(existing.get("viaFedinet") or ""):
-        # Already paired here (by hand, before the federation):
-        # the record keeps its operator facts — relay ticks, the
-        # tunnel route — and gains only its federation
-        # provenance, exactly as the gateway's admit marks a
-        # hand-paired joiner. autoPaired stays False: the
-        # federation marked this record, it did not make it — an
-        # expulsion unmarks it again rather than deleting the
-        # pairing. (Build 4, #215: without this mark, the
-        # gateway's record on a dual-hat member stayed pairwise
-        # forever, and the member's borrows from its own gateway
-        # rendered the pairwise pill although the federation's
-        # roster is what pairs the two machines now. The stamp is
-        # laid surgically — mesh_add_peer replaces a record
-        # wholesale and would clobber the operator facts.)
+    else:
+        # Already paired here (by hand, before the federation —
+        # or by an earlier, staler card): the record keeps its
+        # operator facts — relay ticks, the tunnel route, borrow
+        # posture, pair history — and gains its federation
+        # provenance if it has none yet, exactly as the gateway's
+        # admit marks a hand-paired joiner. autoPaired stays as
+        # it stands: the federation marked this record, it did
+        # not make it — an expulsion unmarks it again rather
+        # than deleting the pairing. (Build 4, #215: without
+        # this mark, the gateway's record on a dual-hat member
+        # stayed pairwise forever, and the member's borrows from
+        # its own gateway rendered the pairwise pill although
+        # the federation's roster is what pairs the two machines
+        # now. The stamp is laid surgically — mesh_add_peer
+        # replaces a record wholesale and would clobber the
+        # operator facts.)
+        #
+        # (v0.3.0e — Build 6, #227): the VERIFIED card also
+        # refreshes the record's card-claimed reachability —
+        # addresses, port, certFingerprint, name. The field
+        # wound: a gateway hand-paired before its fedinet
+        # existed kept a LAN-only record forever, because the
+        # import stamped provenance and nothing else — and the
+        # knock dials the RECORD, never the card, so the
+        # gateway's public road was never tried. A fresh card
+        # now heals the record it verifies against.
         _cfg2 = load_config()
-        _block = dict(_cfg2.get("mesh") or {})
-        _borrow = dict(_block.get("borrow") or {})
-        _peers = []
-        for _p in _borrow.get("peers") or []:
-            if isinstance(_p, dict) and str(_p.get("nodeId") or "") == peer["nodeId"]:
-                _p = dict(_p)
-                _p["viaFedinet"] = fed["id"]
-            _peers.append(_p)
-        _borrow["peers"] = _peers
-        _block["borrow"] = _borrow
-        _cfg2["mesh"] = _block
-        save_config(_cfg2)
-        cfg = _cfg2
+        if _mesh_peer_card_refresh(_cfg2, peer["nodeId"], peer,
+                                   fed_id=fed["id"]):
+            save_config(_cfg2)
+            cfg = _cfg2
     _federation_save(cfg, fedinets)
     return fed, ""
 
@@ -5970,14 +6128,18 @@ def _fed_roster_auth(handler, body, fed_hint):
 
 
 def _fed_roster_ask(peer, payload):
+    # Returns (answer-or-None, failure-stage-clause): Build 6
+    # (#226) — a failed ask carries its dial stage out, so the
+    # sync sentence can name where the road died instead of
+    # flattening it into "did not answer".
     body = json.dumps(payload).encode()
     try:
         _code, raw = _mesh_request(peer, "POST", "/mesh/roster", body,
                                    str(payload.get("requestId") or ""), 15)
         data = json.loads(raw.decode("utf-8", "replace"))
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
+        return (data if isinstance(data, dict) else None), ""
+    except Exception as e:
+        return None, _mesh_failure_stage(e)
 
 
 def _fed_roster_sync(cfg, fed):
@@ -5994,10 +6156,17 @@ def _fed_roster_sync(cfg, fed):
     payload = {"action": "get", "fedinetId": fed["id"],
                "version": _fed_roster_version(fed),
                "requestId": secrets.token_hex(8)}
-    answer = _fed_roster_ask(gw_rec, payload)
+    answer, stage = _fed_roster_ask(gw_rec, payload)
     if answer is None:
         answer = _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload)
     if answer is None:
+        # Build 6 (#226): name the direct road's stage — it is
+        # the road the diagnosis needs; the relay was tried too
+        # and is named as tried, as before.
+        if stage:
+            return ("The gateway did not answer — on the direct road, "
+                    + stage + ". The roster stands as it was. Direct "
+                    "and relay roads were both tried.")
         return ("The gateway did not answer — the roster stands as it was. "
                 "Direct and relay roads were both tried.")
     if not answer.get("ok"):
@@ -6531,7 +6700,23 @@ def federation_act(data, via_dhd=False):
             _code, raw = _mesh_request(gw, "POST", "/mesh/roster", body,
                                        payload["requestId"], 15)
             ans = json.loads(raw.decode("utf-8", "replace"))
-        except Exception:
+        except Exception as e:
+            # Build 6 (#226): the failure names its stage and the
+            # road it died on, and the FAILED knock is audited —
+            # one entry per operator-initiated attempt, the same
+            # cadence a failed sync already kept. (Before this, a
+            # failed knock left no trace anywhere, and a live
+            # diagnosis misread the silent log as "no knock was
+            # ever sent".)
+            stage = _mesh_failure_stage(e)
+            federation_audit("knock", fed["name"],
+                             "The knock did not reach the gateway — "
+                             + (stage or "the request failed before "
+                                "any answer") + ".", via)
+            if stage:
+                return refuse("The gateway did not answer the knock — "
+                              + stage + ". The road is dark, or the "
+                              "gateway is off.")
             return refuse("The gateway did not answer the knock — the road "
                           "is dark, or the gateway is off.")
         if not isinstance(ans, dict) or not ans.get("ok"):
@@ -6877,11 +7062,22 @@ def _mesh_dial(peer, method, path, body, timeout, headers):
     fp_err = None
     tls_err = None
     timeout_err = None
+    # Build 6 (#226): the dial remembers WHICH address each
+    # failure kind died at, and the classified exceptions carry
+    # it (mesh_kind / mesh_addr) — the federation sentences name
+    # the stage and the road instead of flattening every failure
+    # into "did not answer".
+    fp_addr = ""
+    tls_addr = ""
+    timeout_addr = ""
+    last_addr = ""
     for address in _mesh_effective_addresses(peer):
         # Build 4 (#143/#154): an entry may carry its own port
         # (host:port); a bare host inherits the record's port.
         # One helper parses both, here and in the health sweep.
         host, eport = _mesh_addr_parts(address, peer["port"])
+        disp = host + ":" + str(eport)
+        last_addr = disp
         conn = None
         sent = False
         try:
@@ -6904,6 +7100,7 @@ def _mesh_dial(peer, method, path, body, timeout, headers):
                 # is raised only at the end, when no address both
                 # connected AND matched (see below).
                 fp_err = "fingerprint mismatch"
+                fp_addr = disp
                 last_err = _MeshFpError("fingerprint mismatch")
                 continue
             conn.request(method, path, body=body, headers=headers)
@@ -6938,23 +7135,80 @@ def _mesh_dial(peer, method, path, body, timeout, headers):
             except Exception:
                 pass
             if sent:
-                raise _MeshDropped(str(e))
+                dropped = _MeshDropped(str(e))
+                dropped.mesh_kind = "dropped"
+                dropped.mesh_addr = disp
+                raise dropped
             if isinstance(e, ssl.SSLError):
                 tls_err = str(e)
+                tls_addr = disp
             elif isinstance(e, (socket.timeout, TimeoutError)):
                 timeout_err = str(e)
+                timeout_addr = disp
             last_err = e
             continue
     # Build 7 (#87): something DID answer at one of the addresses
     # but never with the pinned certificate — that is the honest,
     # diagnosable failure, and it outranks a plain unreachable.
     if fp_err is not None:
-        raise _MeshFpError(fp_err)
+        err = _MeshFpError(fp_err)
+        err.mesh_kind = "fingerprint"
+        err.mesh_addr = fp_addr
+        raise err
     if tls_err is not None:
-        raise _MeshTlsError(tls_err)
+        err = _MeshTlsError(tls_err)
+        err.mesh_kind = "tls"
+        err.mesh_addr = tls_addr
+        raise err
     if timeout_err is not None:
-        raise _MeshTimeout(timeout_err)
-    raise _MeshUnreachable(str(last_err))
+        err = _MeshTimeout(timeout_err)
+        err.mesh_kind = "timeout"
+        err.mesh_addr = timeout_addr
+        raise err
+    err = _MeshUnreachable(str(last_err))
+    err.mesh_kind = "unreachable"
+    err.mesh_addr = last_addr
+    raise err
+
+
+def _mesh_failure_stage(exc):
+    # Build 6 (#226): the failure as a sentence clause naming the
+    # stage and the road it died on — "the TLS handshake failed
+    # at host:port" — or "" when the exception carries no dial
+    # classification (not a transport failure at all). The
+    # federation knock and roster-sync sentences speak this
+    # clause; before this build they flattened every transport
+    # failure into "did not answer", and a joiner's audit log
+    # showed nothing at all for a failed knock, which read as
+    # "no knock was ever sent" during a live diagnosis.
+    kind = getattr(exc, "mesh_kind", None)
+    if kind is None:
+        for cls, k in ((_MeshFpError, "fingerprint"),
+                       (_MeshTlsError, "tls"),
+                       (_MeshTimeout, "timeout"),
+                       (_MeshDropped, "dropped"),
+                       (_MeshUnreachable, "unreachable")):
+            if isinstance(exc, cls):
+                kind = k
+                break
+    addr = getattr(exc, "mesh_addr", "") or ""
+    if kind == "timeout":
+        return ("the last road tried, " + addr + ", did not "
+                "answer in time") if addr else "nothing answered in time"
+    if kind == "unreachable":
+        return ("the last road tried, " + addr + ", could not "
+                "be connected to") if addr else "no address could be connected to"
+    if kind == "tls":
+        return ("the TLS handshake failed at " + addr) if addr \
+            else "the TLS handshake failed"
+    if kind == "fingerprint":
+        return ("the door that answered at " + addr + " did not "
+                "present the pinned certificate") if addr \
+            else "the door that answered did not present the pinned certificate"
+    if kind == "dropped":
+        return ("the connection to " + addr + " dropped "
+                "mid-answer") if addr else "the connection dropped mid-answer"
+    return ""
 
 
 def mesh_probe_peer(peer, force=False):
@@ -7387,6 +7641,16 @@ def mesh_try_borrow(messages, cfg, ms):
     # Mesh does not apply at all.
     peers = ms["borrow"]["peers"]
     if not peers:
+        return None, None
+    # (v0.3.0e — Build 6, #224, the mesh pin): the borrower's own
+    # list is sanitized BEFORE it rides — a poisoned stored
+    # thread must never reach a lender's model, least of all a
+    # lender running an older build without the builder guard.
+    # An all-hollow list borrows nothing: the local path's
+    # builder names the refusal instead.
+    try:
+        messages = _chat_sanitize_messages(messages)
+    except Exception:
         return None, None
     if not mesh_node_id():
         ok, _err = mesh_ensure_identity(cfg)
@@ -8050,7 +8314,10 @@ def mesh_health_check(cfg):
                # Build 6 (#143): the in-place heal, when this
                # record's addresses are all dead ends — offered
                # on the same card that names the problem.
-               "repair": mesh_record_repair(peer)}
+               # (v0.3.0e — Build 6, #227): the second heal —
+               # a federation-marked record missing roads its
+               # verified gateway card carries.
+               "repair": mesh_record_repair(peer) or mesh_card_refresh_repair(cfg, peer)}
         presented_other = ""
         presented_own = ""
         skipped_own = 0
@@ -10156,7 +10423,8 @@ def shell_sessions_kill_all():
 
 
 _SHELL_BLOCK = re.compile(r"\[\[shell\]\]\s*\n?(.*?)\n?\s*\[\[/shell\]\]",
-                          re.S)
+                          re.S | re.I)
+_SHELL_BLOCK_OPEN = re.compile(r"\[\[shell\]\]", re.I)
 
 SHELL_TEACHING = (
     "Interactive shell: this chat can hold ONE live terminal "
@@ -10177,24 +10445,49 @@ def extract_shell_block(reply, chat_id):
     block in her reply is stripped from the text, each line typed
     into the session (born here if this is her first interactive
     need), badged "navi". Mirrors extract_case_log. Returns
-    (clean_reply, drove_or_None)."""
-    if not reply or chat_id is None:
+    (clean_reply, drove_or_None).
+
+    Build 6 (#217): the markup is consumed in every shape a
+    generation actually produces, because a borrowed reply showed
+    the raw token in the field. The block match is
+    case-insensitive (a model that closes with [[/Shell]] still
+    drove, and still showed the token); more than one block in a
+    reply is consumed in order; and an UNTERMINATED block — the
+    generation was cut before the closing token, the borrowed
+    shape — is cut from the text at the opening token and drives
+    NOTHING: a truncated last line is half a command, and half a
+    command is never typed. The drop is named in the returned
+    record ("unterminated") instead of rendering as raw markup.
+    A reply with no chat to drive (chat_id None) still has its
+    markup consumed — it simply drives nothing: the token is
+    presentation, never content."""
+    if not reply:
         return reply, None
-    m = _SHELL_BLOCK.search(reply)
-    if not m:
-        return reply, None
-    lines = m.group(1).split("\n")
-    while lines and lines[0] == "":
-        lines.pop(0)
-    while lines and lines[-1] == "":
-        lines.pop()
     drove = []
-    for ln in lines[:20]:
-        if shell_session_input(chat_id, ln + "\n", "navi",
-                               create=True):
-            drove.append(ln)
-    cleaned = (reply[:m.start()] + reply[m.end():]).strip()
-    return cleaned, {"lines": drove}
+    drove_any = False
+    out = reply
+    for _ in range(3):
+        m = _SHELL_BLOCK.search(out)
+        if not m:
+            break
+        lines = m.group(1).split("\n")
+        while lines and lines[0] == "":
+            lines.pop(0)
+        while lines and lines[-1] == "":
+            lines.pop()
+        for ln in lines[:20]:
+            if chat_id is not None and shell_session_input(
+                    chat_id, ln + "\n", "navi", create=True):
+                drove.append(ln)
+        drove_any = True
+        out = (out[:m.start()] + out[m.end():]).strip()
+    mo = _SHELL_BLOCK_OPEN.search(out)
+    if mo:
+        out = out[:mo.start()].strip()
+        return out, {"lines": drove, "unterminated": True}
+    if not drove_any:
+        return reply, None
+    return out, {"lines": drove}
 
 
 def shell_session_brief(chat_id):
@@ -15735,6 +16028,11 @@ class _NaviInstance:
     def llm_chat(self, user_message, called_from_app=False):
         endpoint = os.environ.get("NAVI_LLAMAFILE_ENDPOINT", "http://localhost:8080/v1")
         model = os.environ.get("NAVI_MODEL", "navi")
+        if not str(user_message or "").strip():
+            # (#224) An empty ask is refused here, by name — the
+            # model server rejects empty content outright, and a
+            # chip deserves the reason, not the raw refusal.
+            return ("(llm_chat was given nothing to ask — the message was empty.)", 0)
         body = json.dumps({"model": model, "messages": [{"role": "user", "content": user_message}], "stream": False, "max_tokens": 512}).encode()
         req = urllib.request.Request(endpoint + "/chat/completions", data=body, headers={"Content-Type": "application/json"})
         try:
@@ -17915,6 +18213,67 @@ def _engine_detail(pkg, exc):
             + str(exc) + ". " + VOICE_INSTALL_HINT)
 
 
+def _voice_decode_probe():
+    # Build 6 (#221): availability by DECODE, not by import. The
+    # import probe above can pass while transcription is dead:
+    # faster-whisper 1.2.1's decode_audio passes a keyword
+    # (metadata_errors) that PyAV 13+ removed from av.open(), so
+    # with av 19 in the venv every clip died at decode — eight
+    # days of "she can't hear me" that every import check called
+    # healthy. This probe generates a quarter second of silence,
+    # writes it as a WAV, and runs the REAL decode path
+    # (faster_whisper.audio.decode_audio — the same call
+    # transcription makes) over it. Cached like the import
+    # probes: the verdict is per-interpreter, and an interpreter
+    # does not change its packages mid-run. Returns
+    # (ok, exception-or-None).
+    key = "decode:faster_whisper"
+    if key in _engine_probes:
+        return _engine_probes[key]
+    try:
+        from faster_whisper.audio import decode_audio
+        wav = _samples_to_wav([0.0] * 4000, 16000)
+        fd, path = tempfile.mkstemp(suffix=".wav",
+                                    prefix="navi-decode-probe-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(wav)
+            samples = decode_audio(path, sampling_rate=16000)
+            n = len(samples)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+        if n <= 0:
+            raise RuntimeError(
+                "the decoder returned no samples for a silent "
+                "test clip")
+        _engine_probes[key] = (True, None)
+    except Exception as e:
+        _engine_probes[key] = (False, e)
+    return _engine_probes[key]
+
+
+def _decode_detail(exc):
+    # Why transcription is unavailable even though the package
+    # imports — the sentence names the failing call and the
+    # drift that causes it, with the cure (the pinned set).
+    if exc is None:
+        return None
+    return ("faster-whisper is installed and imports, but it "
+            "cannot decode audio in this Python: "
+            + type(exc).__name__ + ": " + str(exc)
+            + ". The speech packages have drifted apart — the "
+            "known shape is a PyAV (the 'av' package) newer than "
+            "faster-whisper's decoder expects; the voice "
+            "requirements now pin av below 13 for exactly this. "
+            "Cure: re-run the installer and say yes at the voice "
+            "step — it repairs the venv to the pinned set — or "
+            "run the venv's Python with: -m pip install "
+            "-r requirements-voice.txt")
+
+
 def _unavailable_message(label, pkg, exc):
     # What the loaders raise on failure — the same distinction the
     # availability probe reports, so a speak failure and the status
@@ -18046,9 +18405,27 @@ def discover_piper_voices(current):
     return {"voices": voices, "source": source}
 
 
+# Build 6 (#6, telemetry half): the last mic-state report a
+# window made about ITSELF — the dashboard computes the reading
+# for its Voice tab ("this window's own mic, this session") and,
+# since this build, also posts it here on every push-to-talk
+# attempt, so the field state finally exists in the bridge's log
+# (start.log) instead of only on a screen someone must be
+# watching. In-memory: it is a diagnostic, not a record.
+_MIC_REPORT = {"state": "", "at": 0}
+
+
 def voice_status(cfg):
     vc = voice_config(cfg)
     stt_ok, stt_exc = _probe_engine("faster_whisper", "WhisperModel")
+    # Build 6 (#221): importable is not hearable — the decode
+    # probe is the second half of the STT verdict. When the
+    # import passes but the decode fails, hearing reads
+    # unavailable and the detail names the decode, so the Voice
+    # tab can never again call a deaf install healthy.
+    dec_ok, dec_exc = (True, None)
+    if stt_ok:
+        dec_ok, dec_exc = _voice_decode_probe()
     engine_pkg = "kokoro" if vc["tts_engine"] == "kokoro" else "piper"
     tts_ok, tts_exc = _probe_engine(
         engine_pkg, "KPipeline" if engine_pkg == "kokoro" else "PiperVoice")
@@ -18063,9 +18440,12 @@ def voice_status(cfg):
         "stt": {
             "engine": "faster-whisper",
             "model": vc["stt_model"],
-            "available": stt_ok,
-            "detail": _engine_detail("faster_whisper", stt_exc),
+            "available": stt_ok and dec_ok,
+            "detail": (_engine_detail("faster_whisper", stt_exc)
+                       if not stt_ok else _decode_detail(dec_exc)),
+            "decode_ok": dec_ok,
         },
+        "mic_report": dict(_MIC_REPORT),
         "tts": {
             "engine": vc["tts_engine"],
             "voice": vc["tts_voice"],
@@ -18132,6 +18512,13 @@ def _stt_model(vc):
 def transcribe_audio(audio_bytes, vc):
     if not audio_bytes:
         raise VoiceUnavailable("No audio arrived — the clip was empty.")
+    # Build 6 (#221): the decode verdict gates the attempt — a
+    # broken decoder is named here, in the operator's words,
+    # instead of surfacing as a raw TypeError from inside the
+    # model's transcribe call (which read as a dead microphone).
+    dec_ok, dec_exc = _voice_decode_probe()
+    if not dec_ok:
+        raise VoiceUnavailable(_decode_detail(dec_exc))
     model = _stt_model(vc)
     fd, path = tempfile.mkstemp(suffix=".webm", prefix="navi-stt-")
     try:
@@ -18928,6 +19315,35 @@ CHAT_HISTORY_MESSAGES = 24
 CHAT_TIMEOUT = 600
 
 
+def _chat_sanitize_messages(messages):
+    # Build 6 (#224): the model server refuses a request carrying
+    # ANY message with empty content (HTTP 400 "message must not
+    # have empty content") — one hollow entry anywhere in the
+    # history kills the whole answer. The field shape was a call:
+    # a stored thread entry with no text (an exec-only or
+    # placeholder row the dashboard's history builder passed
+    # through) rode into the call's request and Navi's answer died
+    # on it. The builder is the one funnel every chat request —
+    # typed, called, or borrowed-back — passes through, so the
+    # guard lives here: entries whose content is empty or
+    # whitespace-only are dropped before the request is built.
+    # A list with nothing left is a caller bug, and it is named
+    # rather than sent on to be refused.
+    out = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if content is None or not str(content).strip():
+            continue
+        out.append(m)
+    if not out:
+        raise RuntimeError(
+            "the conversation held nothing the model could answer "
+            "— every message in it was empty. Nothing was sent.")
+    return out
+
+
 def llamafile_chat(messages, endpoint, model):
     # Guardian (Build 14, #156): every local generation is timed
     # and counted. The counter is what Guardian's is_generating
@@ -18936,6 +19352,7 @@ def llamafile_chat(messages, endpoint, model):
     # generation collisions from. The return contract — the
     # reply text, or the same RuntimeErrors — is unchanged: this
     # wrapper only observes the call it wraps.
+    messages = _chat_sanitize_messages(messages)
     _gen_t0 = time.time()
     with _GENERATION_LOCK:
         _GENERATION_ACTIVE["count"] += 1
@@ -23958,6 +24375,27 @@ class Handler(BaseHTTPRequestHandler):
                 "started": started,
                 "error": None if alive else error,
             })
+        elif self.path == "/api/voice/mic-report":
+            # Build 6 (#6, telemetry half): a window reports its
+            # own mic reading (granted / refused / no recording
+            # API) each time push-to-talk is attempted in it. The
+            # report is logged in words and kept for /api/voice —
+            # the app-window capture question (#6) has been open
+            # since 2026-11-07 for want of exactly this reading
+            # existing somewhere durable.
+            data = self._body()
+            st = str(data.get("state") or "")
+            if st not in ("ok", "refused", "unavailable", "unknown"):
+                self._send(200, {"ok": False, "error": "unknown mic state"})
+            else:
+                _MIC_REPORT["state"] = st
+                _MIC_REPORT["at"] = int(time.time())
+                print("Navi voice: a window reports its own mic as "
+                      + {"ok": "granted", "refused": "refused",
+                         "unavailable": "no recording API",
+                         "unknown": "not tested"}[st]
+                      + " (push-to-talk attempt).", flush=True)
+                self._send(200, {"ok": True})
         elif self.path == "/api/voice/warmup":
             # The dashboard fires this when the Voice view opens:
             # load the speech engines then — while the operator is
@@ -23978,6 +24416,16 @@ class Handler(BaseHTTPRequestHandler):
                     warmed.append("stt")
                 except Exception as e:
                     errors["stt"] = str(e)
+                # Build 6 (#221): warming also proves the decode
+                # path — the model can load perfectly over a
+                # decoder that cannot decode (the av drift), and
+                # the warmup answer must not call that warm.
+                if "stt" not in errors:
+                    dec_ok, dec_exc = _voice_decode_probe()
+                    if dec_ok:
+                        warmed.append("decode")
+                    else:
+                        errors["decode"] = _decode_detail(dec_exc)
                 try:
                     if vc["tts_engine"] == "kokoro":
                         _kokoro_pipeline(vc)

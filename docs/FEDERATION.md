@@ -65,6 +65,40 @@ the Federation page's pending list (admit or deny). Admission
 adds the member to the roster at the next Node number, pairs it
 on the gateway, and republishes the signed roster.
 
+**When the road is dark (v0.3.0e — Build 6, #226).** A knock or
+a roster sync that cannot reach the gateway names the stage it
+died at and the last road tried — nothing answered in time at
+an address, no connection to be had, a TLS handshake that
+failed, a door that answered without the pinned certificate, a
+connection dropped mid-answer — instead of every failure
+reading the same *did not answer*. A failed knock is written
+to the node's federation audit log with its stage, one entry
+per operator-initiated attempt, the same cadence a failed sync
+already kept: silence in the log once again means no knock was
+sent.
+
+**Cards keep their kinds, and verified cards refresh
+(v0.3.0e — Build 6, #227).** A gateway card can never become a
+hand-made pairing record, and a pairing record can never serve
+as a fedinet's gateway record: every import path — the pairing
+picture import, the federation import, backup restore, and
+sync-carried cards — refuses the other kind by name. Gateway
+cards are imported on the Federation page, where the gateway's
+signature is checked; pairing cards pair one machine from the
+Mesh page. And when a *verified* gateway card's node already
+has a peer record on the importing node, the import refreshes
+that record's card-claimed reachability — addresses, port,
+certificate fingerprint, name — from the card, because the
+knock dials the record, never the card: a record made before
+the federation existed (a hand pairing carrying only the
+gateway's LAN address) otherwise keeps its stale roads
+forever. Operator facts are never the card's to change: relay
+ticks, the tunnel route, borrow posture, pair history, and
+the auto-paired mark all stand. The Mesh health check names a
+federation-marked record whose stored addresses are a proper
+subset of its verified card's, and offers the same refresh as
+an in-place heal on that peer's card.
+
 **Expulsion** is a signed roster revision like any other: the
 member leaves the roster, and at every member's next sync the
 federation-made records for it go away. Pairings made by hand

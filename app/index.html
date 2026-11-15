@@ -1778,8 +1778,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-15.05";
-var SHIPPED_BUILD_SEQ = 5;
+var BRIDGE_BUILD = "2026-11-15.06";
+var SHIPPED_BUILD_SEQ = 6;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -5205,7 +5205,8 @@ var DOC_PAGES = [
   "<li>Her model answers with her persona, her CLI access, and her chips intact.</li>" +
   "<li><b>Kokoro</b> — an 82M-parameter voice model, Apache-2.0 — speaks the answer back, sentence by sentence as it arrives, so she starts talking before she's finished thinking.</li></ol>" +
   "<p><b>Piper</b> is the lighter fallback engine. Nothing you say is recorded anywhere but this machine.</p>" +
-  "<p><b>Settings → Voice</b> is her voice's one home — the call itself and her settings together (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>): a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p></div>" },
+  "<p><b>Settings → Voice</b> is her voice's one home — the call itself and her settings together (which Whisper model hears you, which engine and voice she speaks with, her speed and pitch — saved in <span class='mono'>config/navi.config.json</span>): a Call button, push-to-talk through your real microphone, an elapsed timer, and a live transcript; the same call can be started from the Chat tab — the Call button beside its composer opens the live call panel (timer, push-to-talk, End) right in the chat window, with the thread as the transcript and the composer speaking to the call; a mic beside the chat composer does push-to-talk for one-off spoken messages, and typed-chat replies can be spoken aloud too. The speech engines are an optional install — the installers offer them in an isolated <span class='mono'>voice/venv</span> — and until they exist the app says voice is unavailable and names the step, rather than faking audio. Models download once into <span class='mono'>voice/models/</span>, which sits on the persistence keep-list with her chips, the llamafile, and her Soul/Memory. Finished calls are recorded in <span class='mono'>voice/calls.json</span> and filed into the conversation — a call is a conversation, not a separate mode. <b>Her voice is picked in Settings → Voice</b>: the list is auto-generated — the bridge enumerates the voices this machine's Kokoro installation actually has (the voice files it holds, or the catalog the installed package pulls from, which download on first use) — and she defaults to <b>Isabella</b>, the British female voice (<span class='mono'>bf_isabella</span>).</p>" +
+  "<p><b>Proven hearing (v0.3.0e — Build 6, #221).</b> Her hearing is now verified by an actual <b>decode</b>, not by the packages merely importing: the bridge runs a silent test clip through the same decoder transcription uses, and the Voice page reports the verdict — a speech stack whose packages have drifted apart (the field shape was a PyAV too new for faster-whisper: every clip died at decode while every check called her healthy) now reads <b>unavailable, with the drift named</b>, and a push-to-talk attempt names it too instead of failing like a dead microphone. The voice requirements pin the set that decodes together (<span class='mono'>av</span> below 13 beside faster-whisper), and the installer's voice step <b>repairs an existing venv to the pin</b> — shebangs included — rather than only building fresh ones. On a call, a model request that fails is a <b>snag, not a reply</b>: the panel leaves the speaking state, names the reason, and keeps the call open. And every push-to-talk attempt now <b>reports this window's own mic reading to the bridge's log</b>, so the desktop-app microphone question (see Troubleshooting) finally accumulates evidence where a fix can be aimed from it.</p></div>" },
   { id: "dhd", title: "DHD — Apex from anywhere", related: ["settings", "installing", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What DHD is</h4>" +
   "<p><b>Apex | DHD</b> — Dial-Home Device, the way home — is Apex's public door. <b>Apex | Node</b> [local] lets a phone on your home network open Apex; DHD extends the <b>same dashboard</b> to a genuinely public address, so you can reach the Apex on your own machine from anywhere.</p>" +
@@ -5305,7 +5306,9 @@ var DOC_PAGES = [
   { id: "federation", title: "Federation — fedinets & deep trust", related: ["mesh", "dhd", "settings"], html:
     "<div class='doc-sec'><h4>From pairs to a fedinet</h4>" +
   "<p>Pairing is two machines trusting each other, one ceremony at a time. A <b>fedinet</b> is the named, many-machine form: a set of nodes whose <b>gateway</b> keeps a <b>signed roster</b> — who is in, with their card facts, in join order. <b>Node numbers are roster facts</b>: the gateway assigns them at admission, and the signed roster is the only place they live. Any operator can <b>found</b> a fedinet and be its gateway; a node can keep several fedinets at once, and no trust bleeds between them. The first fedinet is <b>Rockport Mesh</b> — its real roster lives on its gateway and is never baked into an install; an install ships the machinery and learns the roster from the gateway's signature.</p>" +
-  "<p><b>Gateway cards.</b> A gateway hands out a <b>green</b> card — a pairing card's form, the fedinet's name on its face. Importing one is <b>admission + introduction only</b>: the gateway becomes a peer, its roster becomes fetchable, and no trust is granted. Trust is a separate act, below. A node's gateway can also be its <b>Founding Member</b> — the two facts are distinct, and the roster shows both.</p></div>" +
+  "<p><b>Gateway cards.</b> A gateway hands out a <b>green</b> card — a pairing card's form, the fedinet's name on its face. Importing one is <b>admission + introduction only</b>: the gateway becomes a peer, its roster becomes fetchable, and no trust is granted. Trust is a separate act, below. A node's gateway can also be its <b>Founding Member</b> — the two facts are distinct, and the roster shows both.</p>" +
+  "<p><b>When the road is dark (v0.3.0e — Build 6, #226).</b> A knock or a roster sync that cannot reach the gateway now <b>names the stage it died at and the last road tried</b> — nothing answered in time at an address, no connection to be had, a TLS handshake that failed, a door that answered without the pinned certificate, a connection dropped mid-answer — instead of every failure reading the same <i>did not answer</i>. A <b>failed knock is written to the audit log</b> with its stage, one entry per attempt, the same cadence a failed sync already kept: silence in the log once again means no knock was sent.</p>" +
+  "<p><b>Cards keep their kinds, and verified cards refresh (v0.3.0e — Build 6, #227).</b> A <b>gateway card can never become a hand-made pairing record</b>, and a pairing record can never serve as a fedinet's gateway record: each import names the other kind and refuses it — gateway cards are imported on this page, where the gateway's signature is checked; pairing cards pair one machine from the Mesh page. And when a <b>verified</b> gateway card's node already has a peer record here, the import <b>refreshes the record's reachability from the card</b> — addresses, port, certificate pin, name — because the knock dials the record, never the card. The record's own facts (relay ticks, the tunnel route, borrow posture, pair history) are never the card's to change. The Mesh health check names a record that carries only some of its card's roads and offers the same refresh as a heal.</p></div>" +
     "<div class='doc-sec'><h4>Deep trust, and its guardrails</h4>" +
   "<p>With a fedinet's <b>trust-by-default</b> on, its signed roster <b>auto-pairs and auto-lends</b> on this node — deep trust, against the gateway's signature, never against a claim. The guardrails are the operator's own, per fedinet: the <b>new-member tick</b> (a member who joins after your trust baseline lends only while it stands; unticked, they are pairing-only for you), a <b>per-member untrust</b> that always wins, a per-member lend tick for named exceptions, an hourly <b>borrow cap</b>, and <b>owner preemption</b> — your own work takes the machine from a federation borrow mid-flight (the borrower is answered <i>preempted</i>, by name; a hand-made pairing's borrow is never preempted). One flip of trust-by-default off ends all auto-lending; pairings already made stay pairings.</p>" +
   "<p><b>Staleness is a posture, not an error.</b> A roster last verified more than <b>72 hours</b> ago degrades its fedinet to pairing-only, with the sentence on the Federation page saying so, until a sync lands. Syncs ride the Mesh door directly, or — when the direct road is dark — <b>via relay</b>, on Build 7's three ticks and one-hop rule. <b>Expulsion</b> is a signed roster revision: it lands at the next sync, removes the federation's own records for the departed node, and never touches a pairing made by hand.</p></div>" +
@@ -5534,7 +5537,7 @@ var DOC_PAGES = [
   "<li><b>She answers without using my pack.</b> Only packs switched <b>on</b> feed her answers. Check the switch on the Packs tab. When a pack does help, the small label under her message names the pack and the document — no label means no pack was used for that answer.</li>" +
   "<li><b>The call will not start.</b> A call needs her voice installed and switched on, and her model connected. Settings → Voice names the missing piece — fix that one thing and try again.</li>" +
   "<li><b>Dark Liquid Glass looks solid, not frosted.</b> That is the design working as intended, not a bug: where your system cannot do backdrop blur, the theme falls back to the same colors, solid and fully readable. If scrolling ever feels stuttery on weak built-in graphics while the glass theme is on, pick any other theme in Settings → Appearance — the flat themes cost the graphics chip almost nothing.</li>" +
-  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted in Settings → Voice at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests, so the break is somewhere in that chain and the fix is still being worked on; it is <b>not fixed yet</b>. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — Settings → Voice shows what this window's own mic requests did this session, which helps narrow it down.</li></ul></div>" },
+  "<li><b>Known issue: she cannot hear me in the desktop app.</b> Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07, and noted in Settings → Voice at his request: in the standalone window, the microphone does not reach Navi — push-to-talk and calls get no working mic — even with the OS permission allowed. Her shell is built to grant the dashboard's mic requests, so the break is somewhere in that chain and the fix is still being worked on; it is <b>not fixed yet</b>. What works today: <b>typing</b>. The call panel takes typed lines and she answers out loud; Chat takes typed messages the whole time. If your mic works in the app, you are ahead of the field report — Settings → Voice shows what this window's own mic requests did this session, which helps narrow it down. Since v0.3.0e — Build 6, the window also <b>reports that reading to the bridge on every push-to-talk attempt</b> — it lands in the bridge's log (start.log) with the attempt, so the evidence accumulates where the next fix can be aimed from it.</li></ul></div>" },
   { id: "glossary", title: "Glossary — the words we use", related: ["getting-started", "chips-guide"], html:
     "<div class='doc-sec'><h4>Glossary — the words we use, in plain words</h4>" +
   "<p>Every special word in this wiki, explained once, in the order you are most likely to meet it. If a page ever uses a word that is not clear, it should be in this list.</p>" +
@@ -5841,6 +5844,12 @@ function liveChat(text, speak) {
     }
     var content = x.who === "NAVI" ? stripCite(x.text) : String(x.text || "").replace(/^>\s+/, "");
     if (x.exec) content += "\n\n[terminal]\n" + execContextText(x.exec);
+    // Build 6 (#224): a hollow history entry never rides — the
+    // model server refuses the whole request over one empty
+    // content (the call-killing 400). The bridge guards the
+    // same line for every other caller; the page keeps its own
+    // history clean at the source.
+    if (!String(content).trim()) return;
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
@@ -7630,7 +7639,7 @@ function meshHealthHtml() {
         "<div style='font-size:12px;margin-top:4px'>Pinned by its card: " + fp(pp.pinnedFingerprint) + "</div>" +
         "<div style='font-size:12px;margin-top:2px'>It presents: " + fp(pp.presentedFingerprint) + "</div>" +
         "<div style='font-size:12px;margin-top:4px'>" + esc(pp.verdictText || "") + "</div>" +
-        (pp.repair ? "<div style='font-size:12px;margin-top:6px;border-top:1px dashed var(--line);padding-top:6px'>" + esc(pp.repair.sentence) + "</div><div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:6px'><button type='button' class='act' data-mesh-repair-import='" + esc(pp.nodeId) + "' aria-label='Import a fresh card for " + esc(pp.name) + "' style='min-height:44px'>Import a fresh card</button><button type='button' class='ghost' data-mesh-repair-clear='" + esc(pp.nodeId) + "' aria-label='Clear the dead addresses from " + esc(pp.name) + "'s record' style='min-height:44px'>Clear the dead addresses</button></div>" : "") + "</div>";
+        (pp.repair ? "<div style='font-size:12px;margin-top:6px;border-top:1px dashed var(--line);padding-top:6px'>" + esc(pp.repair.sentence) + "</div><div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:6px'>" + (pp.repair.kind === "card-refresh" ? "<button type='button' class='act' data-mesh-repair-clear='" + esc(pp.nodeId) + "' aria-label='Refresh " + esc(pp.name) + "'s record from its gateway card' style='min-height:44px'>Refresh from the gateway card</button>" : "<button type='button' class='act' data-mesh-repair-import='" + esc(pp.nodeId) + "' aria-label='Import a fresh card for " + esc(pp.name) + "' style='min-height:44px'>Import a fresh card</button><button type='button' class='ghost' data-mesh-repair-clear='" + esc(pp.nodeId) + "' aria-label='Clear the dead addresses from " + esc(pp.name) + "'s record' style='min-height:44px'>Clear the dead addresses</button>") + "</div>" : "") + "</div>";
     });
     (hh.relay || []).forEach(function (rr) {
       h += "<div style='border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px'>" +
@@ -8399,10 +8408,26 @@ function splitSentences(text) {
 }
 function speakText(text) {
   if (CONFIG.backend !== "live") return mockSpeak(text);
-  return fetch("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text }) })
+  // Build 6 (#224): one sentence's synthesis is bounded — a
+  // hung TTS request used to strand the call panel at "Navi is
+  // speaking…" forever, because the speaking state only lifts
+  // when this promise settles. Ninety seconds is far beyond a
+  // sentence's honest synthesis time on CPU; past it, the line
+  // is named unsaid and the chain moves on.
+  var ctl = null, timer = null;
+  try {
+    if (window.AbortController) {
+      ctl = new AbortController();
+      timer = setTimeout(function () { try { ctl.abort(); } catch (e) {} }, 90000);
+    }
+  } catch (e) {}
+  var opts = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text }) };
+  if (ctl) opts.signal = ctl.signal;
+  return fetch("/api/voice/tts", opts)
     .then(function (r) { return r.json(); })
     .then(function (j) { if (j.ok && j.audio_b64) return playWavB64(j.audio_b64); if (!j.ok) voiceMsg = j.error || "She couldn't speak that line."; })
-    .catch(function () {});
+    .catch(function () { voiceMsg = "That line didn't get spoken — the speech request didn't finish."; })
+    .then(function () { if (timer) clearTimeout(timer); });
 }
 function speakSentences(text) {
   // Her reply, spoken sentence by sentence in order — she starts
@@ -8435,7 +8460,7 @@ function startCall() {
     recordCallTurn("navi", greeting, null);
     persist(); render();
     callState = "speaking"; render();
-    speakText(greeting).then(function () { if (call) { callState = "listening"; render(); } });
+    speakText(greeting).then(function () { if (call) { callState = "listening"; render(); } }, function () { if (call) { callState = "listening"; render(); } });
   };
   if (CONFIG.backend === "live") {
     callStarting = true;
@@ -8471,7 +8496,27 @@ function callNaviTurn(text) {
     persist(); callState = "speaking"; render();
     // A CLI-routed turn carries no reply text — what she says on
     // the call is the terminal output itself.
-    speakSentences(r.text || (r.exec ? r.exec.output : "")).then(function () { if (call) { callState = "listening"; render(); } });
+    // Build 6 (#224): the return to listening is unconditional —
+    // a rejected speech chain lifts the speaking state too.
+    speakSentences(r.text || (r.exec ? r.exec.output : "")).then(function () { if (call) { callState = "listening"; render(); } }, function () { if (call) { callState = "listening"; render(); } });
+  };
+  // Build 6 (#224): a failed model request is a SNAG, not a
+  // reply. It used to be fed through done() as if it were her
+  // answer — the panel entered "speaking" for an error sentence
+  // and, when the speech chain then hung, never left it. The
+  // snag path leaves the speaking/thinking state at once, shows
+  // the reason in the panel, and files the turn in the thread
+  // and the call record as what it was: unanswered.
+  var fail = function (e) {
+    if (!call) return;
+    var why = (e && e.message) ? e.message : "the model didn't answer";
+    var note = "— that turn didn't get an answer (" + why + ") —";
+    call.turns.push({ who: "NAVI", text: note, exec: null, ts: Date.now() });
+    messages.push({ who: "NAVI", text: note, exec: null, ts: Date.now() });
+    recordCallTurn("navi", note, null);
+    callState = "listening";
+    voiceMsg = "That one didn't get an answer — " + why + " The call is still open: say it again, or type below.";
+    persist(); render();
   };
   if (CONFIG.backend === "live") {
     if (llama.status !== "running" && !/^\s*\/chip\b/i.test(text)) {
@@ -8482,7 +8527,7 @@ function callNaviTurn(text) {
       liveShell(cmd).then(function (r) { done({ text: "Here's what that gave us:", exec: r }); })
         .catch(function () { done({ text: "That didn't run — the bridge didn't answer.", exec: null }); });
     } else {
-      liveChat(text).then(done).catch(function (e) { done({ text: "I hit a snag answering that: " + e.message, exec: null }); });
+      liveChat(text).then(done, fail);
     }
   } else {
     setTimeout(function () { done(mockChat(text)); }, 450);
@@ -8521,17 +8566,29 @@ function markPttButtons() {
     else { b.classList.remove("rec"); b.innerHTML = micSvg(); }
   });
 }
+function reportMicState() {
+  // Build 6 (#6, telemetry half): every push-to-talk attempt
+  // reports this window's own mic reading to the bridge, which
+  // logs it — the reading the Voice tab shows has existed only
+  // on this screen since 2026-11-07, which is exactly why the
+  // app-window capture question stayed open. Fire and forget:
+  // a failed report changes nothing about the attempt.
+  if (CONFIG.backend !== "live") return;
+  try {
+    fetch("/api/voice/mic-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: micState }) }).catch(function () {});
+  } catch (e) {}
+}
 function startPtt(target) {
-  if (!navigator.mediaDevices || !window.MediaRecorder) { micState = "unavailable"; voiceMsg = "This browser can't record audio — type what you'd say instead."; render(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { micState = "unavailable"; reportMicState(); voiceMsg = "This browser can't record audio — type what you'd say instead."; render(); return; }
   navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-    micState = "ok";
+    micState = "ok"; reportMicState();
     mediaStream = stream; mediaChunks = []; pttTarget = target; pttRecording = true;
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = function (e) { if (e.data && e.data.size) mediaChunks.push(e.data); };
     mediaRecorder.onstop = finishPtt;
     mediaRecorder.start();
     markPttButtons();
-  }).catch(function () { micState = "refused"; voiceMsg = "Microphone access was refused — Navi can't hear you until the mic is allowed. In the standalone window, check the OS privacy/sound settings for Apex (her shell grants the dashboard's own mic requests; the OS prompt is the gate). In a browser, allow the mic for this page. Or type instead."; render(); });
+  }).catch(function () { micState = "refused"; reportMicState(); voiceMsg = "Microphone access was refused — Navi can't hear you until the mic is allowed. In the standalone window, check the OS privacy/sound settings for Apex (her shell grants the dashboard's own mic requests; the OS prompt is the gate). In a browser, allow the mic for this page. Or type instead."; render(); });
 }
 function stopPtt() {
   if (mediaRecorder && mediaRecorder.state !== "inactive") { try { mediaRecorder.stop(); } catch (e) {} }
@@ -8559,6 +8616,7 @@ function finishPtt() {
 }
 function pttToggle(target) {
   if (pttRecording) { stopPtt(); return; }
+  reportMicState();
   startPtt(target);
 }
 function applyBackgroundUpdate(u) {
@@ -9981,7 +10039,7 @@ function voiceHomeHtml() {
     // Known issue (field report, 2026-11-07): the microphone in the
     // desktop window. Noted here at the operator's request — the
     // note stays until the fix lands, and it never claims it has.
-    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The underlying fix is still being worked on; it is <b>not</b> fixed yet, and this note stays on the Voice page until it is. The same entry lives in the wiki's Troubleshooting page.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
+    h += "<div class='card' style='border-color:#f5b544'><b>Known issue — microphone access in the desktop app.</b><br><span style='color:var(--dim)'>Field report from the operator's Framework 13 (Pop!_OS), 2026-11-07: in the standalone window, Navi cannot hear him — push-to-talk and calls get no working microphone — even though her shell is built to grant the dashboard's mic requests and the OS prompt is allowed. <b>Typing works regardless:</b> the call panel takes typed lines ('type what you'd say'), Chat takes typed messages, and she still answers out loud — a whole call can be had by keyboard. The underlying fix is still being worked on; it is <b>not</b> fixed yet, and this note stays on the Voice page until it is. The same entry lives in the wiki's Troubleshooting page. <b>New in v0.3.0e — Build 6:</b> this window now reports its mic reading to the bridge on every push-to-talk attempt — the reading below also lands in the bridge's log (start.log, beside the app), so this window's mic state is on record even when nobody is watching this line; that record is what the next fix attempt will be aimed with.</span><br><span style='color:var(--dim);font-size:12px'>This window's own mic, this session: " + (micState === "ok" ? "a mic request was granted — if she still can't hear you in the desktop app, that is the known issue above." : micState === "refused" ? "the last mic request was refused or failed — the known issue, live in this window." : micState === "unavailable" ? "this window exposes no recording API at all — typing is the way in here." : "not tested yet — press Push to talk on a call and this line reports what happened.") + "</span></div>";
     if (CONFIG.backend !== "live") {
       h += "<div class='card' style='border-color:#f5b544;color:#f5b544'>Mock mode: this call is simulated — her lines are spoken by your browser's built-in voice and answered by the mock brain. Switch the backend to Live in Settings for the real local engines (faster-whisper + Kokoro).</div>";
     }
@@ -11024,7 +11082,17 @@ function wire() {
     // While a call is live, the composer talks to the call —
     // the same routing the Voice panel's own input uses.
     var route = function (t) { if (!t) return; chatFocusWanted = true; if (call) callNaviTurn(t); else sendChat(t); };
-    var send = function () { if (input.dataset.acOpen === "1") return; route(input.value.trim()); };
+    // Build 6 (#223): a submitted line leaves the composer. The
+    // CLI/session path never re-renders the composer, so the
+    // fired line simply sat in the bar after Enter — looking
+    // unsent and one stray Enter away from firing twice. The
+    // clear happens here, at the one funnel every Enter-submit
+    // passes through, so the session path and the Navi path
+    // clear identically; the input event re-arms the
+    // autocomplete layer on the empty bar. (When the completion
+    // dropdown is open, Enter accepts a completion instead —
+    // that path returns above and clears nothing.)
+    var send = function () { if (input.dataset.acOpen === "1") return; var t = input.value.trim(); if (!t) return; input.value = ""; try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} route(t); };
     // No Send button (build .49): Enter sends, exactly as it always
     // could — the button was a second way to do the same thing.
     input.onkeydown = function (e) { if (e.key === "Enter") send(); };
@@ -12026,7 +12094,7 @@ function wire() {
     var pttBtn = document.getElementById("call-ptt");
     if (pttBtn) pttBtn.onclick = function () { pttToggle("call"); };
     var sayBtn = document.getElementById("call-say");
-    if (sayBtn) sayBtn.onclick = function () { var inp = document.getElementById("call-type"); var t = inp ? inp.value.trim() : ""; if (t) callNaviTurn(t); };
+    if (sayBtn) sayBtn.onclick = function () { var inp = document.getElementById("call-type"); var t = inp ? inp.value.trim() : ""; if (t) { if (inp) inp.value = ""; callNaviTurn(t); } };
     var typeInp = document.getElementById("call-type");
     if (typeInp) typeInp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); var b = document.getElementById("call-say"); if (b) b.click(); } };
     var testBtn = document.getElementById("voice-test");

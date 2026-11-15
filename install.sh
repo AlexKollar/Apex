@@ -1820,6 +1820,114 @@ else
 fi
 
 
+# --- voice-step helpers (v0.3.0e Build 6, #221/#222/#225) -------
+# Delimited so the build's bench can extract and run these exact
+# functions against fixture venvs — what is benched is what ships.
+voice_repair_shebangs() {
+  # $1 = venv dir. A venv carried across a move (the v0.2.0e
+  # Build 11 homecoming moved the install home) keeps console
+  # scripts whose shebangs name the PRE-move Python: the script
+  # exists, is executable, and dies with "cannot execute:
+  # required file not found" (#222). Rewrite every python
+  # shebang in the venv's bin/ to the venv's own current Python.
+  # Prints the number of scripts repaired.
+  python3 - "$1" <<'PYEOF'
+import os, sys
+venv = sys.argv[1]
+bindir = os.path.join(venv, "bin")
+target = "#!" + os.path.join(bindir, "python")
+fixed = 0
+if os.path.isdir(bindir):
+    for name in sorted(os.listdir(bindir)):
+        path = os.path.join(bindir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as f:
+                head = f.readline()
+                rest = f.read()
+        except Exception:
+            continue
+        if not head.startswith(b"#!") or b"python" not in head:
+            continue
+        if head.decode("utf-8", "replace").strip() == target:
+            continue
+        try:
+            with open(path, "wb") as f:
+                f.write(target.encode() + b"\n" + rest)
+            fixed += 1
+        except Exception:
+            pass
+print(fixed)
+PYEOF
+}
+
+voice_pip_script_ok() {
+  # $1 = venv dir. The pip SCRIPT itself must execute — the
+  # probe that proves the #222 repair, not an import test.
+  [ -x "$1/bin/pip" ] && "$1/bin/pip" --version >/dev/null 2>&1
+}
+
+voice_decode_probe() {
+  # $1 = venv dir. Hearing is proven by DECODING, not importing
+  # (#221): a quarter second of generated silence goes through
+  # faster_whisper's own decode_audio — the exact call
+  # transcription makes, and the one a drifted PyAV kills.
+  "$1/bin/python" - <<'PYEOF'
+import os, sys, tempfile, wave
+fd, path = tempfile.mkstemp(suffix=".wav", prefix="navi-decode-probe-")
+try:
+    with os.fdopen(fd, "wb") as raw:
+        w = wave.open(raw, "wb")
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 4000)
+        w.close()
+    from faster_whisper.audio import decode_audio
+    samples = decode_audio(path, sampling_rate=16000)
+    sys.exit(0 if len(samples) > 0 else 1)
+except Exception:
+    sys.exit(1)
+finally:
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
+PYEOF
+}
+
+voice_pip_fail_package() {
+  # $1 = pip log. Name the package pip failed on (#225): the
+  # failure sentence names the package, not just the step.
+  # Prints the package name, or nothing.
+  local log="$1" pkg=""
+  pkg="$(sed -n 's/.*Failed building wheel for \([A-Za-z0-9_.-]*\).*/\1/p' "$log" | head -n 1)"
+  if [ -z "$pkg" ]; then
+    pkg="$(sed -n 's/.*Could not find a version that satisfies the requirement \([A-Za-z0-9_.-]*\).*/\1/p' "$log" | head -n 1)"
+  fi
+  if [ -z "$pkg" ]; then
+    pkg="$(sed -n 's/.*No matching distribution found for \([A-Za-z0-9_.-]*\).*/\1/p' "$log" | head -n 1)"
+  fi
+  printf '%s' "$pkg"
+}
+
+voice_py_version() {
+  # $1 = venv dir. "3.13" — the venv Python's major.minor.
+  "$1/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo ""
+}
+
+voice_py_beyond_horizon() {
+  # $1 = "major.minor". The voice stack's published wheels reach
+  # Python 3.13 (#225); newer than that, pip can find nothing to
+  # install and the honest answer names the distrobox road.
+  case "$1" in
+    3.14|3.15|3.16|3.17|3.18|3.19|3.2*|4.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# --- end voice-step helpers ---
+
 # --- Her voice (optional) ---
 # The speech engines (faster-whisper + Kokoro/Piper) are the app's
 # only Python dependencies, and they stay optional: the bridge is
@@ -1829,15 +1937,37 @@ fi
 # and the exact manual command is printed instead; the Voice tab
 # keeps naming it until the engines exist. A failed voice install
 # never fails the app install.
-# Already set up? When the venv is on disk and its Python imports
-# the engines, her voice is already installed — most often because
-# a --fresh install just restored the venv it stashed before the
-# wipe. Asking again, let alone rebuilding ~250 MB of packages over
-# a working voice, would be pure waste: the whole step is skipped
-# and the installer says so.
+# Already set up? When the venv is on disk, its shebangs are
+# repaired first (#222), and then the skip verdict is a DECODE
+# verdict (Build 6, #221): the engines import AND a test clip
+# decodes AND the venv's pip script executes. An importable but
+# deaf venv is not "already set up" — it falls through to the
+# voice question, and a yes takes the repair road: the pinned
+# requirements over the existing venv, never a rebuild. Most
+# often a healthy venv is here because a --fresh install just
+# restored the one it stashed before the wipe; asking again, let
+# alone rebuilding ~250 MB of packages over a working voice,
+# would be pure waste: the whole step is skipped and the
+# installer says so.
+VOICE_VENV="$INSTALL_DIR/voice/venv"
 VOICE_READY=""
-if [ -x "$INSTALL_DIR/voice/venv/bin/python" ] && "$INSTALL_DIR/voice/venv/bin/python" -c "import faster_whisper, kokoro" >/dev/null 2>&1; then
-  VOICE_READY=1
+VOICE_REPAIRED=0
+if [ -x "$VOICE_VENV/bin/python" ]; then
+  # Repair before judging (#222): shebangs a move left stale are
+  # rewritten to the venv's own Python, so a carried venv is
+  # judged as it will actually run.
+  VOICE_REPAIRED="$(voice_repair_shebangs "$VOICE_VENV" 2>/dev/null || echo 0)"
+  # Build 6 (#221): "already set up" is a DECODE verdict now,
+  # not an import verdict — an importable venv whose PyAV has
+  # drifted past faster-whisper's decoder imports cleanly and
+  # hears nothing, and the old import-only skip called that
+  # healthy for eight days. The pip script must execute too
+  # (#222's probe).
+  if "$VOICE_VENV/bin/python" -c "import faster_whisper, kokoro" >/dev/null 2>&1 \
+     && voice_decode_probe "$VOICE_VENV" >/dev/null 2>&1 \
+     && voice_pip_script_ok "$VOICE_VENV"; then
+    VOICE_READY=1
+  fi
 fi
 if [ -z "$VOICE_READY" ]; then
 case "$VOICE" in
@@ -1873,7 +2003,10 @@ case "$VOICE" in
 esac
 fi
 if [ -n "$VOICE_READY" ]; then
-  echo "==> Her voice is already set up — $INSTALL_DIR/voice/venv imports faster_whisper and kokoro — skipping the voice install"
+  echo "==> Her voice is already set up — $VOICE_VENV imports faster_whisper and kokoro, and a test clip decodes — skipping the voice install"
+  if [ "${VOICE_REPAIRED:-0}" != "0" ]; then
+    echo "    (repaired $VOICE_REPAIRED venv script shebang(s) that still pointed at the pre-move Python — #222)"
+  fi
 elif [ "$VOICE" = "yes" ]; then
   echo "==> Installing her voice (Python speech engines, isolated venv)"
   # Every step is checked and logged, and the result is VERIFIED —
@@ -1888,20 +2021,65 @@ elif [ "$VOICE" = "yes" ]; then
   # and repeat as the last lines of the install.
   VOICE_TMP_LOG="$(mktemp)"
   VOICE_FAIL=""
-  if ! $SUDO python3 -m venv "$INSTALL_DIR/voice/venv" >>"$VOICE_TMP_LOG" 2>&1; then
+  # The pip step, shared by the fresh and repair roads: binary-
+  # preferring (#225 — a source build on an atomic base has no
+  # compilers to build with), always as `python -m pip` from the
+  # venv's Python, never the venv's pip script (#222: the script
+  # is the thing that may be broken). A failure composes its
+  # sentence from the log: the package pip failed on is named,
+  # and a venv Python past the wheel horizon names the
+  # distrobox road instead of a bare failure.
+  voice_pip_step() {
+    if $SUDO "$VOICE_VENV/bin/python" -m pip install --prefer-binary -r "$INSTALL_DIR/requirements-voice.txt" >>"$VOICE_TMP_LOG" 2>&1; then
+      return 0
+    fi
+    local pkg pyv
+    pkg="$(voice_pip_fail_package "$VOICE_TMP_LOG")"
+    pyv="$(voice_py_version "$VOICE_VENV")"
+    if [ -n "$pyv" ] && voice_py_beyond_horizon "$pyv"; then
+      VOICE_FAIL="installing the speech packages — this venv runs Python $pyv, newer than the speech stack's published wheels reach (3.13), so pip has nothing it can install. The road that works: build the venv under an older Python — on an atomic base, a Fedora distrobox (distrobox create, then distrobox enter) shares this home folder, so a venv built there lands in place; then re-run this installer"
+    elif [ -n "$pkg" ]; then
+      VOICE_FAIL="installing the speech packages — pip could not install $pkg (the log names the cause: no wheel for this Python, a blocked download, or a failed source build are the usual ones)"
+    else
+      VOICE_FAIL="installing the speech packages from requirements-voice.txt — the log tail names the cause (a blocked download or a missing system library are the usual ones)"
+    fi
+    return 1
+  }
+  if [ -d "$VOICE_VENV" ]; then
+    # The repair road (#221/#222): an existing venv is repaired
+    # to the pinned set, not rebuilt — its models and its place
+    # survive; only the drift is corrected. Shebangs first (the
+    # health gate already ran the same repair), then the pinned
+    # requirements over the top, via the venv's own Python.
+    echo "    (an existing voice venv is here — repairing it to the pinned speech set rather than rebuilding it)"
+    voice_repair_shebangs "$VOICE_VENV" >>"$VOICE_TMP_LOG" 2>&1
+    if ! voice_pip_step; then
+      :
+    elif ! "$VOICE_VENV/bin/python" -c "import faster_whisper, kokoro" >>"$VOICE_TMP_LOG" 2>&1; then
+      VOICE_FAIL="verification — the packages landed, but the venv's Python cannot import faster_whisper and kokoro"
+    elif ! voice_decode_probe "$VOICE_VENV" >>"$VOICE_TMP_LOG" 2>&1; then
+      VOICE_FAIL="verification — the packages import, but a test clip does not decode in the venv's Python: the speech packages have drifted apart (the known shape is a PyAV too new for faster-whisper — the requirements pin av below 13 for exactly this; the log carries the decoder's state)"
+    elif ! voice_pip_script_ok "$VOICE_VENV"; then
+      VOICE_FAIL="verification — the venv's pip script still cannot execute after the shebang repair (the log names it)"
+    fi
+  elif ! $SUDO python3 -m venv "$INSTALL_DIR/voice/venv" >>"$VOICE_TMP_LOG" 2>&1; then
     VOICE_FAIL="creating the venv (python3 -m venv) — on Debian/Ubuntu this usually means the python3-venv package is missing: sudo apt install python3-venv, then re-run this installer"
   elif ! $SUDO "$INSTALL_DIR/voice/venv/bin/python" -m pip install --upgrade pip >>"$VOICE_TMP_LOG" 2>&1; then
     VOICE_FAIL="installing pip into the venv"
-  elif ! $SUDO "$INSTALL_DIR/voice/venv/bin/python" -m pip install -r "$INSTALL_DIR/requirements-voice.txt" >>"$VOICE_TMP_LOG" 2>&1; then
-    VOICE_FAIL="installing the speech packages from requirements-voice.txt — the log tail names the cause (a blocked download or a missing system library are the usual ones)"
+  elif ! voice_pip_step; then
+    :
   elif ! "$INSTALL_DIR/voice/venv/bin/python" -c "import faster_whisper, kokoro" >>"$VOICE_TMP_LOG" 2>&1; then
     VOICE_FAIL="verification — the packages landed, but the venv's Python cannot import faster_whisper and kokoro"
+  elif ! voice_decode_probe "$VOICE_VENV" >>"$VOICE_TMP_LOG" 2>&1; then
+    VOICE_FAIL="verification — the packages import, but a test clip does not decode in the venv's Python: the speech packages have drifted apart (the known shape is a PyAV too new for faster-whisper — the requirements pin av below 13 for exactly this; the log carries the decoder's state)"
+  elif ! voice_pip_script_ok "$VOICE_VENV"; then
+    VOICE_FAIL="verification — the venv's pip script cannot execute (the log names it)"
   fi
   $SUDO mkdir -p "$INSTALL_DIR/voice"
   $SUDO cp "$VOICE_TMP_LOG" "$INSTALL_DIR/voice/voice-install.log" 2>/dev/null || true
   rm -f "$VOICE_TMP_LOG"
   if [ -z "$VOICE_FAIL" ]; then
-    echo "    voice installed and verified: $INSTALL_DIR/voice/venv — faster_whisper and kokoro import cleanly."
+    echo "    voice installed and verified: $INSTALL_DIR/voice/venv — faster_whisper and kokoro import cleanly, and a test clip decodes."
     echo "    (install log: $INSTALL_DIR/voice/voice-install.log; her speech models download on first use)"
   else
     echo "" >&2

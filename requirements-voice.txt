@@ -14,7 +14,17 @@
 # Hearing: OpenAI's Whisper run by CTranslate2 — fast on CPU with
 # int8. Models (tiny.en / base.en / small.en) download on first use
 # into voice/models/whisper.
-faster-whisper>=1.0
+faster-whisper>=1.0,<2
+
+# The decoder faster-whisper hears through (PyAV). This bound is
+# load-bearing (v0.3.0e — Build 6, #221): faster-whisper's
+# decode_audio passes a keyword argument (metadata_errors) that
+# PyAV 13 removed from av.open(), so an unbounded install drifts
+# to a PyAV on which EVERY transcription dies at decode — while
+# every import check still passes. av 12.3.0 is the field-proven
+# partner for faster-whisper 1.x; the bridge now proves hearing
+# by decoding a test clip, and this pin keeps the set decodable.
+av>=11,<13
 
 # Speaking: Kokoro-82M, an Apache-2.0 voice model built for CPU.
 # Its weights ride inside the package; voices are built in.
