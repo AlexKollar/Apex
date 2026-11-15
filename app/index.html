@@ -466,6 +466,30 @@
   span.m-av { display:inline-flex; align-items:center; justify-content:center; font-size:10px; color:var(--dim); border:1px solid var(--line); }
   .presence-av { width:34px; height:34px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
   .exec { background:var(--exec-bg,#000); border:1px solid var(--line); border-radius:4px; padding:8px; white-space:pre-wrap; color:#a7f3d0; }
+  /* CLI Mode shell sessions (Build 3, #209): the streamed record,
+     the session bar, and the desktop full-screen pane. On a phone
+     the pane never renders \u2014 the streamed record below is the
+     honest degradation, and it says so. */
+  .wire-pills-body { animation:view-in var(--motion-med) var(--motion-ease); }
+  .shellrec { background:var(--exec-bg,#000); border:1px solid var(--line); border-radius:4px; padding:8px; }
+  .shell-out { margin:0; white-space:pre-wrap; word-break:break-word; color:#a7f3d0; font:inherit; }
+  .shell-in { color:var(--text); margin:2px 0; word-break:break-word; }
+  .shell-badge { border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:10px; letter-spacing:.06em; }
+  .shell-badge.navi { color:var(--cy); border-color:var(--cy); }
+  .shell-badge.op { color:var(--dim); }
+  .shell-note { color:var(--dim); font-size:12px; font-style:italic; margin:2px 0; }
+  .shellbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; border:1px solid var(--line); border-radius:6px; padding:8px; margin:0 0 8px; background:var(--panel2); }
+  .shellbar input { flex:1 1 180px; min-height:44px; }
+  .shellbar button { min-height:44px; }
+  .shellpane { border:1px solid var(--cy); border-radius:6px; margin:10px 0 0; background:#000; }
+  .shellpane-head { color:var(--cy); font-size:11px; letter-spacing:.08em; padding:6px 10px; border-bottom:1px solid var(--line); }
+  .shellpane pre { margin:0; padding:10px; color:#a7f3d0; font-size:12px; line-height:1.35; overflow:auto; white-space:pre; min-height:200px; }
+  .shellpane:focus { outline:2px solid var(--cy); }
+  .shell-mobile-note { display:none; }
+  @media (max-width:800px) {
+    .shellpane { display:none; }
+    .shell-mobile-note { display:block; color:var(--dim); font-size:12px; margin-top:6px; }
+  }
   body[data-theme="casefile"] .exec { color:#f5ecd7; }
   .execstat { font-size:11px; color:var(--dim); padding:2px 2px 0; }
   .foldcard { border:1px solid var(--line); border-radius:6px; background:var(--panel); padding:6px 10px; margin:4px 0; }
@@ -1464,6 +1488,7 @@ function navLabel(name) { return NAV_LABELS[name] || name; }
 // Lucide-style stroke set the Apex test bench uses). Collapsed
 // to its rail, the icon alone identifies the view.
 var NAV_ICON_PATHS = {
+  Home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
   Chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   Voice: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>',
   Chips: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
@@ -1527,7 +1552,9 @@ function navIcon(name) {
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
-var view = "Chat";
+// Build 3 (#210): the app opens to Home \u2014 the fused Wire
+// surface. Chat is one click down the rail, as it always was.
+var view = "ThreatIntel";
 var navClosed = false;
 // Menu group state (Build 6, #114 — supersedes Build 4's
 // expanded-by-default + persistence): every group starts
@@ -1574,15 +1601,12 @@ var statusHidden = true;
 // connect probe flips it to running. While stopped, chat is a plain
 // command line.
 var llama = { status: "stopped", endpoint: "http://localhost:8080", error: null };
-// Sudo session authentication: the sudo password lives ONLY in these
-// page variables — never in localStorage, never in the saved config.
-// Turning sudo off, or closing the page, forgets it. In live mode
-// sudo mode does not engage until the bridge has validated the
-// password once (/api/sudo/auth); mock mode is simulated and needs
-// no password.
-var sudoPassword = "";
-var sudoAuthed = false;
-var sudoAuthError = null;
+// Sudo mode (Build 3, #209): NO password lives in this page at
+// all. Arming happens in Settings \u2192 System \u2014 a masked prompt
+// whose value rides exactly one /api/sudo/arm request into the
+// bridge's "sudo -v" and is forgotten by both sides. The page's
+// only sudo truth is sudoState, read from /api/status; CONFIG.sudo
+// mirrors its enabled flag so chat payloads can ask for elevation.
 // Whether the Sudo Mode Warning dropdown is open — render() rebuilds
 // the status column, so the open state lives here, not on the element.
 var sudoWarnOpen = false;
@@ -1744,8 +1768,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-14.02";
-var SHIPPED_BUILD_SEQ = 2;
+var BRIDGE_BUILD = "2026-11-14.03";
+var SHIPPED_BUILD_SEQ = 3;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2849,7 +2873,7 @@ function intelItemHtml(it, sel) {
 // CTFs (the board), Bounties, and the Center itself. Articles
 // open in the in-app reader where extraction works; where it
 // cannot, the fallback is named, never faked.
-var intelTab = "dashboard";
+var intelTab = "news";
 var wireState = null, wireFetching = false, wireMsg = "";
 var ctfState = null, ctfFetching = false, ctfMsg = "";
 var bountyState = null, bountyFetching = false, bountyMsg = "";
@@ -2880,7 +2904,14 @@ function ticLocal(ts) {
   if (!ts) return "";
   try { return new Date(ts * 1000).toLocaleString(); } catch (e) { return ""; }
 }
-var TIC_TABS = [["dashboard", "Dashboard"], ["news", "News"], ["cves", "CVEs"], ["ctfs", "CTFs"], ["bounties", "Bounties"], ["center", "Center"]];
+// Build 3 (#210): the Dashboard tab retires \u2014 its surface is
+// fused into the home section above the strip (ticHomeHtml) \u2014
+// and the wire's families are re-laned: News carries news only,
+// the wire's CVE items get the CVE tab, its KEV items the KEV
+// tab. The Center's own graded queue lives on the Center tab
+// (and in the home section's highlights); the old "cves" scope
+// folds into it \u2014 nothing it showed is lost.
+var TIC_TABS = [["news", "News"], ["cve", "CVE"], ["kev", "KEV"], ["ctfs", "CTFs"], ["bounties", "Bounties"], ["center", "Center"]];
 function ticTabStrip() {
   var h = "<div class='row' style='gap:6px;flex-wrap:wrap;margin:10px 0'>";
   TIC_TABS.forEach(function (pair) {
@@ -2890,17 +2921,63 @@ function ticTabStrip() {
   return h + "</div>";
 }
 function threatIntelHtml() {
-  var h = "<h3>The Wire</h3>";
-  h += "<p style='color:var(--dim)'>The awareness home: the news wire, the Center's CVE picture, the CTF board and the bounty board — each family on its own tab, each carrying the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
+  // Retired tab keys land somewhere honest: the old Dashboard
+  // is the home section itself now; the old CVEs scope folded
+  // into the Center.
+  if (intelTab === "dashboard") intelTab = "news";
+  if (intelTab === "cves") intelTab = "center";
+  var h = "<h3>Home — The Wire</h3>";
+  h += "<p style='color:var(--dim)'>The fused awareness home: the situation at a glance, feed health, and every family on its own tab — News (news only), CVE, KEV, the CTF board, the bounty board, and the Center. Each carries the stamp of when its source last answered. Navi carries the same picture in chat; ask her <span class='mono'>what's the sitch</span>.</p>";
   if (CONFIG.backend !== "live") { h += "<div class='card'>The awareness home works through the live bridge — the stores live in this install's config. Switch the backend to Live in Settings and it will be here.</div>"; return h; }
+  h += ticHomeHtml();
   h += ticTabStrip();
-  if (intelTab === "news") h += wireTabHtml();
-  else if (intelTab === "cves") h += ticCenterHtml("cves");
+  if (intelTab === "cve") h += wireKindHtml("cve");
+  else if (intelTab === "kev") h += wireKindHtml("kev");
   else if (intelTab === "ctfs") h += ctfTabHtml();
   else if (intelTab === "bounties") h += bountiesTabHtml();
   else if (intelTab === "center") h += ticCenterHtml("center");
-  else h += ticDashboardHtml();
+  else h += wireTabHtml();
   if (wireReader) h += wireReaderHtml();
+  return h;
+}
+function ticHomeHtml() {
+  // The fusion (Build 3, #210): what the Dashboard and the
+  // Center's front door showed, on one surface — a situation
+  // strip, the glance cards (the Center card's top rows ARE
+  // the matching queue highlights), and feed health in its
+  // collapsible field. Nothing either surface showed is lost.
+  if (!wireState && !wireFetching) refreshWire();
+  if (!intelState && !intelFetching) refreshIntel();
+  var h = "<div class='card' id='tic-home'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>Situation</b><span class='mono' style='font-size:11px;color:var(--dim)'>one surface — the Center and the Dashboard, fused</span></div>";
+  h += "<p style='font-size:13px;margin-top:6px'>" + (wireState ? esc(wireState.staleness || "") : "Gathering the wire\u2026") + "</p>";
+  h += "<p style='font-size:13px;margin-top:2px'>" + (intelState ? esc(intelState.kevTotal || 0) + " known-exploited in the Center's catalog \u00b7 " + esc(intelState.matchedCount || 0) + " matched to you \u00b7 queue holds " + esc((intelState.queue || []).length) : "Gathering the Center\u2026") + "</p>";
+  h += "</div>";
+  h += ticDashboardHtml();
+  h += wirePillsHtml();
+  return h;
+}
+var wirePillsOpen = true;
+try { wirePillsOpen = localStorage.getItem("navi.wirePills") !== "closed"; } catch (e) {}
+function wirePillsHtml() {
+  // Feed health (Build 3, #210): the source pills live in a
+  // collapsible field. Collapsed, they cost one slim row that
+  // still NAMES the count of feeds not answering; expanded,
+  // the full pill set with each failure's own sentence. The
+  // state persists per operator (this browser's storage, the
+  // same place the chat latch persists).
+  var s = wireState;
+  if (!s) return "";
+  var srcs = s.sources || [];
+  var dead = srcs.filter(function (x) { return !!x.error; }).length;
+  var h = "<div class='card' style='margin-top:12px'><button class='ghost' id='wire-pills-toggle' aria-expanded='" + (wirePillsOpen ? "true" : "false") + "' aria-label='Toggle the feed health pills' style='min-height:44px;width:100%;text-align:left'><b>Feed health</b> \u00b7 " + srcs.length + " sources" + (dead ? " \u00b7 <span style='color:#f87171'>" + dead + " not answering</span>" : " \u00b7 all answering") + "<span style='float:right'>" + (wirePillsOpen ? "\u25be" : "\u25b8") + "</span></button>";
+  h += "<div class='wire-pills-body'" + (wirePillsOpen ? "" : " style='display:none'") + ">";
+  h += "<div class='tic-fresh' style='margin-top:8px'>";
+  srcs.forEach(function (src) {
+    h += "<span class='tic-chip'><span style='color:" + (src.error ? "#f87171" : "#34d399") + "'>\u25cf</span>&nbsp;" + esc(src.label) + (src.custom ? " (yours)" : "") + " \u00b7 " + (src.error ? "not answering" : ticFresh(src.lastOk)) + "</span>";
+  });
+  h += "</div>";
+  srcs.forEach(function (src) { if (src.error) h += "<p style='color:#f87171;font-size:12px;margin-top:6px'>" + esc(src.error) + "</p>"; });
+  h += "</div></div>";
   return h;
 }
 function ticDashboardHtml() {
@@ -2926,7 +3003,7 @@ function ticDashboardHtml() {
     if (!q.length) h += "<p style='color:var(--dim)'>The queue is empty — pull from the CVEs tab, or let the cadence work.</p>";
     q.forEach(function (it) { h += "<div style='margin-top:6px'><b style='color:" + caseSevColor(intelSev(it.cvss)) + "'>" + esc(it.id) + "</b> <span style='font-size:13px'>" + esc(it.title || "") + "</span></div>"; });
   }
-  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='cves' style='min-height:40px'>Open the CVEs</button></div></div>";
+  h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
   // -- Next CTFs (the board)
   h += "<div class='card'><h3 style='margin-top:0'>Next CTFs</h3>";
   if (!ctfState) { if (!ctfFetching) refreshCtf(); h += "<p style='color:var(--dim)'>Gathering the board…</p>"; }
@@ -2950,36 +3027,77 @@ function ticDashboardHtml() {
   h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='bounties' style='min-height:40px'>Open the bounties</button></div></div>";
   return h + "</div>";
 }
+function wireItemCardHtml(it) {
+  var h = "<div class='card' style='margin-top:10px'>";
+  if (it.kind === "kev") h += "<span class='mono' style='font-size:11px;color:#f87171'>KEV ADDITION</span> ";
+  else if (it.kind === "cve") h += "<span class='mono' style='font-size:11px;color:#f5b544'>NEW CVE</span> ";
+  if (it.developing) h += "<span class='mono' style='font-size:11px;color:#34d399'>DEVELOPING</span> ";
+  h += "<button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(it.title) + "</b></button>";
+  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " \u00b7 " + esc(ticLocal(it.published)) : "") + "</div>";
+  if (it.excerpt) h += "<p style='font-size:13px;margin-top:6px'>" + esc(it.excerpt) + "</p>";
+  return h + "</div>";
+}
+var wireFeedMsg = "";
+function wireFeedsCardHtml(s) {
+  // Your feeds (Build 3, #210): the operator's own RSS/Atom
+  // sources. Validated by the bridge at add time — a bad feed
+  // is refused BY NAME and never saved; a saved feed that
+  // later fails names its failure on its pill in Feed health.
+  // Feeds live in this install's config and do NOT ride Sync.
+  var feeds = s.feeds || [];
+  var h = "<div class='card' style='margin-top:12px'><b>Your feeds</b>";
+  h += "<p style='font-size:13px;color:var(--dim);margin-top:4px'>Add any RSS or Atom feed and its stories flow into the News tab, badged with the name you give it, on the wire's normal cadence. A feed is checked before it is saved: unreachable, unparseable, or not-a-feed are refused by name. Feeds are per-install — they do not ride Sync.</p>";
+  if (wireFeedMsg) h += "<p style='font-size:13px'>" + esc(wireFeedMsg) + "</p>";
+  if (feeds.length) {
+    feeds.forEach(function (f) {
+      h += "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px'><span><b>" + esc(f.name) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(f.url) + "</span></span><button class='ghost' data-wire-feed-remove='" + esc(f.id) + "' style='min-height:40px;padding:4px 10px'>Remove</button></div>";
+    });
+  } else {
+    h += "<p style='color:var(--dim);font-size:13px'>None yet — the curated sources above are the wire's own.</p>";
+  }
+  h += "<div class='row' style='margin-top:8px;gap:8px;flex-wrap:wrap'><input id='wire-feed-name' type='text' placeholder='Feed name — e.g. My Lab Blog' aria-label='Name for the new feed' style='min-height:44px;flex:1 1 160px'><input id='wire-feed-url' type='url' placeholder='https://example.org/feed.xml' aria-label='URL of the new feed' style='min-height:44px;flex:2 1 240px'><button class='act' id='wire-feed-add' style='min-height:44px'>Add feed</button></div>";
+  return h + "</div>";
+}
 function wireTabHtml() {
   var h = "";
   if (wireMsg) h += "<p style='font-size:13px'>" + esc(wireMsg) + "</p>";
-  if (!wireState) { if (!wireFetching) refreshWire(); return h + "<div class='card'>Gathering the wire…</div>"; }
+  if (!wireState) { if (!wireFetching) refreshWire(); return h + "<div class='card'>Gathering the wire\u2026</div>"; }
   var s = wireState;
   if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The wire is unavailable.") + "</div>";
-  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>The wire</b><button class='act' id='wire-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching…" : "Fetch now") + "</button></div>";
+  h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>News — the wire</b><button class='act' id='wire-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching\u2026" : "Fetch now") + "</button></div>";
   h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
-  h += "<div class='tic-fresh'>";
-  (s.sources || []).forEach(function (src) {
-    h += "<span class='tic-chip'><span style='color:" + (src.error ? "#f87171" : "#34d399") + "'>●</span>&nbsp;" + esc(src.label) + " · " + (src.error ? "not answering" : ticFresh(src.lastOk)) + "</span>";
-  });
-  h += "</div>";
-  (s.sources || []).forEach(function (src) { if (src.error) h += "<p style='color:#f87171;font-size:12px;margin-top:6px'>" + esc(src.error) + "</p>"; });
+  h += "<p style='font-size:12px;color:var(--dim)'>News only on this lane — the wire's CVE items live on the CVE tab, its KEV additions on the KEV tab, and feed health lives in the field at the top of this page.</p>";
   h += "<div class='row' style='margin-top:8px;gap:14px;align-items:center;flex-wrap:wrap'><label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='wire-enabled'" + (s.enabled ? " checked" : "") + "> Wire enabled</label>";
   h += "<label style='font-size:12px;color:var(--dim)'>Fetch every <select id='wire-interval' style='min-height:40px'>" + [15, 30, 60, 120].map(function (n) { return "<option value='" + n + "'" + (Number(s.intervalMinutes) === n ? " selected" : "") + ">" + n + " min</option>"; }).join("") + "</select></label>";
   h += "<label style='font-size:12px;color:var(--dim)'>Keep <select id='wire-retention' style='min-height:40px'>" + [3, 7, 14, 30].map(function (n) { return "<option value='" + n + "'" + (Number(s.retentionDays) === n ? " selected" : "") + ">" + n + " days</option>"; }).join("") + "</select></label>";
   h += "<button class='ghost' id='wire-save' style='min-height:40px'>Save wire settings</button></div></div>";
-  var items = s.items || [];
-  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>The wire is empty — the first fetch brings the headlines. A feed that does not answer is named above, never silently missing.</p></div>";
-  items.slice(0, 60).forEach(function (it) {
-    h += "<div class='card' style='margin-top:10px'>";
-    if (it.kind === "kev") h += "<span class='mono' style='font-size:11px;color:#f87171'>KEV ADDITION</span> ";
-    else if (it.kind === "cve") h += "<span class='mono' style='font-size:11px;color:#f5b544'>NEW CVE</span> ";
-    if (it.developing) h += "<span class='mono' style='font-size:11px;color:#34d399'>DEVELOPING</span> ";
-    h += "<button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(it.title) + "</b></button>";
-    h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " · " + esc(ticLocal(it.published)) : "") + "</div>";
-    if (it.excerpt) h += "<p style='font-size:13px;margin-top:6px'>" + esc(it.excerpt) + "</p>";
-    h += "</div>";
-  });
+  h += wireFeedsCardHtml(s);
+  // News is news only (Build 3, #210): the lane filter is the
+  // item's own kind — CVE and KEV items are re-laned to their
+  // tabs, never dropped.
+  var items = (s.items || []).filter(function (it) { return it.kind === "news"; });
+  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>No news on the wire yet — the first fetch brings the headlines. A feed that does not answer is named in Feed health above, never silently missing.</p></div>";
+  items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
+  return h;
+}
+function wireKindHtml(kind) {
+  // The CVE and KEV tabs (Build 3, #210): the wire's own items
+  // of one family, with the same cards and the same reader the
+  // News lane always had. The Center's graded queue is a
+  // different store — it lives on the Center tab, and the KEV
+  // header carries its count so the two never blur.
+  var h = "";
+  if (!wireState) { if (!wireFetching) refreshWire(); return h + "<div class='card'>Gathering the wire\u2026</div>"; }
+  var s = wireState;
+  if (s.ok === false) return h + "<div class='card' style='border-color:#f87171;color:#f87171'>" + esc(s.error || "The wire is unavailable.") + "</div>";
+  var items = (s.items || []).filter(function (it) { return it.kind === kind; });
+  if (kind === "cve") {
+    h += "<div class='card'><b>New CVEs — from the wire (NVD)</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " on the wire right now. These are the NVD's newest, as headlines — the Center's graded queue (CVSS, EPSS, matched records) lives on the <b>Center</b> tab.</p><div class='row' style='margin-top:8px'><button class='act' data-tic-go='center' style='min-height:40px'>Open the Center</button></div></div>";
+  } else {
+    h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p></div>";
+  }
+  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>Nothing in this family on the wire right now.</p></div>";
+  items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
   return h;
 }
 function openWireReader(link) {
@@ -3097,6 +3215,31 @@ function wireAwareness() {
   mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
   bindWireReaderClose();
+  bind("wire-pills-toggle", function () {
+    wirePillsOpen = !wirePillsOpen;
+    try { localStorage.setItem("navi.wirePills", wirePillsOpen ? "open" : "closed"); } catch (e) {}
+    render();
+  });
+  bind("wire-feed-add", function () {
+    var nm = document.getElementById("wire-feed-name");
+    var ur = document.getElementById("wire-feed-url");
+    var name = nm ? nm.value.trim() : "";
+    var url = ur ? ur.value.trim() : "";
+    if (!name) { wireFeedMsg = "Give the feed a name first."; render(); return; }
+    if (!url) { wireFeedMsg = "Give the feed a URL first."; render(); return; }
+    wireFeedMsg = "Checking the feed\u2026";
+    render();
+    intelPost("/api/wire/feeds", { name: name, url: url }, function (j) {
+      wireFeedMsg = j && j.ok ? (j.sentence || "Feed added.") : ((j && j.error) || "The feed was refused.");
+      wireState = null; refreshWire(); render();
+    });
+  });
+  mainEl.querySelectorAll("[data-wire-feed-remove]").forEach(function (b) { b.onclick = function () {
+    intelPost("/api/wire/feeds/remove", { id: b.getAttribute("data-wire-feed-remove") }, function (j) {
+      wireFeedMsg = j && j.ok ? "Feed removed." : ((j && j.error) || "The feed could not be removed.");
+      wireState = null; refreshWire(); render();
+    });
+  }; });
   bind("wire-pull", function () {
     intelPost("/api/wire/refresh", {}, function (j) {
       wireMsg = j && j.ok ? "Fetch started — the wire refreshes when the feeds answer." : ((j && j.error) || "The fetch could not start.");
@@ -3829,6 +3972,133 @@ function execChatHtml(x) {
   var h = "<div class='exec mono'>" + esc(execOutputClean(x)) + "</div>";
   if (info.known) h += "<div class='execstat mono'>" + esc(info.label) + "</div>";
   return h;
+}
+/* CLI Mode shell sessions (Build 3, #209): the page side. The
+   session itself lives in the bridge; this is its record and its
+   controls. Events poll in on a light timer while the Chat view
+   is open, fold into the thread as SHELL records (persisted with
+   the chat like exec blocks), and a full-screen program renders
+   on the grid the bridge keeps \u2014 desktop pane only; a phone
+   gets the streamed record and a note naming the difference. */
+var shellUi = { chatId: null, live: false, ended: false, altScreen: false, screen: null, seq: 0, timer: null, fetching: false };
+function shellEventsHtml(events) {
+  var h = "<div class='shellrec mono'>";
+  (events || []).forEach(function (e) {
+    if (e.kind === "in") h += "<div class='shell-in'><span class='shell-badge " + (e.author === "navi" ? "navi" : "op") + "'>" + (e.author === "navi" ? "NAVI" : "OPERATOR") + "</span> " + esc(e.text) + "</div>";
+    else if (e.kind === "out") h += "<pre class='shell-out'>" + esc(e.text) + "</pre>";
+    else h += "<div class='shell-note'>" + esc(e.text) + "</div>";
+  });
+  return h + "</div>";
+}
+function shellFoldEvents(events, endedNow) {
+  if (!events.length && !endedNow) return;
+  var last = messages[messages.length - 1];
+  if (!last || last.who !== "SHELL" || !last.shell || !last.shell.open) {
+    last = { who: "SHELL", text: "", shell: { events: [], open: true }, ts: Date.now() };
+    messages.push(last);
+  }
+  events.forEach(function (e) { last.shell.events.push(e); });
+  if (endedNow) last.shell.open = false;
+  persist();
+  var msgsEl = document.getElementById("msgs");
+  if (msgsEl) {
+    var kids = msgsEl.querySelectorAll(".msg");
+    var lastMsgEl = kids.length ? kids[kids.length - 1] : null;
+    var rec = lastMsgEl ? lastMsgEl.querySelector(".shellrec") : null;
+    if (rec && messages[messages.length - 1] === last && lastMsgEl.dataset.shellrec === "1") {
+      rec.outerHTML = shellEventsHtml(last.shell.events);
+    } else {
+      var holder = document.createElement("div");
+      holder.innerHTML = "<div class='msg' data-shellrec='1'><div class='msg-row'>" + msgAvatarHtml(last) + "<div class='msg-body'><div class='who'>" + msgWhoHtml(last) + "</div>" + shellEventsHtml(last.shell.events) + "</div></div></div>";
+      msgsEl.appendChild(holder.firstChild);
+    }
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+}
+function shellPoll() {
+  if (view !== "Chat" || CONFIG.backend !== "live" || shellUi.fetching) return;
+  var cid = String(activeChatId);
+  if (shellUi.chatId !== cid) { shellUi.chatId = cid; shellUi.seq = 0; shellUi.live = false; shellUi.ended = false; shellUi.altScreen = false; shellUi.screen = null; }
+  shellUi.fetching = true;
+  fetch("/api/shell/session/state?chatId=" + encodeURIComponent(cid) + "&since=" + shellUi.seq)
+    .then(function (r) { return r.json(); })
+    .then(function (st) {
+      shellUi.fetching = false;
+      if (!st || view !== "Chat" || String(activeChatId) !== cid) return;
+      var hadLive = shellUi.live;
+      var wasAlt = shellUi.altScreen;
+      var wasLive = shellUi.live;
+      shellUi.live = !!st.live; shellUi.ended = !!st.ended;
+      shellUi.altScreen = !!st.altScreen; shellUi.screen = st.screen || null;
+      if (typeof st.seq === "number") shellUi.seq = st.seq;
+      if (st.events && st.events.length) shellFoldEvents(st.events, shellUi.ended);
+      if (hadLive && !st.live && !st.ended) {
+        shellFoldEvents([{ kind: "note", author: null, text: "the session ended when the bridge restarted \u2014 the shell is gone; nothing was carried over" }], true);
+        shellUi.ended = true;
+      }
+      if (wasAlt !== shellUi.altScreen || wasLive !== shellUi.live) { render(); return; }
+      if (shellUi.altScreen && shellUi.screen) {
+        var pre = document.getElementById("shell-screen");
+        if (pre) pre.textContent = shellUi.screen.join("\n");
+      }
+    })
+    .catch(function () { shellUi.fetching = false; });
+}
+function watchShellSession() {
+  if (shellUi.timer) return;
+  shellUi.timer = setInterval(shellPoll, 900);
+}
+function shellPost(path, body) {
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json(); });
+}
+function wireShellUi() {
+  var open = document.getElementById("chat-shell");
+  if (open) open.onclick = function () {
+    if (shellUi.live) { var si = document.getElementById("shell-in"); if (si) si.focus(); return; }
+    var cols = Math.max(40, Math.min(200, Math.floor(window.innerWidth / 8)));
+    shellPost("/api/shell/session/open", { chatId: String(activeChatId), cols: cols, rows: 24 }).then(function () { shellUi.seq = 0; shellUi.chatId = String(activeChatId); shellPoll(); render(); }).catch(function () {});
+  };
+  var send = document.getElementById("shell-send");
+  var input = document.getElementById("shell-in");
+  var sendLine = function () {
+    if (!input) return;
+    var text = input.value;
+    input.value = "";
+    shellPost("/api/shell/session/input", { chatId: String(activeChatId), text: text + "\n" }).then(function () { shellPoll(); }).catch(function () {});
+  };
+  if (send) send.onclick = sendLine;
+  if (input) input.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); sendLine(); } };
+  var close = document.getElementById("shell-close");
+  if (close) close.onclick = function () {
+    shellPost("/api/shell/session/close", { chatId: String(activeChatId) }).then(function () { shellPoll(); }).catch(function () {});
+  };
+  var pane = document.getElementById("shell-pane");
+  if (pane) pane.onkeydown = function (e) {
+    var k = null;
+    if (e.key === "Enter") k = "\r";
+    else if (e.key === "Backspace") k = "\x7f";
+    else if (e.key === "Tab") k = "\t";
+    else if (e.key === "Escape") k = "\x1b";
+    else if (e.key === "ArrowUp") k = "\x1b[A";
+    else if (e.key === "ArrowDown") k = "\x1b[B";
+    else if (e.key === "ArrowRight") k = "\x1b[C";
+    else if (e.key === "ArrowLeft") k = "\x1b[D";
+    else if (e.ctrlKey && e.key.length === 1) k = String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64);
+    else if (e.key.length === 1) k = e.key;
+    if (k !== null) { e.preventDefault(); shellPost("/api/shell/session/input", { chatId: String(activeChatId), text: k, raw: true }).then(function () { shellPoll(); }).catch(function () {}); }
+  };
+}
+function shellBarHtml() {
+  if (CONFIG.backend !== "live" || !shellUi.live) return "";
+  return "<div class='shellbar' id='shell-bar' data-live='1'><span class='dot' style='background:#34d399'></span><span style='font-size:12px'><b>Shell session</b> \u2014 live in this chat" + (shellUi.altScreen ? " \u00b7 a program holds the full screen" : "") + "</span>" +
+    "<input id='shell-in' type='text' placeholder='Type a line into the session \u2014 Enter sends it' aria-label='Line to type into the shell session'>" +
+    "<button class='act' id='shell-send'>Type</button><button class='ghost' id='shell-close'>Close session</button>" +
+    (shellUi.altScreen ? "<span class='shell-mobile-note'>A full-screen program is running. On this screen size Apex streams its output into the thread instead of rendering the terminal pane \u2014 the pane is a desktop surface.</span>" : "") +
+    "</div>";
+}
+function shellPaneHtml() {
+  if (!shellUi.live || !shellUi.altScreen || !shellUi.screen) return "";
+  return "<div class='shellpane' id='shell-pane' tabindex='0' aria-label='Terminal pane \u2014 click and type to the full-screen program'><div class='shellpane-head'>TERMINAL \u2014 FULL-SCREEN PROGRAM (CLICK AND TYPE)</div><pre id='shell-screen'>" + esc(shellUi.screen.join("\n")) + "</pre></div>";
 }
 function isLongNavi(text) {
   var t = String(text || "");
@@ -4608,7 +4878,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The shape of her — dashboard, bridge, model</h4>" +
   "<p>Apex is three pieces on your own machine:</p><ul>" +
   "<li>The <b>dashboard</b> is this page, served by the bridge at <span class='mono'>http://localhost:" + BRIDGE_PORT + "</span>.</li>" +
-  "<li>The <b>bridge</b> (bridge.py, in the install folder) does the real work: it serves the dashboard, runs shell commands, manages chips and workflows, holds the sudo root shell, and carries your words to the model.</li>" +
+  "<li>The <b>bridge</b> (bridge.py, in the install folder) does the real work: it serves the dashboard, runs shell commands, manages chips and workflows, holds sudo mode's on/off state (never a password), runs the chats' shell sessions, and carries your words to the model.</li>" +
   "<li>The <b>model server</b> is navi.llamafile, running <span class='mono'>./navi.llamafile --server --v2</span> plus the flags from her <b>hardware profile</b> on port 8080 — at install, the installer profiled this machine (CPU, RAM, GPU) and chose the context size, threads, batch size, and GPU layers to fit it, so her settings come from your hardware, not the developer's; Settings shows what was detected and what was chosen, and the full log is <span class='mono'>hardware-profile.log</span>; the model answers to the id <span class='mono'>navi</span>, which the bridge reads from the server itself (<span class='mono'>/v1/models</span>) rather than guessing.</li></ul>" +
   "<p>Nothing leaves the machine on its own — the only network calls the bridge makes are to GitHub: when you open the chip or pack catalogs, check something for updates, or, once you have signed in and set it up, run a backup. The <b>GitHub — issues &amp; backups</b> page in this wiki covers that whole side of her.</p>" +
   "<p>Two small details ride the frame: under the <b>APEX</b> wordmark sits her <b>tagline</b> — “Powered by Navi”, one static line; and at the top of the status column, her <b>presence line</b> starts at “Navi is here.” and cycles every few minutes through what she's up to — listening to the network breathe, arguing with a CAPTCHA, haunting Rockport's west end.</p></div>" +
@@ -4620,8 +4890,10 @@ var DOC_PAGES = [
   "<p><b>Sending, and attaching files.</b> There is no Send button — <b>Enter</b> sends, in every mode; beside the <b>CLI | Navi</b> toggle under the bar, plain words say so: <i>Press enter to send.</i> The whole composer — her chips on their slim shelf, the bar, the toggle row — sits in one dock at the foot of the chat, and the bar dresses for the latched mode: latched to CLI it takes the terminal green and command wording (<span class='mono'>Run a command — try: ls</span>); latched to Navi it keeps her cyan. On a phone the dock's Call button is the phone glyph alone, so the bar keeps its room. The paperclip button beside the bar attaches a picture or a text file to this chat. The attachment stays in the thread where you uploaded it: a text file's contents ride with your next message as context she can reason over, and a picture is stored and referenced by name — her local model is text-only, so she does not see pictures, and nothing in the app claims she does. Every upload is also listed under the status column's <b>Chats</b> tab, in its Uploaded files, where you can find it later and delete it.</p>" +
   "<p>The composer works like a good shell: the line is <b>colored as you type</b> — the command word by whether the system knows it, flags, quoted strings, and paths each in their own color, the zsh-syntax-highlighting read — a dim <b>ghost</b> of the most recent matching command from this chat completes the line (Tab or → accepts it, in the zsh-autosuggestions way), and the command word autocompletes from what the system has installed, the same set that decides the CLI route. The terminal blocks in the thread keep the same coloring, so the history reads like a real shell session. Her replies render as markdown: code arrives as code blocks, not literal backticks. When navi.llamafile is disconnected, chat drops to a <b>plain command line</b> until you reconnect from the status column; chips still run in that mode. Above every view sits her <b>presence bar</b> — her picture (her own portrait, the lamp-post key art that ships with the app), her name, her dot, and what she is doing: here (the same living line the status column carries), typing, in a call with you, or away when her model is stopped. The bar is part of the frame, not of any one page: it stays over Chat, Settings, Docs — everywhere — and at its top right sits the status column's <b>pane button</b>, wearing the panel glyph. Every message in the thread wears its author's face in the gutter, their name, and the time it was sent — hers, yours (the name from your profile), and the call transcript in Settings → Voice reads the same way, spoken marker kept. The status column's doors are the frame's own now: the <b>pane button</b> at the presence bar's top right — on every page, at every width — and the panel button in the phone's top bar. Those are the only two doors; every one drives the one column state and raises the rail in place wherever you are; the phone's top bar itself is pinned, so the doors are there at any scroll depth. Conversations are saved as known chats — switch from the status column's <b>Chats</b> tab (the status pane's second tab, beside Status), without leaving this page.</p>" +
   "<p><b>Her window.</b> Apex opens in her own standalone window — the Tauri shell — and closing the window quits the app. There is no tray icon and no login autostart: she runs when you launch her from the application menu, and not before. Her window binary is verified, never assumed: installers stamp it with a hash of the shell sources, a failed rebuild retires the previous binary (navi-apex-shell.stale) instead of leaving it to be run, and the launchers refuse to run a binary the stamp doesn't cover — an older shell is a different app wearing this build's name.</p></div>" +
-    "<div class='doc-sec'><h4>Sudo mode</h4>" +
-  "<p>The status column's sudo switch makes Navi execute commands as root. Turning it on asks for your sudo password once; the bridge validates it by opening <b>one persistent root shell</b> that every sudo command runs inside, so a fingerprint-first PAM stack is consulted exactly once, at authentication. The password lives only in this page's memory — never saved, never logged — and turning sudo off closes the root shell on the spot.</p></div>" +
+    "<div class='doc-sec'><h4>Sudo mode (v0.3.0e — Build 3)</h4>" +
+  "<p>Sudo mode lets the commands Navi runs execute as root — and since Build 3 it runs on <b>sudo's own credential timestamp</b>, not on anything Apex holds. You arm it in <b>Settings → System</b>: flip the switch and a masked prompt appears on that same card; the password is fed <b>once</b> to <span class='mono'>sudo -v</span> and then forgotten by the page and the bridge alike — <b>never stored, logged or synced, anywhere</b>. What persists is one on/off flag in the config and sudo's own timestamp. While the timestamp lives, her elevated commands run as <span class='mono'>sudo -n</span> (never prompting); when it lapses, the status column and the Settings card read <b>Expired</b>, and elevated commands <b>refuse honestly</b> — naming the expiry — until you re-warm. Disarming (from Settings or the status column) flips the flag and kills the timestamp with <span class='mono'>sudo -k</span>: instant and total. The status column no longer owns the switch; it <b>reads</b> the state — Armed or Expired while the feature is on, and absent entirely while it is off. <b>Every elevated command Navi runs is on the record</b>: an append-only audit (<span class='mono'>config/sudo-audit.jsonl</span> — timestamp, the command as run, the chat it served, its exit status), viewable read-only on the Settings card. The audit deliberately does <b>not</b> ride Sync. One honest cost: on a machine whose sudo asks a fingerprint reader before the password, each fresh <span class='mono'>sudo -n</span> still runs PAM — but it fails fast instead of waiting the reader out, and the arm's one <span class='mono'>sudo -v</span> pays the full conversation once per timestamp window. The DHD prerequisite installer rides the same timestamp now: arm sudo mode first if a DHD step needs root.</p></div>" +
+    "<div class='doc-sec'><h4>Shell sessions — the full shell (CLI Mode, Build 3)</h4>" +
+  "<p>One-shot commands are half the story. Each chat can hold <b>one standing interactive session</b> — a real shell on a real terminal (a PTY), living in the bridge, keyed to the chat. Open one with the <span class='mono'>&gt;_</span> button beside the composer; it survives messages and window reloads, and everything it does streams into the thread as a terminal record: lines typed are <b>badged by author</b> — OPERATOR or NAVI — because Navi can drive the same session. When a step needs a stateful shell (answering a prompt, a REPL, an interactive tool), she types into it herself and sees its output on her next turn. A program that takes the <b>full screen</b> (an editor, a monitor) renders on a real terminal grid in a pane above the composer on the desktop — click the pane and type to the program. On a phone there is no pane: the session streams into the thread instead, and the bar says so — an honest degradation, named, not a squeezed pretend-terminal. Sessions end when you close them, when the shell exits, or after <b>30 minutes without input</b> — the thread notes the closing and its reason either way. If the bridge restarts, the session is gone and the record says exactly that; nothing fakes continuity. Elevation never rides the session: it runs under its own session id, so sudo inside it prompts in-terminal like any terminal, and sudo mode's timestamp does not leak into it. Sessions are local to the seat whose bridge holds them — a reply borrowed over the Mesh does not move your shell.</p></div>" +
     "<div class='doc-sec'><h4>Output cards — the thread folds itself</h4>" +
   "<p>When the conversation moves on, the bulky parts of earlier exchanges fold into small cards so the thread stays readable: a terminal block folds into a card whose line shows the command in its colors, how it ended (like <span class='mono'>exit 0</span>), and the first line of its output; a long reply from Navi — 500 characters or more, eight lines or more, or one containing a code block — folds into a card labeled <b>Navi reply</b> with its first line and its size. Click a card to open it and read the whole thing; click again to fold it. The card you are still in — everything from your last message onward — never folds. Folding is only about looks: nothing is deleted, the whole history stays in the thread and on disk, and Navi still sees the full output as her context, exactly as before. Clearing the chat clears the cards with it.</p></div>" +
     "<div class='doc-sec'><h4>Your command shows once</h4>" +
@@ -4631,7 +4903,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>The shell remembers — recall, search, completion, and shortcuts</h4>" +
   "<p>Your command history is kept in one place, like a shell's history file: it survives switching chats, clearing a chat, and closing the page, and it holds up to 200 commands. With the suggestion list closed, press the <b>Up arrow</b> to walk back through commands you have run and the <b>Down arrow</b> to walk forward again — going past the newest brings back what you had typed. Press <b>Ctrl+R</b> to search the history: type some letters and the newest matching command shows; press Ctrl+R or the arrow keys to step through matches, <b>Enter</b> or <b>Tab</b> to put the match in the bar (it does not run yet), and <b>Escape</b> to cancel and get your typed line back. As you type a command, the list now completes more than the first word: file and folder paths complete from the real filesystem (a folder completes with a slash and opens its contents), known flags and subcommands for common commands like <span class='mono'>git</span> and <span class='mono'>ls</span> are offered, and arguments you have used with that command before are offered too, marked as used before. The editing shortcuts from the shell work as well: <b>Ctrl+A</b> and <b>Ctrl+E</b> jump to the start and end of the line, <b>Ctrl+U</b> cuts everything before the cursor, <b>Ctrl+K</b> cuts everything after it, <b>Ctrl+W</b> cuts the word before the cursor, and <b>Ctrl+Y</b> pastes back what a cut took. History shortcuts like <span class='mono'>!!</span> (the last command), <span class='mono'>!$</span> (its last argument), and <span class='mono'>!3</span> (the third command in the history) never run silently: the first Enter rewrites the bar with the expanded command and asks you to check it — press Enter again to run exactly what you see.</p></div>" +
     "<div class='doc-sec'><h4>Raw terminal work — Chat's CLI mode</h4>" +
-  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and the same sudo switch in the status column covers the commands you run this way. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> (or <span class='mono'>/clear</span>) and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" +
+  "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and sudo mode — armed in Settings → System — covers the commands you run this way while its timestamp lives. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> (or <span class='mono'>/clear</span>) and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" +
     "<div class='doc-sec'><h4>Chats live on the server now</h4>" +
   "<p>Your chats are kept by the <b>bridge</b>, not by this browser window: plain files in <span class='mono'>config/chats/</span> on the machine Apex runs on, one per thread. Open Apex from the desktop, through DHD, or from a second browser on the same install and you are looking at the <b>same conversations</b> — sign in on your server from work and the thread you left on the laptop is simply there. The browser keeps a local copy as a cache and an offline fallback, and the first time a browser with older chats meets an empty server store, its chats are imported as the seed — never discarded. Your uploads index rides with the chats. Chats are also the ninth backup essential: tick <b>Chats</b> in Settings → GitHub &amp; Backup and the threads ride the ready-to-fly backup; a restore <b>converges</b> them — newest wins per thread, and where both machines moved the same thread on, both versions survive, the incoming one as a dated sibling. Nothing is ever merged away silently.</p></div>" },
   { id: "chips-guide", title: "Chips development guide", related: ["navi-functions", "chips-publishing"], html:
@@ -4780,7 +5052,12 @@ var DOC_PAGES = [
   "<p><b>Reading, in the app.</b> Tapping a headline tries the <b>in-app reader</b> first: the bridge fetches that one article (on demand, nothing prefetched in bulk, and only for links the wire itself is carrying) and extracts a readable view — the story's text, its furniture stripped — presented with the source, the date, and an <b>Open original</b> button always present. When extraction cannot honestly produce the article — a paywall, a script-built page, a non-article — the reader says which, and falls back: on desktop the original opens in a <b>new tab</b>; on mobile it opens the article proper. A failed extraction is never dressed up as the article.</p></div>" +
     "<div class='doc-sec'><h4>The CTF board, and the bounty board (Build 7)</h4>" +
   "<p><b>CTFs</b> (its own tab in The Wire — the board's home since Build 9 retired its separate menu entry) pulls the <b>CTFtime API</b> into a local cache on an hourly cadence. Cards carry everything the listing gives — name, start and finish <b>in your timezone</b>, format (Jeopardy / Attack-Defense), online or on-site with its location, weight, restrictions, organizers, logo, description, prizes where listed, and the CTFtime link — split into <b>Running now</b> and <b>Upcoming</b>; past events fall off. Ask her what's on or what's worth playing and she answers from the board, citing the listing.</p>" +
-  "<p><b>Bounties</b> lists public bug-bounty programs from <b>ProjectDiscovery's Chaos index</b> — the public, keyless JSON of public programs — cached locally and re-read every six hours: program name, platform, the program link, whether it <b>pays bounties</b>, and its <b>scope size</b> in the Chaos dataset. The index does not state safe-harbor terms, so the cards say exactly that rather than guessing. <b>Disclosed reports</b> ship as a named empty section: HackerOne's hacktivity has no keyless feed (it needs an account), so the tab says so instead of inventing rows. Same posture as everything on this page: outbound-only, local cache, named staleness, a dead source is a sentence. She can speak to bounties in chat from the store, same as CTFs.</p></div>"
+  "<p><b>Bounties</b> lists public bug-bounty programs from <b>ProjectDiscovery's Chaos index</b> — the public, keyless JSON of public programs — cached locally and re-read every six hours: program name, platform, the program link, whether it <b>pays bounties</b>, and its <b>scope size</b> in the Chaos dataset. The index does not state safe-harbor terms, so the cards say exactly that rather than guessing. <b>Disclosed reports</b> ship as a named empty section: HackerOne's hacktivity has no keyless feed (it needs an account), so the tab says so instead of inventing rows. Same posture as everything on this page: outbound-only, local cache, named staleness, a dead source is a sentence. She can speak to bounties in chat from the store, same as CTFs.</p></div>" +
+    "<div class='doc-sec'><h4>The fused home, re-laned tabs, and your own feeds (v0.3.0e — Build 3)</h4>" +
+  "<p>Build 3 fuses the <b>Center and the Dashboard into one surface</b> — and that surface is now <b>Home</b>: the first entry on the menu rail and the page Apex opens to. One page carries a <b>situation strip</b> (the wire's freshness and the Center's counts), the glance cards the Dashboard always showed (the Center card's top rows are the matching queue's highlights), <b>feed health</b>, and the tab set. The old Dashboard tab and the separate CVEs tab retire; everything they showed lives on here or on the Center tab.</p>" +
+  "<p><b>News is news only.</b> The News tab carries news articles — nothing else. The wire's CVE items moved to their own <b>CVE tab</b> and its KEV additions to a <b>KEV tab</b>, same cards, same reader, same honest fallback; the families stay separated and no record is lost in the move. The Center's graded queue (CVSS, EPSS, your matches) is a different store and stays on the <b>Center tab</b> — the CVE tab's header says so, so the two never blur.</p>" +
+  "<p><b>Your own feeds.</b> On the News tab you can add any <b>RSS or Atom feed</b> — a name and a URL. The bridge fetches and parses it <i>before</i> saving: unreachable, unparseable, or not-a-feed is <b>refused by name</b> and nothing is saved. A saved feed is first-class: its stories flow into News badged with your name for it, on the normal pull cadence, and if it later stops answering, its pill in Feed health names the failure instead of going silently stale. Feeds can be removed from the same card. They live in this install's config (<span class='mono'>navi.config.json</span>) and deliberately do <b>not</b> ride Sync — each seat keeps its own.</p>" +
+  "<p><b>Feed health, folded.</b> The source pills live in a collapsible field at the top of Home: collapsed, they cost one slim row that still names how many sources are not answering; expanded, the full pill set with each failure's sentence. The choice persists, per operator.</p></div>"
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
@@ -5428,7 +5705,7 @@ function liveChat(text, speak) {
     if (x.exec) content += "\n\n[terminal]\n" + execContextText(x.exec);
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
-  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "", operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
+  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", meshLocal: meshLocal, chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
     .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, chatId: activeChatId }; });
@@ -5437,7 +5714,7 @@ function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
 }
 function liveShell(cmd) {
-  return fetch("/api/shell", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: cmd, sudo: !!CONFIG.sudo, sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+  return fetch("/api/shell", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: cmd, sudo: !!CONFIG.sudo, sudo_password: "" }) })
     .then(function (r) { return r.json(); })
     .then(function (j) { return { command: j.command, output: j.output, exit_code: typeof j.exit_code === "number" ? j.exit_code : 0 }; });
 }
@@ -5820,6 +6097,11 @@ function navGroupWrap(gid) {
 // the group seated low opens UPWARD, its children stacked
 // above its header (#160 settles both the order and that
 // direction; group contents are unchanged).
+// Build 3 (#210): Home \u2014 the fused Wire surface (the Center
+// and the Dashboard, one page) \u2014 sits at the very top of the
+// rail and is what the app opens to. It is the same view as
+// Apps \u2192 The Wire; both entries light when it is showing.
+navMenu.appendChild(navBtn("nav-Home", "Home", "Home", "ThreatIntel"));
 navMenu.appendChild(navBtn("nav-Chat", "Chat", "Chat", "Chat"));
 var navBrk1 = document.createElement("div"); navBrk1.className = "nav-break"; navBrk1.setAttribute("aria-hidden", "true"); navMenu.appendChild(navBrk1);
 var navSys = document.createElement("div"); navSys.className = "nav-group-sec"; navSys.id = "nav-sec-network";
@@ -5851,10 +6133,10 @@ navMenu.appendChild(navUtil);
 var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
-  ["nav-Chat", "nav-child-network-Federation", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
-    if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
+    if (el && (id === want || (id === "nav-Home" && (view === "ThreatIntel" || view === "CTFBoard")))) el.className = (el.className ? el.className + " " : "") + "on";
   });
   ["network", "navi", "apps", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
@@ -6170,7 +6452,7 @@ function wireOperationCards(root) {
     b.dataset.wired = "1";
     b.onclick = function () {
       b.disabled = true; b.textContent = "Installing…";
-      fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+      fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: "" }) })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (j && j.dhd) dhdState = j.dhd;
@@ -6367,7 +6649,7 @@ function wireDhd() {
   if (install) install.onclick = function () {
     if (CONFIG.backend !== "live") { dhdMsg = "Simulated: prerequisites installed; the enable can continue."; render(); return; }
     install.disabled = true; install.textContent = "Installing…";
-    fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+    fetch("/api/dhd/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sudo_password: "" }) })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (j && j.dhd) dhdState = j.dhd;
@@ -6402,7 +6684,7 @@ function wireDhd() {
       render();
       return;
     }
-    fetch("/api/dhd/toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next, sudo_password: CONFIG.sudo ? sudoPassword : "" }) })
+    fetch("/api/dhd/toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next, sudo_password: "" }) })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (j && j.dhd) dhdState = j.dhd;
@@ -7754,56 +8036,102 @@ function wireLocalNetwork() {
   var setBtn = document.getElementById("local-net-settings");
   if (setBtn) setBtn.onclick = function () { view = "DHD"; dockOpen = false; render(); };
 }
-function renderSudo() {
-  var needsAuth = CONFIG.sudo && CONFIG.backend === "live" && !sudoAuthed;
-  var h = "<div class='stat'><span class='dot' style='background:" + (CONFIG.sudo ? "#f87171" : "#9fb3c8") + "'></span><span style='color:var(--dim)'>SUDO MODE</span><br>" +
-    "<span style='display:inline-flex;align-items:center;gap:8px;margin-top:4px'><button class='switch' id='sudo-sw' role='switch' aria-checked='" + (CONFIG.sudo ? "true" : "false") + "' aria-label='Sudo mode — Navi executes commands with admin privileges'><span class='knob'></span></button>" +
-    "<span class='mono' style='font-weight:700;color:" + (CONFIG.sudo ? "#f87171" : "var(--text)") + "'>" + (CONFIG.sudo ? (needsAuth ? "On — authenticate" : "On — root") : "Off") + "</span></span>";
-  if (needsAuth) {
-    h += "<div style='margin-top:6px'><label style='color:var(--dim);font-size:12px' for='sudo-pw'>Sudo password — asked once per session:</label>" +
-      "<input id='sudo-pw' type='password' autocomplete='off' aria-label='Sudo password for this session' placeholder='sudo password' style='margin-top:4px'>" +
-      "<button class='act' id='sudo-auth' style='margin-top:6px;padding:6px 10px'>Authenticate sudo</button>" +
-      (sudoAuthError ? "<div style='color:#f87171;font-size:12px;margin-top:4px'>" + esc(sudoAuthError) + "</div>" : "") +
-      "</div>";
-  }
-  h += "<details id='sudo-warn'" + (sudoWarnOpen ? " open" : "") + " style='margin-top:6px'>" +
+var sudoState = null;   // live: the bridge's sudo truth from /api/status (Build 3, #209) — {enabled, state}
+var sudoArmOpen = false;    // the Settings card's masked prompt is revealed
+var sudoArmBusy = false;    // an arm request is in flight — the switch will not double-flip
+var sudoArmError = null;    // a refusal, shown on the same card that was flipped
+var sudoAuditEntries = null; // the audit, loaded on demand (read-only)
+function sudoWarnHtml() {
+  return "<details id='sudo-warn'" + (sudoWarnOpen ? " open" : "") + " style='margin-top:6px'>" +
     "<summary style='color:#f87171;font-size:12px;cursor:pointer'>Sudo Mode Warning</summary>" +
-    "<div style='color:#f87171;font-size:12px;margin-top:4px'>" + esc(SUDO_WARNING_LINE) + "</div></details></div>";
-  return h;
+    "<div style='color:#f87171;font-size:12px;margin-top:4px'>" + esc(SUDO_WARNING_LINE) + "</div></details>";
+}
+function renderSudo(live) {
+  // Build 3 (#209): the status column READS sudo mode; it no
+  // longer owns it. Arming lives in Settings \u2192 System \u2014 a
+  // masked prompt feeding "sudo -v" once; no password is ever
+  // held by this page. Here the column shows the bridge's own
+  // state (Armed / Expired) with a Disarm button, and per the
+  // #204 law the row is ABSENT when the feature is off or its
+  // state is not yet known \u2014 never greyed, never guessed.
+  // Mock mode reads the simulated CONFIG flag instead.
+  if (CONFIG.backend !== "live") {
+    if (!CONFIG.sudo) return "";
+    return "<div class='stat'><span class='dot' style='background:#f87171'></span><span style='color:var(--dim)'>SUDO MODE</span><br>" +
+      "<span class='mono' style='font-weight:700;color:#f87171'>On \u2014 root (simulated)</span> " +
+      "<button class='ghost' id='sudo-disarm-status' style='min-height:44px;padding:6px 10px'>Disarm</button>" +
+      sudoWarnHtml() + "</div>";
+  }
+  if (live && live.sudo) sudoState = live.sudo;
+  if (!sudoState || !sudoState.enabled) return "";
+  var armed = sudoState.state === "armed";
+  return "<div class='stat'><span class='dot' style='background:" + (armed ? "#f87171" : "#f5b544") + "'></span><span style='color:var(--dim)'>SUDO MODE</span><br>" +
+    "<span class='mono' style='font-weight:700;color:" + (armed ? "#f87171" : "#f5b544") + "'>" + (armed ? "Armed \u2014 root" : "Expired \u2014 re-warm in Settings") + "</span> " +
+    "<button class='ghost' id='sudo-disarm-status' style='min-height:44px;padding:6px 10px'>Disarm</button>" +
+    sudoWarnHtml() + "</div>";
 }
 function wireSudo() {
   var warn = document.getElementById("sudo-warn");
   if (warn) warn.addEventListener("toggle", function () { sudoWarnOpen = warn.open; });
-  var sw = document.getElementById("sudo-sw");
-  if (sw) sw.onclick = function () {
-    CONFIG.sudo = !CONFIG.sudo;
-    if (!CONFIG.sudo) {
-      sudoPassword = ""; sudoAuthed = false; sudoAuthError = null;
-      // Forget the password here AND close the bridge's root shell
-      // there — turning sudo off should leave nothing root-shaped
-      // open anywhere.
-      if (CONFIG.backend === "live") fetch("/api/sudo/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(function () {});
-    }
-    saveCfg(); render();
-  };
-  var authBtn = document.getElementById("sudo-auth");
-  if (authBtn) authBtn.onclick = function () {
-    var field = document.getElementById("sudo-pw");
-    var pw = field ? field.value : "";
-    if (!pw) { sudoAuthError = "Enter the sudo password first."; render(); return; }
-    authBtn.textContent = "Checking…"; authBtn.disabled = true;
-    fetch("/api/sudo/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) })
+  var dis = document.getElementById("sudo-disarm-status");
+  if (dis) dis.onclick = function () {
+    if (CONFIG.backend !== "live") { CONFIG.sudo = false; saveCfg(); render(); return; }
+    dis.disabled = true; dis.textContent = "Disarming\u2026";
+    fetch("/api/sudo/disarm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
       .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (j.ok) { sudoPassword = pw; sudoAuthed = true; sudoAuthError = null; }
-        else if (j.error === "not found") { sudoPassword = ""; sudoAuthed = false; sudoAuthError = "That answer came from an older bridge with no sudo-auth endpoint — the bridge process was never restarted after the reinstall. Fully quit the app and relaunch it; see the BRIDGE OUT OF DATE note at the top of this column."; }
-        else { sudoPassword = ""; sudoAuthed = false; sudoAuthError = j.error || "sudo authentication failed."; }
-        render();
-      })
-      .catch(function () { sudoAuthError = "Could not reach the bridge to authenticate."; render(); });
+      .then(function (j) { if (j && j.sudo) sudoState = j.sudo; CONFIG.sudo = false; render(); })
+      .catch(function () { render(); });
   };
-  var pwField = document.getElementById("sudo-pw");
-  if (pwField) pwField.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); var b = document.getElementById("sudo-auth"); if (b) b.click(); } };
+}
+function wireSudoCard() {
+  var sw = document.getElementById("set-sudo-sw");
+  if (sw) sw.onclick = function () {
+    if (sudoArmBusy) return;
+    var on = CONFIG.backend === "live" ? !!(sudoState && sudoState.enabled) : !!CONFIG.sudo;
+    if (on) { disarmSudo(); return; }
+    // Flipping on reveals the prompt on this same card; the
+    // switch itself turns on only when the bridge confirms.
+    sudoArmOpen = true; sudoArmError = null; render();
+    var f = document.getElementById("set-sudo-pw"); if (f) f.focus();
+  };
+  var arm = document.getElementById("set-sudo-arm");
+  if (arm) arm.onclick = submitSudoArm;
+  var pw = document.getElementById("set-sudo-pw");
+  if (pw) pw.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); submitSudoArm(); } };
+  var cancel = document.getElementById("set-sudo-cancel");
+  if (cancel) cancel.onclick = function () { sudoArmOpen = false; sudoArmError = null; render(); };
+  var rewarm = document.getElementById("set-sudo-rewarm");
+  if (rewarm) rewarm.onclick = function () { sudoArmOpen = true; sudoArmError = null; render(); var f = document.getElementById("set-sudo-pw"); if (f) f.focus(); };
+  var aud = document.getElementById("set-sudo-audit");
+  if (aud) aud.onclick = function () {
+    if (CONFIG.backend !== "live") { sudoAuditEntries = []; render(); return; }
+    fetch("/api/sudo/audit").then(function (r) { return r.json(); }).then(function (j) { sudoAuditEntries = (j && j.entries) || []; render(); }).catch(function () { sudoAuditEntries = []; render(); });
+  };
+}
+function submitSudoArm() {
+  if (sudoArmBusy) return;
+  var f = document.getElementById("set-sudo-pw");
+  var pw = f ? f.value : "";
+  if (!pw) { sudoArmError = "Enter the sudo password to arm sudo mode."; render(); return; }
+  if (CONFIG.backend !== "live") { CONFIG.sudo = true; sudoArmOpen = false; sudoArmError = null; saveCfg(); render(); return; }
+  sudoArmBusy = true; sudoArmError = null; render();
+  fetch("/api/sudo/arm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      sudoArmBusy = false;
+      if (j && j.sudo) sudoState = j.sudo;
+      if (j && j.ok) { sudoArmOpen = false; sudoArmError = null; CONFIG.sudo = true; }
+      else { sudoArmError = (j && j.error) || "sudo mode was not armed."; sudoArmOpen = true; }
+      render();
+    })
+    .catch(function () { sudoArmBusy = false; sudoArmError = "Could not reach the bridge to arm sudo mode."; sudoArmOpen = true; render(); });
+}
+function disarmSudo() {
+  if (CONFIG.backend !== "live") { CONFIG.sudo = false; sudoAuditEntries = null; saveCfg(); render(); return; }
+  fetch("/api/sudo/disarm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { if (j && j.sudo) sudoState = j.sudo; CONFIG.sudo = false; sudoAuditEntries = null; render(); })
+    .catch(function () { render(); });
 }
 /* ------------------------------- voice ------------------------------- */
 /* Mock mode's simulated voice catalog. Live mode never uses these:
@@ -8787,7 +9115,14 @@ function chatsPanelHtml() {
   return h;
 }
 
-var federationState = null;
+// The status column's federation list lives in its OWN
+// variable (#212): the Federation page's federationState is
+// the state OBJECT from POST /api/federation, this one is
+// the status payload's [{name, state}] array. They shared a
+// global once — the boot-time status poll overwrote the
+// page's object with the array, federationHtml() threw on
+// knownDefault, and the Federation view never painted.
+var fedStatusList = null;
 function renderFederationStatus(live) {
   // Build 2 (#204): the FediNet sections — under the Servers
   // list, above Sudo Mode, exactly where the decree puts
@@ -8802,9 +9137,9 @@ function renderFederationStatus(live) {
   // federation truth to read, so the section stays absent
   // there rather than inventing one.
   if (CONFIG.backend !== "live") return "";
-  if (live && Array.isArray(live.federation)) federationState = live.federation;
-  if (!federationState) return "";
-  var feds = federationState;
+  if (live && Array.isArray(live.federation)) fedStatusList = live.federation;
+  if (!fedStatusList) return "";
+  var feds = fedStatusList;
   if (!feds.length) {
     return "<div class='stat'><span style='color:var(--dim)'>You are not federated.</span></div>";
   }
@@ -8866,7 +9201,7 @@ function renderStatus(live) {
     renderBootStatus(live && live.boot) +
     "</details></div>" +
     renderFederationStatus(live) +
-    renderSudo() +
+    renderSudo(live) +
     renderVoiceStatus() +
     stat("CASE", openCaseState ? openCaseState.name : "No case open", openCaseState ? "#34d399" : "#9fb3c8") +
     stat("MEMORY", memory.length + " entries (local)", "#34d399") +
@@ -9828,7 +10163,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -9852,7 +10187,7 @@ function render() {
     messages.forEach(function (m, idx) {
       var isCurrent = idx >= lastYouIdx;
       var foldKey = String(activeChatId) + ":" + idx;
-      h += "<div class='msg'><div class='msg-row'>" + msgAvatarHtml(m) + "<div class='msg-body'><div class='who'>" + msgWhoHtml(m) + "</div>";
+      h += "<div class='msg'" + (m.shell ? " data-shellrec='1'" : "") + "><div class='msg-row'>" + msgAvatarHtml(m) + "<div class='msg-body'><div class='who'>" + msgWhoHtml(m) + "</div>";
       if (m.who === "YOU" && m.text) {
         var nxt = messages[idx + 1];
         var isCliYou = routeOfLine(m.text).kind === "cli" || (nxt && nxt.exec && (nxt.exec.command === m.text || nxt.exec.command === String(m.text).replace(/^\$\s*/, "")));
@@ -9877,6 +10212,7 @@ function render() {
         } else h += execChatHtml(m.exec);
       }
       if (m.operation) h += operationCardHtml(m.operation);
+      if (m.shell) h += shellEventsHtml(m.shell.events);
       if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with “This chat only” beside the composer, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
@@ -9896,8 +10232,10 @@ function render() {
     // The composer dock (build .66): everything under the thread —
     // the bar, the toggle row — renders inside one .composer zone
     // so it reads as a single docked unit.
+    h += shellPaneHtml();
     h += "<div class='composer'>";
     if (voiceMsg) h += "<div style='color:#f5b544;font-size:12px;margin:4px 0'>" + esc(voiceMsg) + "</div>";
+    h += shellBarHtml();
     // The call, in the chat window: a call started here (or in
     // the Voice view) runs in place — timer, state, push-to-talk,
     // and End above the composer, with the thread itself as the
@@ -9921,7 +10259,7 @@ function render() {
     // the hint row beside the mode latch — a pressed state, kept
     // per chat session like the latch itself.
     var meshLocalBtn = "<button type='button' id='chat-mesh-local' aria-pressed='" + (meshLocal ? "true" : "false") + "' aria-label='This chat only: keep it on this machine — while on, this chat never borrows a paired machine' title='This chat only: keep it on this machine' style='" + (meshLocal ? "border-color:var(--cy);color:var(--cy)" : "") + "'>This chat only" + (meshLocal ? " ●" : "") + "</button>";
-    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
+    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-shell' aria-label='Open a shell session in this chat' title='Shell session (CLI Mode)' style='min-height:44px;font-family:monospace;font-weight:700'>&gt;_</button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
       : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
       : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines run as system commands until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
@@ -10185,6 +10523,36 @@ function render() {
     // The Door (Build 2, #173): the trusted-device list lives
     // here in Settings → System AND on the DHD page — one shared
     // renderer (doorDevicesCardHtml), one registry behind it.
+    // Sudo Mode (Build 3, #209): the arm switch lives here, and
+    // it is a switch-gate surface \u2014 the flip, the bridge's
+    // stored state and what a reload shows must agree. Flipping
+    // on does not pretend: it reveals the masked prompt ON THIS
+    // CARD, and the switch turns on only when the bridge
+    // confirms the arm. A refusal (wrong password, cold sudo)
+    // degrades honestly right here \u2014 the switch stays off and
+    // the reason sits on the same card, never stranded elsewhere.
+    if (settingsTab === "system") (function () {
+      var st = CONFIG.backend === "live" ? sudoState : (CONFIG.sudo ? { enabled: true, state: "armed" } : { enabled: false, state: "off" });
+      var on = !!(st && st.enabled);
+      var word = !on ? "Off" : st.state === "armed" ? "Armed \u2014 root" : "On \u2014 timestamp expired";
+      h += "<div class='card'><h3>Sudo Mode \u2014 Navi, elevated</h3>";
+      h += "<p style='color:var(--dim)'>When armed, the commands Navi runs in chat may run as root. Arming feeds your password <b>once</b> to <span class='mono'>sudo -v</span> \u2014 it is never stored, logged or synced, by the page or the bridge; what persists is sudo's own credential timestamp and one on/off flag. When the timestamp lapses the mode reads <b>Expired</b> and elevated commands refuse honestly until you re-warm. Disarming is instant and total: the flag flips and the timestamp is killed. Every elevated command Navi runs is written to an append-only audit (<span class='mono'>config/sudo-audit.jsonl</span> in the install home), shown read-only below; the audit never rides Sync.</p>";
+      h += "<div style='display:flex;align-items:center;gap:8px'><button class='switch' id='set-sudo-sw' role='switch' aria-checked='" + (on ? "true" : "false") + "' aria-label='Sudo mode' " + (sudoArmBusy ? "disabled" : "") + "><span class='knob'></span></button><span><b>" + esc(word) + "</b></span></div>";
+      if (on && st.state === "expired") h += "<p style='font-size:12px;color:#f5b544'>sudo's timestamp has lapsed. Elevated commands refuse until you re-warm. <button class='ghost' id='set-sudo-rewarm' style='min-height:44px;padding:6px 10px'>Re-warm</button></p>";
+      if (sudoArmOpen && !sudoArmBusy) {
+        h += "<div style='margin-top:8px'><label style='color:var(--dim);font-size:12px' for='set-sudo-pw'>Sudo password \u2014 asked once per arm, never kept:</label>" +
+          "<div class='row'><input class='grow' id='set-sudo-pw' type='password' autocomplete='off' aria-label='Sudo password for arming sudo mode' placeholder='sudo password'><button class='act' id='set-sudo-arm' style='min-height:44px'>Arm sudo mode</button><button class='ghost' id='set-sudo-cancel' style='min-height:44px'>Cancel</button></div></div>";
+      }
+      if (sudoArmBusy) h += "<p style='font-size:12px;color:var(--dim)'>Arming\u2026 (a fingerprint reader, if this machine has one, gets its say first.)</p>";
+      if (sudoArmError) h += "<p style='font-size:12px;color:#f87171'>" + esc(sudoArmError) + "</p>";
+      if (on) {
+        h += "<div style='margin-top:10px'><button class='ghost' id='set-sudo-audit' style='min-height:44px;padding:6px 10px'>" + (sudoAuditEntries ? "Refresh the audit" : "Show the audit") + "</button></div>";
+        if (sudoAuditEntries) {
+          h += sudoAuditEntries.length ? "<div class='mono' style='font-size:12px;margin-top:8px;max-height:220px;overflow:auto'>" + sudoAuditEntries.slice().reverse().map(function (e) { return "<div>" + esc(new Date((e.ts || 0) * 1000).toLocaleString()) + " \u00b7 " + esc(e.command || "") + " \u00b7 chat " + esc(String(e.chat == null ? "\u2014" : e.chat)) + " \u00b7 exit " + esc(String(e.exit)) + "</div>"; }).join("") + "</div>" : "<p style='color:var(--dim);font-size:12px'>No elevated commands on the record yet.</p>";
+        }
+      }
+      h += "</div>";
+    })();
     if (settingsTab === "system") h += doorDevicesCardHtml();
     // Hardware profile (build .34): what the installer detected on
     // this machine and the runtime settings it chose from it.
@@ -10324,6 +10692,8 @@ function render() {
   wire();
   if (view === "Docs") docsRestoreNav();
   if (view === "Chat") {
+    watchShellSession();
+    wireShellUi();
     wireOperationCards(mainEl);
     messages.forEach(function (m) { if (m.operation && (m.operation.state === "running" || m.operation.state === "waiting")) watchOperation(m.operation.id); });
     var msgsEl = document.getElementById("msgs");
@@ -11637,6 +12007,7 @@ function wire() {
       fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) { bootFetching = false; if (j && j.boot) { bootStateCache = j.boot; if (view === "Settings" && settingsTab === "system") render(); } }).catch(function () { bootFetching = false; });
     }
     wireDoorDevices();
+    wireSudoCard();
     var savePersona = function () { saveCfg(); if (CONFIG.backend === "live") fetch("/api/persona", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ soul: CONFIG.soul, memory: CONFIG.memory }) }).catch(function () {}); };
     var soulSave = document.getElementById("soul-save");
     if (soulSave) soulSave.onclick = function () { var ta = document.getElementById("soul-doc"); if (ta) CONFIG.soul = ta.value; savePersona(); };

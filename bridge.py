@@ -39,15 +39,20 @@ Stdlib only. Endpoints:
   POST /api/chat      {messages:[...], sudo, operator_name} -> proxies
                       to the llamafile server, with Navi's persona as
                       the system prompt
-  POST /api/shell     {command:"...", sudo, sudo_password} -> runs it,
-                      returns output. Commands run from the operator's
-                      home directory; sudo commands run inside the
-                      bridge's one persistent root shell (below).
-  POST /api/sudo/auth {password} -> validates the session sudo
-                      password once and opens the root shell with it;
-                      the password is never stored or logged by the
-                      bridge
-  POST /api/sudo/logout -> closes the root shell (sudo turned off)
+  POST /api/shell     {command:"...", sudo} -> runs it, returns
+                      output. Commands run from the operator's home
+                      directory; elevated commands ride sudo mode
+                      (below).
+  POST /api/sudo/arm  {password} -> warms sudo's own timestamp once
+                      (sudo -v) and enables sudo mode; the password
+                      is never stored, logged or synced
+  POST /api/sudo/disarm -> disables sudo mode and kills the
+                      timestamp (sudo -k), instantly and totally
+  GET  /api/sudo/audit -> the append-only record of the elevated
+                      commands Navi has run (never rides Sync)
+  POST /api/shell/session/open|input|close, GET
+       /api/shell/session/state -> the per-chat interactive shell
+                      sessions (CLI Mode, below)
   GET  /api/github    -> GitHub account state: repo/issues URLs,
                       whether an OAuth client id is configured,
                       sign-in state, backup settings, last
@@ -226,32 +231,40 @@ there is no model to proxy to, so /api/chat treats the message as a
 plain command line — it runs it as a shell command and returns the
 system output, flagged mode="command-line" so the UI can say so.
 
-Sudo mode: bare "sudo -n" can never elevate on a normal sudo setup —
-it refuses to ask for a password, so every command failed with "a
-password is required". One sudo process per command (the first fix)
-was not enough either: on machines whose sudo PAM stack tries a
-fingerprint reader (pam_fprintd) before the password, every fresh
-sudo paid the full fingerprint wait and printed the reader's
-prompts into the command's output, and sudo's credential cache —
-keyed to a terminal the bridge's children don't have — never
-carried from one command to the next. So the bridge now pays the
-PAM cost exactly once: when the operator enables sudo mode, the
-app asks for the sudo password once (kept in page memory for the
-session only — never saved, never logged, cleared when sudo is
-turned off or the page closes) and POST /api/sudo/auth validates
-it by opening ONE persistent root shell (sudo /bin/sh) in the
-bridge. Every sudo command is piped through that shell, framed by
-a sentinel line carrying its exit code: no new sudo process, no
-PAM, no reader prompts — commands run instantly, and their output
-is purely their own (the one-time start's PAM chatter is consumed
-by the handshake, and clean_sudo_output() strips those lines on
-the fallback paths too). The dashboard still sends the password
-with each sudo request, so if the bridge restarted or the shell
-died, the next command reopens the shell on demand. Without a
-session password the bridge falls back to "sudo -n" and, if sudo
-answers "a password is required", appends a pointer to
-authenticate. Turning sudo off POSTs /api/sudo/logout, which
-closes the root shell immediately.
+Sudo mode (v0.3.0e — Build 3, #209): the operator arms it in
+Settings with one masked password prompt. The bridge feeds the
+password once to "sudo -v" and forgets it — never stored, logged
+or synced; what persists is a single boolean in navi.config.json.
+While sudo's own credential timestamp lives, elevated commands
+run as "sudo -n <cmd>" (never prompt); when it lapses the state
+reads EXPIRED and elevated commands refuse honestly until the
+operator re-warms. Disarming flips the boolean and runs
+"sudo -k", so it is instant and total. Every elevated command
+Navi runs is appended to config/sudo-audit.jsonl (timestamp,
+command as run, chat served, exit status), surfaced read-only in
+Settings, and deliberately NOT part of the Sync set. This
+replaced the parked pre-Build-3 design (a persistent root shell
+held by the bridge, the password re-sent by the page with every
+request): the shell was the credential, held root indefinitely,
+and had no expiry semantics. One cost is accepted knowingly: on
+machines whose sudo PAM stack tries a fingerprint reader before
+the password, each fresh "sudo -n" still runs PAM — but "-n"
+fails fast instead of waiting out the reader, and the arm's one
+"sudo -v" pays the full conversation once per timestamp window.
+
+CLI Mode shell sessions (Build 3, #209): each chat can hold ONE
+standing interactive session — a real shell on a PTY, born on
+first interactive need (the operator opens it, or Navi drives
+one through a [[shell]] block in her reply), surviving messages
+and window reloads, closed explicitly or after 30 idle minutes
+(the thread says so either way). Output streams into the thread
+as events badged by author (operator / Navi); a program that
+takes the alternate screen gets a real terminal grid on the
+desktop and an honestly-named streamed degradation on mobile.
+Sessions are local to the seat's bridge and die with it — the
+thread keeps the record and names the death rather than faking
+continuity. Elevation never rides the PTY: a session runs under
+its own session id, so sudo inside it prompts in-terminal.
 
 Voice: Navi can be called and spoken with, and the whole loop is
 local — she hears through faster-whisper (Whisper on CTranslate2,
@@ -395,11 +408,11 @@ SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-14.02"
+BRIDGE_BUILD = "2026-11-14.03"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
-# Build 2. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 2
+# Build 3. The Updater's third comparison tier reads it.
+SHIPPED_BUILD_SEQ = 3
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3179,10 +3192,28 @@ def wire_settings(cfg):
     b = cfg.get("wire") if isinstance(cfg, dict) else None
     if not isinstance(b, dict):
         b = {}
+    # Operator feeds (Build 3, #210): name + URL pairs the
+    # operator added, validated at add time (see /api/wire/feeds).
+    # They live in navi.config.json, which is NOT part of the
+    # Sync set — feeds are per-seat until the operator says
+    # otherwise, and the build report says so out loud.
+    feeds = []
+    for f in b.get("feeds") or []:
+        if not isinstance(f, dict):
+            continue
+        url = str(f.get("url") or "").strip()
+        name = str(f.get("name") or "").strip()[:80]
+        if not name or not (url.startswith("http://")
+                            or url.startswith("https://")):
+            continue
+        fid = str(f.get("id") or "") or (
+            "custom-" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:10])
+        feeds.append({"id": fid, "name": name, "url": url[:500]})
     return {
         "enabled": b.get("enabled") is not False,
         "intervalMinutes": max(5, min(240, _mesh_int(b.get("intervalMinutes"), 30))),
         "retentionDays": max(1, min(30, _mesh_int(b.get("retentionDays"), 7))),
+        "feeds": feeds,
     }
 
 
@@ -9218,31 +9249,36 @@ def expand(path):
 
 
 # ---------------------------------------------------------------------
-# Sudo: one persistent root shell per bridge session.
+# Sudo mode (v0.3.0e — Build 3, #209 leg A2): sudo's own timestamp,
+# no stored password, every elevated Navi run on the record.
 #
-# Why not "sudo -S <cmd>" per command? On machines whose sudo PAM
-# stack tries a fingerprint reader (pam_fprintd) before the password,
-# EVERY fresh sudo process pays the fingerprint wait first: the
-# prompt ("Place your right index finger on the fingerprint
-# reader") and "Verification timed out" land in the command's own
-# output — polluting the transcript and the output the model is
-# handed — and the password is only checked after the reader gives
-# up, so every elevated command crawls. Authenticating once does
-# not help: sudo's credential cache is keyed to a terminal, and the
-# bridge's child processes have none, so the next per-command sudo
-# re-runs the whole PAM stack anyway. The fix is to pay the PAM
-# cost exactly once: when the operator authenticates, the bridge
-# opens ONE root shell (sudo /bin/sh) and pipes every sudo command
-# through it, framing each command's output with a sentinel line
-# that carries its exit code. Per command there is no new sudo
-# process and no PAM at all — commands run instantly and their
-# output is purely the command's own. The PAM chatter from the
-# one-time shell start is consumed by the start handshake, and
-# clean_sudo_output() strips those exact lines anywhere else they
-# surface (the per-command fallback path can still produce them).
-# The shell dies with the bridge, when a command times out, or on
-# /api/sudo/logout (the dashboard calls it when sudo is turned
-# off); it is never written anywhere.
+# The model: the operator arms sudo mode in Settings. Arming feeds
+# the operator's password ONCE to "sudo -v" on stdin — the password
+# transits this process's memory for that single call and is never
+# stored, logged, synced or written anywhere. What persists is one
+# boolean in navi.config.json (sudo.enabled) plus sudo's own
+# credential timestamp. While the timestamp lives, elevated
+# commands run as "sudo -n <cmd>" (never prompt); when it lapses
+# the state reads EXPIRED and elevated commands refuse honestly
+# until the operator re-warms. Disarming flips the boolean and
+# kills the timestamp (sudo -k) — instant and total.
+#
+# Why this replaced the persistent root shell: the shell WAS the
+# credential, so the bridge held root indefinitely with no expiry
+# semantics at all. The timestamp model borrows sudo's own expiry
+# instead. And every elevated command Navi runs lands on the
+# record: config/sudo-audit.jsonl, append-only, surfaced read-only
+# in Settings, deliberately NOT part of the Sync set.
+#
+# Session note: sudo timestamps key by session id (and tty, where
+# configured). Every child the bridge spawns without setsid shares
+# the bridge's session, so one child's "sudo -v" warms the next
+# child's "sudo -n" — the sudo1 bench proves this on the shipped
+# package. Interactive shell sessions (CLI Mode, below) run under
+# their own session id and deliberately do NOT inherit the warmth:
+# the operator's own sudo inside their terminal prompts
+# in-terminal, as it should, and Navi never drives elevation
+# through the PTY at all.
 
 SUDO_NOISE_LINES = (
     "verification timed out",
@@ -9251,9 +9287,10 @@ SUDO_NOISE_LINES = (
     "could not verify fingerprint",
 )
 
-_root_shell = {"proc": None, "token": ""}
+SUDO_AUDIT_PATH = os.path.join(
+    os.path.dirname(CONFIG_PATH), "sudo-audit.jsonl")
 _sudo_lock = threading.Lock()
-_sudo_counter = [0]
+_sudo_probe_cache = {"at": 0.0, "warm": False}
 
 
 def _is_sudo_noise(line):
@@ -9274,189 +9311,121 @@ def clean_sudo_output(text):
     return "\n".join(kept).strip()
 
 
-def _root_shell_kill():
-    proc = _root_shell.get("proc")
-    _root_shell["proc"] = None
-    _root_shell["token"] = ""
-    if proc is not None:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+def sudo_settings(cfg=None):
+    cfg = cfg if cfg is not None else load_config()
+    raw = cfg.get("sudo") if isinstance(cfg, dict) else None
+    return {"enabled": bool(isinstance(raw, dict) and raw.get("enabled"))}
 
 
-def _root_shell_read_until(proc, token, want, deadline):
-    # Read the root shell's merged output until the sentinel line
-    # for id "want" appears; a sentinel looks like
-    # "<token>-<id>:<exit code>". Returns (output, exit_code) with
-    # exit_code None on timeout or EOF. Sentinel lines with other
-    # ids (leftovers from the start handshake) are skipped, never
-    # shown. Reads via select + os.read so a command filling the
-    # pipe can't deadlock the bridge, and merged stderr means a
-    # chatty command can't fill an unread stderr pipe either.
-    sentinel = re.compile(
-        "^" + re.escape(token) + r"-([a-z0-9]+):(\d+)$")
-    buf = ""
-    lines = []
-    fd = proc.stdout.fileno()
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            try:
-                chunk = os.read(fd, 65536)
-            except Exception:
-                chunk = b""
-            if not chunk:
-                if buf.strip():
-                    lines.append(buf)
-                return "\n".join(lines), None
-            buf += chunk.decode("utf-8", "replace")
-        else:
-            ready, _, _ = select.select([fd], [], [], 0.25)
-            if not ready:
-                continue
-            try:
-                chunk = os.read(fd, 65536)
-            except Exception:
-                chunk = b""
-            if not chunk:
-                if buf.strip():
-                    lines.append(buf)
-                return "\n".join(lines), None
-            buf += chunk.decode("utf-8", "replace")
-        while "\n" in buf:
-            line, buf = buf.split("\n", 1)
-            m = sentinel.match(line.strip())
-            if m:
-                if m.group(1) == want:
-                    return "\n".join(lines), int(m.group(2))
-                continue
-            lines.append(line)
-    return "\n".join(lines), None
-
-
-def _root_shell_start(password, timeout=90):
-    # Open the root shell: one sudo process, one PAM conversation.
-    # The 90s budget exists because that one conversation may have
-    # to wait out a fingerprint reader before the password is even
-    # tried. Returns (ok, error). Three sentinel lines follow the
-    # password on purpose: with a wrong password sudo consumes them
-    # as its remaining attempts and exits (EOF below) instead of
-    # blocking on a stdin nobody will write to again; with the
-    # right password the shell runs them and the handshake reads
-    # through the last one, draining all three.
-    _root_shell_kill()
-    token = "NAVI" + str(int(time.time() * 1000) % 100000000)
+def _sudo_probe():
+    # Is sudo's credential timestamp warm for the bridge's session
+    # right now? "sudo -n true" answers without ever prompting.
+    # Cached for a few seconds: the status column polls.
+    now = time.time()
+    if now - _sudo_probe_cache["at"] < 5:
+        return _sudo_probe_cache["warm"]
+    warm = False
     try:
-        proc = subprocess.Popen(
-            ["sudo", "-S", "-p", "", "/bin/sh"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, cwd=shell_cwd(),
-        )
-    except Exception as e:
-        return False, "could not start sudo: " + str(e)
-    try:
-        proc.stdin.write((password + "\n").encode())
-        for boot in ("boot1", "boot2", "boot3"):
-            proc.stdin.write(
-                ("echo " + token + "-" + boot + ":$?\n").encode())
-        proc.stdin.flush()
+        proc = subprocess.run(
+            ["sudo", "-n", "true"], capture_output=True, text=True,
+            timeout=10, cwd=shell_cwd())
+        warm = proc.returncode == 0
     except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return False, "sudo closed the session before it started."
-    _out, code = _root_shell_read_until(
-        proc, token, "boot3", time.time() + timeout)
-    if code is None:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return False, (
-            "sudo did not open a root shell — the password was "
-            "rejected, or the machine's sign-in prompt (a "
-            "fingerprint reader, for example) never finished."
-        )
-    _root_shell["proc"] = proc
-    _root_shell["token"] = token
-    return True, None
+        warm = False
+    _sudo_probe_cache["at"] = now
+    _sudo_probe_cache["warm"] = warm
+    return warm
 
 
-def _root_shell_run(body, timeout):
-    # Run one command in the open root shell. Returns the result
-    # dict, or None when there is no live shell to run it in.
-    proc = _root_shell.get("proc")
-    if proc is None or proc.poll() is not None:
-        _root_shell_kill()
-        return None
-    token = _root_shell["token"]
-    _sudo_counter[0] += 1
-    cid = "c" + str(_sudo_counter[0])
-    try:
-        proc.stdin.write((body + "\n").encode())
-        proc.stdin.write(
-            ("echo " + token + "-" + cid + ":$?\n").encode())
-        proc.stdin.flush()
-    except Exception:
-        _root_shell_kill()
-        return None
-    output, code = _root_shell_read_until(
-        proc, token, cid, time.time() + timeout)
-    if code is None:
-        # Timed out or the shell died mid-command: close it so the
-        # next sudo command opens a fresh one instead of queueing
-        # behind a stuck shell.
-        _root_shell_kill()
-        return {
-            "command": "sudo " + body,
-            "output": clean_sudo_output(output) +
-                "\n(the root shell stopped answering and was closed "
-                "— the next sudo command opens a fresh one)",
-            "exit_code": 1,
-        }
-    return {
-        "command": "sudo " + body,
-        "output": clean_sudo_output(output),
-        "exit_code": code,
-    }
+def sudo_state(cfg=None):
+    # The one status shape every surface reads: the Settings card,
+    # the status column, /api/status. "off" = the feature is not
+    # enabled; "armed" = enabled and the timestamp is warm;
+    # "expired" = enabled but the timestamp has lapsed.
+    if not sudo_settings(cfg)["enabled"]:
+        return {"enabled": False, "state": "off"}
+    return {"enabled": True,
+            "state": "armed" if _sudo_probe() else "expired"}
 
 
-def validate_sudo_password(password, timeout=120):
-    # Validate the session sudo password AND leave the bridge
-    # ready: open the persistent root shell with it, so the PAM
-    # conversation (fingerprint wait included, on machines that
-    # have one) happens exactly once, here. If a root shell can't
-    # be opened on this machine, fall back to a plain "sudo -v"
-    # validation so authentication can still succeed and commands
-    # run per-command instead. The password itself is never stored
-    # or logged — it is fed to sudo on stdin and forgotten; the
-    # open shell is the credential. Returns (ok, error).
-    with _sudo_lock:
-        ok, _err = _root_shell_start(password)
-        if ok:
-            return True, None
+def sudo_arm(password):
+    # Warm sudo's timestamp with the operator's password, fed once
+    # on stdin and forgotten — never stored, logged or synced. On
+    # success the feature is enabled in config; on failure nothing
+    # is enabled and the refusal carries sudo's own words (cleaned
+    # of PAM chatter). Returns (ok, error_or_None). The 120s budget
+    # exists because the one PAM conversation may have to wait out
+    # a fingerprint reader before the password is even tried.
+    password = (password or "").split("\n")[0]
+    if not password:
+        return False, "Enter the sudo password to arm sudo mode."
     try:
         proc = subprocess.run(
             "sudo -S -p '' -v", shell=True, capture_output=True,
-            text=True, timeout=timeout, cwd=shell_cwd(),
-            input=password + "\n",
-        )
-        if proc.returncode == 0:
-            return True, None
+            text=True, timeout=120, cwd=shell_cwd(),
+            input=password + "\n")
+    except Exception as e:
+        return False, "sudo could not be run: " + str(e)
+    _sudo_probe_cache["at"] = 0.0
+    if proc.returncode != 0 or not _sudo_probe():
         err_text = clean_sudo_output(
             ((proc.stderr or "") + "\n" + (proc.stdout or "")).strip())
         lines = [ln for ln in err_text.split("\n")
                  if "try again" not in ln.lower()]
         msg = lines[-1].strip() if lines else "sudo rejected that password."
         return False, msg
-    except Exception as e:
-        return False, str(e)
+    cfg = load_config()
+    cfg["sudo"] = {"enabled": True}
+    save_config(cfg)
+    return True, None
 
+
+def sudo_disarm():
+    # Instant and total: the boolean flips AND the timestamp dies,
+    # so nothing the bridge runs can elevate again until a fresh
+    # arm — not even inside sudo's own timeout window.
+    cfg = load_config()
+    cfg["sudo"] = {"enabled": False}
+    save_config(cfg)
+    try:
+        subprocess.run(["sudo", "-k"], capture_output=True, timeout=10,
+                       cwd=shell_cwd())
+    except Exception:
+        pass
+    _sudo_probe_cache["at"] = 0.0
+    _sudo_probe_cache["warm"] = False
+    return sudo_state(cfg)
+
+
+def sudo_audit_append(command, chat_id, exit_code):
+    # Append-only. One JSON object per elevated run: when, the
+    # command as run, the chat it served, how it ended. Returns
+    # False when the record could not be written — the caller
+    # surfaces that on the result rather than hiding it.
+    entry = {"ts": int(time.time()), "command": command,
+             "chat": chat_id, "exit": exit_code}
+    try:
+        os.makedirs(os.path.dirname(SUDO_AUDIT_PATH), exist_ok=True)
+        with open(SUDO_AUDIT_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def sudo_audit_entries(limit=100):
+    try:
+        with open(SUDO_AUDIT_PATH, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except Exception:
+        return []
+    out = []
+    for ln in lines[-max(1, int(limit)):]:
+        try:
+            out.append(json.loads(ln))
+        except Exception:
+            continue
+    return out
 
 
 def path_complete(prefix, base=None):
@@ -9502,7 +9471,8 @@ def path_complete(prefix, base=None):
     return out[:12]
 
 
-def run_shell(command, timeout=20, sudo=False, sudo_password=""):
+def run_shell(command, timeout=20, sudo=False, sudo_password="",
+              chat_id=None, audit=False):
     raw = (command or "").strip()
     body = raw
     wants_sudo = bool(sudo)
@@ -9513,24 +9483,14 @@ def run_shell(command, timeout=20, sudo=False, sudo_password=""):
     # What the transcript shows — never the password, never the
     # plumbing behind it.
     display = ("sudo " + body) if wants_sudo and body else body
-    password = (sudo_password or "").split("\n")[0]
     if wants_sudo and body:
-        with _sudo_lock:
-            if password and _root_shell.get("proc") is None:
-                # Authenticate on demand: /api/sudo/auth normally
-                # opens the root shell, but the bridge may have
-                # restarted since (or the shell died) — the request
-                # carries the session password, so reopen it here.
-                _root_shell_start(password)
-            result = _root_shell_run(body, timeout)
-        if result is not None:
-            result["command"] = display
-            return result
+        password = (sudo_password or "").split("\n")[0]
         if password:
-            # A session password exists but no root shell could be
-            # opened or kept: fall back to one sudo process for
-            # this command, PAM chatter filtered. Slow on
-            # fingerprint machines, still correct.
+            # Explicit-password path — internal callers only (the
+            # DHD prerequisite installer, whose password the
+            # operator types into that flow for that purpose). One
+            # sudo process, the password on stdin, never stored,
+            # logged or synced.
             proc = subprocess.run(
                 "sudo -S -p '' " + body, shell=True,
                 capture_output=True, text=True, timeout=timeout,
@@ -9543,35 +9503,59 @@ def run_shell(command, timeout=20, sudo=False, sudo_password=""):
                 or "sorry" in output.lower()
             ):
                 output += (
-                    "\n(sudo rejected the session password — turn "
-                    "sudo off and back on in the status column and "
-                    "authenticate again.)"
+                    "\n(sudo rejected the password given to that "
+                    "installer step.)"
                 )
             return {
                 "command": display,
                 "output": output,
                 "exit_code": proc.returncode,
             }
-        # No session password and no root shell: -n never prompts.
-        # It can only succeed inside sudo's own cached-timestamp
-        # window; otherwise the operator needs the note below.
+        # Sudo mode proper (Build 3): the timestamp model. Nothing
+        # here ever prompts; a command that cannot run says why.
+        st = sudo_state()
+        if not st["enabled"]:
+            return {
+                "command": display,
+                "output": "(sudo mode is off — this command was not "
+                          "run. Arm sudo mode in Settings → System "
+                          "if it should run elevated.)",
+                "exit_code": 1,
+            }
+        if st["state"] != "armed":
+            return {
+                "command": display,
+                "output": "(sudo mode is on but its timestamp has "
+                          "expired — this command was not run. "
+                          "Re-warm sudo mode in Settings → System.)",
+                "exit_code": 1,
+            }
         proc = subprocess.run(
             "sudo -n " + body, shell=True, capture_output=True,
             text=True, timeout=timeout, cwd=shell_cwd(),
         )
         output = clean_sudo_output((proc.stdout + proc.stderr).strip())
         if proc.returncode != 0 and "password is required" in output:
+            # The timestamp died between the probe and the run.
+            _sudo_probe_cache["at"] = 0.0
+            _sudo_probe_cache["warm"] = False
             output += (
-                "\n(sudo mode is on but not authenticated for this "
-                "session — turn sudo off and back on in the status "
-                "column and enter the sudo password once; it is kept "
-                "in page memory for the session only, never saved.)"
+                "\n(sudo mode's timestamp expired before this "
+                "command ran — re-warm sudo mode in Settings → "
+                "System.)"
             )
-        return {
+        result = {
             "command": display,
             "output": output,
             "exit_code": proc.returncode,
         }
+        if audit and not sudo_audit_append(display, chat_id,
+                                           proc.returncode):
+            result["output"] = (output +
+                "\n(warning: the sudo audit log could not be "
+                "written — this elevated run is not on the "
+                "record.)").strip()
+        return result
     proc = subprocess.run(
         body, shell=True, capture_output=True, text=True,
         timeout=timeout, cwd=shell_cwd(),
@@ -9581,6 +9565,609 @@ def run_shell(command, timeout=20, sudo=False, sudo_password=""):
         "output": (proc.stdout + proc.stderr).strip(),
         "exit_code": proc.returncode,
     }
+
+
+# ---------------------------------------------------------------------
+# CLI Mode: interactive shell sessions (v0.3.0e — Build 3, #209
+# leg A1). One standing PTY-backed session per chat.
+#
+# A session is born on first interactive need — the operator opens
+# it from the composer, or Navi drives one into existence with a
+# [[shell]] block — and then survives messages and window reloads
+# (it lives here, in the bridge, not in the page). It ends when
+# someone closes it, when its shell exits, after 30 minutes
+# without input (the sweeper says so in the thread), or when the
+# bridge dies — and a bridge death is never papered over: the
+# events stay queryable as a tombstone until the bridge restarts,
+# and the persisted thread record shows a session with no closing
+# note, which the page names as a bridge restart.
+#
+# Everything a session does is an event on the chat's record:
+# inputs badged by author ("operator" / "navi"), output as it
+# streams. A program that takes the alternate screen is held on a
+# real grid (below) for the desktop's terminal pane; its output
+# does not pollute the streamed record, and entering/leaving the
+# alternate screen is itself noted in the thread.
+#
+# Elevation never rides the PTY: the session runs under its own
+# session id, so sudo's timestamp warmth from sudo mode does not
+# leak into it (and Navi has no password to type here anyway).
+# The operator's own sudo inside their session prompts in-terminal.
+
+import codecs
+import fcntl
+import pty
+import signal
+import termios
+
+SHELL_IDLE_SECONDS = 1800  # 30 minutes without input
+
+_ANSI_SEQ = re.compile(
+    r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|.)",
+    re.S)
+
+
+def _strip_ansi(text):
+    if not text:
+        return ""
+    return _ANSI_SEQ.sub("", text).replace("\r", "")
+
+
+class _TermGrid:
+    """A minimal VT grid — enough of xterm to hold a full-screen
+    program's frame for the desktop pane: printable text with
+    wrap, CR/LF/BS, cursor addressing, erases, insert/delete
+    lines and chars, scrolling, and the alternate screen. SGR
+    and friends are parsed and ignored. It is a faithful record
+    of the frame, not a terminal emulator competing with xterm."""
+
+    def __init__(self, cols=80, rows=24):
+        self.cols = max(20, int(cols or 80))
+        self.rows = max(5, int(rows or 24))
+        self.main = self._blank()
+        self.alt = None
+        self.cx = 0
+        self.cy = 0
+        self.in_alt = False
+
+    def _blank(self):
+        return [[" "] * self.cols for _ in range(self.rows)]
+
+    @property
+    def grid(self):
+        return self.alt if self.in_alt else self.main
+
+    def lines(self):
+        return ["".join(r).rstrip() for r in self.grid]
+
+    def resize(self, cols, rows):
+        cols = max(20, int(cols or self.cols))
+        rows = max(5, int(rows or self.rows))
+        for name in ("main", "alt"):
+            g = getattr(self, name)
+            if g is None:
+                continue
+            ng = [[" "] * cols for _ in range(rows)]
+            for y in range(min(rows, len(g))):
+                for x in range(min(cols, len(g[y]))):
+                    ng[y][x] = g[y][x]
+            setattr(self, name, ng)
+        self.cols, self.rows = cols, rows
+        self.cx = min(self.cx, cols - 1)
+        self.cy = min(self.cy, rows - 1)
+
+    def _scroll_up(self, n=1):
+        g = self.grid
+        for _ in range(n):
+            g.pop(0)
+            g.append([" "] * self.cols)
+
+    def _scroll_down(self, n=1):
+        g = self.grid
+        for _ in range(n):
+            g.pop()
+            g.insert(0, [" "] * self.cols)
+
+    def _newline(self):
+        self.cx = 0
+        self.cy += 1
+        if self.cy >= self.rows:
+            self._scroll_up(1)
+            self.cy = self.rows - 1
+
+    def _put(self, ch):
+        self.grid[self.cy][self.cx] = ch
+        self.cx += 1
+        if self.cx >= self.cols:
+            self._newline()
+
+    def feed(self, text):
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":
+                m = re.match(r"\x1b\[([0-9;?]*)([@-~])", text[i:])
+                if m:
+                    self._csi(m.group(1), m.group(2))
+                    i += m.end()
+                    continue
+                m = re.match(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)",
+                             text[i:])
+                if m:
+                    i += m.end()
+                    continue
+                i += 2 if i + 1 < n else 1
+                continue
+            if ch == "\n":
+                self._newline()
+            elif ch == "\r":
+                self.cx = 0
+            elif ch == "\b":
+                self.cx = max(0, self.cx - 1)
+            elif ch == "\t":
+                self.cx = min(self.cols - 1, (self.cx // 8 + 1) * 8)
+            elif ch >= " ":
+                self._put(ch)
+            i += 1
+
+    def _csi(self, params, final):
+        private = params.startswith("?")
+        nums = [p for p in params.lstrip("?").split(";") if p != ""]
+        def num(k, default):
+            try:
+                v = int(nums[k])
+                return v if v != 0 else default
+            except Exception:
+                return default
+        g = self.grid
+        if private:
+            modes = [int(p) for p in nums if p.isdigit()]
+            if any(m in (1049, 1047, 47) for m in modes):
+                if final == "h" and not self.in_alt:
+                    self.alt = self._blank()
+                    self.in_alt = True
+                elif final == "l" and self.in_alt:
+                    self.in_alt = False
+                    self.alt = None
+            return
+        if final in ("H", "f"):
+            self.cy = max(0, min(self.rows - 1, num(0, 1) - 1))
+            self.cx = max(0, min(self.cols - 1, num(1, 1) - 1))
+        elif final == "A":
+            self.cy = max(0, self.cy - num(0, 1))
+        elif final == "B":
+            self.cy = min(self.rows - 1, self.cy + num(0, 1))
+        elif final == "C":
+            self.cx = min(self.cols - 1, self.cx + num(0, 1))
+        elif final == "D":
+            self.cx = max(0, self.cx - num(0, 1))
+        elif final == "G":
+            self.cx = max(0, min(self.cols - 1, num(0, 1) - 1))
+        elif final == "d":
+            self.cy = max(0, min(self.rows - 1, num(0, 1) - 1))
+        elif final == "J":
+            mode = num(0, 0)
+            if mode == 0:
+                for x in range(self.cx, self.cols):
+                    g[self.cy][x] = " "
+                for y in range(self.cy + 1, self.rows):
+                    g[y] = [" "] * self.cols
+            elif mode == 1:
+                for x in range(0, self.cx + 1):
+                    g[self.cy][x] = " "
+                for y in range(0, self.cy):
+                    g[y] = [" "] * self.cols
+            else:
+                for y in range(self.rows):
+                    g[y] = [" "] * self.cols
+        elif final == "K":
+            mode = num(0, 0)
+            if mode == 0:
+                rng = range(self.cx, self.cols)
+            elif mode == 1:
+                rng = range(0, self.cx + 1)
+            else:
+                rng = range(0, self.cols)
+            for x in rng:
+                g[self.cy][x] = " "
+        elif final == "L":
+            for _ in range(num(0, 1)):
+                g.insert(self.cy, [" "] * self.cols)
+                g.pop()
+        elif final == "M":
+            for _ in range(num(0, 1)):
+                g.pop(self.cy)
+                g.append([" "] * self.cols)
+        elif final == "P":
+            row = g[self.cy]
+            for _ in range(num(0, 1)):
+                if self.cx < len(row):
+                    row.pop(self.cx)
+                    row.append(" ")
+        elif final == "@":
+            row = g[self.cy]
+            for _ in range(num(0, 1)):
+                row.insert(self.cx, " ")
+                row.pop()
+        elif final == "S":
+            self._scroll_up(num(0, 1))
+        elif final == "T":
+            self._scroll_down(num(0, 1))
+        # m (SGR), r, s, u, and everything else: parsed, ignored.
+
+
+def _key_display(text):
+    # How a raw key burst reads in the thread record: printable
+    # runs kept, control characters named.
+    out = []
+    for ch in text:
+        if ch in ("\r", "\n"):
+            out.append("⏎")
+        elif ch == "\x03":
+            out.append("^C")
+        elif ch == "\x04":
+            out.append("^D")
+        elif ch == "\x1a":
+            out.append("^Z")
+        elif ch == "\x09":
+            out.append("⇥")
+        elif ch < " ":
+            out.append("^" + chr(ord(ch) + 64))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+class ShellSession:
+    """One chat's standing terminal. See the section header."""
+
+    def __init__(self, chat_id, cols=80, rows=24):
+        self.chat_id = str(chat_id)
+        self.grid = _TermGrid(cols, rows)
+        self.events = []
+        self.seq = 0
+        self.lock = threading.Lock()
+        self.created_at = time.time()
+        self.last_input_at = time.time()
+        self.alive = True
+        self.close_reason = None
+        self._pending = ""
+        self._pending_at = 0.0
+        self._tail = ""
+        self._was_alt = False
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        master, slave = pty.openpty()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", self.grid.rows,
+                                    self.grid.cols, 0, 0))
+        except Exception:
+            pass
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+
+        def _preexec():
+            os.setsid()
+            try:
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+            except Exception:
+                pass
+
+        self.proc = subprocess.Popen(
+            ["/bin/bash", "-i"], stdin=slave, stdout=slave,
+            stderr=slave, cwd=shell_cwd(), env=env,
+            preexec_fn=_preexec, close_fds=True)
+        os.close(slave)
+        self.master = master
+        os.set_blocking(master, False)
+        self._emit("note", None, "shell session opened")
+        self._reader = threading.Thread(target=self._read_loop,
+                                        daemon=True)
+        self._reader.start()
+
+    # -- events ---------------------------------------------------
+    def _emit(self, kind, author, text):
+        with self.lock:
+            self.seq += 1
+            self.events.append({
+                "seq": self.seq, "kind": kind, "author": author,
+                "text": text, "ts": int(time.time())})
+            if len(self.events) > 400:
+                del self.events[:len(self.events) - 400]
+
+    def events_since(self, since):
+        with self.lock:
+            return [dict(e) for e in self.events if e["seq"] > since]
+
+    def output_tail(self, limit=1200):
+        with self.lock:
+            return self._tail[-limit:]
+
+    # -- output path ------------------------------------------------
+    def _on_data(self, text):
+        if not text:
+            return
+        with self.lock:
+            self.grid.feed(text)
+            alt = self.grid.in_alt
+        if alt != self._was_alt:
+            self._was_alt = alt
+            if alt:
+                self._flush_pending(force=True)
+                self._emit("note", None,
+                           "a program took the full screen — on the "
+                           "desktop it renders in the terminal pane")
+            else:
+                self._emit("note", None,
+                           "the full-screen program exited — back "
+                           "to the streamed record")
+        if not alt:
+            self._pending += text
+            if not self._pending_at:
+                self._pending_at = time.time()
+            self._flush_pending()
+
+    def _flush_pending(self, force=False):
+        if not self._pending:
+            return
+        if not force and len(self._pending) < 8192 \
+                and time.time() - self._pending_at < 0.15:
+            return
+        raw, self._pending = self._pending, ""
+        self._pending_at = 0.0
+        text = _strip_ansi(raw)
+        if text.strip():
+            with self.lock:
+                self._tail = (self._tail + text)[-8000:]
+            self._emit("out", None, text.rstrip("\n"))
+
+    def _read_loop(self):
+        while True:
+            try:
+                r, _, _ = select.select([self.master], [], [], 0.2)
+            except Exception:
+                break
+            if r:
+                try:
+                    chunk = os.read(self.master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                self._on_data(self._decoder.decode(chunk))
+            self._flush_pending()
+            if self.proc.poll() is not None:
+                try:
+                    while True:
+                        chunk = os.read(self.master, 65536)
+                        if not chunk:
+                            break
+                        self._on_data(self._decoder.decode(chunk))
+                except Exception:
+                    pass
+                break
+        self._flush_pending(force=True)
+        code = self.proc.poll()
+        with self.lock:
+            was = self.alive
+            self.alive = False
+        if was:
+            self._emit("note", None,
+                       "the shell exited" +
+                       ("" if code is None else
+                        " (exit " + str(code) + ")") +
+                       " — the session is closed")
+            _shell_session_died(self)
+
+    # -- input path ---------------------------------------------------
+    def input(self, text, author, raw=False):
+        if not self.alive:
+            return False
+        try:
+            os.write(self.master, text.encode("utf-8", "replace"))
+        except OSError:
+            return False
+        self.last_input_at = time.time()
+        shown = _key_display(text) if raw else text.rstrip("\r\n")
+        if shown or not raw:
+            self._emit("in", author, shown)
+        return True
+
+    def resize(self, cols, rows):
+        with self.lock:
+            self.grid.resize(cols, rows)
+            rows_now, cols_now = self.grid.rows, self.grid.cols
+        try:
+            fcntl.ioctl(self.master, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", rows_now, cols_now, 0, 0))
+        except Exception:
+            pass
+
+    def kill(self, reason):
+        with self.lock:
+            was = self.alive
+            self.alive = False
+            self.close_reason = reason
+        if was:
+            self._flush_pending(force=True)
+            self._emit("note", None, "session closed (" + reason + ")")
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            self.proc.wait(timeout=2)
+        except Exception:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
+        try:
+            os.close(self.master)
+        except Exception:
+            pass
+
+
+_shell_sessions = {}
+_shell_tombstones = {}
+_shell_mgr_lock = threading.Lock()
+_shell_sweeper_on = [False]
+
+
+def _shell_sweeper():
+    while True:
+        time.sleep(20)
+        now = time.time()
+        for chat_id, sess in list(_shell_sessions.items()):
+            if sess.alive and \
+                    now - sess.last_input_at > SHELL_IDLE_SECONDS:
+                shell_session_close(chat_id, "idle for 30 minutes")
+
+
+def _ensure_sweeper():
+    if not _shell_sweeper_on[0]:
+        _shell_sweeper_on[0] = True
+        threading.Thread(target=_shell_sweeper, daemon=True).start()
+
+
+def shell_session_open(chat_id, cols=80, rows=24):
+    key = str(chat_id)
+    with _shell_mgr_lock:
+        sess = _shell_sessions.get(key)
+        if sess is not None and sess.alive:
+            return sess
+        sess = ShellSession(key, cols, rows)
+        _shell_sessions[key] = sess
+        _shell_tombstones.pop(key, None)
+        _ensure_sweeper()
+        return sess
+
+
+def shell_session_get(chat_id):
+    sess = _shell_sessions.get(str(chat_id))
+    return sess if (sess is not None and sess.alive) else None
+
+
+def shell_session_input(chat_id, text, author, raw=False, create=False):
+    sess = shell_session_get(chat_id)
+    if sess is None and create:
+        sess = shell_session_open(chat_id)
+    if sess is None:
+        return False
+    return sess.input(text, author, raw=raw)
+
+
+def shell_session_close(chat_id, reason="closed by the operator"):
+    key = str(chat_id)
+    with _shell_mgr_lock:
+        sess = _shell_sessions.pop(key, None)
+        if sess is not None:
+            _shell_tombstones[key] = sess
+    if sess is not None:
+        sess.kill(reason)
+    return sess
+
+
+def _shell_session_died(sess):
+    with _shell_mgr_lock:
+        if _shell_sessions.get(sess.chat_id) is sess:
+            _shell_sessions.pop(sess.chat_id, None)
+            _shell_tombstones[sess.chat_id] = sess
+
+
+def shell_session_state(chat_id, since=0):
+    key = str(chat_id)
+    sess = _shell_sessions.get(key)
+    if sess is not None and sess.alive:
+        with sess.lock:
+            alt = sess.grid.in_alt
+            screen = sess.grid.lines() if alt else None
+            cursor = [sess.grid.cx, sess.grid.cy]
+            seq = sess.seq
+        return {
+            "ok": True, "live": True, "ended": False,
+            "chatId": key, "altScreen": alt, "screen": screen,
+            "cursor": cursor, "seq": seq,
+            "events": sess.events_since(since),
+            "idleFor": int(time.time() - sess.last_input_at),
+        }
+    tomb = _shell_tombstones.get(key)
+    if tomb is not None:
+        return {
+            "ok": True, "live": False, "ended": True,
+            "chatId": key, "altScreen": False, "screen": None,
+            "cursor": None, "seq": tomb.seq,
+            "events": tomb.events_since(since),
+            "closeReason": tomb.close_reason or "the shell exited",
+        }
+    return {"ok": True, "live": False, "ended": False,
+            "chatId": key, "altScreen": False, "screen": None,
+            "cursor": None, "seq": 0, "events": []}
+
+
+def shell_sessions_kill_all():
+    for chat_id in list(_shell_sessions.keys()):
+        shell_session_close(chat_id, "the bridge is shutting down")
+
+
+_SHELL_BLOCK = re.compile(r"\[\[shell\]\]\s*\n?(.*?)\n?\s*\[\[/shell\]\]",
+                          re.S)
+
+SHELL_TEACHING = (
+    "Interactive shell: this chat can hold ONE live terminal "
+    "session. When a step needs a stateful shell — answering a "
+    "prompt, working in a REPL or an interactive tool, anything "
+    "where the next move depends on the terminal's answer — end "
+    "your reply with a block:\n[[shell]]\neach line to type, "
+    "exactly as typed\n[[/shell]]\nThe lines are typed into the "
+    "session badged as yours, its output streams into the thread, "
+    "and you will see its tail on your next turn. One-shot "
+    "commands do not need the session; they run as they always "
+    "have. Elevation never rides the session: sudo inside it "
+    "prompts in-terminal.")
+
+
+def extract_shell_block(reply, chat_id):
+    """Navi drives the chat's interactive session: a [[shell]]
+    block in her reply is stripped from the text, each line typed
+    into the session (born here if this is her first interactive
+    need), badged "navi". Mirrors extract_case_log. Returns
+    (clean_reply, drove_or_None)."""
+    if not reply or chat_id is None:
+        return reply, None
+    m = _SHELL_BLOCK.search(reply)
+    if not m:
+        return reply, None
+    lines = m.group(1).split("\n")
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+    drove = []
+    for ln in lines[:20]:
+        if shell_session_input(chat_id, ln + "\n", "navi",
+                               create=True):
+            drove.append(ln)
+    cleaned = (reply[:m.start()] + reply[m.end():]).strip()
+    return cleaned, {"lines": drove}
+
+
+def shell_session_brief(chat_id):
+    """What Navi is told about this chat's live session before she
+    answers: that it lives, and the tail of what it has shown."""
+    if chat_id is None:
+        return ""
+    sess = shell_session_get(chat_id)
+    if sess is None:
+        return ""
+    tail = sess.output_tail(1200)
+    out = ("A live interactive shell session is open in this chat. "
+           "Its recent output:\n" + (tail or "(nothing yet)"))
+    if sess.grid.in_alt:
+        out += ("\n(A full-screen program currently holds the "
+                "terminal.)")
+    return out
 
 
 def installed_commands():
@@ -21882,6 +22469,11 @@ class Handler(BaseHTTPRequestHandler):
                 # sections — one per membership, state from the
                 # federation machinery itself.
                 "federation": federation_status_slice(cfg),
+                # Build 3 (#209): sudo mode's state, read true —
+                # the status column and the Settings card both
+                # render from this, so the switch, the stored
+                # state and the reload view cannot disagree.
+                "sudo": sudo_state(cfg),
                 "boot": boot_mode_payload(),
             })
         elif self.path.startswith("/api/operations/"):
@@ -22080,6 +22672,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "item": _item})
         elif self.path == "/api/wire":
             self._send(200, WIRE.state())
+        elif self.path.split("?")[0] == "/api/shell/session/state":
+            # CLI Mode (Build 3): the session's events since the
+            # page's last sequence number, plus the full-screen
+            # grid while a program holds the alternate screen.
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                _since = int((qs.get("since") or ["0"])[0])
+            except Exception:
+                _since = 0
+            self._send(200, shell_session_state(
+                (qs.get("chatId") or ["main"])[0], _since))
+        elif self.path == "/api/sudo/audit":
+            # The record, read-only: every elevated command Navi
+            # has run under sudo mode. It lives in the install
+            # home and never rides Sync.
+            self._send(200, {"ok": True, "entries": sudo_audit_entries(100),
+                             "sudo": sudo_state()})
         elif self.path.split("?")[0] == "/api/wire/article":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._send(200, WIRE.read_article((qs.get("url") or [""])[0]))
@@ -22922,6 +23531,35 @@ class Handler(BaseHTTPRequestHandler):
                 ))
             except Exception as e:
                 self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
+        elif self.path == "/api/shell/session/open":
+            # CLI Mode (Build 3): open (or return) the chat's one
+            # standing interactive session.
+            data = self._body()
+            sess = shell_session_open(str(data.get("chatId") or "main"),
+                                      data.get("cols") or 80,
+                                      data.get("rows") or 24)
+            self._send(200, shell_session_state(sess.chat_id, 0))
+        elif self.path == "/api/shell/session/input":
+            data = self._body()
+            ok = shell_session_input(str(data.get("chatId") or "main"),
+                                     str(data.get("text") or ""),
+                                     "operator",
+                                     raw=bool(data.get("raw")))
+            if ok:
+                self._send(200, {"ok": True})
+            else:
+                self._send(200, {"ok": False, "error": "No live shell session for this chat — open one first."})
+        elif self.path == "/api/shell/session/close":
+            data = self._body()
+            chat_id = str(data.get("chatId") or "main")
+            shell_session_close(chat_id)
+            self._send(200, shell_session_state(chat_id, 0))
+        elif self.path == "/api/shell/session/resize":
+            data = self._body()
+            sess = shell_session_get(str(data.get("chatId") or "main"))
+            if sess is not None:
+                sess.resize(data.get("cols") or 80, data.get("rows") or 24)
+            self._send(200, {"ok": sess is not None})
         elif self.path == "/api/update/apply":
             # Starts the end-to-end apply: the worker downloads,
             # verifies (gzip-tolerant), and stages the release
@@ -22937,34 +23575,27 @@ class Handler(BaseHTTPRequestHandler):
             # Downloads folder under a sanitized name — the shell's
             # webview cannot save files the way a browser does.
             self._send(200, save_download_payload(self._body()))
-        elif self.path == "/api/sudo/auth":
-            # Authenticate sudo mode once, when the operator enables
-            # it: validate the password AND open the bridge's
-            # persistent root shell with it (validate_sudo_password),
-            # so the machine's whole PAM conversation — fingerprint
-            # reader first, on machines that have one — happens
-            # exactly once, here, instead of inside every command.
-            # That is why this can legitimately take a while. The
-            # password is never stored or logged — the dashboard
-            # holds it in page memory and re-sends it with each sudo
-            # request; the bridge forgets it once the shell is open.
+        elif self.path == "/api/sudo/arm":
+            # Sudo mode (Build 3): the operator arms it from
+            # Settings. The password rides this one request into
+            # "sudo -v" and is forgotten — never stored, logged or
+            # synced. The reply carries the fresh state so the
+            # card can show exactly what the bridge holds (the
+            # switch gate's three-way contract).
             data = self._body()
-            password = str(data.get("password") or "").split("\n")[0]
+            password = str(data.get("password") or "")
             if not password:
-                self._send(200, {"ok": False, "error": "Enter the sudo password to authenticate sudo mode."})
+                self._send(200, {"ok": False, "error": "Enter the sudo password to arm sudo mode.", "sudo": sudo_state()})
             else:
-                ok, err = validate_sudo_password(password)
+                ok, err = sudo_arm(password)
                 if ok:
-                    self._send(200, {"ok": True})
+                    self._send(200, {"ok": True, "sudo": sudo_state()})
                 else:
-                    self._send(200, {"ok": False, "error": "sudo authentication failed: " + str(err)})
-        elif self.path == "/api/sudo/logout":
-            # Sudo was turned off in the dashboard: close the root
-            # shell now rather than leaving root open in the bridge
-            # until it exits.
-            with _sudo_lock:
-                _root_shell_kill()
-            self._send(200, {"ok": True})
+                    self._send(200, {"ok": False, "error": "sudo mode was not armed: " + str(err), "sudo": sudo_state()})
+        elif self.path == "/api/sudo/disarm":
+            # Instant and total: the flag flips and the timestamp
+            # dies with it (sudo_disarm runs sudo -k).
+            self._send(200, {"ok": True, "sudo": sudo_disarm()})
         elif self.path == "/api/hardware/redetect":
             # Re-run profiling on the real machine and store it:
             # detected hardware, derived settings, reasoning, and
@@ -23561,7 +24192,10 @@ class Handler(BaseHTTPRequestHandler):
             exec_block = None
             m = LIST_INTENT.search(last or "")
             if m:
-                result = run_shell("ls " + expand(m.group(1)), sudo=sudo, sudo_password=sudo_password)
+                # Navi's own initiative — when this runs elevated
+                # it lands in the sudo audit (Build 3, #209).
+                result = run_shell("ls " + expand(m.group(1)), sudo=sudo, sudo_password=sudo_password,
+                                   chat_id=data.get("chatId"), audit=True)
                 exec_block = result
                 messages = messages + [{
                     "role": "system",
@@ -23646,6 +24280,18 @@ class Handler(BaseHTTPRequestHandler):
                 _aw = _awareness_brief_block()
                 if _aw:
                     _system_prompt += "\n\n" + _aw
+            except Exception:
+                pass
+            # CLI Mode (Build 3, #209): the standing teaching
+            # rides every model turn — it is the only way she
+            # knows the session exists — and when this chat holds
+            # a live session its tail rides too, so she answers
+            # the prompt she is actually looking at.
+            _system_prompt += "\n\n" + SHELL_TEACHING
+            try:
+                _sbrief = shell_session_brief(data.get("chatId"))
+                if _sbrief:
+                    _system_prompt += "\n\n" + _sbrief
             except Exception:
                 pass
             _bound_case = ""
@@ -23768,6 +24414,15 @@ class Handler(BaseHTTPRequestHandler):
                         reply, _clog = extract_case_log(reply, _bound_case, last or "")
                     except Exception:
                         _clog = None
+                # CLI Mode (Build 3, #209): her [[shell]] block
+                # comes out of the reply the same way — the lines
+                # are typed into this chat's session badged as
+                # hers, and the drive rides back as data.
+                try:
+                    reply, _shell_drove = extract_shell_block(
+                        reply, data.get("chatId"))
+                except Exception:
+                    _shell_drove = None
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload
@@ -23775,6 +24430,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload["caseFilings"] = _cfilings
                 if _clog:
                     payload["caseLog"] = _clog
+                if _shell_drove:
+                    payload["shellDrove"] = _shell_drove
                 if _msaves:
                     payload["memorySaves"] = _msaves
                 if _mrefused:
@@ -24873,6 +25530,47 @@ class Handler(BaseHTTPRequestHandler):
             cfg2["wire"] = block
             save_config(cfg2)
             self._send(200, {"ok": True, "wire": wire_settings(cfg2)})
+        elif self.path == "/api/wire/feeds":
+            # Operator feeds (Build 3, #210): validated at add
+            # time — the feed is fetched and parsed BEFORE it is
+            # saved, and a refusal names its reason. A saved feed
+            # is first-class from the next pull.
+            data = self._body()
+            name = str(data.get("name") or "").strip()[:80]
+            url = str(data.get("url") or "").strip()[:500]
+            if not name:
+                self._send(200, {"ok": False, "error": "Give the feed a name first."})
+            else:
+                if wire_mod is None:
+                    ok, sentence, count = False, "The wire engine is not loaded in this bridge.", 0
+                else:
+                    ok, sentence, count = wire_mod.validate_feed(url)
+                if not ok:
+                    self._send(200, {"ok": False, "error": sentence})
+                else:
+                    cfg2 = load_config()
+                    block = cfg2.get("wire") if isinstance(cfg2.get("wire"), dict) else {}
+                    feeds = wire_settings(cfg2)["feeds"]
+                    fid = "custom-" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
+                    if any(f["id"] == fid for f in feeds):
+                        self._send(200, {"ok": False, "error": "That feed is already on the wire."})
+                    else:
+                        feeds.append({"id": fid, "name": name, "url": url})
+                        block["feeds"] = feeds
+                        cfg2["wire"] = block
+                        save_config(cfg2)
+                        self._send(200, {"ok": True, "wire": wire_settings(cfg2),
+                                         "sentence": "Feed added — " + str(count) + " items on its current front page. It joins the next pull."})
+        elif self.path == "/api/wire/feeds/remove":
+            data = self._body()
+            fid = str(data.get("id") or "")
+            cfg2 = load_config()
+            block = cfg2.get("wire") if isinstance(cfg2.get("wire"), dict) else {}
+            feeds = [f for f in wire_settings(cfg2)["feeds"] if f["id"] != fid]
+            block["feeds"] = feeds
+            cfg2["wire"] = block
+            save_config(cfg2)
+            self._send(200, {"ok": True, "wire": wire_settings(cfg2)})
         elif self.path == "/api/ctf/refresh":
             self._send(200, CTF.refresh_now())
         elif self.path == "/api/ctf/settings":
@@ -25528,12 +26226,12 @@ if __name__ == "__main__":
                       "to step aside.", flush=True)
     claim_pid_file()
     atexit.register(drop_pid_file)
-    # The sudo root shell (if the operator authenticated) is a child
-    # of this process: close it on the way out so no root shell
-    # outlives the bridge. Its stdin is a pipe owned by this process,
-    # so even a hard kill of the bridge leaves it reading EOF — this
-    # is the tidy path, not the only one.
-    atexit.register(_root_shell_kill)
+    # CLI Mode shell sessions are children of this process: close
+    # them on the way out so no interactive shell outlives the
+    # bridge. Their masters are pipes owned by this process, so
+    # even a hard kill leaves them reading EOF — this is the tidy
+    # path, not the only one.
+    atexit.register(shell_sessions_kill_all)
     try:
         _mtime = os.path.getmtime(os.path.abspath(__file__))
     except Exception:

@@ -167,6 +167,30 @@ def feed_items(raw):
     return out
 
 
+def validate_feed(url, fetch=None):
+    """Add-time validation for an operator feed (v0.3.0e —
+    Build 3): the URL is fetched and parsed BEFORE the feed is
+    saved, and a refusal names its reason — unreachable,
+    unparseable, or not a feed. Returns (ok, sentence, count)."""
+    fetch = fetch or _fetch
+    u = (url or "").strip()
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return False, "That is not an http(s) URL.", 0
+    try:
+        _status, raw, _st = fetch(u, {})
+    except Exception as e:
+        return False, ("The feed could not be reached (" +
+                       str(e)[:140] + ")."), 0
+    try:
+        items = feed_items(raw)
+    except Exception:
+        return False, "What came back could not be parsed as a feed.", 0
+    if not items:
+        return False, ("What came back parsed but carried no items "
+                       "\u2014 it does not look like a news feed."), 0
+    return True, None, len(items)
+
+
 def kev_items(raw, since_ts):
     # KEV additions inside the retention window become wire
     # items (the catalog itself is the Center's store, not the
@@ -437,6 +461,25 @@ class Wire:
                 note(source_id, "", count=None, state=new_state)
             except Exception as e:
                 note(source_id, label + " could not be fetched (" + str(e)[:140] + ").")
+        # Operator feeds (Build 3): first-class — same ingest,
+        # same cadence, badged with the operator's own name for
+        # the source; a failure names itself on the feed's pill.
+        for feed in s.get("feeds") or []:
+            fid = str(feed.get("id") or "")
+            fname = str(feed.get("name") or fid)
+            furl = str(feed.get("url") or "")
+            if not fid or not furl:
+                continue
+            row = sources.get(fid) or {}
+            try:
+                status, raw, new_state = self._fetch(furl, row)
+                if status == 304:
+                    note(fid, "", state=row)
+                    continue
+                ingest(fid, fname, feed_items(raw))
+                note(fid, "", count=None, state=new_state)
+            except Exception as e:
+                note(fid, fname + " could not be fetched (" + str(e)[:140] + ").")
         # KEV additions.
         row = sources.get("kev") or {}
         try:
@@ -496,10 +539,21 @@ class Wire:
     def _source_rows(self, data):
         rows = []
         ids = [sid for sid, _l, _u in NEWS_SOURCES] + ["kev", "nvd"]
+        custom = {}
+        try:
+            for f in self.settings().get("feeds") or []:
+                if f.get("id"):
+                    custom[str(f["id"])] = f
+        except Exception:
+            custom = {}
+        ids += list(custom.keys())
         for sid in ids:
             row = (data.get("sources") or {}).get(sid) or {}
             rows.append({
-                "source": sid, "label": SOURCE_LABELS.get(sid, sid),
+                "source": sid,
+                "label": (custom.get(sid) or {}).get("name") or SOURCE_LABELS.get(sid, sid),
+                "custom": sid in custom,
+                "url": (custom.get(sid) or {}).get("url") or "",
                 "lastOk": row.get("lastOk") or 0, "lastTry": row.get("lastTry") or 0,
                 "error": row.get("error") or "",
                 "ageHours": (round((time.time() - row["lastOk"]) / 3600.0, 1)
@@ -541,6 +595,7 @@ class Wire:
             "lastOk": data.get("lastOk") or 0,
             "staleness": self.staleness_sentence(data),
             "sources": self._source_rows(data),
+            "feeds": self.settings().get("feeds") or [],
             "items": items,
         }
 
