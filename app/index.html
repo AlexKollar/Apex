@@ -10710,7 +10710,7 @@ function render() {
       }
       if (m.operation) h += operationCardHtml(m.operation);
       if (m.shell) h += shellEventsHtml(m.shell.events);
-      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with the route pill beside the composer set to “Use Local Resources”, or turn borrowing off on the Mesh page.</div>";
+      if (m.meshFirst && m.mesh) h += "<div class='card' style='margin-top:6px;font-size:12px'><b>Apex | Mesh</b> — this reply was written by <b>" + esc(m.mesh.node || "a paired machine") + "</b>, a machine you paired. Borrowing is automatic for paired machines: hold a chat home with the route pill beside the composer set to “Local”, or turn borrowing off on the Mesh page.</div>";
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       if (m.who === "NAVI") h += caseFilingsHtml(m);
