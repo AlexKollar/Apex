@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.4"
+SHIPPED_VERSION = "0.4.5"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.10"
+BRIDGE_BUILD = "2026-11-16.11"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 10
+SHIPPED_BUILD_SEQ = 11
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -10870,6 +10870,51 @@ SHELL_TEACHING = (
     "One-shot commands do not need the session; they run as "
     "they always have. Elevation never rides the session: sudo "
     "inside it prompts in-terminal.")
+
+# v0.4.5e (#241): starting a case from chat — Route A. The
+# operator's intent, expressed in conversation, is the trigger:
+# she acts in the same reply, by closing it with the intake
+# block below. The bridge does the creating and the filing;
+# her prose never does. extract_case_intake (in the case
+# section) is the acting half.
+CASE_TEACHING = (
+    "Starting a case: you can start a NEW case yourself, in "
+    "the conversation where the work surfaces. When the "
+    "operator's intent is to start one — he says so in his own "
+    "words, in whatever phrasing ('add this into a new research "
+    "case', 'this needs a case', 'start a case on X') — act on "
+    "it in the SAME reply: answer him in words first, in your "
+    "own voice, then close the reply with the intake block, "
+    "exactly this form:\n"
+    "[[case-intake]]\n"
+    "name: <the case's name>\n"
+    "type: <incident|investigation|research|hunt|locate>\n"
+    "client: <the client, when the conversation names one>\n"
+    "scope: <a one-line scope>\n"
+    "summary: <one or two lines — what this case is>\n"
+    "priority: <low|normal|high|critical>\n"
+    "tags: <comma-separated tags>\n"
+    "finding: <a conclusion's title> | <the finding, stated plainly>\n"
+    "entity: <name> | <person|org|account|system|place|other> | <their role in the case>\n"
+    "observable: <value> | <ip|domain|url|hash|file|wallet|other> | <a one-line context>\n"
+    "event: <what happened> | <the detail>\n"
+    "task: <a concrete next step>\n"
+    "[[/case-intake]]\n"
+    "Use only the lines the conversation supports, and swipe "
+    "as much REAL detail from it as it holds — the findings the "
+    "thread backs, the entities and observables actually named, "
+    "the beats of what happened. Never invent a detail to fill "
+    "a line, and leave a field out rather than guess it; the "
+    "name is the one line a case cannot be born without. One "
+    "intake per reply. A case exists only when the bridge "
+    "receipts it: the bridge creates the case, files your "
+    "swiped substance as UNVERIFIED leads, sets the case open, "
+    "and appends its own receipt to your reply — so never "
+    "present a case file as chat text, never say a case was "
+    "opened or anything was filed unless that receipt says so, "
+    "and never mention the block itself. Adding to an EXISTING "
+    "case is not an intake — that is the open case's filing and "
+    "logging, which ride their own markers.")
 
 
 def extract_shell_block(reply, chat_id):
@@ -23785,6 +23830,428 @@ def extract_case_log(reply, slug, source_text=""):
                    "duplicates": duplicates, "dropped": dropped}
 
 
+# --- Starting a case from chat (v0.4.5e, #241) -------------------
+# Route A: the conversational intake. When the operator's intent
+# is to start a new case, Navi acts in the same reply by closing
+# it with an intake block (CASE_TEACHING rides the prompt):
+#
+#   [[case-intake]]
+#   name: <the case's name>
+#   type: <incident|investigation|research|hunt|locate>
+#   client: ... / scope: ... / summary: ... / priority: ...
+#   tags: ... / sensitive: yes|no / owner: ...
+#   finding: <title> | <the finding, stated plainly>
+#   entity: <name> | <type> | <role in the case>
+#   observable: <value> | <kind> | <context line>
+#   event: <title> | <what happened>
+#   task: <a next step>
+#   [[/case-intake]]
+#
+# The bridge parses defensively, creates the case through the
+# ordinary machinery, files the swiped substance — findings in
+# her name, entities/observables/tasks as UNVERIFIED leads (the
+# #199 doctrine) — ensures the case's chat, sets the case OPEN,
+# and appends its OWN receipt to the reply: a case exists only
+# when the bridge receipts it. Every failure shape is named in
+# the reply and creates NOTHING. No block, no action: a model
+# miss is a field matter, not a bridge defect.
+CASEINTAKE_RE = re.compile(r"\[\[case-intake\]\](.*?)\[\[/case-intake\]\]", re.I | re.S)
+CASEINTAKE_OPEN_RE = re.compile(r"\[\[case-intake\]\]", re.I)
+CASEINTAKE_CAPS = {"finding": 6, "entity": 8, "observable": 8, "event": 6, "task": 6}
+CASEINTAKE_FIELD_KEYS = ("name", "client", "scope", "summary", "type",
+                         "priority", "tags", "sensitive", "owner")
+
+
+def _case_set_open(slug):
+    # The /api/cases/open write, for bridge-side callers: the
+    # open-case pointer is config, loaded and saved fresh so no
+    # stale in-request copy can clobber a newer state.
+    cfg2 = load_config()
+    block = cfg2.get("casefiles") if isinstance(cfg2.get("casefiles"), dict) else {}
+    block["open"] = slug
+    cfg2["casefiles"] = block
+    save_config(cfg2)
+
+
+def extract_case_intake(reply, cfg, source_text=""):
+    # Returns (reply, intake): intake is None when the reply
+    # holds no intake block at all. Otherwise the block is
+    # stripped from the reply and the intake dict rides the
+    # payload back — {ok: True, slug, name, type, chatId,
+    # findings, entities, observables, events, tasks, dropped}
+    # on a birth, {ok: False, error} on a refusal — with the
+    # bridge's receipt (or the named refusal) appended to the
+    # reply text itself.
+    text = reply or ""
+    blocks = CASEINTAKE_RE.findall(text)
+    clean = CASEINTAKE_RE.sub("", text)
+    tail_lines = 0
+    m_open = CASEINTAKE_OPEN_RE.search(clean)
+    if m_open:
+        # An opening token with no close (the extract_shell_block
+        # discipline: a truncated block is half an intake, and
+        # half an intake is never acted on). The tail is cut; a
+        # complete block ahead of it still stands on its own.
+        tail_lines = len([ln for ln in clean[m_open.start():].split("\n")[1:]
+                          if ln.strip()])
+        clean = clean[:m_open.start()]
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    if not blocks:
+        if m_open:
+            reason = ("the intake block was cut off before it closed, "
+                      "so it could not be read whole.")
+            line = ("— **Case not started:** " + reason + " Nothing was "
+                    "created. The **New case** button beside the composer "
+                    "will pre-fill a form from this conversation instead.")
+            return ((clean + "\n\n" + line) if clean else line), {"ok": False, "error": reason}
+        return text, None
+
+    def _refuse(reason):
+        line = ("— **Case not started:** " + reason + " Nothing was "
+                "created. The **New case** button beside the composer "
+                "will pre-fill a form from this conversation instead.")
+        return ((clean + "\n\n" + line) if clean else line), {"ok": False, "error": reason}
+
+    fields = {}
+    items = {"finding": [], "entity": [], "observable": [], "event": [], "task": []}
+    for block in blocks:
+        for raw_line in block.split("\n"):
+            line = raw_line.strip().lstrip("-").strip()
+            if not line:
+                continue
+            mf = re.match(r"^([a-z]+)\s*:\s*(.*)$", line, re.I)
+            if not mf:
+                continue
+            key, val = mf.group(1).lower(), mf.group(2).strip()
+            if key in CASEINTAKE_FIELD_KEYS:
+                if key not in fields:
+                    fields[key] = val
+            elif key in items:
+                items[key].append(val)
+    name = str(fields.get("name") or "").strip()
+    if not name and not any(items[k] for k in items) and not fields:
+        return _refuse("the intake block could not be read — it held no "
+                       "case fields and no material to file.")
+    if not name:
+        return _refuse("the intake named no case — a case cannot be "
+                       "born without a name.")
+    cfields = {
+        "summary": fields.get("summary") or "",
+        "type": str(fields.get("type") or "").lower(),
+        "priority": str(fields.get("priority") or "").lower(),
+        "tags": fields.get("tags") or "",
+        "sensitive": str(fields.get("sensitive") or "").lower() in ("yes", "true", "1"),
+        "owner": fields.get("owner") or "",
+    }
+    detail, err = case_create(name, fields.get("client") or "",
+                              fields.get("scope") or "", cfields)
+    if err or detail is None:
+        return _refuse(err or "the case could not be created.")
+    slug = detail["slug"]
+    chat = case_chat_ensure(slug)
+    chat_id = chat["id"] if chat else None
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    excerpt = " ".join(str(source_text or "").split())[:90]
+    source = "case intake from chat" + ((" — reply to: “" + excerpt + "”") if excerpt else "")
+    counts = {"finding": 0, "entity": 0, "observable": 0, "event": 0, "task": 0}
+    dropped = tail_lines
+    seen = {"entity": set(), "observable": set(), "task": set()}
+    for raw in items["finding"]:
+        if counts["finding"] >= CASEINTAKE_CAPS["finding"]:
+            dropped += 1
+            continue
+        title, sep, body = raw.partition("|")
+        title = " ".join(title.split()).strip()
+        body = body.strip() if sep else ""
+        if not title:
+            dropped += 1
+            continue
+        filed, ferr = case_file_entry(
+            slug, "finding", title,
+            (body + "\n\n" if body else "")
+            + "Swiped by Navi at case intake from the conversation — unverified.",
+            "info", False, author="navi")
+        if ferr:
+            dropped += 1
+        else:
+            counts["finding"] += 1
+    for raw in items["entity"]:
+        if counts["entity"] >= CASEINTAKE_CAPS["entity"]:
+            dropped += 1
+            continue
+        parts = [p.strip() for p in raw.split("|")]
+        ename = parts[0] if parts else ""
+        if not ename or _register_key(ename) in seen["entity"]:
+            dropped += 1
+            continue
+        etype = (parts[1].lower() if len(parts) > 1 else "") or "other"
+        if etype not in CASELOG_ENTITY_TYPES:
+            etype = "other"
+        role = parts[2] if len(parts) > 2 else ""
+        if _register_append(slug, "entities", ename, {
+                "type": etype, "role": role, "aliases": "", "identifiers": "",
+                "state": "lead", "author": "navi", "filed": now,
+                "source": source}, ""):
+            seen["entity"].add(_register_key(ename))
+            counts["entity"] += 1
+        else:
+            dropped += 1
+    for raw in items["observable"]:
+        if counts["observable"] >= CASEINTAKE_CAPS["observable"]:
+            dropped += 1
+            continue
+        parts = [p.strip() for p in raw.split("|")]
+        value = parts[0] if parts else ""
+        if not value or _register_key(value) in seen["observable"]:
+            dropped += 1
+            continue
+        okind = (parts[1].lower() if len(parts) > 1 else "") or "other"
+        if okind not in CASELOG_OBS_KINDS:
+            okind = "other"
+        ctx = parts[2] if len(parts) > 2 else ""
+        if _register_append(slug, "observables", value, {
+                "kind": okind, "state": "lead", "author": "navi",
+                "filed": now, "source": source}, ctx):
+            seen["observable"].add(_register_key(value))
+            counts["observable"] += 1
+        else:
+            dropped += 1
+    for raw in items["event"]:
+        if counts["event"] >= CASEINTAKE_CAPS["event"]:
+            dropped += 1
+            continue
+        title, sep, body = raw.partition("|")
+        title = " ".join(title.split()).strip()
+        body = body.strip() if sep else ""
+        if not title:
+            dropped += 1
+            continue
+        case_file_entry(slug, "timeline", title,
+                        (body + "\n\n" if body else "")
+                        + "Logged by Navi at case intake — unverified.")
+        counts["event"] += 1
+    for raw in items["task"]:
+        if counts["task"] >= CASEINTAKE_CAPS["task"]:
+            dropped += 1
+            continue
+        task_text = " ".join(raw.split()).strip()
+        if not task_text or _register_key(task_text) in seen["task"]:
+            dropped += 1
+            continue
+        if _register_append(slug, "tasks", task_text, {
+                "done": "no", "author": "navi", "filed": now,
+                "source": source}, ""):
+            seen["task"].add(_register_key(task_text))
+            counts["task"] += 1
+        else:
+            dropped += 1
+    bits = []
+    if counts["finding"]:
+        bits.append(str(counts["finding"]) + " finding" + ("s" if counts["finding"] != 1 else ""))
+    if counts["entity"]:
+        bits.append(str(counts["entity"]) + " entit" + ("ies" if counts["entity"] != 1 else "y"))
+    if counts["observable"]:
+        bits.append(str(counts["observable"]) + " observable" + ("s" if counts["observable"] != 1 else ""))
+    if counts["event"]:
+        bits.append(str(counts["event"]) + " timeline beat" + ("s" if counts["event"] != 1 else ""))
+    if counts["task"]:
+        bits.append(str(counts["task"]) + " task" + ("s" if counts["task"] != 1 else ""))
+    case_file_entry(slug, "timeline", "Case started from chat",
+                    "Navi started this case from the conversation at " + now
+                    + ((" and swiped in: " + ", ".join(bits) + ".") if bits else ".")
+                    + " Everything she swiped in lands unverified (state: lead) "
+                      "until the operator promotes or strikes it on review.")
+    _case_set_open(slug)
+    ctype = str(detail.get("type") or cfields["type"] or "investigation")
+    cname = str(detail.get("name") or name)
+    rbits = []
+    if counts["finding"]:
+        rbits.append(str(counts["finding"]) + " finding" + ("s" if counts["finding"] != 1 else "") + " filed")
+    if counts["entity"] or counts["observable"]:
+        lead_bits = []
+        if counts["entity"]:
+            lead_bits.append(str(counts["entity"]) + " entit" + ("ies" if counts["entity"] != 1 else "y"))
+        if counts["observable"]:
+            lead_bits.append(str(counts["observable"]) + " observable" + ("s" if counts["observable"] != 1 else ""))
+        rbits.append(" and ".join(lead_bits) + " logged as unverified leads")
+    if counts["event"]:
+        rbits.append(str(counts["event"]) + " timeline beat" + ("s" if counts["event"] != 1 else ""))
+    if counts["task"]:
+        rbits.append(str(counts["task"]) + " task" + ("s" if counts["task"] != 1 else "") + " proposed")
+    line = ("— **Case opened: " + cname + "** (" + ctype + ")"
+            + ((" — " + "; ".join(rbits)) if rbits else "")
+            + ". It is the open case now"
+            + (", and its own chat is ready on the card below." if chat_id else "."))
+    if dropped:
+        line += (" " + str(dropped) + " further item" + ("s" if dropped != 1 else "")
+                 + " did not fit the intake caps or repeated "
+                 + ("themselves" if dropped != 1 else "itself")
+                 + " and were dropped — named here, not silently.")
+    intake = {"ok": True, "slug": slug, "name": cname, "type": ctype,
+              "chatId": chat_id, "findings": counts["finding"],
+              "entities": counts["entity"], "observables": counts["observable"],
+              "events": counts["event"], "tasks": counts["task"],
+              "dropped": dropped}
+    return ((clean + "\n\n" + line) if clean else line), intake
+
+
+def case_register_add_lead(slug, register, heading, fields, body):
+    # v0.4.5e (#241): the lead-writing sibling of
+    # case_register_add, for material Navi swiped — the New
+    # case form's checked entities/observables ride it into a
+    # newborn case. Same guards (the case stands, the heading
+    # names something, a duplicate is refused in words), but
+    # the entry lands UNVERIFIED (state: lead), authored navi:
+    # the #199 doctrine does not bend because a form carried it.
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    if register not in ("entities", "observables"):
+        return None, "Only entities and observables ride the lead door."
+    heading = " ".join(str(heading or "").split()).strip()
+    if not heading:
+        return None, "The entry needs a name."
+    if any(e["key"] == _register_key(heading) for e in _case_register(slug, register)):
+        return None, "That entry is already in the register."
+    fields = fields if isinstance(fields, dict) else {}
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    if register == "entities":
+        etype = str(fields.get("type") or "").lower()
+        if etype not in CASELOG_ENTITY_TYPES:
+            etype = "other"
+        clean = {"type": etype, "role": str(fields.get("role") or ""),
+                 "aliases": "", "identifiers": ""}
+    else:
+        okind = str(fields.get("kind") or "").lower()
+        if okind not in CASELOG_OBS_KINDS:
+            okind = "other"
+        clean = {"kind": okind}
+    clean["state"] = "lead"
+    clean["author"] = "navi"
+    clean["filed"] = now
+    clean["source"] = "swiped from chat — the New case form"
+    if not _register_append(slug, register, heading, clean, str(body or "")):
+        return None, "The entry could not be written."
+    return case_detail_payload(slug), None
+
+
+# Route B's swipe (v0.4.5e, #241): a bridge-side model pass
+# over a chat's stored history proposes the new case's form —
+# the same llamafile_chat the prose guard re-asks with, under
+# a strict JSON-only instruction. Every failure is named; the
+# form opens blank on any of them rather than guess.
+CASE_DRAFT_INSTRUCTION = (
+    "You are preparing a NEW CASE FILE from a conversation between an "
+    "operator and his assistant. Read the conversation and propose the "
+    "case's intake form. Reply with ONE JSON object only — no prose, "
+    "no code fences, no commentary:\n"
+    "{\"name\": \"<a short case name>\", \"client\": \"\", \"scope\": \"\", "
+    "\"summary\": \"<one or two lines>\", "
+    "\"type\": \"<incident|investigation|research|hunt|locate>\", "
+    "\"priority\": \"<low|normal|high|critical>\", "
+    "\"tags\": \"<comma-separated tags>\", "
+    "\"entities\": [{\"name\": \"\", \"type\": \"<person|org|account|system|place|other>\", \"role\": \"\"}], "
+    "\"observables\": [{\"value\": \"\", \"kind\": \"<ip|domain|url|hash|file|wallet|other>\", \"context\": \"\"}]}\n"
+    "Use ONLY details the conversation actually states. Where it does "
+    "not support a field, use an empty string or an empty list. Never "
+    "invent a detail to fill the form.")
+
+
+def _case_draft_sanitize(obj):
+    if not isinstance(obj, dict):
+        return None
+
+    def _s(v, cap):
+        return " ".join(str(v or "").split())[:cap]
+
+    ctype = _s(obj.get("type"), 30).lower()
+    if ctype not in CASE_TYPES:
+        ctype = ""
+    prio = _s(obj.get("priority"), 30).lower()
+    if prio not in CASE_PRIORITIES:
+        prio = ""
+    ents = []
+    for e in (obj.get("entities") or [])[:12]:
+        if not isinstance(e, dict):
+            continue
+        nm = _s(e.get("name"), 120)
+        if not nm:
+            continue
+        et = _s(e.get("type"), 30).lower()
+        if et not in CASELOG_ENTITY_TYPES:
+            et = "other"
+        ents.append({"name": nm, "type": et, "role": _s(e.get("role"), 200)})
+    obss = []
+    for o in (obj.get("observables") or [])[:12]:
+        if not isinstance(o, dict):
+            continue
+        val = _s(o.get("value"), 200)
+        if not val:
+            continue
+        ok = _s(o.get("kind"), 30).lower()
+        if ok not in CASELOG_OBS_KINDS:
+            ok = "other"
+        obss.append({"value": val, "kind": ok, "context": _s(o.get("context"), 300)})
+    return {"name": _s(obj.get("name"), 160), "client": _s(obj.get("client"), 160),
+            "scope": _s(obj.get("scope"), 300), "summary": _s(obj.get("summary"), 600),
+            "type": ctype, "priority": prio, "tags": _s(obj.get("tags"), 200),
+            "sensitive": False, "entities": ents, "observables": obss}
+
+
+def case_draft_from_chat(chat_id, cfg):
+    # Returns (draft, None) or (None, named error).
+    rec = None
+    for r in chats_all():
+        if str(r.get("id")) == str(chat_id):
+            rec = r
+            break
+    if rec is None:
+        return None, ("No such chat on this machine — the draft needs "
+                      "the conversation it swipes from.")
+    lines = []
+    for m in (rec.get("messages") or [])[-40:]:
+        if not isinstance(m, dict):
+            continue
+        t = " ".join(str(m.get("text") or "").split())
+        if not t:
+            continue
+        who = "Navi" if str(m.get("who") or "") == "NAVI" else "Operator"
+        lines.append(who + ": " + t[:800])
+    transcript = "\n".join(lines)[:12000]
+    if not transcript:
+        return None, ("That conversation holds nothing to swipe yet — "
+                      "the form opens blank.")
+    endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
+    if not llamafile_alive(endpoint):
+        return None, ("Navi's model is not connected, so there is no "
+                      "swipe — the form opens blank and the fields are "
+                      "yours to fill.")
+    model = cfg.get("live", {}).get("model_name") or "navi"
+    try:
+        raw = llamafile_chat([
+            {"role": "system", "content": CASE_DRAFT_INSTRUCTION},
+            {"role": "user", "content": "The conversation:\n\n" + transcript},
+        ], endpoint, model)
+    except Exception:
+        return None, "The draft pass failed — the form opens blank rather than guess."
+    obj = None
+    if raw:
+        txt = str(raw).strip()
+        txt = re.sub(r"^```[a-z]*\s*", "", txt)
+        txt = re.sub(r"\s*```$", "", txt)
+        a, b = txt.find("{"), txt.rfind("}")
+        if a != -1 and b > a:
+            try:
+                obj = json.loads(txt[a:b + 1])
+            except Exception:
+                obj = None
+    draft = _case_draft_sanitize(obj) if obj is not None else None
+    if draft is None:
+        return None, ("Navi's draft came back unreadable — the form "
+                      "opens blank rather than guess.")
+    return draft, None
+
+
 def _case_brief_block(slug):
     # What Navi is told about the case whose chat she is in:
     # the summary first, then the file's contents WITH their
@@ -26071,6 +26538,10 @@ class Handler(BaseHTTPRequestHandler):
             # a live session its tail rides too, so she answers
             # the prompt she is actually looking at.
             _system_prompt += "\n\n" + SHELL_TEACHING
+            # v0.4.5e (#241): the case-intake teaching rides
+            # every model turn the same way — an intake can be
+            # asked for in any chat, not only in a case room.
+            _system_prompt += "\n\n" + CASE_TEACHING
             try:
                 _sbrief = shell_session_brief(data.get("chatId"))
                 if _sbrief:
@@ -26206,6 +26677,19 @@ class Handler(BaseHTTPRequestHandler):
                         reply, _clog = extract_case_log(reply, _bound_case, last or "")
                     except Exception:
                         _clog = None
+                # v0.4.5e (#241): the case intake — her
+                # [[case-intake]] block comes out of the reply
+                # the same way; the bridge creates the case,
+                # files the swipe as unverified leads, sets it
+                # open, and the receipt (or the named refusal)
+                # is appended to the reply by the bridge itself,
+                # with the intake riding back as payload data
+                # for the dashboard's card.
+                _cintake = None
+                try:
+                    reply, _cintake = extract_case_intake(reply, cfg, last or "")
+                except Exception:
+                    _cintake = None
                 # CLI Mode (Build 3, #209): her [[shell]] block
                 # comes out of the reply the same way — the lines
                 # are typed into this chat's session badged as
@@ -26244,6 +26728,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload["caseFilings"] = _cfilings
                 if _clog:
                     payload["caseLog"] = _clog
+                if _cintake:
+                    payload["caseIntake"] = _cintake
                 if _shell_drove:
                     payload["shellDrove"] = _shell_drove
                 if _msaves:
@@ -27259,12 +27745,23 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/cases/register":
             # Build 2 (#199): the operator files a register
             # entry (entity / observable / task) from the view.
+            # v0.4.5e (#241): with "unverified" set, the entry
+            # rides the lead door instead — Navi-swiped material
+            # (the New case form's checked entries) lands as a
+            # lead in her name, never as the operator's record.
             data = self._body()
-            detail, err = case_register_add(
-                str(data.get("case") or ""), str(data.get("register") or ""),
-                data.get("heading"),
-                data.get("fields") if isinstance(data.get("fields"), dict) else {},
-                data.get("body"))
+            if data.get("unverified") is True:
+                detail, err = case_register_add_lead(
+                    str(data.get("case") or ""), str(data.get("register") or ""),
+                    data.get("heading"),
+                    data.get("fields") if isinstance(data.get("fields"), dict) else {},
+                    data.get("body"))
+            else:
+                detail, err = case_register_add(
+                    str(data.get("case") or ""), str(data.get("register") or ""),
+                    data.get("heading"),
+                    data.get("fields") if isinstance(data.get("fields"), dict) else {},
+                    data.get("body"))
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
@@ -27318,6 +27815,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": "No such case."})
             else:
                 self._send(200, {"ok": True, "chatId": chat["id"], "chat": chat})
+        elif self.path == "/api/cases/draft":
+            # v0.4.5e (#241): Route B's swipe — a bridge-side
+            # model pass over the chat's stored history proposes
+            # the new case's form. Failures are named; the form
+            # opens blank on any of them rather than guess.
+            data = self._body()
+            draft, err = case_draft_from_chat(data.get("chatId"), load_config())
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "draft": draft})
         elif self.path == "/api/cases/delete":
             # Build 15 (#163): delete is complete — the case, all
             # its Vault files, and its tied chat. The dashboard's

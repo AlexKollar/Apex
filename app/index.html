@@ -660,6 +660,16 @@
   .composer #chat-in { width:100%; }
   .composer #chat-upload, .composer #chat-mic { width:44px; height:44px; min-height:44px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; flex:0 0 auto; }
   #chat-call { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:44px; min-height:44px; padding:0 14px; border-radius:6px; flex:0 0 auto; }
+  /* New case from chat (v0.4.5e, #241): the composer's case
+     door wears the Call button's shape — 44px floor, word
+     beside the glyph — and its form is a dialog in the Wire
+     reader's idiom: shade + centered panel on desktop, the
+     full phone screen under the phone chrome. */
+  #chat-newcase { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:44px; min-height:44px; padding:0 14px; border-radius:6px; flex:0 0 auto; }
+  #nc-shade { position:fixed; inset:0; z-index:118; background:rgba(0,0,0,.45); }
+  #nc-dialog { position:fixed; z-index:119; left:50%; top:50%; transform:translate(-50%,-50%); width:min(560px,calc(100vw - 48px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:16px 18px calc(14px + env(safe-area-inset-bottom, 0px)); }
+  #nc-dialog .nc-check { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border:1px solid var(--line); border-radius:8px; margin-top:6px; }
+  #nc-dialog .nc-check input { width:20px; height:20px; margin-top:1px; flex:0 0 auto; }
   /* Mode feels alive (build .66): CLI latched, the bar takes the
      terminal green (--green in every theme) for its edge; Navi
      latched keeps the line color it has always had, under her
@@ -1083,6 +1093,9 @@
     .chipbtn.chippill { height:32px; min-height:32px; }
     #chat-call { width:44px; padding:0; }
     #chat-call .call-label { display:none; }
+    #chat-newcase { width:44px; padding:0; }
+    #chat-newcase .call-label { display:none; }
+    #nc-dialog { left:0; top:0; right:0; bottom:0; transform:none; width:auto; max-height:none; height:100dvh; border:none; border-radius:0; box-shadow:none; }
     /* Docs picker at phone widths (build .66): the topic list
        and its cards never render here — one grouped select picks
        the page, the page renders full-width beneath it. */
@@ -1914,8 +1927,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.10";
-var SHIPPED_BUILD_SEQ = 10;
+var BRIDGE_BUILD = "2026-11-16.11";
+var SHIPPED_BUILD_SEQ = 11;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3034,6 +3047,7 @@ var wireState = null, wireFetching = false, wireMsg = "";
 var ctfState = null, ctfFetching = false, ctfMsg = "";
 var bountyState = null, bountyFetching = false, bountyMsg = "";
 var wireReader = null, wireReaderBusy = false;
+var newCaseState = null; // v0.4.5e (#241): the New-case-from-chat form's state, while it stands
 function refreshWire() {
   if (wireFetching) return;
   wireFetching = true;
@@ -3891,6 +3905,144 @@ function casePost(path, body, done) {
     .then(function (j) { done(j || {}); })
     .catch(function () { caseMsg = "The bridge didn't answer — nothing was filed."; render(); });
 }
+function jumpToCaseChat(slug, onFail) {
+  // The one road into a case's own chat (Build 15, #161): the
+  // bridge ensures the bound thread and hands back its record;
+  // the app seats it in the store and lands on it. The case
+  // page's "Open the case chat" walks it, and so does the
+  // intake receipt's button (v0.4.5e, #241) — one path, rigged
+  // the same way in both places, never a decorative door.
+  casePost("/api/cases/chat", { case: slug }, function (j) {
+    if (j.ok && j.chat) {
+      var rec = j.chat;
+      if (!chats.some(function (c) { return c.id === rec.id; })) chats.push(rec);
+      activeChatId = rec.id; messages = rec.messages; persist(); landOnChat();
+    } else if (onFail) {
+      onFail(j || {});
+    }
+  });
+}
+// --- New case from chat (v0.4.5e, #241, Route B) ----------------
+// The deterministic companion to the conversational intake:
+// the composer's New case button asks the bridge to swipe the
+// active conversation into a draft (/api/cases/draft), shows
+// it as a form the operator confirms or corrects, and on
+// submit composes the ordinary doors — create, the lead door
+// for the checked register entries, open, and the jump into
+// the case's own chat. Every refusal lands on the form itself.
+function ncPost(path, body, done, fail) {
+  fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { done(j || {}); })
+    .catch(function () { if (fail) fail(); });
+}
+function openNewCaseForm() {
+  newCaseState = { busy: true, submitting: false, note: "", name: "", client: "", scope: "", summary: "", type: "", priority: "", tags: "", sensitive: false, entities: [], observables: [] };
+  render();
+  ncPost("/api/cases/draft", { chatId: activeChatId }, function (j) {
+    if (!newCaseState) return; // closed while she swiped
+    newCaseState.busy = false;
+    if (j.ok && j.draft) {
+      var dr = j.draft;
+      newCaseState.name = dr.name || ""; newCaseState.client = dr.client || "";
+      newCaseState.scope = dr.scope || ""; newCaseState.summary = dr.summary || "";
+      newCaseState.type = dr.type || ""; newCaseState.priority = dr.priority || "";
+      newCaseState.tags = dr.tags || ""; newCaseState.sensitive = !!dr.sensitive;
+      newCaseState.entities = (dr.entities || []).map(function (e) { return { name: e.name || "", type: e.type || "other", role: e.role || "", on: true }; });
+      newCaseState.observables = (dr.observables || []).map(function (o) { return { value: o.value || "", kind: o.kind || "other", context: o.context || "", on: true }; });
+    } else {
+      newCaseState.note = j.error || "The draft could not be read — the form is blank, and the fields are yours to fill.";
+    }
+    render();
+  }, function () {
+    if (!newCaseState) return;
+    newCaseState.busy = false;
+    newCaseState.note = "The bridge didn't answer, so there is no swipe — the form is blank, and the fields are yours to fill.";
+    render();
+  });
+}
+function newCaseFormHtml() {
+  var st = newCaseState;
+  if (!st) return "";
+  var typeOpts = ["incident", "investigation", "research", "hunt", "locate"].map(function (t) { return "<option value='" + t + "'" + (st.type === t ? " selected" : "") + ">" + t + "</option>"; }).join("");
+  var prioOpts = ["low", "normal", "high", "critical"].map(function (t) { return "<option value='" + t + "'" + (st.priority === t ? " selected" : "") + ">" + t + "</option>"; }).join("");
+  var h = "<div id='nc-shade'></div>";
+  h += "<div id='nc-dialog' role='dialog' aria-modal='true' aria-label='Start a new case from this chat'>";
+  h += "<div style='display:flex;gap:8px;align-items:flex-start;justify-content:space-between'><div><b style='font-size:15px'>New case — from this chat</b><div style='color:var(--dim);font-size:12px;margin-top:2px'>Navi swiped this conversation for the shape of the case. Confirm or correct it — nothing is created until you start it, and what she swiped lands as unverified leads for your review.</div></div><button class='ghost' data-nc-cancel aria-label='Close the new case form' style='min-height:44px;flex:0 0 auto'>Close</button></div>";
+  if (st.busy) h += "<p style='margin-top:10px;color:var(--dim)'>Navi is swiping this conversation…</p>";
+  if (st.note) h += "<p style='margin-top:10px;color:var(--am)'>" + esc(st.note) + "</p>";
+  h += "<div class='row' style='margin-top:10px'><input class='grow' id='nc-name' type='text' placeholder='Case name — required' aria-label='Case name' value='" + esc(st.name) + "'></div>";
+  h += "<div class='row' style='margin-top:8px'><input class='grow' id='nc-client' type='text' placeholder='Client' aria-label='Client' value='" + esc(st.client) + "'><input class='grow' id='nc-scope' type='text' placeholder='Scope' aria-label='Scope' value='" + esc(st.scope) + "'></div>";
+  h += "<div class='row' style='margin-top:8px'><input class='grow' id='nc-summary' type='text' placeholder='Summary — one or two lines' aria-label='Summary' value='" + esc(st.summary) + "'></div>";
+  h += "<div class='row' style='margin-top:8px'><select id='nc-type' aria-label='Case type'>" + typeOpts + "</select><select id='nc-priority' aria-label='Priority'>" + prioOpts + "</select><input class='grow' id='nc-tags' type='text' placeholder='Tags, comma-separated' aria-label='Tags' value='" + esc(st.tags) + "'></div>";
+  h += "<label style='display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px'><input type='checkbox' id='nc-sensitive' style='width:20px;height:20px'" + (st.sensitive ? " checked" : "") + "> Sensitive — its name and details stay home through the DHD door</label>";
+  if (st.entities.length) {
+    h += "<div class='mono' style='font-size:11px;color:var(--dim);margin-top:12px'>ENTITIES SHE SWIPED — UNVERIFIED LEADS</div>";
+    st.entities.forEach(function (e, i) {
+      h += "<label class='nc-check'><input type='checkbox' id='nc-ent-" + i + "'" + (e.on !== false ? " checked" : "") + "><span><b>" + esc(e.name) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(e.type.toUpperCase()) + "</span>" + (e.role ? "<br><span style='color:var(--dim);font-size:12px'>" + esc(e.role) + "</span>" : "") + "</span></label>";
+    });
+  }
+  if (st.observables.length) {
+    h += "<div class='mono' style='font-size:11px;color:var(--dim);margin-top:12px'>OBSERVABLES SHE SWIPED — UNVERIFIED LEADS</div>";
+    st.observables.forEach(function (o, i) {
+      h += "<label class='nc-check'><input type='checkbox' id='nc-obs-" + i + "'" + (o.on !== false ? " checked" : "") + "><span><b class='mono' style='font-size:13px'>" + esc(o.value) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(o.kind.toUpperCase()) + "</span>" + (o.context ? "<br><span style='color:var(--dim);font-size:12px'>" + esc(o.context) + "</span>" : "") + "</span></label>";
+    });
+  }
+  h += "<div class='row' style='margin-top:14px'><button class='ghost' data-nc-cancel style='min-height:44px'>Cancel</button><button class='act grow' id='nc-submit' style='min-height:44px'" + (st.busy || st.submitting ? " disabled" : "") + ">" + (st.submitting ? "Starting…" : "Start the case") + "</button></div>";
+  return h + "</div>";
+}
+function harvestNewCaseForm() {
+  var st = newCaseState;
+  if (!st) return;
+  var g = function (id) { var el = document.getElementById(id); return el ? el.value : ""; };
+  st.name = g("nc-name"); st.client = g("nc-client"); st.scope = g("nc-scope"); st.summary = g("nc-summary");
+  st.type = g("nc-type"); st.priority = g("nc-priority"); st.tags = g("nc-tags");
+  var sen = document.getElementById("nc-sensitive");
+  st.sensitive = !!(sen && sen.checked);
+  st.entities.forEach(function (e, i) { var c = document.getElementById("nc-ent-" + i); if (c) e.on = !!c.checked; });
+  st.observables.forEach(function (o, i) { var c = document.getElementById("nc-obs-" + i); if (c) o.on = !!c.checked; });
+}
+function submitNewCaseForm() {
+  var st = newCaseState;
+  if (!st || st.submitting || st.busy) return;
+  harvestNewCaseForm();
+  if (!st.name.trim()) { st.note = "A case needs a name — give it one and it can be started."; render(); return; }
+  st.submitting = true; st.note = ""; render();
+  var fail = function (what) {
+    if (!newCaseState) return;
+    newCaseState.submitting = false;
+    newCaseState.note = what;
+    render();
+  };
+  ncPost("/api/cases/create", { name: st.name, client: st.client, scope: st.scope, fields: { summary: st.summary, type: st.type || "investigation", priority: st.priority || "normal", tags: st.tags, sensitive: !!st.sensitive } }, function (j) {
+    if (!newCaseState) return;
+    if (!j.ok || !j.case) { fail(j.error || "The case could not be opened."); return; }
+    var slug = j.case.slug;
+    var queue = [];
+    st.entities.forEach(function (e) { if (e.on !== false) queue.push({ register: "entities", heading: e.name, fields: { type: e.type || "other", role: e.role || "" }, body: "" }); });
+    st.observables.forEach(function (o) { if (o.on !== false) queue.push({ register: "observables", heading: o.value, fields: { kind: o.kind || "other" }, body: o.context || "" }); });
+    var step = function (i) {
+      if (!newCaseState) return;
+      if (i >= queue.length) {
+        ncPost("/api/cases/open", { case: slug }, function () {
+          newCaseState = null;
+          caseOpenSlug = slug;
+          try { localStorage.setItem("navi.openCase", slug); } catch (e) {}
+          hydrateChatsFromServer();
+          jumpToCaseChat(slug, function () { render(); });
+        }, function () { newCaseState = null; jumpToCaseChat(slug, function () { render(); }); });
+        return;
+      }
+      var q = queue[i];
+      ncPost("/api/cases/register", { case: slug, register: q.register, heading: q.heading, fields: q.fields, body: q.body, unverified: true }, function (rj) {
+        if (!newCaseState) return;
+        if (!rj.ok) { fail((rj.error || "An entry could not be filed.") + " The case itself stands — find it in Case Files, and the rest can be filed from there."); return; }
+        step(i + 1);
+      }, function () { fail("The bridge stopped answering mid-filing. The case itself stands — find it in Case Files, and the rest can be filed from there."); });
+    };
+    step(0);
+  }, function () { fail("The bridge didn't answer — nothing was created."); });
+}
 function afterCaseDeleted(slug, name) {
   // After a case delete lands (Build 15, #163; shared by the
   // detail card and, since Build 3's #177, the cases list): the
@@ -4016,16 +4168,9 @@ function wireCaseFiles() {
   });
   bind("cf-chat", function () {
     if (!caseDetailState) return;
-    var slug = caseDetailState.slug;
-    casePost("/api/cases/chat", { case: slug }, function (j) {
-      if (j.ok && j.chat) {
-        var rec = j.chat;
-        if (!chats.some(function (c) { return c.id === rec.id; })) chats.push(rec);
-        activeChatId = rec.id; messages = rec.messages; persist(); landOnChat();
-      } else {
-        caseMsg = j.error || "The case chat could not be opened.";
-        render();
-      }
+    jumpToCaseChat(caseDetailState.slug, function (j) {
+      caseMsg = j.error || "The case chat could not be opened.";
+      render();
     });
   });
   bind("cf-del", function () { if (caseDetailState) { caseDeleteArm = caseDetailState.slug; render(); } });
@@ -5407,6 +5552,9 @@ var DOC_PAGES = [
   "<p><b>Evidence has a chain of custody now.</b> When a file is filed as evidence, the bridge computes its <b>SHA-256 at filing time</b> and writes its register entry in the same act — description, when/from/how it was acquired, and a custody note. Files filed before the register existed are backfilled on first sight, and the entry says so honestly: the hash is the file's hash as found, its acquisition unrecorded.</p>" +
   "<p><b>Navi logs as she sees it.</b> In a case's own chat — only there — she may end a reply with a structured log block naming the new, specific, checkable details the work surfaced: entities, observables, events, leads, tasks. The block never renders; the bridge parses, validates, dedupes and writes it — she never edits files. Everything she logs lands <b>unverified</b> (state: <i>lead</i>), badged LOGGED BY NAVI with its provenance (the message it answers, the timestamp). Findings carry the same state: yours default to confirmed, hers to lead. <b>One tap promotes or strikes</b> an unverified entry in the case view; a strike removes the entry and <i>notes the strike in the timeline</i> — an audit trail, not a memory hole. Her own case brief labels the states back to her: she may reason from leads, never cite them as established. Caps keep a talkative turn from flooding the file: at most six log entries and two findings per reply. A detail belonging to a <i>different</i> case is flagged on her message in chat, never written across.</p>" +
   "<p><b>Awareness flows in.</b> A Wire story or a KEV CVE matching one of the case's observables or entities is surfaced two ways: in the case chat, the matched records ride her context <b>named as matches, not findings</b>; in the case view, a <b>Wire matches</b> card badges them the same way. A match is a lead to check — the product never promotes it to a finding on its own.</p></div>" +
+    "<div class='doc-sec'><h4>Starting a case from chat (v0.4.5e, #241)</h4>" +
+  "<p>A case no longer has to start in Case Files. <b>Route A — just ask her.</b> In any chat, say it the way you'd say it to a partner — <i>“add this into a new research case, as much detail as possible”</i>, <i>“this needs a case”</i> — and Navi acts on the intent in the same reply: the bridge creates the case, swipes the conversation's substance into it (her findings in her name; the entities, observables and tasks as <b>unverified leads</b>, exactly as her case logging lands), and sets it open. The proof is the bridge's, not her prose: her reply carries the bridge's own receipt naming what was actually filed, and under it a card with an <b>Open the case chat</b> button that walks you into the case's own room, chip and all. If the intake can't be read, the reply says so in the open and <b>no case is claimed</b> — a case-shaped essay is not a case, and the product no longer lets one pass for the other.</p>" +
+  "<p><b>Route B — the form.</b> The composer's <b>New case</b> button is the deterministic companion: Navi first swipes the conversation into a draft of the case's form — name, client, scope, summary, type, priority, tags, and the entities and observables she lifted, as a checklist — and you confirm or correct every field before anything exists. Submit creates the case, files the checked entries as unverified leads, sets it open, and lands you in its chat. If her model isn't connected the form simply opens blank, with the reason stated on it. Either way the landing is the same: a real case in Case Files, its own chat ensured, set open, its substance filed as leads awaiting your review — and because cases ride Sync, it is on your other screens too.</p></div>" +
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
@@ -6034,6 +6182,36 @@ function caseFilingsHtml(m) {
       + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div></div>";
   }).join("");
 }
+function caseIntakeHtml(m) {
+  // v0.4.5e (#241): the receipt for a case started from chat —
+  // built from the BRIDGE's record of what it did, never from
+  // her prose. A born case gets its counts and the door into
+  // its own chat: the button rides the receipt's chatId and
+  // walks the same /api/cases/chat jump the case page uses.
+  // No chatId, no button — a button that does nothing is
+  // never rendered. A refusal renders as a named card with no
+  // button at all.
+  var it = m.caseIntake;
+  if (!it) return "";
+  if (it.ok === false) {
+    return "<div class='card' style='margin-top:8px;padding:8px 10px;border-color:var(--am)'><div class='mono' style='font-size:12px'><b>Case not started</b></div>"
+      + "<div style='font-size:13px;margin-top:2px'>" + esc(it.error || "The intake could not be read.") + " Nothing was created — the <b>New case</b> button beside the composer will pre-fill a form from this conversation instead.</div></div>";
+  }
+  var bits = [];
+  if (it.findings) bits.push(it.findings + (it.findings === 1 ? " finding" : " findings") + " filed");
+  if (it.entities) bits.push(it.entities + (it.entities === 1 ? " entity" : " entities"));
+  if (it.observables) bits.push(it.observables + (it.observables === 1 ? " observable" : " observables"));
+  if (it.events) bits.push(it.events + (it.events === 1 ? " timeline beat" : " timeline beats"));
+  if (it.tasks) bits.push(it.tasks + (it.tasks === 1 ? " task" : " tasks") + " proposed");
+  var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Case opened</b> <span style='color:var(--dim)'>from this chat · set as the open case</span></div>"
+    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(it.name || it.slug || "Case") + "</b>" + (it.type ? " <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.type.toUpperCase()) + "</span>" : "") + "</div>"
+    + (bits.length ? "<div style='font-size:13px;margin-top:2px'>" + esc(bits.join(" · ")) + ((it.entities || it.observables) ? " <span style='color:var(--am)'>— logged unverified, review in Case Files</span>" : "") + "</div>" : "")
+    + (it.dropped ? "<div style='font-size:12px;color:var(--am);margin-top:2px'>" + it.dropped + (it.dropped === 1 ? " further item" : " further items") + " did not fit the intake caps and were dropped — named, not silent.</div>" : "");
+  if (it.chatId) {
+    h += "<div style='margin-top:8px'><button class='act' data-caseintake-open='" + esc(String(it.chatId)) + "' data-caseintake-slug='" + esc(it.slug || "") + "' aria-label='Open the case chat for " + esc(it.name || "the new case") + "' style='min-height:44px;padding:6px 14px'>Open the case chat — " + esc(it.name || "the case") + "</button></div>";
+  }
+  return h + "</div>";
+}
 var MEMORY_ORIGIN_LABELS = { manual: "Added by hand", trigger: "From chat — you asked", autonomous: "From chat — her call", correction: "From chat — correction" };
 function srcPills(sources) {
   // The breadcrumb path of where an answer came from: one quiet
@@ -6100,7 +6278,7 @@ function liveChat(text, speak) {
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, chatId: activeChatId }; });
+    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -8584,6 +8762,7 @@ var voiceCalls = null;
 function fmtCallTime(sec) { var m = Math.floor(sec / 60), s = sec % 60; return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function uploadSvg() { return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48'/></svg>"; }
 function micSvg() { return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z'/><path d='M19 10v2a7 7 0 0 1-14 0v-2'/><path d='M12 19v3'/></svg>"; }
+function caseSvg() { return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/><path d='M12 10v6'/><path d='M9 13h6'/></svg>"; }
 // The phone glyph (the same Lucide path as the Voice nav icon) for
 // the Call Navi buttons: the Voice view's call button, the Call
 // button beside the chat composer, and the status column's Call
@@ -10718,6 +10897,7 @@ function render() {
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       if (m.who === "NAVI") h += caseFilingsHtml(m);
       if (m.who === "NAVI") h += caseLogHtml(m);
+      if (m.who === "NAVI") h += caseIntakeHtml(m);
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
@@ -10760,10 +10940,13 @@ function render() {
     // one pill, three roads, its face rendered from the
     // bridge's stored route for this chat (routePillHtml).
     var meshLocalBtn = routePillHtml();
-    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span><button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
+    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-newcase' aria-label='Start a new case from this chat' title='New case — Navi swipes this conversation into a case'>" + caseSvg() + "<span class='call-label'>New case</span></button>" : "") + "<button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "</div>" +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
       : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
       : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
+    // New case from chat (v0.4.5e, #241): the form stands over
+    // the chat it swipes — a dialog, never a page.
+    if (newCaseState) h += newCaseFormHtml();
   } else if (view === "Chips") {
     h += "<h3>Chips</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='Chips sections' style='margin-bottom:10px'><button class='" + (chipsTab === "management" ? "act" : "ghost") + "' data-ctab='management' aria-label='Navi User Repo tab'>Navi User Repo (NUR)</button><button class='" + (chipsTab === "studio" ? "act" : "ghost") + "' data-ctab='studio' aria-label='Chip studio tab'>Chip Studio</button><button class='" + (chipsTab === "workflows" ? "act" : "ghost") + "' data-ctab='workflows' aria-label='Chip workflows tab'>Workflows</button></div>";
@@ -11323,6 +11506,11 @@ function sendChat(text) {
       // she logged into the bound case's registers hangs on
       // this message the same way.
       if (r.caseLog) nm.caseLog = r.caseLog;
+      // Starting a case from chat (v0.4.5e, #241): the
+      // intake receipt — the case she opened, what the bridge
+      // filed, and the door into the case's own chat — hangs
+      // on this message the same way.
+      if (r.caseIntake) nm.caseIntake = r.caseIntake;
       messages.push(nm);
     }
     persist(); render(); if (CONFIG.backend !== "live" && CONFIG.speakReplies && r.text) mockSpeak(r.text);
@@ -11340,6 +11528,23 @@ function wire() {
   var docsIn = document.getElementById("docs-pop-in");
   if (docsIn) docsIn.onclick = function () { dockDocs(); };
   if (view === "Chat") {
+    // Case intake receipts (v0.4.5e, #241): the "Open the case
+    // chat" button on a born case's receipt walks the same
+    // jump the case page uses (jumpToCaseChat) and lands the
+    // operator in the bound chat. If the bridge door somehow
+    // refuses, a record already in the local store still
+    // lands — the button is rigged to open, never decorative.
+    mainEl.querySelectorAll("[data-caseintake-open]").forEach(function (b) { b.onclick = function () {
+      var slug = b.getAttribute("data-caseintake-slug") || "";
+      var cid = b.getAttribute("data-caseintake-open") || "";
+      var land = function () {
+        var c = chats.filter(function (x) { return String(x.id) === String(cid); })[0];
+        if (c) { activeChatId = c.id; messages = c.messages; persist(); landOnChat(); return true; }
+        return false;
+      };
+      if (slug) jumpToCaseChat(slug, function () { if (!land()) hydrateChatsFromServer(); });
+      else land();
+    }; });
     // Memory receipts (build .81, #72): Undo and proposal
     // decisions act on the receipt object stored on the message,
     // then persist and re-render so the store, the receipt, and
@@ -11379,6 +11584,15 @@ function wire() {
     // No Send button (build .49): Enter sends, exactly as it always
     // could — the button was a second way to do the same thing.
     input.onkeydown = function (e) { if (e.key === "Enter") send(); };
+    // New case from chat (v0.4.5e, #241): the composer's case
+    // door and its form's controls.
+    var ncBtn = document.getElementById("chat-newcase");
+    if (ncBtn) ncBtn.onclick = function () { openNewCaseForm(); };
+    mainEl.querySelectorAll("[data-nc-cancel]").forEach(function (b) { b.onclick = function () { newCaseState = null; render(); }; });
+    var ncShade = document.getElementById("nc-shade");
+    if (ncShade) ncShade.onclick = function () { newCaseState = null; render(); };
+    var ncSubmit = document.getElementById("nc-submit");
+    if (ncSubmit) ncSubmit.onclick = function () { submitNewCaseForm(); };
     var upBtn = document.getElementById("chat-upload");
     var fileIn = document.getElementById("chat-file");
     if (upBtn && fileIn) {
