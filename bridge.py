@@ -28904,7 +28904,7 @@ class Handler(BaseHTTPRequestHandler):
                 _system_prompt += (
                     "\n\n[Case open — " + _open_case["name"] + "]\n"
                     "The case \"" + _open_case["name"] + "\" is open on the desk, and work in this conversation may belong to it. "
-                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by ending your reply with a line of exactly this form: "
+                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by putting a line of exactly this form FIRST in your reply, before your words (a long reply can be cut off before it ends, and a marker that never lands files nothing): "
                     "[[finding: <short title> | <the finding, stated plainly>]] — optionally with a severity: [[finding[high]: <title> | <finding>]]. "
                     "At most two per reply, and only for real conclusions about this case — not small talk, and not the operator's words restated as yours. "
                     "The marker line is removed before the operator sees your reply; the filing is made in your name, a line goes into the case's timeline, and the operator is shown a receipt of exactly what you filed — never mention the marker itself."
