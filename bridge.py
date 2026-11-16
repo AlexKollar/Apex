@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.6"
+SHIPPED_VERSION = "0.4.7"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.12"
+BRIDGE_BUILD = "2026-11-16.13"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 12
+SHIPPED_BUILD_SEQ = 13
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -24899,6 +24899,407 @@ def badge_sync_dismiss(op_id):
     return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id)}
 
 
+# --- Notifications (v0.4.7e, #242; ruling Alex 2026-11-16) -----------
+# Navi announces notifications in chat herself — the bell/panel is
+# the persistent record, her word is the tap on the shoulder, and
+# the announcement is generated FROM the bridge's record, never a
+# substitute for it. If a record is cleared/retired, she does not
+# still mention it: retirement below deletes the record outright,
+# and a record is announced exactly once, when it is born (the
+# announced flag is the receipt). This is rules 14 + 15 at work —
+# she senses what is waiting and says so in the room, in the same
+# pass that records it.
+#
+# The store is bridge-held, one plain file (config/notifications.json,
+# the chat-routes store pattern: a module path constant, a lock, a
+# load that cleans, a store function; the path is read from the
+# constant at call time). QUIET DISCIPLINE: only acts and decisions
+# notify — a knock at a gateway, a device waiting at the door,
+# case entries waiting for review, an update staged. Routine syncs,
+# successful borrows and feed fetches NEVER notify; there is no
+# producer for them here, on purpose.
+#
+# A record: {id, kind, title, body, target, created, read,
+# announced, count}. Reconcile computes the WANTED set from the
+# four producers and folds it into the store: a wanted id with no
+# record is born (and announced); a record still wanted is
+# refreshed in place — and if its count grew, it goes unread
+# again, because new material needs eyes; a record no longer
+# wanted is retired (the knock was answered, the review emptied,
+# the update applied). Each producer is wrapped on its own: one
+# producer's failure yields no items from it and retires NONE of
+# its kind's records — a transient error must never read as
+# "nothing is waiting anymore".
+
+NOTIF_PATH = os.path.join(ROOT, "config", "notifications.json")
+NOTIF_CAP = 64
+NOTIF_PAYLOAD_CAP = 20
+NOTIF_RECONCILE_SECONDS = 10
+_notif_lock = threading.Lock()
+_NOTIF_STATE = {"at": 0.0}
+
+
+def _notif_clean(raw):
+    # One record, cleaned — the load's discipline (the chat-routes
+    # cleaning idiom): a malformed row is dropped, never repaired
+    # into a half-truth the bell would then vouch for.
+    if not isinstance(raw, dict):
+        return None
+    rid = str(raw.get("id") or "").strip()[:200]
+    if not rid:
+        return None
+    kind = str(raw.get("kind") or "").strip()[:40]
+    if not kind:
+        return None
+    target = raw.get("target") if isinstance(raw.get("target"), dict) else {}
+    created = raw.get("created")
+    if not isinstance(created, (int, float)) or isinstance(created, bool):
+        created = 0
+    count = raw.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = None
+    return {
+        "id": rid,
+        "kind": kind,
+        "title": str(raw.get("title") or "")[:200],
+        "body": str(raw.get("body") or "")[:600],
+        "target": dict(target),
+        "created": created,
+        "read": raw.get("read") is True,
+        "announced": raw.get("announced") is True,
+        "count": count,
+    }
+
+
+def _notif_load():
+    try:
+        with open(NOTIF_PATH) as f:
+            data = json.load(f)
+        rows = data.get("records") if isinstance(data, dict) else None
+        if isinstance(rows, list):
+            out = []
+            seen = set()
+            for row in rows:
+                rec = _notif_clean(row)
+                if rec is not None and rec["id"] not in seen:
+                    seen.add(rec["id"])
+                    out.append(rec)
+            return out[-NOTIF_CAP:]
+    except Exception:
+        pass
+    return []
+
+
+def _notif_save(records):
+    try:
+        os.makedirs(os.path.dirname(NOTIF_PATH), exist_ok=True)
+        tmp = NOTIF_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"records": records}, f, indent=2)
+        os.replace(tmp, NOTIF_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def _notif_wanted_fed_knocks(cfg):
+    # Producer (a): a knock at a gateway this node keeps — each
+    # pending join on a GATEWAY fedinet (member fedinets hold no
+    # knock queue here; the gateway answers knocks). The pending
+    # entry carries nodeId + the knock's card; the node's name
+    # rides the card, exactly as federation_payload reads it.
+    items = []
+    for fed in federation_settings(cfg):
+        if fed.get("role") != "gateway":
+            continue
+        fed_id = str(fed.get("id") or "")
+        fed_name = str(fed.get("name") or fed_id)
+        if not fed_id:
+            continue
+        for pending in (fed.get("pendingJoins") or []):
+            if not isinstance(pending, dict):
+                continue
+            node_id = str(pending.get("nodeId") or "")
+            if not node_id:
+                continue
+            card = pending.get("card") if isinstance(pending.get("card"), dict) else {}
+            node_name = str(card.get("name") or "") or "A node"
+            items.append({
+                "id": "fed-knock:" + fed_id + ":" + node_id,
+                "kind": "fed-knock",
+                "title": "A knock at " + fed_name,
+                "body": (node_name + " (" + node_id[:12]
+                         + ") is asking to join."),
+                "target": {"view": "Federation", "fedinetId": fed_id,
+                           "nodeId": node_id},
+                "count": 1,
+            })
+    return items
+
+
+def _notif_wanted_door_devices(cfg):
+    # Producer (b): a device asking to pair at the door. Pairwise
+    # Mesh pairing is card-consent with no queue in this product;
+    # the pending-answer queue that exists is the door's device
+    # approvals (door_devices_payload) — that is this producer.
+    items = []
+    for dev in door_devices_payload(cfg):
+        if not isinstance(dev, dict) or dev.get("status") != "pending":
+            continue
+        dev_id = str(dev.get("id") or "")
+        if not dev_id:
+            continue
+        name = str(dev.get("name") or "Unnamed device")
+        items.append({
+            "id": "door-device:" + dev_id,
+            "kind": "door-device",
+            "title": "A device is asking to pair",
+            "body": (name + " is waiting for your word — approve it "
+                     "or turn it away at the Door (Settings, or the "
+                     "DHD page — the same card stands at both)."),
+            "target": {"view": "DHD"},
+            "count": 1,
+        })
+    return items
+
+
+def _notif_wanted_case_reviews():
+    # Producer (c): case entries waiting for the operator's
+    # review — each case head's unverified count (leads Navi
+    # filed, awaiting a verdict) above zero.
+    items = []
+    for head in (cases_list_payload().get("cases") or []):
+        if not isinstance(head, dict):
+            continue
+        n = head.get("unverified")
+        if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+            continue
+        slug = str(head.get("slug") or "")
+        if not slug:
+            continue
+        items.append({
+            "id": "case-review:" + slug,
+            "kind": "case-review",
+            "title": str(head.get("name") or slug),
+            "body": (str(n) + " unverified entries are waiting "
+                     "for your review"),
+            "target": {"view": "CaseFiles", "case": slug},
+            "count": n,
+        })
+    return items
+
+
+def _notif_wanted_update():
+    # Producer (d): an update staged and waiting on the Updater —
+    # the background checker's cached verdict, read as-is.
+    payload = update_bg_payload()
+    if not isinstance(payload, dict) or not payload.get("updateAvailable"):
+        return []
+    latest = str(payload.get("latest") or "")
+    if not latest:
+        return []
+    return [{
+        "id": "update:" + latest,
+        "kind": "update",
+        "title": "Apex " + latest + " is ready",
+        "body": "An Edge update is staged and waiting on the Updater.",
+        "target": {"view": "Settings"},
+        "count": 1,
+    }]
+
+
+def _notif_announce_line(rec):
+    # Navi's line, composed FROM THE RECORD (deterministic
+    # templates per kind — no model call): her voice, warm and
+    # factual, naming the act that waits. The record's own title
+    # and body are the substance; the framing is hers.
+    framing = {
+        "fed-knock": "Knock knock — ",
+        "door-device": "At the door — ",
+        "case-review": "Case Files — ",
+        "update": "Good news — ",
+    }.get(rec.get("kind"), "A word — ")
+    line = framing + str(rec.get("title") or "") + ": " + str(rec.get("body") or "")
+    if rec.get("kind") == "fed-knock":
+        line += " It waits on your word in Federation."
+    return line
+
+
+def _notif_announce(rec):
+    # The tap on the shoulder: Navi's line lands in the MAIN chat
+    # as her own message, carrying the record's id in "notice" so
+    # the room and the record point at each other. A chat-store
+    # failure returns False and breaks nothing — the caller
+    # leaves announced=False and a later pass retries (once per
+    # pass, never a loop inside one).
+    try:
+        line = _notif_announce_line(rec)
+        now_ms = int(time.time() * 1000)
+        chat = None
+        try:
+            with open(_chat_path(MAIN_CHAT_ID), encoding="utf-8") as f:
+                chat = json.load(f)
+        except Exception:
+            chat = None
+        if not isinstance(chat, dict):
+            chat = {"id": MAIN_CHAT_ID, "title": "Chat", "messages": [],
+                    "createdAt": now_ms, "updatedAt": now_ms}
+        chat["id"] = MAIN_CHAT_ID
+        if not chat.get("title"):
+            chat["title"] = "Chat"
+        if not isinstance(chat.get("createdAt"), (int, float)):
+            chat["createdAt"] = now_ms
+        msgs = chat.get("messages")
+        if not isinstance(msgs, list):
+            msgs = []
+        msgs.append({"who": "NAVI", "text": line, "exec": None,
+                     "notice": rec["id"], "ts": now_ms})
+        chat["messages"] = msgs
+        chat["updatedAt"] = now_ms
+        return chat_write(chat) is not None
+    except Exception:
+        return False
+
+
+def _notif_payload_from_records(records):
+    items = [{
+        "id": r["id"], "kind": r["kind"], "title": r["title"],
+        "body": r["body"], "target": r["target"],
+        "created": r["created"], "read": r["read"], "count": r["count"],
+    } for r in records]
+    # Unread first, then newest first — the bell's order.
+    items.sort(key=lambda it: (it["read"], -(it["created"] or 0)))
+    return {
+        "unread": sum(1 for r in records if not r["read"]),
+        "items": items[:NOTIF_PAYLOAD_CAP],
+    }
+
+
+def notifications_reconcile(cfg=None):
+    # One pass: wanted set in, store folded, births announced,
+    # retirements deleted, save only if anything changed. The
+    # return is the payload (see notifications_payload).
+    if cfg is None:
+        cfg = load_config()
+    with _notif_lock:
+        records = _notif_load()
+        wanted = {}
+        ran_kinds = set()
+        producers = (
+            ("fed-knock", lambda: _notif_wanted_fed_knocks(cfg)),
+            ("door-device", lambda: _notif_wanted_door_devices(cfg)),
+            ("case-review", lambda: _notif_wanted_case_reviews()),
+            ("update", lambda: _notif_wanted_update()),
+        )
+        for kind, produce in producers:
+            try:
+                items = produce()
+            except Exception:
+                # A failed producer yields no items and retires
+                # none of its kind's records (see the banner).
+                continue
+            ran_kinds.add(kind)
+            for item in (items or []):
+                if isinstance(item, dict) and item.get("id"):
+                    wanted[str(item["id"])] = item
+        changed = False
+        by_id = {r["id"]: r for r in records}
+        now = time.time()
+        for wid, item in wanted.items():
+            rec = by_id.get(wid)
+            if rec is None:
+                rec = {
+                    "id": wid,
+                    "kind": str(item.get("kind") or ""),
+                    "title": str(item.get("title") or "")[:200],
+                    "body": str(item.get("body") or "")[:600],
+                    "target": (dict(item["target"])
+                               if isinstance(item.get("target"), dict) else {}),
+                    "created": now,
+                    "read": False,
+                    "announced": False,
+                    "count": (item.get("count")
+                              if isinstance(item.get("count"), int)
+                              and not isinstance(item.get("count"), bool)
+                              else None),
+                }
+                records.append(rec)
+                by_id[wid] = rec
+                changed = True
+            else:
+                title = str(item.get("title") or "")[:200]
+                body = str(item.get("body") or "")[:600]
+                target = (dict(item["target"])
+                          if isinstance(item.get("target"), dict) else {})
+                if (rec["title"] != title or rec["body"] != body
+                        or rec["target"] != target):
+                    rec["title"], rec["body"], rec["target"] = title, body, target
+                    changed = True
+                new_count = item.get("count")
+                if isinstance(new_count, int) and not isinstance(new_count, bool):
+                    if isinstance(rec.get("count"), int) \
+                            and new_count > rec["count"] and rec["read"]:
+                        # New material needs eyes again.
+                        rec["read"] = False
+                        changed = True
+                    if rec.get("count") != new_count:
+                        rec["count"] = new_count
+                        changed = True
+            if not rec["announced"]:
+                if _notif_announce(rec):
+                    rec["announced"] = True
+                    changed = True
+        kept = []
+        for rec in records:
+            if rec["id"] in wanted or rec["kind"] not in ran_kinds:
+                kept.append(rec)
+            else:
+                # Retired: the act was answered, the queue
+                # emptied, the update applied — the record goes,
+                # and with it any reason to mention it again.
+                changed = True
+        records = kept
+        if len(records) > NOTIF_CAP:
+            records = records[-NOTIF_CAP:]
+            changed = True
+        if changed:
+            _notif_save(records)
+        _NOTIF_STATE["at"] = time.time()
+        return _notif_payload_from_records(records)
+
+
+def notifications_payload(cfg=None, force=False):
+    # The bell's read: a throttled reconcile (at most once per
+    # NOTIF_RECONCILE_SECONDS unless forced) over the store, so
+    # /api/status can carry it on every poll without re-running
+    # the producers each time. Between reconciles the answer is
+    # read straight from the store as it stands.
+    if not force and _NOTIF_STATE["at"] \
+            and (time.time() - _NOTIF_STATE["at"] < NOTIF_RECONCILE_SECONDS):
+        return _notif_payload_from_records(_notif_load())
+    return notifications_reconcile(cfg)
+
+
+def notifications_mark_read(ids=None, mark_all=False, cfg=None):
+    # The bell's write: mark the named records read (or all of
+    # them). Unknown ids are ignored, not errors — the panel may
+    # hold a record a reconcile has already retired. The answer
+    # is the fresh payload.
+    want = None
+    if isinstance(ids, (list, tuple, set)):
+        want = {str(i) for i in ids}
+    with _notif_lock:
+        records = _notif_load()
+        changed = False
+        for rec in records:
+            if (mark_all or (want is not None and rec["id"] in want)) \
+                    and not rec["read"]:
+                rec["read"] = True
+                changed = True
+        if changed:
+            _notif_save(records)
+    return notifications_payload(cfg)
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload, ctype="application/json"):
@@ -25113,6 +25514,10 @@ class Handler(BaseHTTPRequestHandler):
                 "dir": ROOT,
                 "root": ROOT,
                 "update": update_bg_payload(),
+                # v0.4.7e (#242): the bell rides the status poll —
+                # the throttled payload, so the producers re-run
+                # at most once per NOTIF_RECONCILE_SECONDS.
+                "notifications": notifications_payload(cfg),
                 "updaterChannel": updater_channel(cfg),
                 "updaterChannelExplicit": updater_channel_explicit(cfg),
                 "model": "navi",
@@ -25369,6 +25774,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, INTEL.build_digest())
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)[:160]})
+        elif self.path == "/api/notifications":
+            # v0.4.7e (#242): the bell's own read — a forced
+            # reconcile, so opening the panel always answers from
+            # the world as it stands now.
+            self._send(200, notifications_payload(load_config(), force=True))
         elif self.path == "/api/cases":
             self._send(200, cases_list_payload(
                 (self.headers.get("X-Apex-Via") or "") == "dhd"))
@@ -26544,6 +26954,13 @@ class Handler(BaseHTTPRequestHandler):
                 state["call"] = None
                 save_voice_state(state)
                 self._send(200, {"ok": True, "call": call})
+        elif self.path == "/api/notifications/read":
+            # v0.4.7e (#242): the bell's write — {"ids": [...]} or
+            # {"all": true} marks records read; unknown ids are
+            # ignored, not errors. The answer is the fresh payload.
+            data = self._body()
+            self._send(200, notifications_mark_read(
+                data.get("ids"), data.get("all") is True, cfg))
         elif self.path == "/api/chat/route":
             # v0.4.1e (#228): a route flip, validated against the
             # access the operator actually has (chat_route_set).
