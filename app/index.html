@@ -1699,6 +1699,13 @@ function routeStops() {
   var avail = (chatRoute && chatRoute.available) || { mesh: false, fedinets: [] };
   if (avail.mesh) stops.push({ mode: "mesh" });
   (avail.fedinets || []).forEach(function (f) { stops.push({ mode: "federation", fedinetId: f.id, name: f.name }); });
+  // v0.4.3e (#235): a chat carrying a stored route gains one
+  // final stop — Automatic — which hands the chat back to the
+  // precedence (the bridge clears the stored route; the face
+  // that lands is the automatic face). A chat with nothing
+  // stored is already automatic and has no such stop: there
+  // is nothing to hand back.
+  if (chatRoute && chatRoute.route) stops.push({ mode: "automatic" });
   return stops;
 }
 function routePillHtml() {
@@ -1716,35 +1723,43 @@ function routePillHtml() {
   var auto = !!chatRoute.automatic;
   var cls = "routepill", face = "", label = "";
   if (auto) cls += " routepill-auto";
+  // v0.4.3e (#236): the faces are one word — Local / Mesh /
+  // FediNet — so the pill fits the composer line on a phone
+  // instead of taking a row of its own. The long forms live
+  // in the descriptive label, which is also where a
+  // federation's NAME now rides (the green face no longer
+  // carries it): with several fedinets joined, the label is
+  // what tells them apart. The automatic mark is unchanged:
+  // an "Auto · " prefix and the dashed border.
   if (eff.mode === "mesh") {
     if (stored && stored.mode === "mesh" && !avail.mesh) {
-      face = "Mesh Not Available"; cls += " routepill-na";
+      face = "Mesh Unavailable"; cls += " routepill-na";
       label = "This chat's route is the Mesh, but no paired machine can be borrowed from right now — replies answer locally until one can. Press to choose another route.";
     } else if (auto) {
       face = "Auto · Mesh"; cls += " routepill-mesh";
-      label = "Automatic route: the Mesh — no federation road is available, so the automatic precedence (federation, then Mesh, then local) puts this chat on the pairwise Mesh. Press to choose a route yourself.";
+      label = "Automatic route: Mesh — no federation road is available, so the automatic precedence (federation, then Mesh, then local) puts this chat on the pairwise Mesh. Press to choose a route yourself.";
     } else {
-      face = "Connected to Mesh"; cls += " routepill-mesh";
-      label = "Route: Connected to Mesh — this chat's model work borrows over the pairwise Mesh. Press to change the route.";
+      face = "Mesh"; cls += " routepill-mesh";
+      label = "Route: Mesh — this chat's model work borrows over the pairwise Mesh. Press to change the route; the cycle's last stop, Automatic, hands the chat back to the automatic precedence.";
     }
   } else if (eff.mode === "federation") {
     var fed = null;
     (avail.fedinets || []).forEach(function (f) { if (f.id === eff.fedinetId) fed = f; });
     if (fed) {
-      face = (auto ? "Auto · " : "") + fed.name; cls += " routepill-fed";
+      face = (auto ? "Auto · " : "") + "FediNet"; cls += " routepill-fed";
       label = auto
-        ? "Automatic route: " + fed.name + " — the automatic precedence (federation, then Mesh, then local) puts this chat on the federation while a member can be borrowed from. Press to choose a route yourself."
-        : "Route: " + fed.name + " — this chat's model work borrows through that federation. Press to change the route.";
+        ? "Automatic route: FediNet — " + fed.name + " — the automatic precedence (federation, then Mesh, then local) puts this chat on that federation while a member can be borrowed from. Press to choose a route yourself."
+        : "Route: FediNet — " + fed.name + " — this chat's model work borrows through that federation. Press to change the route; the cycle's last stop, Automatic, hands the chat back to the automatic precedence.";
     } else {
-      face = "Federation Not Available"; cls += " routepill-na";
+      face = "FediNet Unavailable"; cls += " routepill-na";
       label = "This chat's federation route is not available right now — replies answer locally. Press to choose another route.";
     }
   } else if (auto) {
     face = "Auto · Local";
-    label = "Automatic route: local — no federation or Mesh road is available, so the automatic precedence (federation, then Mesh, then local) answers on this machine. Press to choose a route yourself.";
+    label = "Automatic route: Local — no federation or Mesh road is available, so the automatic precedence (federation, then Mesh, then local) answers on this machine. Press to choose a route yourself.";
   } else {
-    face = "Use Local Resources";
-    label = "Route: Use Local Resources — this chat's model work runs on this machine. Press to change the route.";
+    face = "Local";
+    label = "Route: Local — this chat's model work runs on this machine. Press to change the route; the cycle's last stop, Automatic, hands the chat back to the automatic precedence.";
   }
   var h = "<button type='button' id='chat-route-pill' class='" + cls + "' aria-label='" + esc(label) + "' title='" + esc(label) + "'>" + esc(face) + "</button>";
   if (chatRouteMsg) h += "<span class='route-msg' role='status'>" + esc(chatRouteMsg) + "</span>";
@@ -1763,7 +1778,13 @@ function cycleChatRoute() {
   if (next.mode === eff.mode && next.fedinetId === eff.fedinetId) return;
   chatRouteMsg = "";
   fetch("/api/chat/route", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: activeChatId, route: next }) }).then(function (r) { return r.json(); }).then(function (j) {
-    if (j && j.ok) { chatRoute = j; chatRouteChatId = activeChatId; }
+    if (j && j.ok) {
+      chatRoute = j; chatRouteChatId = activeChatId;
+      // v0.4.3e (#235): the return to automatic is NAMED on
+      // the pill row, the way a refusal is — the operator
+      // sees the hand-back land, not just a face change.
+      if (next.mode === "automatic") chatRouteMsg = "Handed back to Automatic — no route is stored for this chat; the precedence (federation, then Mesh, then local) routes it again.";
+    }
     else chatRouteMsg = (j && j.error) || "The bridge refused that route — the route is unchanged.";
     render();
   }).catch(function () { chatRouteMsg = "The bridge did not answer — the route is unchanged."; render(); });
@@ -1893,8 +1914,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-15.08";
-var SHIPPED_BUILD_SEQ = 8;
+var BRIDGE_BUILD = "2026-11-15.09";
+var SHIPPED_BUILD_SEQ = 9;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -5490,8 +5511,9 @@ var DOC_PAGES = [
   "<p>Three off switches, from widest to narrowest:</p><ul>" +
   "<li>The <b>Mesh master switch</b> turns the whole thing off.</li>" +
   "<li>The <b>Borrowing switch</b> stops this machine from borrowing while leaving it able to lend.</li>" +
-  "<li><b>The route pill</b>, beside the composer, is the chat's route control (v0.4.1e, #228) — one pill, three roads, its face read from the bridge's stored route for the chat, so the face, the store, and a reload can never disagree. <b>Use Local Resources</b> (neutral): model work runs on this machine, no borrow attempted. <b>Connected to Mesh</b> (blue): model work borrows over the pairwise Mesh, from hand-paired machines. The <b>federation's name</b> (green): model work borrows through that fedinet, from its members. Pressing the pill cycles the roads you have access to; a road you don't reads <b>Not Available</b> and cannot be flipped into, and a flip the bridge refuses is answered on the pill itself, in words, with the route unchanged.</li>" +
-  "<li><b>The automatic precedence (v0.4.2e, #231).</b> A chat you have never routed by hand rides the automatic precedence: <b>the fedinet first, then the Mesh, then local</b>, falling back down the chain as roads empty — and the pill <i>shows</i> that default rather than hiding it: an automatic face carries an <b>Auto ·</b> prefix and a dashed border (<i>Auto · Rockport Mesh</i>, <i>Auto · Mesh</i>, <i>Auto · Local</i>), so it can never be mistaken for a route you chose, and a route you chose never wears the mark. The face tracks availability as it changes, and when an answer falls back below the road the precedence preferred, the line under the reply says so. Pressing the pill on an automatic chat stores the next road as your own choice, and from then on your choice wins over the precedence.</li>" +
+  "<li><b>The route pill</b>, beside the composer, is the chat's route control (v0.4.1e, #228) — one pill, three roads, its face read from the bridge's stored route for the chat, so the face, the store, and a reload can never disagree. Since v0.4.3e (#236) the faces are one word, so the pill fits the composer line on a phone: <b>Local</b> (neutral): model work runs on this machine, no borrow attempted. <b>Mesh</b> (blue): model work borrows over the pairwise Mesh, from hand-paired machines. <b>FediNet</b> (green): model work borrows through a federation, from its members — the federation's name rides in the pill's descriptive label (its tooltip and accessible name), which is also where several joined fedinets are told apart. Pressing the pill cycles the roads you have access to; a stored road whose access has lapsed reads <b>Unavailable</b> in amber and answers locally until it can be served, and a flip the bridge refuses is answered on the pill itself, in words, with the route unchanged.</li>" +
+  "<li><b>The automatic precedence (v0.4.2e, #231).</b> A chat you have never routed by hand rides the automatic precedence: <b>the fedinet first, then the Mesh, then local</b>, falling back down the chain as roads empty — and the pill <i>shows</i> that default rather than hiding it: an automatic face carries an <b>Auto ·</b> prefix and a dashed border (<i>Auto · FediNet</i>, <i>Auto · Mesh</i>, <i>Auto · Local</i>), so it can never be mistaken for a route you chose, and a route you chose never wears the mark. The face tracks availability as it changes, and when an answer falls back below the road the precedence preferred, the line under the reply says so. Pressing the pill on an automatic chat stores the next road as your own choice, and from then on your choice wins over the precedence.</li>" +
+  "<li><b>Handing a chat back (v0.4.3e, #235).</b> A chat you routed by hand gains one more stop at the end of the pill's cycle: <b>Automatic</b>. Landing on it clears the stored route through the bridge — the chat goes back to standing exactly as a never-routed chat stands, riding the precedence — and the pill row names the hand-back as it lands. There is no stored value that means automatic; the absence of a route is the automatic state, so the face, the store, and a reload cannot disagree about it.</li>" +
   "<li><b>Recognition by roster (v0.4.2e, #234).</b> A machine is a federation road because its node stands on a fedinet's signed roster — a member entry, or the fedinet's gateway itself — never because of how its pairing record happened to be created. A machine you paired by hand before its fedinet existed is recognized the same as one the roster materialized, and it counts for both roads: your Mesh pairing when the Mesh road is chosen, the federation's member when the federation road is. The pill, the status column's FediNet line, and the green answer pill all read this one recognition.</li></ul>" +
   "<p>If the lender is <b>busy</b>, your machine waits a short grace (2 seconds by default, set on the Mesh page) for it to free up, then answers locally — a lender that frees up during the grace can still take that request, but once your machine starts answering, the lender is never claimed mid-reply; it serves the <b>next</b> request. If a lender <b>drops mid-answer</b>, you see the notice — <i>“&lt;machine&gt; dropped mid-answer — this reply was generated locally instead”</i> — and your machine writes a fresh reply of its own. Two machines' prose is never spliced together. CLI mode, chips, and every built-in route never borrow; only model answers do.</p></div>" +
     "<div class='doc-sec'><h4>Lending — automatic when idle, off means off</h4>" +

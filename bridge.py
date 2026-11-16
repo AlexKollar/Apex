@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.2"
+SHIPPED_VERSION = "0.4.3"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-15.08"
+BRIDGE_BUILD = "2026-11-15.09"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 8
+SHIPPED_BUILD_SEQ = 9
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -8125,6 +8125,19 @@ def chat_route_set(cfg, chat_id, raw):
     # (None, (reason, sentence)) on refusal, with the store
     # untouched: the pill keeps its old face and shows the
     # sentence, never a silent snap-back.
+    if isinstance(raw, dict) and raw.get("mode") == "automatic":
+        # v0.4.3e (#235): the return to automatic. The stored
+        # route is REMOVED, not replaced with a marker value:
+        # the chat goes back to standing exactly as a chat that
+        # was never routed stands, and chat_route_answer
+        # computes its road from the precedence and marks it
+        # automatic — no stored value masquerades as the
+        # default. Clearing is never refused (it needs no road
+        # to be available), and the answer is read back from
+        # the store after the clear, so the pill's face, the
+        # store, and a post-reload read agree by construction.
+        _chat_route_store(chat_id, None)
+        return chat_route_answer(cfg, chat_id), None
     route = _chat_route_clean(raw)
     if route is None:
         return None, ("route-shape", "That is not a route the pill offers.")
@@ -11986,9 +11999,30 @@ APPLY_HELPER_PY = '''#!/usr/bin/env python3
 # a record whose helper is gone as failed at that step,
 # quoting the log's last line, instead of leaving it frozen
 # at working/installing forever.
+#
+# v0.4.3e (#237) — the stage comes home. The v0.4.2e field
+# pull named the remaining updater wounds: the installer's
+# own output and the staged package both lived in the stage
+# folder inside the tree the installer's swap parked, so
+# the paths the failure surface printed (apply-install.log
+# for the diagnose command, the package folder for the
+# manual fallback) did not exist in the live tree — and,
+# found by the same bake, the installer itself died after
+# the swap when it recomputed its own folder's path (fixed
+# in install.sh). This helper now holds a copy of the staged
+# package beside the install root while the installer runs,
+# keeps the install log's handle open across the swap, and
+# — before any verdict or record close — brings the stage
+# home: the log written to the live path the diagnose
+# command names, the package restored to the folder the
+# fallback command points at. It also fails the record on
+# the installer's owed-but-missing line: a shell build that
+# was owed (the sources changed) and produced no window is
+# a missing window, not the designed browser fallback.
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -12591,6 +12625,116 @@ def _install_log_last_step(log_path):
     return "the installer's closing steps (its log names no step banner for the failure)"
 
 
+def _stage_holding_dir(job):
+    # The apply's insurance folder: a sibling of the install
+    # root, in the installer's own sibling idiom (.apex-stage,
+    # .apex-prev) — ground the installer's swap never renames.
+    root = str(job.get("root") or "")
+    tag = str(job.get("tagDir") or "apply")
+    if not root:
+        return ""
+    return os.path.join(
+        os.path.dirname(os.path.abspath(root)),
+        ".apex-apply-stage", tag)
+
+
+def _recover_stage_artifacts(job, log_handle):
+    # v0.4.3e (#237): the stage comes home. The job's paths —
+    # the install log, the staged package — name the stage
+    # folder inside the tree the installer replaces, and the
+    # swap parks that tree beside its successor (.apex-prev):
+    # in the field (v0.4.2e's pull on neondrip) the parked
+    # tree took the install log and the package with it, so
+    # every path the failure surface printed — the diagnose
+    # command's apply-install.log, the manual fallback's
+    # package folder — was a path the apply had NOT left
+    # behind, and the operator's own fallback cd failed with
+    # "No such file or directory". The trace and relaunch
+    # logs survive the swap only because their writers
+    # recreate the folder; the install log and the package
+    # had no such rescue. Now they do, here, before any
+    # record closes:
+    #   * the install log is read back through this helper's
+    #     own still-open handle (an open handle survives the
+    #     rename AND the installer's end-of-run deletion of
+    #     the previous tree) and written to the live path the
+    #     diagnose command names;
+    #   * the staged package is restored to the live folder
+    #     the fallback command names — from the parked tree
+    #     when it stands, else from the holding copy this
+    #     helper made before the installer ran.
+    # A path that already stands (a no-swap apply, a parked-
+    # in-place migration) is left exactly as it lies.
+    # Best-effort throughout: a rescue that fails is traced,
+    # never fatal — the apply's verdict must not hinge on it.
+    try:
+        install_log = str(job.get("installLog") or "")
+        if install_log and not os.path.isfile(install_log) \\
+                and log_handle is not None:
+            try:
+                log_handle.flush()
+                log_handle.seek(0)
+                data = log_handle.read()
+            except Exception:
+                data = b""
+            if data:
+                _idir = os.path.dirname(install_log)
+                if _idir:
+                    os.makedirs(_idir, exist_ok=True)
+                with open(install_log, "wb") as f:
+                    f.write(data)
+                trace("stage-recovered",
+                      "the install log was brought home to "
+                      + install_log + " (" + str(len(data))
+                      + " bytes, read back through the helper's "
+                      "own handle — the swap had parked the "
+                      "original with the previous tree)")
+        pkg_dir = str(job.get("pkgDir") or "")
+        if pkg_dir and not os.path.isdir(pkg_dir):
+            src = ""
+            orig_root = os.path.abspath(str(job.get("root") or ""))
+            if orig_root and os.path.abspath(pkg_dir).startswith(
+                    orig_root + os.sep):
+                parked = os.path.join(
+                    os.path.dirname(orig_root), ".apex-prev") \\
+                    + os.path.abspath(pkg_dir)[len(orig_root):]
+                if os.path.isdir(parked):
+                    src = parked
+            if not src:
+                held = os.path.join(
+                    _stage_holding_dir(job), "package")
+                if held and os.path.isdir(held):
+                    src = held
+            if src:
+                _pdir = os.path.dirname(pkg_dir)
+                if _pdir:
+                    os.makedirs(_pdir, exist_ok=True)
+                shutil.copytree(src, pkg_dir)
+                trace("stage-recovered",
+                      "the staged package was restored to "
+                      + pkg_dir + " from " + src
+                      + " — the manual fallback's folder stands "
+                      "where the fallback command points")
+            else:
+                trace("stage-recovery-missed",
+                      "no surviving copy of the staged package "
+                      "was found to restore to " + pkg_dir)
+    except Exception as e:
+        trace("stage-recovery-failed", str(e))
+    # The holding copy has served either way; a finished
+    # apply leaves no litter beside the install root.
+    try:
+        held_dir = _stage_holding_dir(job)
+        if held_dir and os.path.isdir(held_dir):
+            shutil.rmtree(held_dir, ignore_errors=True)
+            try:
+                os.rmdir(os.path.dirname(held_dir))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def version_label(number, status):
     return "v" + number + (
         "e" if status in ("edge", "alpha") else
@@ -12623,6 +12767,26 @@ def main():
     trace("job-loaded",
           "target " + str(job.get("targetLabel"))
           + ", target build " + str(job.get("targetBuildSeq")))
+    # v0.4.3e (#237): before the installer runs, the staged
+    # package is copied to the holding folder beside the
+    # install root (see _stage_holding_dir) — the one copy of
+    # the package the installer's swap and its end-of-run
+    # cleanup can never take, so _recover_stage_artifacts
+    # can always put the manual fallback's folder back where
+    # the fallback command points.
+    try:
+        _held = _stage_holding_dir(job)
+        if _held and os.path.isdir(pkg_dir):
+            _held_pkg = os.path.join(_held, "package")
+            if os.path.isdir(_held_pkg):
+                shutil.rmtree(_held_pkg, ignore_errors=True)
+            os.makedirs(_held, exist_ok=True)
+            shutil.copytree(pkg_dir, _held_pkg)
+            trace("stage-held",
+                  "the staged package is held at " + _held_pkg
+                  + " while the installer runs")
+    except Exception as e:
+        trace("stage-hold-failed", str(e))
 
     # v0.3.0e Build 1 (#205): takeover mode. When the staged
     # package's bootstrap spawned this helper, it takes an apply
@@ -12708,14 +12872,21 @@ def main():
     why = ""
     trace("installer-start",
           "bash install.sh --startup " + startup + " --voice " + voice)
+    # v0.4.3e (#237): the install log's handle stays OPEN
+    # after the installer exits — it is the rescue's source
+    # (see _recover_stage_artifacts): the swap renames the
+    # tree the log file sits in, and a completed installer
+    # deletes that tree, but an open handle reads the content
+    # back through both.
+    _log_handle = None
     try:
-        with open(job["installLog"], "wb") as log:
-            proc = subprocess.run(
-                ["bash", os.path.join(pkg_dir, "install.sh"),
-                 "--startup", startup, "--voice", voice,
-                 "--dir", root],
-                cwd=pkg_dir, env=env, stdout=log,
-                stderr=subprocess.STDOUT, timeout=3000)
+        _log_handle = open(job["installLog"], "wb")
+        proc = subprocess.run(
+            ["bash", os.path.join(pkg_dir, "install.sh"),
+             "--startup", startup, "--voice", voice,
+             "--dir", root],
+            cwd=pkg_dir, env=env, stdout=_log_handle,
+            stderr=subprocess.STDOUT, timeout=3000)
         code = proc.returncode
     except subprocess.TimeoutExpired:
         why = "the installer did not finish within 50 minutes"
@@ -12770,6 +12941,19 @@ def main():
     except Exception:
         pass
 
+    # v0.4.3e (#237): the stage comes home BEFORE any verdict
+    # or record close below — the shell verdict's failure text
+    # and every later failure text name the install log and
+    # the staged package at their live paths, so those paths
+    # are made true first (see _recover_stage_artifacts).
+    _recover_stage_artifacts(job, _log_handle)
+    if _log_handle is not None:
+        try:
+            _log_handle.close()
+        except Exception:
+            pass
+        _log_handle = None
+
     # v0.4.2e (#233): the shell-window verdict, read from disk
     # (see _shell_window_state). An apply is NOT confirmed
     # while the installed window binary is one the launcher
@@ -12797,6 +12981,46 @@ def main():
         relaunch()
         STATE["stop_beat"] = True
         return
+
+    # v0.4.3e (#237): the owed-but-missing window. The disk
+    # verdict above reads "ok" when no binary stands beside
+    # start.sh — the designed browser fallback — but on an
+    # update whose shell sources CHANGED, a build was owed,
+    # and a build that failed retires the stale binary into
+    # exactly that no-binary shape. The installer names the
+    # distinction in its own log (SHELL-WINDOW:
+    # owed-but-missing); when it does, the absence is a
+    # missing window, not a fallback, and the apply fails on
+    # it here the same way a stale verdict does.
+    if _shell_state == "ok":
+        _owed_missing = False
+        try:
+            with open(job["installLog"], "rb") as _lf:
+                _owed_missing = (
+                    b"SHELL-WINDOW: owed-but-missing" in _lf.read())
+        except Exception:
+            _owed_missing = False
+        if _owed_missing:
+            trace("shell-window",
+                  "owed-but-missing — the shell sources changed "
+                  "with this update and the build produced no "
+                  "window; the apply fails on it in its record")
+            fail("install",
+                 "The update installed, but her standalone window "
+                 "did not come with it: the shell sources changed "
+                 "with this update and the build did not produce "
+                 "a window — the previous binary was retired "
+                 "rather than left standing stale. The update is "
+                 "not confirmed. The installer's shell build log "
+                 "is at shell/shell-build.log in the install "
+                 "folder — the Rust toolchain and the WebKitGTK "
+                 "development packages are the usual causes. Fix "
+                 "the cause and run the update again, or use the "
+                 "manual fallback below, which re-runs its "
+                 "installer by hand.")
+            relaunch()
+            STATE["stop_beat"] = True
+            return
 
     tail_failure = ""
     if code != 0:

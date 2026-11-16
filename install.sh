@@ -2137,9 +2137,30 @@ shell_sources_hash() {
   fi
 }
 SHELL_HASH="$(shell_sources_hash "$INSTALL_DIR/shell")"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+if [ -z "$SCRIPT_DIR" ] || [ ! -d "$SCRIPT_DIR/shell" ]; then
+  # v0.4.3e (#237): the updater runs this installer from the
+  # staged package INSIDE the tree being replaced — and by
+  # this point in the run, the swap has parked that tree, so
+  # the script's own folder no longer stands at its old path.
+  # The bare cd that stood here used to fail at exactly this
+  # spot, and under set -e the whole install died with it —
+  # exit 1, after the voice step, before the Rust check and
+  # the build: no updater-path apply ever attempted the
+  # window build, and the only account of the death rode the
+  # parked tree's install log. (A hand-run installer never
+  # met it: its folder stands outside the swapped tree.) The
+  # parked package keeps the same relative address under
+  # .apex-prev — the pristine sources are read from there.
+  case "$SRC_DIR" in
+    "$INSTALL_DIR"/*)
+      _parked="$PREV_DIR/${SRC_DIR#$INSTALL_DIR/}"
+      if [ -d "$_parked/shell" ]; then SCRIPT_DIR="$_parked"; fi
+      ;;
+  esac
+fi
 PKG_SHELL_HASH=""
-if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
   PKG_SHELL_HASH="$(shell_sources_hash "$SCRIPT_DIR/shell")"
 fi
 SHELL_SKIP=""
@@ -2260,6 +2281,24 @@ retire_stale_shell() {
   fi
 }
 
+# v0.4.3e (#237): the owed-build ledger. A build is OWED when
+# this install must produce a window: the sources changed (or
+# the standing binary cannot be verified against them), the
+# build is not skipped, and no designed skip road (missing
+# icon files, Bazzite with no distrobox) excuses it. When an
+# owed build does not produce a window, the end-state verdict
+# below names it with a machine-readable line — a missing
+# window the operator was owed is not the designed browser
+# fallback, and an updater apply must fail on it in its
+# record (the helper reads the line) instead of confirming
+# an update whose window silently never came.
+SHELL_BUILD_OWED=""
+SHELL_BUILD_DONE=""
+if [ -z "$SHELL_SKIP" ] && [ -z "$SHELL_ICON_MISSING" ] \
+   && { [ "$DISTRO_FAMILY" != "bazzite" ] || [ -n "$BAZZITE_BOX" ]; }; then
+  SHELL_BUILD_OWED=1
+fi
+
 # --- The standalone window (Tauri shell) ---
 # Apex opens in her own window now — a small Tauri shell over
 # the OS webview (no bundled Chromium; the footprint matters on a
@@ -2302,7 +2341,7 @@ elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
   mkdir -p "$BOX_BUILD_DIR"
   cp -r "$INSTALL_DIR/shell/." "$BOX_BUILD_DIR/"
   if distrobox enter "$BAZZITE_BOX" -- bash -c "sudo dnf install -y webkit2gtk4.1-devel gtk3-devel librsvg2-devel libappindicator-gtk3-devel openssl-devel gcc gcc-c++ make pkgconf-pkg-config curl file >/dev/null 2>&1; if ! command -v cargo >/dev/null 2>&1; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1; fi; export PATH=\$HOME/.cargo/bin:\$PATH; cd \"$BOX_BUILD_DIR\" && cargo build --release" >> "$INSTALL_DIR/shell/shell-build.log" 2>&1 && [ -x "$BOX_BUILD_DIR/target/release/navi-apex-shell" ]; then
-    install_shell_binary "$BOX_BUILD_DIR/target/release/navi-apex-shell"
+    install_shell_binary "$BOX_BUILD_DIR/target/release/navi-apex-shell" && SHELL_BUILD_DONE=1
     if [ -n "$SHELL_HASH" ]; then
       echo "$SHELL_HASH" > "$INSTALL_DIR/navi-apex-shell.stamp" || true
       if [ "$(cat "$INSTALL_DIR/navi-apex-shell.stamp" 2>/dev/null || true)" = "$SHELL_HASH" ]; then
@@ -2321,7 +2360,7 @@ elif [ "$DISTRO_FAMILY" = "bazzite" ]; then
   fi
 elif command -v cargo >/dev/null 2>&1; then
   if (cd "$INSTALL_DIR/shell" && cargo build --release >> "$INSTALL_DIR/shell/shell-build.log" 2>&1) && [ -x "$INSTALL_DIR/shell/target/release/navi-apex-shell" ]; then
-    install_shell_binary "$INSTALL_DIR/shell/target/release/navi-apex-shell"
+    install_shell_binary "$INSTALL_DIR/shell/target/release/navi-apex-shell" && SHELL_BUILD_DONE=1
     # The stamp is what lets the next install skip this build and
     # what the launcher verifies before running the binary — so
     # the write is read back, not assumed. A stamp that did not
@@ -2377,6 +2416,20 @@ if [ -x "$INSTALL_DIR/navi-apex-shell" ]; then
     echo "  *** The shell build log (shell/shell-build.log) carries the cause; fix it" >&2
     echo "  *** and re-run this installer — the window is the only step missing." >&2
   fi
+elif [ -n "$SHELL_BUILD_OWED" ] && [ -z "$SHELL_BUILD_DONE" ]; then
+  # v0.4.3e (#237): an owed build that produced no window.
+  # The failure roads above retired the stale binary (the
+  # designed protection), so no binary stands here — but on
+  # an update whose shell sources changed, that absence is
+  # a MISSING window, not the designed fallback, and it is
+  # named as such, with the machine-readable line the apply
+  # helper fails the update's record on.
+  echo "  *** NO WINDOW BESIDE start.sh — this install owed one: the shell sources" >&2
+  echo "  *** changed and the build did not produce a window, so the previous binary" >&2
+  echo "  *** was retired rather than left standing stale (issue #233). The shell" >&2
+  echo "  *** build log (shell/shell-build.log) carries the cause; fix it and re-run" >&2
+  echo "  *** this installer — the window is the only step missing." >&2
+  echo "SHELL-WINDOW: owed-but-missing — the shell sources changed with this install and the build did not produce a window; shell/shell-build.log carries the cause"
 fi
 
 if [ -n "${VOICE_FAIL:-}" ]; then
