@@ -44,6 +44,28 @@ rendered **green**, the fedinet's name on its face, and a
 own pairing card, the fedinet's identity, and the gateway's
 signature over the claim.
 
+The card's reachability is the gateway's **declared public
+endpoint alone** (v0.4.4e, #238). A pairing card carries the
+machine's LAN addresses because pairing is arranged between
+machines whose operators can meet on a network; a gateway
+card is imported by machines *outside* the gateway's network,
+and a member's bridge dials the card's addresses in order —
+a LAN address on it is a door that exists in only one house.
+On the member's own LAN such an address is a connection
+sitting in SYN-SENT until it times out, or a stranger's
+machine holding the same private address, and the automatic
+route can fall back to a local answer without the public
+road ever being tried. So the local addresses come out of
+the gateway's card entirely — the embedded pairing card
+carries the endpoint as its only address, and the gateway's
+own roster entry is shaped the same way. A gateway with **no
+declared public endpoint** mints no gateway card at all: the
+mint refuses, on the Federation page and at the download
+alike, with a sentence naming the missing declaration.
+Declare the endpoint on the Mesh page and the card can be
+minted. (Pairing cards are unchanged: they keep their LAN
+addresses by design.)
+
 Importing a gateway card does exactly two things: **admission**
 (this node now keeps the fedinet) and **introduction** (the
 gateway becomes a peer, and its roster becomes fetchable). It

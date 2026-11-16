@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.3"
+SHIPPED_VERSION = "0.4.4"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-15.09"
+BRIDGE_BUILD = "2026-11-16.10"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 9
+SHIPPED_BUILD_SEQ = 10
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -5519,8 +5519,52 @@ def _fed_crown_ok(cfg, via_dhd, data, confirm_label):
 # not "pair with me" but "I keep the roster of this fedinet; here
 # is my card so you can reach me, and my signature over the claim."
 
-def _fed_gateway_payload(cfg, fed):
+def _gateway_public_card(cfg):
+    # (card, refusal) — (v0.4.4e, #238): this node's card as a
+    # federation GATEWAY may present it. The facts are the
+    # pairing card's own — name, node id, key, pin, capabilities
+    # — but the reachability is cut to the declared public
+    # endpoint alone. A gateway card is imported by machines
+    # OUTSIDE this network, and a member's bridge dials the
+    # card's addresses in order: a LAN address on the card is a
+    # door that exists in only one house. On the member's own
+    # LAN it is a connection sitting in SYN-SENT until it times
+    # out — or a stranger's machine that happens to hold the
+    # same private address — and the field evidence on #238 is
+    # that the dial never fell through to the public road: the
+    # automatic route gave up and answered locally while the
+    # endpoint sat unused in the same card. So the local
+    # addresses come out of the gateway's card entirely, here,
+    # in the one builder every gateway-card render path shares.
+    # With no public endpoint declared there is no honest
+    # gateway card at all, and the mint refuses in words rather
+    # than minting a card that can only strand its bearer.
     own = mesh_card(cfg)
+    endpoint = str(own.get("publicEndpoint") or "").strip()
+    if not endpoint:
+        return None, ("This gateway has no declared public endpoint, so its "
+                      "gateway card cannot be minted: a gateway card carries "
+                      "the gateway's public endpoint alone — no local "
+                      "addresses — and without one there is no public road "
+                      "for the card to carry. Declare a public endpoint on "
+                      "the Mesh page, and the card can be minted.")
+    own = dict(own)
+    own["addresses"] = [endpoint]
+    return own, ""
+
+
+def gateway_card_refusal(cfg):
+    # "" when this node's gateway card can be minted, or the
+    # refusal sentence — the gateway-card mirror of
+    # mesh_card_refusal, so every mint surface can answer in
+    # words instead of drawing a picture that strands people.
+    return _gateway_public_card(cfg)[1]
+
+
+def _fed_gateway_payload(cfg, fed):
+    own, refusal = _gateway_public_card(cfg)
+    if own is None:
+        raise ValueError(refusal)
     payload = {
         "gatewayCard": 1,
         "fedinetId": fed["id"],
@@ -5801,6 +5845,19 @@ def _fed_gateway_locked(fed):
         nid = str(m.get("nodeId") or "")
         if nid == own_id:
             own = mesh_card(cfg)
+            # (v0.4.4e, #238): the gateway's own roster entry is
+            # the gateway's card facts republished under its
+            # signature, and federation_apply refreshes a
+            # member's gateway record FROM this entry — an entry
+            # still carrying the LAN addresses would undo the
+            # gateway card's public-only reachability on the
+            # next roster sync. Same shaping, same reason. With
+            # no endpoint declared the entry stands as it is:
+            # a roster cannot refuse, and the card mint's
+            # refusal is where that sentence lives.
+            shaped, _refusal = _gateway_public_card(cfg)
+            if shaped is not None:
+                own = shaped
             entry = _fed_member_entry(cfg, own, m.get("n") or 1, m.get("joinedAt"))
             if m.get("founding"):
                 entry["founding"] = True
@@ -6432,11 +6489,21 @@ def federation_payload(cfg, via_dhd=False):
             "ownNumber": next((m["n"] for m in members if m["nodeId"] == own_id), 0),
         }
         if fed["role"] == "gateway":
-            try:
-                entry["gatewayCardPng"] = base64.b64encode(
-                    build_gateway_card_png(cfg, fed)).decode("ascii")
-            except Exception:
+            # (v0.4.4e, #238): a gateway whose card cannot be
+            # minted — no declared public endpoint — says so on
+            # its own page, in the refusal's words, where the
+            # card would have stood; a silent absence would read
+            # as a rendering bug, not a missing declaration.
+            refusal = gateway_card_refusal(cfg)
+            if refusal:
                 entry["gatewayCardPng"] = ""
+                entry["gatewayCardRefusal"] = refusal
+            else:
+                try:
+                    entry["gatewayCardPng"] = base64.b64encode(
+                        build_gateway_card_png(cfg, fed)).decode("ascii")
+                except Exception:
+                    entry["gatewayCardPng"] = ""
         elif fed.get("gatewayCardPayload"):
             # A member re-shares the card it imported — the
             # gateway's own signed payload, re-drawn; nothing is
@@ -6677,6 +6744,9 @@ def federation_act(data, via_dhd=False):
     if act == "gateway-card":
         if fed["role"] != "gateway":
             return refuse("Only the gateway mints its fedinet's gateway card.")
+        refusal = gateway_card_refusal(cfg)
+        if refusal:
+            return refuse(refusal)
         try:
             png = build_gateway_card_png(cfg, fed)
         except Exception as e:
