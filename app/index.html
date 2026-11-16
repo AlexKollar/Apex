@@ -267,13 +267,13 @@
   .chat-presence .dot { flex:0 0 auto; }
   .chat-presence-name { font-weight:700; line-height:1.25; }
   .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  /* The status pane's phone identity (0.1.9e Build 11, issue
-     #140): a portrait and name that head the pane's presence
-     row on a phone, where the presence bar itself is retired
-     (see the small-screen block). Hidden at desktop widths —
-     there the bar carries her face, and the pane row stays
-     exactly as it has always been. */
-  .pane-presence-id { display:none; }
+  /* The status pane's presence row (0.1.9e Build 11, #140)
+     is retired in v0.4.10e (#250): #248 took the presence
+     line out of the pane, and what remained — a STATUS header
+     over a lone green dot on the wide canvas — was an orphan,
+     not a section. The pane now opens on its first real
+     section; her portrait, name, and dot live at the top of
+     the chat, untouched. */
   .status-tabs { position:sticky; top:-14px; z-index:5; display:flex; gap:6px; padding:12px 0 8px; margin:-14px 0 0; background:var(--panel2); border-bottom:1px solid var(--line); }
   .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
@@ -1044,8 +1044,6 @@
        the pane's line updates from the same source either
        way. */
     #presence-bar { display:none; }
-    .presence-stat { display:flex; align-items:center; gap:10px; }
-    .pane-presence-id { display:inline-flex; align-items:center; gap:8px; flex:0 0 auto; }
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     .status-tabs { top:-12px; margin-top:-12px; }
@@ -1145,6 +1143,30 @@
   body[data-motion="potato"] *, body[data-motion="potato"] *::before, body[data-motion="potato"] *::after { transition-duration:.01ms !important; transition-delay:0s !important; animation-duration:.01ms !important; animation-delay:0s !important; animation-iteration-count:1 !important; }
   body[data-motion="potato"] .pdot, body[data-motion="potato"] .wave i, body[data-motion="potato"] .tdots i, body[data-motion="potato"] .glitching { animation:none !important; }
   body[data-motion="potato"][data-theme="glass"] nav, body[data-motion="potato"][data-theme="glass"] aside, body[data-motion="potato"][data-theme="glass"] .ac, body[data-motion="potato"][data-theme="glass"] .acsearch { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+  /* The sync bar (v0.4.10e, #254; placement ruled by the
+     operator): the head of the status pane — the seat the old
+     STATUS header vacated in #250. At rest it reads "System
+     Synced"; while a round runs it becomes the progress bar —
+     three phase segments (fetch, merge, write) lit by the
+     bridge's own recorded phase, the running segment pulsing,
+     counts only where the bridge measures them (the write
+     leg's files), never a fabricated percentage. A stall or a
+     failure names itself on the bar; the landing receipt
+     hangs beneath it as its sub-line. The phone's Status tab
+     renders this same body, so the bar's phone shape is this
+     shape. */
+  .sync-bar { display:flex; align-items:center; gap:8px; }
+  .sync-bar-label { font-weight:700; font-size:13px; }
+  .sync-bar-ago { color:var(--dim); font-size:12px; }
+  .sync-track { display:flex; gap:4px; margin:8px 0 4px; }
+  .sync-seg { flex:1; height:4px; border-radius:2px; background:var(--line); }
+  .sync-seg.done { background:var(--cy); }
+  .sync-seg.now { background:var(--cy); opacity:.55; animation:sync-pulse 1.2s ease-in-out infinite; }
+  @keyframes sync-pulse { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .sync-seg.now { animation:none; } }
+  .sync-bar-sub { color:var(--dim); font-size:12px; line-height:1.5; margin-top:4px; }
+  .sync-bar.stalled .sync-bar-label { color:#f5b544; }
+  .sync-bar.failed .sync-bar-label { color:#f87171; }
   /* Quick Sync card (0.2.0e Build 3, #176): an in-place overlay,
      never a page — bottom-right on the desktop canvas, a bottom
      sheet under the phone chrome. Essentials only: state, what
@@ -1170,9 +1192,9 @@
   .fed-grid .card { margin-top:0; }
   @media (max-width: 800px) { .fed-grid { grid-template-columns:1fr; } }
 
-  /* Notifications (v0.4.7e, #242; placement v0.4.8e, #247): the
-     bell is a direct child of the nav, standing at the top of
-     the rail above Home, so it rides BOTH canvases — the
+  /* Notifications (v0.4.7e, #242; placement v0.4.8e, #247;
+     the pair v0.4.10e, #249): the bell rides in #rail-head at
+     the head of the column beside the Home tile, so it rides BOTH canvases — the
      desktop rail and the phone top bar the nav becomes at
      ≤800px — and never hides inside the collapsible #nav-menu.
      On the phone a scoped order in the ≤800px block keeps it in
@@ -1182,6 +1204,25 @@
      sheet on a phone, the house easing on the way in, and no
      backdrop blur, per the standing potato rule. */
   #notif-bell { position:relative; min-width:44px; min-height:44px; }
+  /* The rail head as an icon pair (v0.4.10e, #249): the bell
+     and Home side by side at the head of the column, icon-only
+     — their words ride tooltips and aria-labels. They live in
+     #rail-head, seated where the bell sat alone. The labeled
+     Home row retires on the wide canvas (the pair's tile IS
+     Home there, active state and all); on the collapsed rail
+     the pair stacks in the icon column, bell over Home; on
+     the phone the head dissolves back into the top bar — the
+     bell keeps its #242 slot via the order guard below and
+     the labeled Home stays in the menu, exactly as before. */
+  #rail-head { display:flex; flex-direction:row; gap:6px; }
+  #rail-head > button { flex:1 1 0; width:auto; justify-content:center; }
+  #rail-home { position:relative; min-width:44px; min-height:44px; }
+  #app.closed #rail-head { flex-direction:column; }
+  @media (min-width: 801px) { #nav-Home { display:none; } }
+  @media (max-width: 800px) {
+    #rail-head { display:contents; }
+    #rail-home { display:none; }
+  }
   #notif-badge { position:absolute; top:2px; right:2px; min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:var(--cy); color:#000; font-size:10px; font-weight:700; line-height:18px; text-align:center; box-sizing:border-box; }
   #notifShade { position:fixed; inset:0; z-index:122; background:transparent; }
   #notifPanel { position:fixed; right:16px; bottom:16px; z-index:123; width:min(380px, calc(100vw - 24px)); max-height:min(70vh, 560px); overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:12px 16px 14px; animation:notif-in .65s cubic-bezier(.22,.8,.3,1); }
@@ -2006,8 +2047,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.15";
-var SHIPPED_BUILD_SEQ = 15;
+var BRIDGE_BUILD = "2026-11-16.16";
+var SHIPPED_BUILD_SEQ = 16;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3049,10 +3090,75 @@ function bootAction() {
     });
 }
 
+/* ------------------- The sync bar (v0.4.10e, #254) ------------------- */
+// The head of the status pane, in the seat #250 vacated. Two
+// faces, both read from the bridge's sync record on the status
+// poll — never from window-local guesses: at rest, "System
+// Synced" with the last round's receipt hanging beneath it;
+// while a round runs (any trigger — button, app start, DHD
+// session, Mesh contact), the phase the bridge reports, its
+// segments lit in order, counts only where the bridge
+// measures them. A phase that has not advanced in 25 seconds
+// names its stall and the honest reason per leg; a failed
+// round names its failure on the bar until the next round.
+function syncReceiptText(receipt) {
+  var c = (receipt && receipt.counts) || {};
+  var bits = [];
+  if (c.mergedMessages) bits.push(c.mergedMessages + " message" + (c.mergedMessages === 1 ? "" : "s") + " merged into the main thread");
+  if (c.foldedGhosts) bits.push(c.foldedGhosts + " ghost thread" + (c.foldedGhosts === 1 ? "" : "s") + " folded in");
+  if (c.pairsRepaired) bits.push(c.pairsRepaired + " case/chat pair" + (c.pairsRepaired === 1 ? "" : "s") + " made whole");
+  (c.gapTitles || []).forEach(function (t) { bits.push("the chat of “" + t + "” folded away — its case didn't cross"); });
+  if (c.tombstones) bits.push(c.tombstones + " deletion" + (c.tombstones === 1 ? "" : "s") + " honored");
+  if (c.chatsAdded) bits.push(c.chatsAdded + " chat" + (c.chatsAdded === 1 ? "" : "s") + " arrived");
+  if (!bits.length) return "Last sync: nothing changed.";
+  return "Last sync: " + bits.join(" · ") + ".";
+}
+function renderSyncBar(live) {
+  if (CONFIG.backend !== "live") return "";
+  var sync = (live && live.sync) || null;
+  var prog = (sync && sync.progress) || null;
+  var receipt = (sync && sync.receipt) || null;
+  var inner;
+  if (prog && prog.active) {
+    var names = { fetch: "Fetching", merge: "Merging", write: "Writing" };
+    var label = names[prog.phase] || "Syncing";
+    var since = (typeof prog.phaseAt === "number" && prog.phaseAt) || (typeof prog.startedAt === "number" && prog.startedAt) || 0;
+    var secs = since ? Math.max(0, Math.floor(Date.now() / 1000 - since)) : 0;
+    var stalled = secs >= 25;
+    var order = ["fetch", "merge", "write"];
+    var cur = order.indexOf(prog.phase);
+    var segs = order.map(function (p, i) { return "<span class='sync-seg" + (i < cur ? " done" : i === cur ? " now" : "") + "'></span>"; }).join("");
+    var sub = label;
+    if (prog.phase === "write" && prog.counts && prog.counts.filesTotal) sub += " · " + (prog.counts.filesWritten || 0) + " of " + prog.counts.filesTotal + " files";
+    if (stalled) {
+      var why = prog.phase === "fetch" ? "no answer from the other side yet"
+        : prog.phase === "write" ? "the write has not finished"
+        : "the merge is taking a while on this machine";
+      sub = "Still " + label.toLowerCase() + " after " + secs + "s — " + why + ". It will land or name its failure.";
+    }
+    inner = "<div class='sync-bar" + (stalled ? " stalled" : "") + "'><span class='dot' style='background:#f5b544'></span><span class='sync-bar-label'>Syncing — " + label + "</span></div>" +
+      "<div class='sync-track'>" + segs + "</div><div class='sync-bar-sub'>" + esc(sub) + "</div>";
+  } else if (receipt && receipt.ok === false) {
+    inner = "<div class='sync-bar failed'><span class='dot' style='background:#f87171'></span><span class='sync-bar-label'>Sync didn't land — " + esc(receipt.message || "the round failed") + "</span></div>";
+  } else {
+    var ago = sync && sync.lastSyncEpoch ? " · " + syncAgoText(sync.lastSyncEpoch) : "";
+    inner = "<div class='sync-bar'><span class='dot' style='background:#34d399'></span><span class='sync-bar-label'>System Synced</span><span class='sync-bar-ago'>" + ago + "</span></div>" +
+      (receipt ? "<div class='sync-bar-sub'>" + esc(syncReceiptText(receipt)) + "</div>" : "");
+  }
+  return "<div class='stat' style='padding-bottom:10px'>" + inner + "</div>";
+}
+
 /* ------------------- Boot mode, read live (#142) ------------------- */
 function renderBootStatus(boot) {
   if (boot) bootStateCache = boot;
   if (CONFIG.backend !== "live" || !boot) return "";
+  // v0.4.10e (#250): the BOOT section follows Settings. When
+  // the startup mode Settings holds is not boot mode, the pane
+  // does not render the section at all; when it is, the
+  // section renders exactly as it always has — its states
+  // read from the system, never assumed. Enabling and arming
+  // live in Settings → System, as they did.
+  if (boot.settingsMode !== "on-boot") return "";
   var unit = function (s) { return s === "enabled" ? "enabled" : s === "disabled" ? "not enabled" : "unknown"; };
   var line = boot.armed ? "Armed — Apex comes up headless at boot" : "Not armed — Apex starts when you open it";
   var dot = boot.armed ? "#34d399" : "#9fb3c8";
@@ -5561,7 +5667,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Raw terminal work — Chat's CLI mode</h4>" +
   "<p>There is no separate terminal view: <b>Chat's CLI mode is the terminal</b>. Press the composer's <b>CLI</b> toggle once and it latches — every line you send runs as a command and the raw output lands in the thread as a terminal block, with nothing of Navi in the loop until you press <b>Navi</b> (or start a line with <span class='mono'>&gt;</span>) to latch back. The same installed commands decide what counts as a command, the same autocomplete finishes the command word as you type, and sudo mode — armed in Settings → System — covers the commands you run this way while its timestamp lives. One command is the composer's own, in either mode: type <span class='mono'>/cls</span> (or <span class='mono'>/clear</span>) and send it to clear the current chat — the thread empties and its folded cards reset, exactly what the old Clear chat button did before it retired; the line itself is never sent, never run, and never enters the history.</p></div>" +
     "<div class='doc-sec'><h4>Chats live on the server now</h4>" +
-  "<p>Your chats are kept by the <b>bridge</b>, not by this browser window: plain files in <span class='mono'>config/chats/</span> on the machine Apex runs on, one per thread. Open Apex from the desktop, through DHD, or from a second browser on the same install and you are looking at the <b>same conversations</b> — sign in on your server from work and the thread you left on the laptop is simply there. The browser keeps a local copy as a cache and an offline fallback, and the first time a browser with older chats meets an empty server store, its chats are imported as the seed — never discarded. Your uploads index rides with the chats. Chats are also the ninth backup essential: tick <b>Chats</b> in Settings → GitHub &amp; Backup and the threads ride the ready-to-fly backup; a restore <b>converges</b> them — newest wins per thread, and where both machines moved the same thread on, both versions survive, the incoming one as a dated sibling. Nothing is ever merged away silently.</p></div>" +
+  "<p>Your chats are kept by the <b>bridge</b>, not by this browser window: plain files in <span class='mono'>config/chats/</span> on the machine Apex runs on, one per thread. Open Apex from the desktop, through DHD, or from a second browser on the same install and you are looking at the <b>same conversations</b> — sign in on your server from work and the thread you left on the laptop is simply there. The browser keeps a local copy as a cache and an offline fallback, and the first time a browser with older chats meets an empty server store, its chats are imported as the seed — never discarded. Your uploads index rides with the chats. Chats are also the ninth backup essential: tick <b>Chats</b> in Settings → GitHub &amp; Backup and the threads ride the ready-to-fly backup; a restore <b>converges</b> them — newest wins per thread, and where both machines moved the same thread on, both versions survive, the incoming one as a dated sibling. Nothing is ever merged away silently. The one exception is the <b>main thread</b>: it is a single thread on every machine, so its copies merge by message rather than surviving side by side (v0.4.10e, #251).</p></div>" +
     "<div class='doc-sec'><h4>The phone composer \u2014 the Chat tools list (v0.4.7e, #246)</h4>" +
   "<p>On a phone the composer bar is two things: the <b>input</b> and a <b>\u2630 Chat tools</b> button at its end, in the slot the Call button used to hold. Three tools live in the list that button opens \u2014 <b>New case</b>, <b>Attach</b> and <b>Call</b> \u2014 each a full-width row with its icon and its name. Picking one closes the list and does the thing, exactly as the old bar buttons did \u2014 the same handlers, the same form, the same picker, the same call. There is <b>no composer mic on a phone at all</b> \u2014 not in the bar, not in the list: dictation into the composer is a desktop affordance. On a phone, voice is a call: while a call is live, the call card's own <b>Push to talk</b> is the voice control, and it is untouched by any of this. The CLI/Navi latch and the route pill beneath the bar are state, not tools, and stay exactly where they were, with the list open or closed.</p>" +
   "<p>What stayed out of the list is what is <b>state</b>, not tools: the <b>CLI | Navi latch</b> and the <b>route pill</b> under the bar never moved, because they say how your next line will travel and must stay visible while you type. Above phone widths nothing changes at all: the four tools sit in the bar itself, and there is no \u2630 button.</p></div>" +
@@ -5726,8 +5832,8 @@ var DOC_PAGES = [
   "<div class='doc-sec'><h4>Home is the board only (v0.3.0e \u2014 Build 4)</h4>" +
   "<p>Build 4 narrows Home to the <b>board itself</b>: the situation strip and the four glance cards \u2014 Top News, Newest CVEs, Next CTFs, Bounties \u2014 and nothing else. The tab set retired, and <b>feed health moved to the top of the News view</b>, in the same collapsible field with the same persisted choice. Every family is now its own view, reached by the Open button on its glance card or through the menu; each carries a way back to the board, and the News view carries the doors to the CVE and KEV families, so nothing the tabs pointed at is stranded. Home is built as a host surface \u2014 the board is its first resident, not its last word. The menu rail also lights <b>exactly one entry</b> now: the board lights Home, a family lights The Wire.</p></div>" +
     "<div class='doc-sec'><h4>Notifications \u2014 Needs your eyes (v0.4.7e, #242)</h4>" +
-  "<p>The <b>bell</b> at the top of the rail, above Home \u2014 in the top bar on a phone \u2014 carries a badge with the unread count. Tapping it opens the <b>Needs your eyes</b> panel: every item with its title, its story, and when it landed, each with a <b>Go</b> button that takes you to the surface it belongs to \u2014 a federation knock to Federation, a DHD summons to DHD, a case item to that case in Case Files, an account item to Settings \u2014 and marks the item read on the way. <b>Mark all read</b> clears the whole list's unread state in one tap. The same card stands <b>first on Home</b> whenever anything is unread, carrying the first four; a quiet list shows nothing at all.</p>" +
-  "<p><b>What notifies</b> is what needs the operator: federation knocks waiting on your admission, devices asking to pair at the door, case entries that landed as unverified leads, an Edge update staged and waiting on the Updater. <b>What never does</b>: routine traffic \u2014 feed pulls, ordinary replies, a sync that simply worked. Navi also <b>announces a notification in chat herself</b> when it lands, in her own words; the bell is the record, the announcement is the tap on the shoulder. Read state lives in the <b>bridge</b>, not in any browser window, so every seat agrees on what has been seen.</p></div>" 
+  "<p>The <b>bell</b> stands at the head of the rail beside <b>Home</b> \u2014 an icon pair, their names carried by their tooltips \u2014 in the top bar on a phone \u2014 and carries a badge with the unread count. Tapping it opens the <b>Needs your eyes</b> panel: every item with its title, its story, and when it landed, each with a <b>Go</b> button that takes you to the surface it belongs to \u2014 a federation knock to Federation, a DHD summons to DHD, a case item to that case in Case Files, an account item to Settings \u2014 and marks the item read on the way. <b>Mark all read</b> clears the whole list's unread state in one tap. The same card stands <b>first on Home</b> whenever anything is unread, carrying the first four; a quiet list shows nothing at all.</p>" +
+  "<p><b>What notifies</b> is what needs the operator: federation knocks waiting on your admission, devices asking to pair at the door, case entries that landed as unverified leads, an Edge update staged and waiting on the Updater. <b>What never does</b>: routine traffic \u2014 feed pulls, ordinary replies, a sync that simply worked. One sync exception, ruled with the sync bar (v0.4.10e, #254): a sync that <b>materially</b> changed things — ghost threads folded into the main chat, a case/chat pairing repaired, another machine's deletion honored here — is an act, and it notifies like one. Navi also <b>announces a notification in chat herself</b> when it lands, in her own words; the bell is the record, the announcement is the tap on the shoulder. Read state lives in the <b>bridge</b>, not in any browser window, so every seat agrees on what has been seen.</p></div>" 
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
@@ -5850,7 +5956,8 @@ var DOC_PAGES = [
   "<p><b>Staleness is a posture, not an error.</b> A roster last verified more than <b>72 hours</b> ago degrades its fedinet to pairing-only, with the sentence on the Federation page saying so, until a sync lands. Syncs ride the Mesh door directly, or — when the direct road is dark — <b>via relay</b>, on Build 7's three ticks and one-hop rule. <b>Expulsion</b> is a signed roster revision: it lands at the next sync, removes the federation's own records for the departed node, and never touches a pairing made by hand.</p></div>" +
     "<div class='doc-sec'><h4>The status column: the law, and the FediNet sections (v0.3.0e — Build 2, #204)</h4>" +
   "<p><b>Anything turned off in Settings does not show in the status bar at all.</b> Off is absent — no greyed placeholder, no teaser row, and no dot in the collapsed Servers header either. The Mesh row, the DHD row, the Apex | Node row and the Voice row all obey it; a feature mid-switch still shows its switching state, because that is the flip's own feedback. The law governs visibility only, one-directionally — and any Settings toggle added later inherits it.</p>" +
-  "<p>Under the Servers list, above Sudo Mode, each fedinet this node belongs to gets its own line: <b>FediNet: &lt;Name&gt;</b> — the name in the <b>federation green</b> when the fedinet is reachable, <b>red</b> when its gateway cannot be reached, read from the federation machinery's own state (the roster's freshness and the gateway's probe verdict), never a cosmetic guess. A roster past its 72-hour freshness window — the pairing-only degradation above — shows <b>amber</b>, the named middle state. A node in no fedinet gets the one line: <i>You are not federated.</i> The section refreshes on the status column's own cadence; the phone arrangement carries it in the same relative position.</p></div>" +
+  "<p>Under the Servers list, above Sudo Mode, each fedinet this node belongs to gets its own line: <b>FediNet: &lt;Name&gt;</b> — the name in the <b>federation green</b> when the fedinet is reachable, <b>red</b> when its gateway cannot be reached, read from the federation machinery's own state (the roster's freshness and the gateway's probe verdict), never a cosmetic guess. A roster past its 72-hour freshness window — the pairing-only degradation above — shows <b>amber</b>, the named middle state. A node in no fedinet gets the one line: <i>You are not federated.</i> The section refreshes on the status column's own cadence; the phone arrangement carries it in the same relative position.</p>" +
+  "<p>The pane itself opens on its first real section (v0.4.10e, #250) — the update line — with no header row of its own: her portrait, her name, and her dot live at the top of the chat, and the pane is for the machine's state, not hers. The <b>BOOT</b> line inside Servers follows Settings the same way the law above does: it renders only while boot mode is the startup mode Settings holds, and when it renders, its states still read from the system, never assumed. Arming and disarming live in <b>Settings → System</b>.</p></div>" +
     "<div class='doc-sec'><h4>The doors: DHD tiers & crown acts</h4>" +
   "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
@@ -5963,8 +6070,9 @@ var DOC_PAGES = [
   "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. Since Build 6 the badge itself also travels <b>as its own plain file</b> — <span class='mono'>cards/operator-badge.png</span> in the backup repo, exactly the card's bytes, no archive — so the card can be listed and fetched on its own, one card at a time, on the phone over DHD, without opening the whole backup; a restore takes the card from that file, byte for byte. The Mesh node keypair is never in any file a backup writes — the card is the operator's picture and profile, nothing of the node's keys. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
     "<div class='doc-sec'><h4>Sync — One Navi. All the screens. (The Sync Update, v0.3.0e Build 1)</h4>" +
   "<p>The badge round above is the deliberate ceremony; <b>Sync</b> is the everyday gesture it grew into. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so a conversation started at the desk is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it. Pulls also happen on their own: at <b>app start</b>, when a <b>DHD session starts</b>, when a <b>window opens</b> (the seat notes itself to the bridge, which refreshes the room for it — the desk was the one seat that never announced itself before this build), and on <b>Mesh contact</b>. Publishing stays the button's act. There is no polling daemon.</p>" +
+  "<p><b>Sync shows itself</b> (v0.4.10e, #254). The head of the status pane is the <b>sync bar</b>: at rest it reads <b>System Synced</b>; while any round runs — from the button, at app start, at a DHD session's start, on Mesh contact — it becomes a progress bar naming the phase the bridge is in (<b>fetch, merge, write</b>), with counts only where the bridge can measure them, and an honest indeterminate pulse where it can't. A round that stalls names its stall and the leg it is stuck on; a round that fails names its failure. When a round lands, the <b>receipt</b> hangs off the bar in plain terms — messages merged into the main thread, ghost threads folded, case/chat pairs made whole or the gaps named, deletions honored — or simply <i>nothing changed</i>. The durable copy is the sync record itself; the bar is its face. And when a round materially changed things — a fold, a pairing repaired, another machine's deletion honored — Navi announces it in the main chat herself, from that same record; a routine round stays quiet.</p>" +
   "<p>What rides is the whole living her, anchored to your <b>GitHub account</b> — the set's manifest names the account, and a set from a different account is refused by name at the door, on both transports, before anything is applied: different accounts are different people's work. The set: the <b>chat store</b>; <b>Case Files</b> whole; the <b>ChipDeck</b> as one unit — chips with their install record, RAG packs with theirs, and the cards that tie machines together (your own pairing card and one per paired peer, re-drawn fresh each round, and a gateway card for every fedinet you keep; a gateway card landing on a machine that doesn't keep that fedinet yet admits it — admission and introduction only, never trust); your <b>operator picture and badge</b>; her <b>memory entries</b>; and <b>her Soul and her memory book</b>. The Operator Badge keeps its crown jobs — recovery root, the acts that need the ceremony — but it is not the sync key anymore; the account is. Settings stay with the badge backup, as ever.</p>" +
-  "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union — they are append-shaped, and nothing un-remembers. Your picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs, so the other machine's older copy cannot resurrect it — while a copy genuinely edited <i>after</i> the deletion counts as newer work and survives. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p></div>" +
+  "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union — they are append-shaped, and nothing un-remembers. Your picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p></div>" +
     "<div class='doc-sec'><h4>One sign-in, and failures with names (Build 2, completed in Build 6)</h4>" +
   "<p><b>Who Apex speaks as.</b> Build 2 taught Apex to keep its GitHub identities apart — your sign-in for backup and import, a separate pasted token for the app's own reads — and Build 6 finished the thought by collapsing them to <b>one</b>: your GitHub account sign-in, and nothing else. There is no token to create, paste, or rotate; the Updater's checks, the NUR's catalog searches, downloads, sync's repo transport, backup and import all ride the one sign-in, which lives in <span class='mono'>config/github-auth.json</span> (readable only by you, never backed up, deleted by signing out). <b>Release Automation</b> still holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote. And failures keep their names everywhere GitHub is read: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the sentence carries its reset), <b>abuse</b> (GitHub's secondary safeguard — the sentence carries the wait it asked for, and Apex stops rather than retrying). No surface shows a bare “HTTP 403”.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
@@ -6873,6 +6981,11 @@ function syncNav() {
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
   });
+  // v0.4.10e (#249): the rail head's Home tile carries the
+  // same active state as the labeled Home row — one selection,
+  // painted on both seats of Home.
+  var railHomeEl = document.getElementById("rail-home");
+  if (railHomeEl) railHomeEl.classList.toggle("on", want === "nav-Home");
   ["network", "navi", "apps", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
     if (wrap) {
@@ -6900,11 +7013,11 @@ dockBtn.onclick = function () {
   render();
 };
 navEl.appendChild(dockBtn);
-// The notifications bell (v0.4.7e, #242; moved v0.4.8e, #247):
-// created here, in the toggleBtn/dockBtn idiom, and inserted
-// BEFORE #nav-menu — a direct child of the nav standing at the
-// top of the rail, above Home, on the desktop canvas and
-// through DHD alike. As first shipped it was appended last and
+// The notifications bell (v0.4.7e, #242; moved v0.4.8e, #247;
+// paired v0.4.10e, #249): created here, in the toggleBtn/dockBtn
+// idiom, and seated in #rail-head BEFORE #nav-menu — at the head
+// of the rail beside Home, on the desktop canvas and through
+// DHD alike. As first shipped it was appended last and
 // rendered at the foot of the rail, under the version line;
 // the operator ruled the bell belongs at the head of the
 // column. It still never hides inside the collapsible
@@ -6918,7 +7031,30 @@ notifBtn.type = "button";
 notifBtn.innerHTML = "<span class='ic'><svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg></span><span id='notif-badge' style='display:none'>0</span>";
 notifBtn.setAttribute("aria-label", "Notifications");
 notifBtn.onclick = function () { openNotifPanel(); };
-navEl.insertBefore(notifBtn, navMenu);
+// v0.4.10e (#249): the bell gains a partner — the head of the
+// rail is an icon pair now. #rail-head seats where the bell
+// sat alone (before #nav-menu, a direct child of the nav) and
+// holds the bell and an icon-only Home tile side by side. The
+// tile does exactly what the labeled Home row does — same
+// tab, same view — and syncNav mirrors Home's active state
+// onto it, so the filled tile IS Home's state on the wide
+// canvas, where the stylesheet retires the labeled row. The
+// words live in the tooltip and the aria-labels. Collapsed,
+// the pair stacks bell over Home (stylesheet); on the phone
+// the head dissolves and nothing moves.
+var railHead = document.createElement("div");
+railHead.id = "rail-head";
+var railHome = document.createElement("button");
+railHome.id = "rail-home";
+railHome.type = "button";
+railHome.innerHTML = "<span class='ic'>" + navIcon("Home") + "</span><span class='nav-tip' aria-hidden='true'>Home</span>";
+railHome.setAttribute("aria-label", "Home");
+railHome.title = "Home";
+railHome.onclick = function () { setIntelTab("home"); goView("ThreatIntel"); };
+notifBtn.title = "Notifications";
+railHead.appendChild(notifBtn);
+railHead.appendChild(railHome);
+navEl.insertBefore(railHead, navMenu);
 // Tapping back into the content dismisses whichever overlay is up
 // (build .64) — reachable whenever an overlay leaves content
 // exposed, and the same gesture on the bar's own toggles.
@@ -10175,12 +10311,12 @@ function chatsPanelHtml() {
     var on = String(c.id) === String(activeChatId);
     var armed = chatDeleteArmId !== null && String(chatDeleteArmId) === String(c.id);
     var foot;
-    if (armed) {
+    if (armed && !c.case) {
       foot = "<div style='margin-top:8px;border-top:1px solid var(--line);padding-top:8px'><span style='color:#f5b544;font-size:12px'>Delete <b>" + esc(c.title) + "</b>? Its " + c.messages.length + " messages go with it — and the deletion travels with Sync, so it won't come back from your other machine. Copies inside backups already taken stay in those backups.</span><div style='margin-top:6px;display:flex;gap:6px'><button class='ghost' data-delchat-yes='" + esc(String(c.id)) + "' style='min-height:44px;color:#f87171;border-color:#f87171'>Delete it</button><button class='ghost' data-delchat-no='1' style='min-height:44px'>Keep it</button></div></div>";
     } else {
       foot = "<div style='margin-top:6px;display:flex;gap:6px'>" +
         (on ? "<span class='mono' style='color:var(--cy);font-size:11px;align-self:center'>ACTIVE</span>" : "<button class='ghost' data-switch='" + c.id + "' style='min-height:40px'>Switch</button>") +
-        (String(c.id) === "1" ? "<span style='color:var(--dim);font-size:11px;align-self:center'>The main chat can't be deleted — /clear or /cls empties it.</span>" : (chats.length > 1 ? "<button class='ghost' data-delchat='" + esc(String(c.id)) + "' style='min-height:44px'>Delete</button>" : "")) + "</div>";
+        (String(c.id) === "1" ? "<span style='color:var(--dim);font-size:11px;align-self:center'>The main chat can't be deleted — /clear or /cls empties it.</span>" : c.case ? "<span style='color:var(--dim);font-size:11px;align-self:center'>Bound to its case — it deletes through the case: deleting the case deletes its chat.</span>" : (chats.length > 1 ? "<button class='ghost' data-delchat='" + esc(String(c.id)) + "' style='min-height:44px'>Delete</button>" : "")) + "</div>";
     }
     return "<div class='card' style='margin-bottom:8px;padding:10px;" + (on ? "border-color:var(--cy)" : "") + "'><b>" + esc(c.title) + "</b>" + (c.case ? " <span class='mono' style='font-size:11px;color:#34d399'>CASE</span>" : "") + " <span style='color:var(--dim);font-size:12px'>" + c.messages.length + " messages</span>" + foot + "</div>";
   }).join("");
@@ -10250,9 +10386,16 @@ function renderStatus(live) {
   } else {
     updHtml = "<div class='mono' style='font-weight:700;color:var(--dim)'>" + (CONFIG.backend === "live" ? "Not checked yet" : "Live bridge only") + "</div>";
   }
+  // v0.4.10e (#250 + #254, as ruled): the pane opens on the
+  // sync bar. The STATUS header and its lone green dot are
+  // retired — the dot was the presence row's, left orphaned
+  // when #248 took the presence line out of the pane; her
+  // portrait, name, and dot live at the top of the chat,
+  // untouched — and the bar takes their seat: "System Synced"
+  // at rest, the progress bar while a round runs, the receipt
+  // hanging off it on landing. Then the sections, unchanged.
   var statusBody =
-    "<h3>Status</h3>" +
-    "<div class='stat presence-stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='pane-presence-id'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='chat-presence-name'>Navi</span></span><span class='dot pdot' style='background:#34d399'></span></div>" +
+    renderSyncBar(live) +
     (bridgeStale && CONFIG.backend === "live"
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +

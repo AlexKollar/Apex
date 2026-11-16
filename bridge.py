@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.9"
+SHIPPED_VERSION = "0.4.10"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.15"
+BRIDGE_BUILD = "2026-11-16.16"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 15
+SHIPPED_BUILD_SEQ = 16
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -21298,7 +21298,23 @@ def chats_replace_all(records, uploads):
     # too (a chat deleted at one door stays deleted at every door).
     keep = set()
     written = 0
+    # v0.4.10e (#253): a window still holding a stale copy of a
+    # deleted thread cannot write it back through this door
+    # either — tombstones govern every door. A record the sync
+    # state names as deleted is refused (the main seat
+    # excepted: it cannot be deleted, and its record is the
+    # window's own). A genuinely new thread carries a fresh id
+    # and creation stamp, so it is never covered by an old
+    # conversation's tombstone.
+    try:
+        tombs = (_sync_state_load().get("tombstones") or {}).get("chats") or {}
+    except Exception:
+        tombs = {}
     for rec in (records or []):
+        norm = _chat_normalize(rec)
+        if norm is not None and tombs and not _chat_is_main_family(norm) and \
+                (str(norm["id"]) in tombs or _chat_conv_tomb_key(norm) in tombs):
+            continue
         saved = chat_write(rec)
         if saved is not None:
             keep.add(saved["id"])
@@ -21344,6 +21360,54 @@ def _chat_msgs_prefix(shorter, longer):
     if len(a) > len(b):
         return False
     return json.dumps(a, sort_keys=True) == json.dumps(b[:len(a)], sort_keys=True)
+
+
+def _chat_msg_id(m):
+    # A message's identity for merge dedupe (v0.4.10e, #251):
+    # the canonical bytes of the message itself. Two seats
+    # holding the same line hold the same identity, wherever
+    # the thread around it has forked.
+    return hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()
+
+
+def _chat_merge_messages(local_msgs, remote_msgs):
+    # The one-main merge (v0.4.10e, #251): the union of two
+    # copies of the main thread, each message exactly once.
+    # When every message on both sides carries a timestamp the
+    # union is ordered by it (a stable sort, so equal stamps
+    # keep their side's order); otherwise the local copy is the
+    # spine and the foreign-only lines append in their own
+    # order. Returns (messages, added_count).
+    local_msgs = local_msgs or []
+    remote_msgs = remote_msgs or []
+    seen = {_chat_msg_id(m) for m in local_msgs}
+    out = list(local_msgs)
+    added = 0
+    for m in remote_msgs:
+        k = _chat_msg_id(m)
+        if k not in seen:
+            seen.add(k)
+            out.append(m)
+            added += 1
+    if added and all(isinstance(m.get("ts"), (int, float))
+                     for m in out if isinstance(m, dict)) and \
+            all(isinstance(m, dict) for m in out):
+        out = sorted(out, key=lambda m: m.get("ts") or 0)
+    return out, added
+
+
+def _chat_is_main_family(rec):
+    # v0.4.10e (#251): the main thread is a SEAT, not one
+    # conversation among many — there is exactly one, and every
+    # record of it belongs to it: the seat itself (id "1") and
+    # the sync-born copies older rounds parked as its siblings
+    # (an import whose origin is the main seat). A case-bound
+    # chat is never family, whatever its id looks like.
+    if not isinstance(rec, dict) or rec.get("case"):
+        return False
+    if str(rec.get("id")) == MAIN_CHAT_ID:
+        return True
+    return _chat_origin(rec) == MAIN_CHAT_ID
 
 
 def _chat_merge_verdict(cur, rec):
@@ -21449,6 +21513,63 @@ def _chats_dedupe_imports():
     return removed
 
 
+def _chats_fold_main_ghosts():
+    # v0.4.10e (#251): the one-time reconciliation, run at the
+    # head of every convergence — a seat holding ghost mains
+    # (sync-born siblings of the main seat, parked by rounds
+    # that treated the main thread as one conversation among
+    # many) folds them into the canonical main: messages merge
+    # in by identity, nothing is lost, the ghost files go, and
+    # the fold is receipted in the sync state — what folded,
+    # and how many messages it carried. Ghost ids are
+    # tombstoned so another seat's copy of the same ghost is
+    # refused as a thread of its own (its messages, if any are
+    # new, still arrive with the main seat's own record and
+    # merge the same way).
+    out = {"folded": 0, "messages": 0, "merged": 0}
+    rows = chats_all()
+    main = None
+    ghosts = []
+    for r in rows:
+        if str(r["id"]) == MAIN_CHAT_ID and not r.get("case"):
+            main = r
+        elif _chat_is_main_family(r):
+            ghosts.append(r)
+    if main is None or not ghosts:
+        return out
+    ghosts.sort(key=lambda r: (r.get("updatedAt") or 0, str(r["id"])))
+    receipt = []
+    cur = main
+    for g in ghosts:
+        merged_msgs, added = _chat_merge_messages(cur.get("messages"), g.get("messages"))
+        nxt = dict(cur)
+        nxt["messages"] = merged_msgs
+        nxt["updatedAt"] = max(cur.get("updatedAt") or 0, g.get("updatedAt") or 0)
+        saved = chat_write(nxt)
+        if saved is None:
+            continue
+        cur = saved
+        try:
+            os.remove(_chat_path(str(g["id"])))
+        except Exception:
+            continue
+        sync_record_tombstone("chats", str(g["id"]))
+        receipt.append({"id": str(g["id"]), "title": str(g.get("title") or ""),
+                        "messages": len(g.get("messages") or [])})
+        out["folded"] += 1
+        out["messages"] += len(g.get("messages") or [])
+        out["merged"] += added
+    if receipt:
+        try:
+            state = _sync_state_load()
+            state["mainFold"] = {"at": time.time(), "folded": receipt,
+                                 "messagesMerged": out["merged"]}
+            _sync_state_save(state)
+        except Exception:
+            pass
+    return out
+
+
 def _chat_write_as(rec, target):
     # Land rec's thread under target's identity: the target
     # keeps its id, its title, and its import provenance — the
@@ -21465,13 +21586,16 @@ def _chat_write_as(rec, target):
 
 
 def chats_converge_preview(incoming):
-    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0}
+    summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "mainMerged": 0}
     rows = chats_all()
     local, by_conv = _chat_local_maps(rows)
     held_keys = {_chat_msgs_key(r) for r in rows}
     for raw in (incoming or []):
         rec = _chat_normalize(raw)
         if rec is None:
+            continue
+        if _chat_is_main_family(rec):
+            summary["mainMerged"] += 1  # v0.4.10e (#251): mains merge, never park
             continue
         cur = local.get(str(rec["id"]))
         if cur is not None and _chat_conv_key(cur) != _chat_conv_key(rec):
@@ -21508,8 +21632,11 @@ def chats_converge(incoming, incoming_uploads=None):
     # parks under the deterministic _chat_sibling_id; and the
     # store first dedupes the timestamp-id copies older builds
     # minted of a single conversation.
+    fold = _chats_fold_main_ghosts()
     summary = {"added": 0, "replaced": 0, "kept": 0, "siblings": 0, "uploads": 0,
-               "deduped": _chats_dedupe_imports()}
+               "deduped": _chats_dedupe_imports(),
+               "mainFolded": fold["folded"], "mainFoldedMessages": fold["merged"],
+               "mainMerged": 0, "mainMergedMessages": 0}
     rows = chats_all()
     local, by_conv = _chat_local_maps(rows)
     held_keys = {_chat_msgs_key(r) for r in rows}
@@ -21517,6 +21644,39 @@ def chats_converge(incoming, incoming_uploads=None):
     for raw in (incoming or []):
         rec = _chat_normalize(raw)
         if rec is None:
+            continue
+        if _chat_is_main_family(rec):
+            # v0.4.10e (#251): a record of the main seat merges
+            # INTO the canonical main — the union of the two
+            # copies, each message exactly once — and never
+            # parks as a sibling, never lands as another
+            # thread. A seat holding no main yet adopts the
+            # record AS its main.
+            cur_main = local.get(MAIN_CHAT_ID)
+            if cur_main is not None and cur_main.get("case"):
+                cur_main = None
+            if cur_main is None:
+                adopt = dict(rec)
+                adopt["id"] = MAIN_CHAT_ID
+                adopt.pop("fromSyncOf", None)
+                saved = chat_write(adopt)
+                if saved is not None:
+                    local[MAIN_CHAT_ID] = saved
+                    by_conv.setdefault(_chat_conv_key(saved), saved)
+                    held_keys.add(_chat_msgs_key(saved))
+            else:
+                merged_msgs, _added = _chat_merge_messages(
+                    cur_main.get("messages"), rec.get("messages"))
+                summary["mainMergedMessages"] += _added
+                nxt = dict(cur_main)
+                nxt["messages"] = merged_msgs
+                nxt["updatedAt"] = max(cur_main.get("updatedAt") or 0,
+                                       rec.get("updatedAt") or 0)
+                saved = chat_write(nxt)
+                if saved is not None:
+                    local[MAIN_CHAT_ID] = saved
+                    held_keys.add(_chat_msgs_key(saved))
+            summary["mainMerged"] += 1
             continue
         key = _chat_conv_key(rec)
         cur = local.get(str(rec["id"]))
@@ -21612,7 +21772,7 @@ def chats_converge(incoming, incoming_uploads=None):
                 summary["uploads"] += 1
         if summary["uploads"]:
             chats_save_uploads(list(merged.values()))
-    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"] + summary["deduped"]
+    summary["changed"] = summary["added"] + summary["replaced"] + summary["siblings"] + summary["uploads"] + summary["deduped"] + summary["mainFolded"] + summary["mainMerged"]
     return summary
 
 
@@ -22224,9 +22384,16 @@ def sync_collect(cfg=None):
     # The local sync set as {path: bytes} plus the case index the
     # convergence reads the other side by.
     payload = chats_payload()
+    # v0.4.10e (#252): the set carries a case and its chat
+    # together — a chat whose case is not on this machine does
+    # not ride at all, since it could only land on the far seat
+    # as an orphan.
+    export_chats = [c for c in payload["chats"]
+                    if not c.get("case")
+                    or _sync_case_files(str(c["case"])) is not None]
     files = {}
     files[SYNC_PREFIX + "chats.json"] = json.dumps(
-        {"chats": payload["chats"], "uploads": payload["uploads"],
+        {"chats": export_chats, "uploads": payload["uploads"],
          "exportedAt": _sync_now_iso()}, indent=2).encode()
     state = _sync_state_load()
     files[SYNC_PREFIX + "tombstones.json"] = json.dumps(
@@ -22287,7 +22454,7 @@ def sync_collect(cfg=None):
     manifest = {"format": SYNC_FORMAT, "app": "Apex",
                 "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
                 "account": account,
-                "chats": len(payload["chats"]), "cases": len(index),
+                "chats": len(export_chats), "cases": len(index),
                 "deckFiles": len(deck_index), "docs": len(docs_index)}
     files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
     return files, manifest, index
@@ -22365,28 +22532,95 @@ def sync_fetch(cfg):
     return {"files": files, "manifest": manifest}, None
 
 
+def _sync_reconcile_case_chats(remote_case_slugs, summary):
+    # v0.4.10e (#252): a case and its chat travel together, so
+    # a seat never HOLDS a case chat whose case is not on its
+    # desk — the field proof was a "Case — Test" chat listed
+    # while the desk read empty. Once the arriving cases have
+    # landed, any chat whose case is absent folds away — not
+    # listed, not offered — with a receipt in the sync state
+    # naming the gap: the case, the chat, and whether the case
+    # was in the arriving set and failed to land or never
+    # crossed at all. No tombstone is recorded: the fold is
+    # not the operator's delete, and if a later set brings the
+    # case whole, the chat rides with it and the pair stands
+    # again. An identical repeat arrival folds again but does
+    # not receipt twice.
+    remote_case_slugs = remote_case_slugs or set()
+    state = _sync_state_load()
+    receipts = state.get("orphanCaseChats") or []
+    known = {(str(r.get("chatId")), r.get("updatedAt")) for r in receipts}
+    gap_slugs = {str(r.get("case")) for r in receipts}
+    dirty = False
+    for chat in chats_all():
+        slug = chat.get("case")
+        if not slug:
+            continue
+        if _sync_case_files(str(slug)) is not None:
+            summary["casePairsWhole"] += 1
+            if str(slug) in gap_slugs:
+                # v0.4.10e (#254's receipt): a gap an earlier
+                # round receipted is healed — the pair stands
+                # whole again. A repair is a delta, counted
+                # once; the old receipt is cleared.
+                summary["casePairsRepaired"] += 1
+                receipts = [r for r in receipts if str(r.get("case")) != str(slug)]
+                gap_slugs.discard(str(slug))
+                dirty = True
+            continue
+        key = (str(chat["id"]), chat.get("updatedAt"))
+        chat_delete(str(chat["id"]), _record=False)
+        summary["orphanedCaseChats"] += 1
+        summary["caseChatGapTitles"].append(str(chat.get("title") or slug))
+        if key not in known:
+            receipts.append({
+                "chatId": str(chat["id"]), "case": str(slug),
+                "title": str(chat.get("title") or ""),
+                "messages": len(chat.get("messages") or []),
+                "updatedAt": chat.get("updatedAt"),
+                "at": time.time(),
+                "reason": ("case-in-set-failed-to-land"
+                           if str(slug) in remote_case_slugs
+                           else "case-not-in-set")})
+            known.add(key)
+            dirty = True
+        summary["eyes"].append("the chat of a case that did not cross: “" +
+                               str(chat.get("title") or slug) + "”")
+    if dirty:
+        state["orphanCaseChats"] = receipts[-20:]
+        _sync_state_save(state)
+    return summary
+
+
 def _sync_apply_tombstones(tombs, summary):
     # Deletions land BEFORE anything converges in — and only over
     # copies no newer than the deletion itself. Returns the set of
     # tombstone keys that were SUPERSEDED by newer local work (the
     # caller drops them from the stored set).
     dropped = {"chats": set(), "cases": set(), "vault": set()}
-    local_chats = {str(c["id"]): c for c in chats_all()}
-    for cid, at in (tombs.get("chats") or {}).items():
-        if str(cid) == MAIN_CHAT_ID:
-            # v0.3.0e Build 1 (#200): the main chat cannot be
-            # deleted, so its tombstone can never land — drop it
-            # from the set rather than retry it every round.
-            dropped["chats"].add(str(cid))
+    chat_tombs = tombs.get("chats") or {}
+    if MAIN_CHAT_ID in {str(k) for k in chat_tombs}:
+        # v0.3.0e Build 1 (#200): the main chat cannot be
+        # deleted, so its tombstone can never land — drop it
+        # from the set rather than retry it every round.
+        dropped["chats"].add(MAIN_CHAT_ID)
+    for rec in chats_all():
+        cid = str(rec["id"])
+        if cid == MAIN_CHAT_ID:
             continue
-        rec = local_chats.get(str(cid))
-        if rec is None:
-            continue
-        if (rec.get("updatedAt") or 0) <= at:
+        # v0.4.10e (#253): a chat tombstone is a fact, not a
+        # suggestion weighed against timestamps. The named
+        # thread dies, and so does any local representative of
+        # its conversation (the "conv:" keys chat_delete
+        # records), however new its last line is — newer work
+        # inside a deleted conversation is not a resurrection
+        # door. The operator deleted the conversation, not a
+        # snapshot of it. (Build 5 weighed updatedAt here and
+        # let the newer copy keep the thread — and the delete
+        # the operator watched happen quietly undone itself.)
+        if cid in chat_tombs or _chat_conv_tomb_key(rec) in chat_tombs:
             if chat_delete(cid, _record=False):
                 summary["removedChats"] += 1
-        else:
-            dropped["chats"].add(str(cid))
     for slug, at in (tombs.get("cases") or {}).items():
         entries = _sync_case_files(slug)
         if entries is None:
@@ -22501,7 +22735,10 @@ def sync_apply(cfg, fetched):
     # summary the card speaks.
     summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
                "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
-               "chatsDeduped": 0,
+               "chatsDeduped": 0, "chatsMainMerged": 0, "chatsMainFolded": 0,
+               "chatsMainMergedMessages": 0, "chatsMainFoldedMessages": 0,
+               "orphanedCaseChats": 0, "casePairsWhole": 0,
+               "casePairsRepaired": 0, "caseChatGapTitles": [],
                "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
                "deckFilesPulled": 0, "cardsImported": 0, "docsPulled": 0,
                "entriesPulled": 0, "seatChanged": False,
@@ -22535,48 +22772,39 @@ def sync_apply(cfg, fetched):
     # (The phase above only deletes copies that exist locally;
     # without this filter, convergence would faithfully re-add
     # every deleted thread from the other machine's store.)
-    # Build 5 (#218): a tombstone covers its CONVERSATION as
-    # well as its id (the "conv:" keys chat_delete records), and
-    # a remote copy stamped NEWER than the newest applicable
-    # tombstone is genuine later work — but it does not restore
-    # the deleted identity. It converges into the conversation's
-    # surviving representative when one lives here; otherwise it
-    # lands as a NEW chat (a revival generation under a fresh
-    # deterministic id), and the deleted copy stays deleted.
-    # The tombstones themselves are kept: they are the record
-    # of the operator's act, pruned only by the standing
-    # 90-day rule in _sync_tombstones_pruned.
+    # A tombstone covers its CONVERSATION as well as its id
+    # (the "conv:" keys chat_delete records). Through
+    # v0.4.9e a copy stamped newer than the tombstone was let
+    # back in as a revival generation; v0.4.10e (#253) retires
+    # that door — covered is covered, at any stamp.
     chat_tombs = merged.get("chats") or {}
     if chat_tombs:
-        _local_by_id, _local_by_conv = _chat_local_maps(chats_all())
-        _day = time.strftime("%Y-%m-%d", time.localtime())
         kept = []
         for raw in remote_chats:
             rec = _chat_normalize(raw)
             if rec is None:
                 continue
-            _ats = [chat_tombs.get(str(rec["id"])),
-                    chat_tombs.get(_chat_conv_tomb_key(rec))]
-            _ats = [a for a in _ats if a is not None]
-            if not _ats:
+            if _chat_is_main_family(rec):
+                # v0.4.10e (#251): the main seat is governed by
+                # the merge, never by tombstones — it cannot be
+                # deleted, and its records fold into the one
+                # thread at convergence below.
                 kept.append(raw)
                 continue
-            newest = max(_ats)
-            if (rec.get("updatedAt") or 0) <= newest:
+            if str(rec["id"]) in chat_tombs or \
+                    _chat_conv_tomb_key(rec) in chat_tombs:
+                # v0.4.10e (#253): covered by a tombstone —
+                # refused, however new its last line claims to
+                # be. Build 5's revival generation is retired:
+                # a deleted conversation does not come back
+                # wearing a "(from sync)" coat, and a seat that
+                # was away when the delete happened cannot undo
+                # it by syncing late. The tombstones themselves
+                # are kept: they are the record of the
+                # operator's act, pruned only by the standing
+                # 90-day rule in _sync_tombstones_pruned.
                 continue
-            if str(rec["id"]) in _local_by_id:
-                kept.append(raw)
-                continue
-            _rep = _local_by_conv.get(_chat_conv_key(rec))
-            if _rep is not None and str(_rep["id"]) != str(rec["id"]):
-                kept.append(raw)
-                continue
-            revival = dict(raw)
-            revival["id"] = _chat_sibling_id(rec) + "-r" + str(int(newest))
-            revival["fromSyncOf"] = _chat_origin(rec)
-            _base = str(rec.get("title") or "Chat").split(" (from sync ")[0]
-            revival["title"] = (_base + " (from sync " + _day + ")")[:200]
-            kept.append(revival)
+            kept.append(raw)
         remote_chats = kept
     for kind in ("chats", "cases", "vault"):
         for key in dropped[kind]:
@@ -22589,11 +22817,28 @@ def sync_apply(cfg, fetched):
     summary["chatsReplaced"] = conv["replaced"]
     summary["chatsSiblings"] = conv["siblings"]
     summary["chatsDeduped"] = conv.get("deduped", 0)
+    summary["chatsMainMerged"] = conv.get("mainMerged", 0)
+    summary["chatsMainFolded"] = conv.get("mainFolded", 0)
+    summary["chatsMainMergedMessages"] = conv.get("mainMergedMessages", 0)
+    summary["chatsMainFoldedMessages"] = conv.get("mainFoldedMessages", 0)
     if conv["siblings"]:
         for c in chats_all():
             if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
                 summary["eyes"].append(str(c.get("title") or c["id"]))
     _sync_apply_cases(fetched, merged, summary)
+    # v0.4.10e (#252): the pairing check runs once the arriving
+    # cases have landed — a chat whose case is not on this desk
+    # folds away with a receipt and the gap is named, rather
+    # than listing as a case chat whose case is missing.
+    _remote_case_slugs = set()
+    if SYNC_PREFIX + "cases-index.json" in files:
+        try:
+            _parsed_index = json.loads(files[SYNC_PREFIX + "cases-index.json"].decode("utf-8", "replace"))
+            if isinstance(_parsed_index, dict):
+                _remote_case_slugs = {str(k) for k in _parsed_index}
+        except Exception:
+            pass
+    _sync_reconcile_case_chats(_remote_case_slugs, summary)
     _sync_apply_deck(cfg, fetched, summary)
     _sync_apply_docs(fetched, summary, state)
     _sync_state_save(state)
@@ -22601,7 +22846,8 @@ def sync_apply(cfg, fetched):
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
                           + summary["removedNotes"] + summary["chatsAdded"]
                           + summary["chatsReplaced"] + summary["chatsSiblings"]
-                          + summary["chatsDeduped"]
+                          + summary["chatsDeduped"] + summary["chatsMainMerged"]
+                          + summary["chatsMainFolded"] + summary["orphanedCaseChats"]
                           + summary["casesAdded"] + summary["casesUpdated"]
                           + summary["deckFilesPulled"] + summary["cardsImported"]
                           + summary["docsPulled"] + summary["entriesPulled"]
@@ -22613,7 +22859,14 @@ def _sync_push(cfg, base, token, files, fetched_files):
     # Publish the converged local set. Files the remote already
     # holds byte-identical are not rewritten. Returns the count
     # of files actually written, or (None, fail).
+    # v0.4.10e (#254): the write phase reports its counts to
+    # the sync bar — the differing-file total is known before
+    # the loop, and the written count as it goes (throttled:
+    # at most twice a second, plus the final state).
+    total = sum(1 for p in files if fetched_files.get(p) != files[p])
+    _sync_progress_set("write", counts={"filesTotal": total, "filesWritten": 0})
     written = 0
+    last_note = 0.0
     for path in sorted(files):
         if fetched_files.get(path) == files[path]:
             continue
@@ -22632,6 +22885,9 @@ def _sync_push(cfg, base, token, files, fetched_files):
         if pst not in (200, 201):
             return None, _sync_fail(pst, "write " + path + " to the backup repo")
         written += 1
+        if time.time() - last_note >= 0.5 or written == total:
+            last_note = time.time()
+            _sync_progress_set("write", counts={"filesTotal": total, "filesWritten": written})
     return written, None
 
 
@@ -22641,6 +22897,23 @@ def _sync_record_result(state, trigger, result):
     state["lastTrigger"] = trigger
     state["lastState"] = result.get("state") or ""
     state["lastResult"] = result.get("message") or result.get("error") or ""
+    # v0.4.10e (#254): the durable receipt — the sync bar's
+    # landing face reads this record, and the #242 producer
+    # announces from it. Counts ride the finish summary's
+    # receipt; failure verdicts carry their message and no
+    # counts. The record is the copy that outlives the bar.
+    receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
+    state["lastReceipt"] = {
+        "at": state["lastSyncEpoch"],
+        "trigger": trigger,
+        "route": result.get("route") or "",
+        "ok": result.get("ok") is True,
+        "state": result.get("state") or "",
+        "message": result.get("message") or result.get("error") or "",
+        "counts": receipt,
+        "material": bool(receipt.get("material")),
+        "roundId": result.get("roundId") or "",
+    }
     _sync_state_save(state)
 
 
@@ -22675,6 +22948,31 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         result["message"] = "Synced — the machines converged."
     else:
         result["message"] = "Synced — already in step."
+    # v0.4.10e (#254): the round's receipt, in the operator's
+    # terms — what the sync bar hangs off the bar on landing
+    # and what the #242 announcement is composed from. A round
+    # is MATERIAL when the sync family actually moved the
+    # room's shape: ghost threads folded (#251), a case/chat
+    # pairing repaired or a gap folded away (#252), or another
+    # seat's tombstone honored here (#253). Ordinary arrivals
+    # and departures are traffic, not material.
+    receipt = {
+        "mergedMessages": summary.get("chatsMainMergedMessages", 0),
+        "foldedGhosts": summary.get("chatsMainFolded", 0),
+        "foldedMessages": summary.get("chatsMainFoldedMessages", 0),
+        "pairsWhole": summary.get("casePairsWhole", 0),
+        "pairsRepaired": summary.get("casePairsRepaired", 0),
+        "gapTitles": list(summary.get("caseChatGapTitles") or []),
+        "tombstones": summary.get("removedChats", 0),
+        "removedCases": summary.get("removedCases", 0),
+        "removedNotes": summary.get("removedNotes", 0),
+        "chatsAdded": summary.get("chatsAdded", 0),
+        "chatsReplaced": summary.get("chatsReplaced", 0),
+        "changed": summary.get("changed", 0),
+    }
+    receipt["material"] = bool(receipt["foldedGhosts"] or receipt["gapTitles"]
+                               or receipt["pairsRepaired"] or receipt["tombstones"])
+    result["receipt"] = receipt
     return result
 
 
@@ -22750,6 +23048,7 @@ def _sync_mesh_round(cfg, open_chat_id):
             continue
         if _mesh_sync_foreign_account(payload):
             continue
+        _sync_progress_set("merge")
         summary = sync_apply(cfg, {
             "files": theirs,
             "manifest": payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {},
@@ -22805,12 +23104,52 @@ def _sync_mesh_pull(cfg):
             continue
         if _mesh_sync_foreign_account(payload):
             continue
+        _sync_progress_set("merge")
         summary = sync_apply(cfg, {
             "files": theirs,
             "manifest": payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {},
         })
         return ("Mesh — " + peer["name"]), summary
     return None
+
+
+def _sync_progress_set(phase, trigger="", round_id="", counts=None):
+    # v0.4.10e (#254): the round's live phase, recorded in the
+    # sync state as it happens — fetch, merge, write, done —
+    # so the status rail's sync bar can show the phase the
+    # bridge is actually in, never a guessed percentage. The
+    # write phase carries file counts because the push loop
+    # knows them; the fetch leg carries none, because a network
+    # wait has no honest fraction. Best-effort by design: a
+    # progress write must never fail a round.
+    try:
+        state = _sync_state_load()
+        prog = state.get("syncProgress") if isinstance(state.get("syncProgress"), dict) else {}
+        if round_id and prog.get("roundId") != round_id:
+            prog = {"roundId": round_id, "startedAt": time.time()}
+        prog["active"] = phase != "done"
+        prog["phase"] = phase
+        prog["phaseAt"] = time.time()
+        if trigger:
+            prog["trigger"] = trigger
+        if counts is not None:
+            prog["counts"] = counts
+        state["syncProgress"] = prog
+        _sync_state_save(state)
+    except Exception:
+        pass
+
+
+def _sync_fail_record(trigger, out):
+    # v0.4.10e (#254): a failed round lands as a receipt too —
+    # the bar names the failure from the record rather than
+    # going dark. Mirrors _sync_record_result's save shape.
+    try:
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, out)
+        _sync_state_save(state)
+    except Exception:
+        pass
 
 
 def sync_round(cfg, trigger="button", open_chat_id=""):
@@ -22820,6 +23159,8 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
     if not _SYNC_LOCK.acquire(False):
         return {"ok": False, "state": "held", "kind": "busy", "route": "Backup repo",
                 "error": "A sync round is already running — this one is held, and the running round's verdict is the one that counts."}
+    round_id = uuid.uuid4().hex[:12]
+    _sync_progress_set("fetch", trigger, round_id)
     try:
         # Build 6 (#176 phase 2): a lit Mesh road carries the
         # round before the repo is asked — the exchange needs no
@@ -22832,23 +23173,32 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         except Exception:
             mesh_result = None
         if mesh_result is not None:
+            mesh_result["roundId"] = round_id
             state = _sync_state_load()
             _sync_record_result(state, trigger, mesh_result)
             state["lastRoute"] = mesh_result["route"]
             _sync_state_save(state)
             return mesh_result
         if not github_auth():
-            return _sync_auth_error()
+            out = _sync_auth_error()
+            out["roundId"] = round_id
+            _sync_fail_record(trigger, out)
+            return out
         fetched, fail = sync_fetch(cfg)
         if fail:
             out = {"ok": False, "route": "Backup repo"}
             out.update(fail)
+            out["roundId"] = round_id
+            _sync_fail_record(trigger, out)
             return out
+        _sync_progress_set("merge")
         summary = sync_apply(cfg, fetched)
         got = _sync_repo(cfg)
         if got[0] is None:
             out = {"ok": False, "route": "Backup repo"}
             out.update(got[1] or _sync_auth_error())
+            out["roundId"] = round_id
+            _sync_fail_record(trigger, out)
             return out
         auth, base = got[0]
         local_files, _manifest, _index = sync_collect()
@@ -22878,15 +23228,19 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         if fail:
             out = {"ok": False, "route": "Backup repo"}
             out.update(fail)
+            out["roundId"] = round_id
+            _sync_fail_record(trigger, out)
             return out
         result = _sync_finish_summary(summary, written, open_chat_id, local_ids)
         result["pushedChats"] = pushed_chats
+        result["roundId"] = round_id
         state = _sync_state_load()
         _sync_record_result(state, trigger, result)
         state["lastRoute"] = "Backup repo"
         _sync_state_save(state)
         return result
     finally:
+        _sync_progress_set("done")
         _SYNC_LOCK.release()
 
 
@@ -22897,6 +23251,8 @@ def sync_pull_round(cfg, trigger):
     # land in the sync state, never in a popup.
     if not _SYNC_LOCK.acquire(False):
         return None
+    round_id = uuid.uuid4().hex[:12]
+    _sync_progress_set("fetch", trigger, round_id)
     try:
         # Build 6 (#176 phase 2): a lit Mesh road answers a
         # trigger pull before the repo is asked — same quiet
@@ -22909,6 +23265,7 @@ def sync_pull_round(cfg, trigger):
         if mesh_hit is not None:
             result = _sync_finish_summary(mesh_hit[1], 0, "", set())
             result["route"] = mesh_hit[0]
+            result["roundId"] = round_id
             state = _sync_state_load()
             _sync_record_result(state, trigger, result)
             state["lastRoute"] = mesh_hit[0]
@@ -22922,14 +23279,17 @@ def sync_pull_round(cfg, trigger):
             _sync_record_result(state, trigger, {"state": fail.get("state") or "held",
                                                  "message": fail.get("error") or ""})
             return None
+        _sync_progress_set("merge")
         summary = sync_apply(cfg, fetched)
         result = _sync_finish_summary(summary, 0, "", set())
+        result["roundId"] = round_id
         state = _sync_state_load()
         _sync_record_result(state, trigger, result)
         return result
     except Exception:
         return None
     finally:
+        _sync_progress_set("done")
         _SYNC_LOCK.release()
 
 
@@ -22945,6 +23305,11 @@ def sync_state_payload():
         "lastResult": state.get("lastResult") or "",
         "lastState": state.get("lastState") or "",
         "lastTrigger": state.get("lastTrigger") or "",
+        # v0.4.10e (#254): the sync bar's two faces — the live
+        # progress while a round runs, the durable receipt
+        # after it lands.
+        "progress": state.get("syncProgress") or {"active": False, "phase": "done"},
+        "receipt": state.get("lastReceipt") or None,
     }
 
 
@@ -23057,6 +23422,14 @@ def boot_mode_payload():
         "llamafileUnit": llama_unit,
         "linger": linger,
         "armed": bridge_unit == "enabled" and llama_unit == "enabled" and linger is True,
+        # v0.4.10e (#250): the mode Settings itself holds — the
+        # installer's startup choice, kept in the config by the
+        # installer and by the Settings → System card alike.
+        # The status pane reads it to decide whether a BOOT
+        # section belongs there at all: the section follows
+        # Settings, and the states inside it still read from
+        # the system, never assumed.
+        "settingsMode": str((load_config() or {}).get("startup") or ""),
     }
     _BOOT_CACHE["at"] = now
     _BOOT_CACHE["payload"] = payload
@@ -24955,8 +25328,10 @@ def badge_sync_dismiss(op_id):
 # constant at call time). QUIET DISCIPLINE: only acts and decisions
 # notify — a knock at a gateway, a device waiting at the door,
 # case entries waiting for review, an update staged. Routine syncs,
-# successful borrows and feed fetches NEVER notify; there is no
-# producer for them here, on purpose.
+# successful borrows and feed fetches NEVER notify. One sync
+# exception, ruled in v0.4.10e (#254): a sync that materially
+# changed things — a fold, a pairing repair, a tombstone honored —
+# is an act, and producer (e) below speaks for exactly those.
 #
 # A record: {id, kind, title, body, target, created, read,
 # announced, count}. Reconcile computes the WANTED set from the
@@ -25147,6 +25522,53 @@ def _notif_wanted_update():
     }]
 
 
+def _notif_wanted_sync():
+    # Producer (e) (v0.4.10e, #254): a sync that MATERIALLY
+    # changed things — ghost threads folded into the main chat
+    # (#251), a case/chat pairing repaired or a gap folded away
+    # (#252), another seat's tombstone honored here (#253) — is
+    # an act, not routine traffic, and it is announced from the
+    # bridge's record like everything else here. The wanted set
+    # holds only the latest material receipt, so the record
+    # retires when a newer material round supersedes it; a
+    # routine sync produces nothing, exactly as the quiet
+    # discipline above demands.
+    state = _sync_state_load()
+    receipt = state.get("lastReceipt") or {}
+    if not receipt.get("material"):
+        return []
+    counts = receipt.get("counts") or {}
+    parts = []
+    if counts.get("foldedGhosts"):
+        n = counts["foldedGhosts"]
+        parts.append(str(n) + " ghost thread" + ("s" if n != 1 else "")
+                     + " folded into the main chat ("
+                     + str(counts.get("foldedMessages") or 0) + " messages carried in)")
+    if counts.get("mergedMessages"):
+        n = counts["mergedMessages"]
+        parts.append(str(n) + " message" + ("s" if n != 1 else "")
+                     + " merged into the main thread")
+    if counts.get("pairsRepaired"):
+        n = counts["pairsRepaired"]
+        parts.append(str(n) + " case/chat pair" + ("s" if n != 1 else "") + " made whole")
+    for t in (counts.get("gapTitles") or [])[:3]:
+        parts.append("the chat of “" + str(t) + "” folded away — its case never crossed")
+    if counts.get("tombstones"):
+        n = counts["tombstones"]
+        parts.append("a deletion from your other machine was honored ("
+                     + str(n) + " thread" + ("s" if n != 1 else "") + " removed here)")
+    if not parts:
+        return []
+    return [{
+        "id": "sync:" + str(receipt.get("roundId") or receipt.get("at") or ""),
+        "kind": "sync",
+        "title": "Sync changed things here",
+        "body": "; ".join(parts) + ".",
+        "target": {"view": "Chat"},
+        "count": 1,
+    }]
+
+
 def _notif_announce_line(rec):
     # Navi's line, composed FROM THE RECORD (deterministic
     # templates per kind — no model call): her voice, warm and
@@ -25157,6 +25579,7 @@ def _notif_announce_line(rec):
         "door-device": "At the door — ",
         "case-review": "Case Files — ",
         "update": "Good news — ",
+        "sync": "Sync — ",
     }.get(rec.get("kind"), "A word — ")
     line = framing + str(rec.get("title") or "") + ": " + str(rec.get("body") or "")
     if rec.get("kind") == "fed-knock":
@@ -25229,6 +25652,7 @@ def notifications_reconcile(cfg=None):
             ("door-device", lambda: _notif_wanted_door_devices(cfg)),
             ("case-review", lambda: _notif_wanted_case_reviews()),
             ("update", lambda: _notif_wanted_update()),
+            ("sync", lambda: _notif_wanted_sync()),
         )
         for kind, produce in producers:
             try:
@@ -25959,6 +26383,10 @@ class Handler(BaseHTTPRequestHandler):
                 # the throttled payload, so the producers re-run
                 # at most once per NOTIF_RECONCILE_SECONDS.
                 "notifications": notifications_payload(cfg),
+                # v0.4.10e (#254): the sync bar rides the same
+                # poll — the bridge's progress and receipt, read
+                # from the sync record.
+                "sync": sync_state_payload(),
             "presenceExtra": presence_extra_lines(cfg),
                 "updaterChannel": updater_channel(cfg),
                 "updaterChannelExplicit": updater_channel_explicit(cfg),
