@@ -374,6 +374,50 @@ def _shell_window_state(root):
     return "ok", ""
 
 
+def _install_headless(job, root):
+    # v0.4.6e (#185): is this a headless install? Returns
+    # (headless, source). The determination mirrors the
+    # installer's own precedence (apex_headless_decide in
+    # install.sh), from the witnesses an apply actually has:
+    #   1. the job itself, when a bridge that knows the field
+    #      names it ("headless": true);
+    #   2. the installed config's recorded determination —
+    #      install.sh stamps config "headless" beside the
+    #      startup choice, so after the installer runs this is
+    #      the installer's own verdict for THIS apply, and
+    #      before it runs it is the previous install's carried
+    #      choice (the same carry the startup mode rides);
+    #   3. --startup boot implies headless: boot services are
+    #      the headless shape;
+    #   4. auto-detection from this process's environment: no
+    #      DISPLAY and no WAYLAND_DISPLAY and no graphical
+    #      session type.
+    # A recorded false never vetoes auto-detection, exactly as
+    # in the installer: it records a past headed install, not
+    # a display on today's seat.
+    if job.get("headless") is True:
+        return True, "the apply job names this install headless"
+    try:
+        with open(os.path.join(root, "config",
+                               "navi.config.json")) as f:
+            cfg = json.load(f)
+        if isinstance(cfg, dict) and cfg.get("headless") is True:
+            return True, ("the recorded determination in the "
+                          "installed config (config headless: true)")
+    except Exception:
+        pass
+    if job.get("startup") == "on-boot":
+        return True, "--startup boot implies headless (#185)"
+    if not os.environ.get("DISPLAY") \
+            and not os.environ.get("WAYLAND_DISPLAY") \
+            and os.environ.get("XDG_SESSION_TYPE", "") \
+            not in ("x11", "wayland", "mir"):
+        return True, ("auto-detected — no DISPLAY, no "
+                      "WAYLAND_DISPLAY and no graphical session "
+                      "in the apply's environment")
+    return False, "a display is present (or a graphical session is recorded)"
+
+
 def _pid_alive(pid):
     try:
         os.kill(pid, 0)
@@ -878,8 +922,24 @@ def main():
             if _rdir:
                 os.makedirs(_rdir, exist_ok=True)
             log = open(job["relaunchLog"], "ab")
+            # v0.4.6e (#185): a headless install relaunches
+            # headless — start.sh --headless starts the services
+            # and opens no window (and attempts no browser
+            # fallback on a seat with no browser session). The
+            # determination is read at call time: after the
+            # installer ran, the installed config carries this
+            # install's own recorded verdict.
+            _rl_argv = ["bash", os.path.join(root, "start.sh")]
+            try:
+                _rl_headless, _rl_why = _install_headless(job, root)
+            except Exception:
+                _rl_headless, _rl_why = False, ""
+            if _rl_headless:
+                _rl_argv.append("--headless")
+                trace("relaunch-mode",
+                      "headless (#185): " + _rl_why)
             subprocess.Popen(
-                ["bash", os.path.join(root, "start.sh")],
+                _rl_argv,
                 cwd=root, env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True, close_fds=True)
@@ -903,10 +963,21 @@ def main():
     # her venv is on disk, both recorded on the job by the bridge
     # when it staged the update.
     voice = "yes" if job.get("voice") == "yes" else "no"
+    # v0.4.6e (#185): the headless determination rides the
+    # installer invocation, so the installer's own record of
+    # this apply carries it. The installer ALSO decides for
+    # itself (flag / boot implication / recorded / auto-detect,
+    # in that order), so a helper that cannot see the whole
+    # picture never strands the determination — but when this
+    # helper CAN see it (above), it says it out loud, as a flag.
+    _hl_pre, _hl_pre_source = _install_headless(job, root)
     code = None
     why = ""
     trace("installer-start",
-          "bash install.sh --startup " + startup + " --voice " + voice)
+          "bash install.sh --startup " + startup + " --voice " + voice
+          + (" --headless" if _hl_pre else "")
+          + " (headless: " + ("yes — " if _hl_pre else "no — ")
+          + _hl_pre_source + ")")
     # v0.4.3e (#237): the install log's handle stays OPEN
     # after the installer exits — it is the rescue's source
     # (see _recover_stage_artifacts): the swap renames the
@@ -919,10 +990,15 @@ def main():
         # reads the log back through this same handle after
         # the swap, and a write-only handle cannot be read.
         _log_handle = open(job["installLog"], "a+b")
+        _install_argv = ["bash", os.path.join(pkg_dir, "install.sh"),
+                         "--startup", startup, "--voice", voice,
+                         "--dir", root]
+        if _hl_pre:
+            # #185: the determination, carried as the flag the
+            # installer records (see the trace line above).
+            _install_argv.append("--headless")
         proc = subprocess.run(
-            ["bash", os.path.join(pkg_dir, "install.sh"),
-             "--startup", startup, "--voice", voice,
-             "--dir", root],
+            _install_argv,
             cwd=pkg_dir, env=env, stdout=_log_handle,
             stderr=subprocess.STDOUT, timeout=3000)
         code = proc.returncode
@@ -992,6 +1068,36 @@ def main():
             pass
         _log_handle = None
 
+    # v0.4.6e (#185): the headless gate on the shell verdicts.
+    # On a headless install the shell build was SKIPPED BY
+    # DETERMINATION — there is no binary beside start.sh, and
+    # none is owed. Both verdicts below must therefore never
+    # fire here: the disk verdict (_shell_window_state) would
+    # read the missing binary as the designed browser fallback
+    # only by luck of its no-binary branch, and the #237
+    # owed-but-missing check reads the install log — a log the
+    # headless installer fills with its own named skip line,
+    # not the owed marker, but the gate does not rest on that
+    # courtesy. The skip is NAMED, in the trace and in the
+    # apply record, as the successful step it is: the window
+    # step of a headless apply is "skipped-headless", decided
+    # before either verdict is consulted. The determination is
+    # re-read NOW, after the installer ran, so the installed
+    # config's recorded verdict for this very install (the
+    # stamp the installer just wrote) is the first witness.
+    _headless_final, _hl_final_source = _install_headless(job, root)
+    _shell_state = None
+    if _headless_final:
+        _shell_state = "skipped-headless"
+        trace("shell-window",
+              "skipped-headless — the shell build was skipped "
+              "by determination on this headless install "
+              "(#185): " + _hl_final_source + ". No window is "
+              "built or expected, so neither the disk verdict "
+              "nor the owed-but-missing check applies.")
+        write_result({"headless": True,
+                      "shellWindow": "skipped-headless"})
+
     # v0.4.2e (#233): the shell-window verdict, read from disk
     # (see _shell_window_state). An apply is NOT confirmed
     # while the installed window binary is one the launcher
@@ -1001,10 +1107,14 @@ def main():
     # from a launcher log. A stale verdict fails the apply
     # HERE — in the record the panel shows, with the reason in
     # words — whatever the installer's exit code claimed.
-    _shell_state, _shell_reason = _shell_window_state(root)
-    trace("shell-window",
-          _shell_state
-          + ((" — " + _shell_reason) if _shell_reason else ""))
+    if _shell_state is None:
+        _shell_state, _shell_reason = _shell_window_state(root)
+    else:
+        _shell_reason = ""
+    if _shell_state != "skipped-headless":
+        trace("shell-window",
+              _shell_state
+              + ((" — " + _shell_reason) if _shell_reason else ""))
     if _shell_state == "stale":
         fail("install",
              "The update installed, but her standalone window "

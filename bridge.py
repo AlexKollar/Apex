@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.5"
+SHIPPED_VERSION = "0.4.6"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.11"
+BRIDGE_BUILD = "2026-11-16.12"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 11
+SHIPPED_BUILD_SEQ = 12
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3406,6 +3406,93 @@ def mesh_settings(cfg):
 # pressure one level stricter exactly while she is generating.
 _GENERATION_LOCK = threading.Lock()
 _GENERATION_ACTIVE = {"count": 0}
+
+# -- Her own vitals (v0.4.6e, #187) -----------------------------------
+# Spartan0311 caught Navi inventing numbers about herself —
+# "gen speed is good, at 110 words per minute… We've been
+# running stress tests" — with no measurement behind any of
+# it (her real pace on that box was ~6.7 tok/s). She cannot
+# feel her own speed; the only honest numbers are ones the
+# bridge measures. So the bridge times every local model
+# request it makes (the llamafile_chat wrapper records here;
+# the impl stashes the server's own timings/usage alongside),
+# and model_vitals_block() puts the recent figures in her
+# context, beside the Guardian brief. VITALS_TEACHING is the
+# other half of the fix: absent a measurement, she says so
+# plainly — she never invents a speed, a benchmark, or a test
+# she did not run.
+_MODEL_VITALS = {"count": 0, "last": None}
+_LAST_GEN_SERVER = {}
+
+VITALS_TEACHING = (
+    "Your own speed: you cannot feel how fast you generate, "
+    "how long a request took, or how loaded the machine is "
+    "under you — you have no senses pointed at yourself. The "
+    "bridge measures your generation and, when it has, shows "
+    "you the figures in a [Your measured vitals] block. Answer "
+    "questions about your speed or performance ONLY from those "
+    "measurements; when none are shown, say plainly that you "
+    "have no measurement — never invent a number, a benchmark, "
+    "a stress test, or a result you did not see.")
+
+
+def _record_model_vitals(duration_s):
+    # Called by the llamafile_chat wrapper after each
+    # SUCCESSFUL local generation — a failed request never
+    # replaces the last good measurement. tok/s and
+    # time-to-first-token come from
+    # the server's own timings when it reports them (llama.cpp
+    # servers do); the bridge's wall-clock duration is always
+    # real. Figures are rounded for speech, not for show.
+    srv = dict(_LAST_GEN_SERVER)
+    timings = srv.get("timings") or {}
+    usage = srv.get("usage") or {}
+    tokens = usage.get("completion_tokens")
+    if tokens is None:
+        tokens = timings.get("predicted_n")
+    tok_s = None
+    if timings.get("predicted_n") and timings.get("predicted_ms"):
+        tok_s = timings["predicted_n"] / (timings["predicted_ms"] / 1000.0)
+    elif tokens and duration_s:
+        tok_s = tokens / duration_s
+    ttft = None
+    if timings.get("prompt_ms") is not None:
+        ttft = timings["prompt_ms"] / 1000.0
+    with _GENERATION_LOCK:
+        _MODEL_VITALS["count"] += 1
+        if tokens or tok_s:
+            _MODEL_VITALS["last"] = {
+                "at": time.time(),
+                "duration_s": round(duration_s, 2),
+                "tokens": tokens,
+                "tok_s": round(tok_s, 1) if tok_s else None,
+                "ttft_s": round(ttft, 2) if ttft is not None else None,
+            }
+
+
+def model_vitals_block():
+    """The recent measured figures, as context for her — or
+    "" when the bridge has measured nothing yet (the teaching
+    still rides; the absence IS the honest state)."""
+    with _GENERATION_LOCK:
+        last = dict(_MODEL_VITALS["last"] or {})
+        count = _MODEL_VITALS["count"]
+    if not last:
+        return ""
+    bits = []
+    if last.get("tokens"):
+        bits.append(str(last["tokens"]) + " tokens")
+    if last.get("tok_s"):
+        bits.append("at " + str(last["tok_s"]) + " tokens/sec")
+    out = "[Your measured vitals — the bridge's stopwatch, this machine]\n"
+    out += "Your last generation: " + (
+        ", ".join(bits) if bits else "completed")
+    if last.get("ttft_s") is not None:
+        out += "; first token after " + str(last["ttft_s"]) + "s"
+    out += ("; the whole request took " + str(last["duration_s"])
+            + "s. Generations measured since this bridge "
+              "started: " + str(count) + ".")
+    return out
 
 
 def _generation_is_active():
@@ -10850,26 +10937,34 @@ _SHELL_BLOCK_OPEN = re.compile(r"\[\[shell\]\]", re.I)
 SHELL_TEACHING = (
     "Interactive shell: this chat can hold ONE live terminal "
     "session, and it is a tool in your hand — never your voice. "
-    "Conversation is answered in conversation: a question you "
-    "can answer in words is answered in words, and a remark "
-    "gets a reply, not a command. Drive the shell only when a "
-    "step needs a stateful shell — answering a prompt, working "
-    "in a REPL or an interactive tool, anything where the next "
-    "move depends on the terminal's answer — or when the "
-    "operator has asked for machine work. When you do drive, "
-    "SPEAK FIRST in the same reply: a sentence in your own "
-    "words saying what you are running and why, then end the "
-    "reply with the block:\n[[shell]]\neach line to type, "
-    "exactly as typed\n[[/shell]]\nA reply that is only a "
-    "block is a failed reply — he asked you, not the terminal. "
-    "The lines are typed into the session badged as yours, its "
-    "output streams into the thread, and you will see its tail "
-    "on your next turn: when that output answers his question, "
-    "your next reply says what it showed, in your own words — "
-    "the result, never the session's banner or scaffolding. "
-    "One-shot commands do not need the session; they run as "
-    "they always have. Elevation never rides the session: sudo "
-    "inside it prompts in-terminal.")
+    "The shell wakes only when the operator is working the "
+    "machine WITH you: he has asked for machine work — files, "
+    "processes, services, the state of this box — or the two of "
+    "you are already mid-flow in a session and the next move "
+    "depends on the terminal's answer. Conversation is answered "
+    "in conversation: a question you can answer in words is "
+    "answered in words, a remark gets a reply, and a general "
+    "question — geography, history, the world — is NEVER a "
+    "reason to open the shell, look something up in it, or let "
+    "a block stand in for an answer. The bridge enforces this "
+    "gate (v0.4.6e, #240): a block in a reply to a conversation "
+    "turn is not run at all. When a drive IS warranted, SPEAK "
+    "FIRST in the same reply: a sentence in your own words "
+    "saying what you are running and why, then end the reply "
+    "with the block in its form — an opening line [[shell]], "
+    "each line to type exactly as typed, a closing [[/shell]]. "
+    "Type commands, never sentences: prose typed into bash is "
+    "refused by name before it reaches the terminal. A reply "
+    "that is only a block is a failed reply — he asked you, "
+    "not the terminal. The lines are typed into the session "
+    "badged as yours, its output streams into the thread, and "
+    "you will see its tail on your next turn: when that output "
+    "answers his question, your next reply says what it showed, "
+    "in your own words — the result, never the session's banner "
+    "or scaffolding, and never a file or a fact the output did "
+    "not actually show. One-shot commands do not need the "
+    "session; they run as they always have. Elevation never "
+    "rides the session: sudo inside it prompts in-terminal.")
 
 # v0.4.5e (#241): starting a case from chat — Route A. The
 # operator's intent, expressed in conversation, is the trigger:
@@ -10917,12 +11012,170 @@ CASE_TEACHING = (
     "logging, which ride their own markers.")
 
 
-def extract_shell_block(reply, chat_id):
+# ---------------- #240: the intent gate + executor hygiene ----------
+# v0.4.6e (#240): the #232 shape recurred in the field on
+# v0.4.3e — a plain knowledge question answered by driving the
+# shell (prose typed into bash, then invented evidence narrated
+# back), once locally and once in a BORROWED reply that drove
+# the borrower's session. The #232 prose guard treated the
+# symptom (a hollow reply) but nothing decided whether a drive
+# should happen at all. Three layers now stand in front of the
+# terminal:
+#
+# 1. THE GATE (below): a block executes only on a
+#    machine-directed turn — the composer latched to CLI mode,
+#    a live session already open in this chat (the operator is
+#    mid-flow in it), or the operator's own message carrying
+#    machine intent. Otherwise the block is inert: stripped
+#    like all markup, never typed, and the turn is answered in
+#    conversation. The gate is deliberately PERMISSIVE toward
+#    naturally-phrased machine asks (the operator's ruling: a
+#    false refusal is friction, and friction is the enemy) —
+#    it exists to stop conversation from reaching bash, not to
+#    make the operator phrase his work a special way.
+# 2. EXECUTOR HYGIENE (_shell_line_prose, in the drive loop):
+#    lines are no longer typed verbatim — a leading "$ " is
+#    stripped, and a line that reads as a sentence rather than
+#    a command is refused and NAMED in the session record
+#    instead of reaching the terminal.
+# 3. THE GROUNDED GUARD (prose_guard, below): the re-ask
+#    carries the session's REAL captured output, so the
+#    narration can only be about what the terminal showed.
+# The gate is computed at the one extraction site every reply
+# passes through — local or mesh-served, the rules are the
+# same; routing does not change them.
+
+_SHELL_INTENT_NOUNS = re.compile(
+    r"\b(disk|drive|ssd|hdd|ram|cpu|gpu|swap|process|processes|"
+    r"service|services|systemd|journal|file|files|folder|folders|"
+    r"directory|directories|path|paths|port|ports|network|wifi|"
+    r"ethernet|terminal|shell|bash|command|commands|script|"
+    r"scripts|docker|container|containers|kernel|mount|mounted|"
+    r"partition|partitions|volume|uptime|package|packages|repo|"
+    r"repository|git|server|machine|box|computer|laptop|desktop|"
+    r"linux|distro|permission|permissions|ownership|cron|backup|"
+    r"backups|firewall|bluetooth|printer|usb|device|devices|"
+    r"driver|drivers|boot|startup|login|session|log|logs|"
+    r"hostname|battery|fan|temperature|home folder|ip address)\b",
+    re.I)
+_SHELL_INTENT_VERBS = re.compile(
+    r"\b(run|execute|install|uninstall|reinstall|kill|restart|"
+    r"restarts|reboot|list|fix|update|upgrade|download|ping|"
+    r"ssh|mount|umount|chmod|chown|grep|tail|cat|curl|wget|"
+    r"watch|monitor|show me|look at|look in|look under)\b", re.I)
+_SHELL_INTENT_SHAPES = re.compile(
+    r"(/[\w.\-]{2,}|~/|\./|\b\w+\.(log|txt|py|sh|json|conf|cfg|"
+    r"md|service|timer|sock)\b|--[\w\-]+|\s-[a-zA-Z]{1,2}\b|"
+    r"`[^`]+`)", re.I)
+_SHELL_INTENT_QUESTIONS = re.compile(
+    r"(what'?s (eating|using|taking|hogging|running)|"
+    r"how much (space|room|ram|memory|disk)|how (full|big) is|"
+    r"why (is|does|did) .{0,40}(slow|full|failing|failed|down|"
+    r"stuck|crashing)|is .{0,30}(running|installed|enabled|up|"
+    r"down)\b|on (this|the|my) (box|machine|computer|server)|"
+    r"my (disk|drive|machine|computer|server|files|system|box|"
+    r"home folder))", re.I)
+
+
+def shell_machine_intent(text):
+    """Does the operator's message carry machine intent — is
+    this turn about the machine, its files, processes, or
+    services, or an imperative to run/show/check/fix something
+    on it? Deliberately permissive (see the gate note above):
+    any one signal qualifies. Plain knowledge questions —
+    Spartan0311's field cases, the capital of France, the
+    tallest mountain in Arizona — carry none of them."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(
+        _SHELL_INTENT_NOUNS.search(t)
+        or _SHELL_INTENT_VERBS.search(t)
+        or _SHELL_INTENT_SHAPES.search(t)
+        or _SHELL_INTENT_QUESTIONS.search(t))
+
+
+def shell_turn_machine_directed(user_text, chat_id, chat_mode=None):
+    """The #240 gate, whole: a [[shell]] block in the reply to
+    THIS turn may execute only when the turn is
+    machine-directed — the composer latched to CLI mode (the
+    operator's standing instruction), a live session already
+    open in this chat (a follow-up inside its working flow),
+    or the operator's message itself carrying machine intent.
+    Computed once, at the extraction site, for local and
+    mesh-served replies alike."""
+    if chat_mode == "cli":
+        return True
+    if chat_id is not None and shell_session_get(chat_id) is not None:
+        return True
+    return shell_machine_intent(user_text)
+
+
+_SHELL_PROSE_SENTENCE = re.compile(
+    r"^[A-Z][a-z]+( [A-Za-z,;:’']+){3,}[.!?]$")
+_SHELL_PROSE_COPULA = re.compile(
+    r"\b(is|are|was|were|has|have|had)\b", re.I)
+_SHELL_COMMAND_CHARS = re.compile(r"[/=|><$`'\";&()\\{}\[\]*?~#]")
+_SHELL_KNOWN_COMMANDS = frozenset(
+    "echo printf ls cat cd pwd whoami hostname date uptime df du "
+    "free ps top htop systemctl journalctl grep tail head find "
+    "ssh ping curl wget id uname env export source nano vi vim "
+    "less more wc sort uniq awk sed xargs kill pkill mkdir rmdir "
+    "touch cp mv rm ln chmod chown tar zip unzip git python "
+    "python3 node npm pip pip3 docker ip ss netstat mount umount "
+    "sudo su clear exit history which type man apt apt-get dnf "
+    "pacman lsblk dmesg lscpu lsusb nproc who w last crontab ufw "
+    "nmap dig nslookup traceroute file stat readlink basename "
+    "dirname tee jq yq systemctl service".split())
+
+
+def _shell_line_prose(line):
+    """Executor hygiene (#240, layer 2): does this line read as
+    a SENTENCE rather than a command? Two shapes convict: a
+    capitalized sentence of four-plus words ending in sentence
+    punctuation, and a five-plus-word line built around a
+    copula (is/are/was/has…) with no command characters in it
+    at all. Command lines — flags, paths, pipes, quotes,
+    assignments — carry command characters or lack the
+    sentence shape, and pass; a line that OPENS with a known
+    command word (echo Paris is the capital…) is a command
+    however sentence-like its arguments read. Judged AFTER
+    the "$ " strip."""
+    t = (line or "").strip()
+    if not t:
+        return False
+    words = t.split()
+    first = words[0].lower() if words else ""
+    if first in _SHELL_KNOWN_COMMANDS:
+        return False
+    if first == "sudo" and len(words) > 1 \
+            and words[1].lower() in _SHELL_KNOWN_COMMANDS:
+        return False
+    if _SHELL_PROSE_SENTENCE.match(t):
+        return True
+    if len(words) >= 5 and _SHELL_PROSE_COPULA.search(t) \
+            and not _SHELL_COMMAND_CHARS.search(t):
+        return True
+    return False
+
+
+def extract_shell_block(reply, chat_id, gate_open=True):
     """Navi drives the chat's interactive session: a [[shell]]
     block in her reply is stripped from the text, each line typed
     into the session (born here if this is her first interactive
     need), badged "navi". Mirrors extract_case_log. Returns
     (clean_reply, drove_or_None).
+
+    v0.4.6e (#240): the drive is GATED — with gate_open False
+    the markup is consumed exactly as always (it is
+    presentation, never content) but nothing is typed and no
+    session is born; the returned record says so
+    ({"lines": [], "gated": True}) so the prose guard can
+    re-ask in conversation. And the lines that DO drive pass
+    executor hygiene first: a leading "$ " is stripped, and a
+    line that reads as prose is refused — named in the session
+    record when a session stands, and carried on the returned
+    record ("refused") either way — never typed.
 
     Build 6 (#217): the markup is consumed in every shape a
     generation actually produces, because a borrowed reply showed
@@ -10940,7 +11193,18 @@ def extract_shell_block(reply, chat_id):
     presentation, never content."""
     if not reply:
         return reply, None
+    if not gate_open:
+        # #240, layer 1: the turn is not machine-directed. The
+        # markup is consumed (presentation, never content) and
+        # NOTHING is typed — no session is born on a
+        # conversation turn. The record says the block was
+        # gated, so the prose guard knows the shape it is
+        # re-asking about: nothing ran.
+        if not _SHELL_BLOCK_OPEN.search(reply):
+            return reply, None
+        return _strip_shell_blocks(reply), {"lines": [], "gated": True}
     drove = []
+    refused = []
     drove_any = False
     out = reply
     settled = False
@@ -10956,6 +11220,14 @@ def extract_shell_block(reply, chat_id):
         for ln in lines[:20]:
             if chat_id is None:
                 continue
+            # #240, layer 2 (executor hygiene): a leading "$ "
+            # is the prompt she copied, not part of the command
+            # — strip it. A line that reads as prose is refused
+            # here, never typed (named after the loop).
+            clean_ln = ln[2:] if ln.startswith("$ ") else ln
+            if _shell_line_prose(clean_ln):
+                refused.append(clean_ln)
+                continue
             if not settled:
                 # v0.4.2e (#232): a drive that BIRTHS the
                 # session waits for the startup stream to
@@ -10969,17 +11241,41 @@ def extract_shell_block(reply, chat_id):
                     except Exception:
                         pass
             if shell_session_input(
-                    chat_id, ln + "\n", "navi", create=True):
-                drove.append(ln)
+                    chat_id, clean_ln + "\n", "navi", create=True):
+                drove.append(clean_ln)
         drove_any = True
         out = (out[:m.start()] + out[m.end():]).strip()
+    if refused:
+        # The refusals are named in the session record when a
+        # session stands (pre-existing, or born by a line that
+        # did type). When nothing typed and no session stands,
+        # no session is born just to hold the note — the record
+        # below carries the refused lines and the guard names
+        # them to her.
+        sess = shell_session_get(chat_id) if chat_id is not None \
+            else None
+        if sess is not None:
+            for ln in refused:
+                try:
+                    sess._emit(
+                        "note", None,
+                        "refused to type a line that reads as "
+                        "prose, not a command: " + ln)
+                except Exception:
+                    pass
     mo = _SHELL_BLOCK_OPEN.search(out)
     if mo:
         out = out[:mo.start()].strip()
-        return out, {"lines": drove, "unterminated": True}
+        rec = {"lines": drove, "unterminated": True}
+        if refused:
+            rec["refused"] = refused
+        return out, rec
     if not drove_any:
         return reply, None
-    return out, {"lines": drove}
+    rec = {"lines": drove}
+    if refused:
+        rec["refused"] = refused
+    return out, rec
 
 
 def _strip_shell_blocks(text):
@@ -10997,7 +11293,8 @@ def _strip_shell_blocks(text):
     return out.strip()
 
 
-def prose_guard(reply, drove, messages, endpoint, model):
+def prose_guard(reply, drove, messages, endpoint, model,
+                chat_id=None):
     """v0.4.2e (#232): a model turn must still ANSWER. The
     field shape, twice in one afternoon: a conversational
     question answered with a bare [[shell]] block (extraction
@@ -11010,20 +11307,72 @@ def prose_guard(reply, drove, messages, endpoint, model):
     nothing, a plain bridge sentence names what was run, so
     the operator is never handed a hollow reply and left to
     guess what happened. A reply with any prose at all passes
-    through untouched. Returns the reply text to ship."""
+    through untouched. Returns the reply text to ship.
+
+    v0.4.6e (#240, layer 3): the re-ask is GROUNDED. The
+    #232 re-ask named what she ran but never showed her what
+    the session actually printed, so the narration was
+    invented to fill the gap (a README that never existed,
+    offered as evidence). Now the re-ask carries the session's
+    REAL captured output — errors included — and binds her to
+    it: narrate only what the output shows; if nothing ran
+    (a gated block, refused lines), the re-ask says nothing
+    ran, and so must she."""
     if (reply or "").strip():
         return reply
     lines = list((drove or {}).get("lines") or [])
+    refused = list((drove or {}).get("refused") or [])
+    gated = bool((drove or {}).get("gated"))
+    shown = ""
+    looked = False
+    if lines and chat_id is not None:
+        # Let the drive's output land, then read what the
+        # session ACTUALLY showed — the only ground the
+        # narration may stand on.
+        sess = shell_session_get(chat_id)
+        if sess is not None:
+            looked = True
+            try:
+                sess.wait_settled(quiet=0.4, cap=2.0, floor=0.0)
+            except Exception:
+                pass
+            try:
+                shown = (sess.output_tail(1500) or "").strip()
+            except Exception:
+                shown = ""
     note = "Your previous reply to the operator "
-    if lines:
+    if gated:
+        note += ("tried to drive this chat's shell on a "
+                 "conversational turn, so the bridge did NOT "
+                 "run anything — nothing was typed, nothing "
+                 "executed. ")
+    elif lines:
         note += ("drove this chat's shell ("
                  + ", ".join("`" + ln + "`" for ln in lines)
                  + ") but ")
+    if refused:
+        note += ("(Lines refused as prose and never typed: "
+                 + ", ".join("`" + ln + "`" for ln in refused)
+                 + ".) ")
     note += ("said nothing in words. Answer him now, in prose, "
              "in character: say what you ran and what it is "
              "for, or answer his question directly. Do NOT emit "
              "a [[shell]] block or any other [[...]] block in "
              "this reply.")
+    if lines and looked:
+        if shown:
+            note += ("\n\nThe shell session actually showed "
+                     "this — narrate ONLY what it shows, never "
+                     "a file, path, or result that is not in "
+                     "it:\n" + shown)
+        else:
+            note += ("\n\nThe shell session has shown nothing "
+                     "back — say plainly that nothing came "
+                     "back, and never invent a result.")
+    elif gated or refused:
+        note += ("\n\nNothing ran. Do not describe any command, "
+                 "output, or result — answer his question from "
+                 "what you know, in words.")
     again = None
     try:
         again = llamafile_chat(
@@ -11039,6 +11388,11 @@ def prose_guard(reply, drove, messages, endpoint, model):
         return ("I ran " + ", ".join("`" + ln + "`" for ln in lines)
                 + " in this chat's shell — its output is in the "
                   "thread, and I'll speak to what it shows.")
+    if refused:
+        return ("I caught myself about to type a sentence "
+                "into the shell instead of answering you — "
+                "nothing was typed and nothing ran. Ask me "
+                "again and I'll answer in words.")
     return ("That one came back empty on my side — ask me again "
             "and I'll answer properly.")
 
@@ -12454,6 +12808,50 @@ def _shell_window_state(root):
     return "ok", ""
 
 
+def _install_headless(job, root):
+    # v0.4.6e (#185): is this a headless install? Returns
+    # (headless, source). The determination mirrors the
+    # installer's own precedence (apex_headless_decide in
+    # install.sh), from the witnesses an apply actually has:
+    #   1. the job itself, when a bridge that knows the field
+    #      names it ("headless": true);
+    #   2. the installed config's recorded determination —
+    #      install.sh stamps config "headless" beside the
+    #      startup choice, so after the installer runs this is
+    #      the installer's own verdict for THIS apply, and
+    #      before it runs it is the previous install's carried
+    #      choice (the same carry the startup mode rides);
+    #   3. --startup boot implies headless: boot services are
+    #      the headless shape;
+    #   4. auto-detection from this process's environment: no
+    #      DISPLAY and no WAYLAND_DISPLAY and no graphical
+    #      session type.
+    # A recorded false never vetoes auto-detection, exactly as
+    # in the installer: it records a past headed install, not
+    # a display on today's seat.
+    if job.get("headless") is True:
+        return True, "the apply job names this install headless"
+    try:
+        with open(os.path.join(root, "config",
+                               "navi.config.json")) as f:
+            cfg = json.load(f)
+        if isinstance(cfg, dict) and cfg.get("headless") is True:
+            return True, ("the recorded determination in the "
+                          "installed config (config headless: true)")
+    except Exception:
+        pass
+    if job.get("startup") == "on-boot":
+        return True, "--startup boot implies headless (#185)"
+    if not os.environ.get("DISPLAY") \\
+            and not os.environ.get("WAYLAND_DISPLAY") \\
+            and os.environ.get("XDG_SESSION_TYPE", "") \\
+            not in ("x11", "wayland", "mir"):
+        return True, ("auto-detected — no DISPLAY, no "
+                      "WAYLAND_DISPLAY and no graphical session "
+                      "in the apply's environment")
+    return False, "a display is present (or a graphical session is recorded)"
+
+
 def _pid_alive(pid):
     try:
         os.kill(pid, 0)
@@ -12958,8 +13356,24 @@ def main():
             if _rdir:
                 os.makedirs(_rdir, exist_ok=True)
             log = open(job["relaunchLog"], "ab")
+            # v0.4.6e (#185): a headless install relaunches
+            # headless — start.sh --headless starts the services
+            # and opens no window (and attempts no browser
+            # fallback on a seat with no browser session). The
+            # determination is read at call time: after the
+            # installer ran, the installed config carries this
+            # install's own recorded verdict.
+            _rl_argv = ["bash", os.path.join(root, "start.sh")]
+            try:
+                _rl_headless, _rl_why = _install_headless(job, root)
+            except Exception:
+                _rl_headless, _rl_why = False, ""
+            if _rl_headless:
+                _rl_argv.append("--headless")
+                trace("relaunch-mode",
+                      "headless (#185): " + _rl_why)
             subprocess.Popen(
-                ["bash", os.path.join(root, "start.sh")],
+                _rl_argv,
                 cwd=root, env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True, close_fds=True)
@@ -12983,10 +13397,21 @@ def main():
     # her venv is on disk, both recorded on the job by the bridge
     # when it staged the update.
     voice = "yes" if job.get("voice") == "yes" else "no"
+    # v0.4.6e (#185): the headless determination rides the
+    # installer invocation, so the installer's own record of
+    # this apply carries it. The installer ALSO decides for
+    # itself (flag / boot implication / recorded / auto-detect,
+    # in that order), so a helper that cannot see the whole
+    # picture never strands the determination — but when this
+    # helper CAN see it (above), it says it out loud, as a flag.
+    _hl_pre, _hl_pre_source = _install_headless(job, root)
     code = None
     why = ""
     trace("installer-start",
-          "bash install.sh --startup " + startup + " --voice " + voice)
+          "bash install.sh --startup " + startup + " --voice " + voice
+          + (" --headless" if _hl_pre else "")
+          + " (headless: " + ("yes — " if _hl_pre else "no — ")
+          + _hl_pre_source + ")")
     # v0.4.3e (#237): the install log's handle stays OPEN
     # after the installer exits — it is the rescue's source
     # (see _recover_stage_artifacts): the swap renames the
@@ -12999,10 +13424,15 @@ def main():
         # reads the log back through this same handle after
         # the swap, and a write-only handle cannot be read.
         _log_handle = open(job["installLog"], "a+b")
+        _install_argv = ["bash", os.path.join(pkg_dir, "install.sh"),
+                         "--startup", startup, "--voice", voice,
+                         "--dir", root]
+        if _hl_pre:
+            # #185: the determination, carried as the flag the
+            # installer records (see the trace line above).
+            _install_argv.append("--headless")
         proc = subprocess.run(
-            ["bash", os.path.join(pkg_dir, "install.sh"),
-             "--startup", startup, "--voice", voice,
-             "--dir", root],
+            _install_argv,
             cwd=pkg_dir, env=env, stdout=_log_handle,
             stderr=subprocess.STDOUT, timeout=3000)
         code = proc.returncode
@@ -13072,6 +13502,36 @@ def main():
             pass
         _log_handle = None
 
+    # v0.4.6e (#185): the headless gate on the shell verdicts.
+    # On a headless install the shell build was SKIPPED BY
+    # DETERMINATION — there is no binary beside start.sh, and
+    # none is owed. Both verdicts below must therefore never
+    # fire here: the disk verdict (_shell_window_state) would
+    # read the missing binary as the designed browser fallback
+    # only by luck of its no-binary branch, and the #237
+    # owed-but-missing check reads the install log — a log the
+    # headless installer fills with its own named skip line,
+    # not the owed marker, but the gate does not rest on that
+    # courtesy. The skip is NAMED, in the trace and in the
+    # apply record, as the successful step it is: the window
+    # step of a headless apply is "skipped-headless", decided
+    # before either verdict is consulted. The determination is
+    # re-read NOW, after the installer ran, so the installed
+    # config's recorded verdict for this very install (the
+    # stamp the installer just wrote) is the first witness.
+    _headless_final, _hl_final_source = _install_headless(job, root)
+    _shell_state = None
+    if _headless_final:
+        _shell_state = "skipped-headless"
+        trace("shell-window",
+              "skipped-headless — the shell build was skipped "
+              "by determination on this headless install "
+              "(#185): " + _hl_final_source + ". No window is "
+              "built or expected, so neither the disk verdict "
+              "nor the owed-but-missing check applies.")
+        write_result({"headless": True,
+                      "shellWindow": "skipped-headless"})
+
     # v0.4.2e (#233): the shell-window verdict, read from disk
     # (see _shell_window_state). An apply is NOT confirmed
     # while the installed window binary is one the launcher
@@ -13081,10 +13541,14 @@ def main():
     # from a launcher log. A stale verdict fails the apply
     # HERE — in the record the panel shows, with the reason in
     # words — whatever the installer's exit code claimed.
-    _shell_state, _shell_reason = _shell_window_state(root)
-    trace("shell-window",
-          _shell_state
-          + ((" — " + _shell_reason) if _shell_reason else ""))
+    if _shell_state is None:
+        _shell_state, _shell_reason = _shell_window_state(root)
+    else:
+        _shell_reason = ""
+    if _shell_state != "skipped-headless":
+        trace("shell-window",
+              _shell_state
+              + ((" — " + _shell_reason) if _shell_reason else ""))
     if _shell_state == "stale":
         fail("install",
              "The update installed, but her standalone window "
@@ -20407,7 +20871,7 @@ def llamafile_chat(messages, endpoint, model):
     with _GENERATION_LOCK:
         _GENERATION_ACTIVE["count"] += 1
     try:
-        return _llamafile_chat_impl(messages, endpoint, model)
+        result = _llamafile_chat_impl(messages, endpoint, model)
     finally:
         with _GENERATION_LOCK:
             _GENERATION_ACTIVE["count"] = max(0, _GENERATION_ACTIVE["count"] - 1)
@@ -20415,6 +20879,15 @@ def llamafile_chat(messages, endpoint, model):
             GUARDIAN.note_generation(time.time() - _gen_t0)
         except Exception:
             pass
+    # #187: the bridge's own stopwatch — the only numbers
+    # about her speed that exist. Runs only on success (an
+    # exception propagates past this point): a failed request
+    # never replaces the last good measurement.
+    try:
+        _record_model_vitals(time.time() - _gen_t0)
+    except Exception:
+        pass
+    return result
 
 
 def _llamafile_chat_impl(messages, endpoint, model):
@@ -20474,6 +20947,17 @@ def _llamafile_chat_impl(messages, endpoint, model):
             "could not reach navi.llamafile at " + endpoint + ": "
             + str(reason)
         )
+    # #187: the server's own account of the generation rides
+    # home for the vitals record (llama.cpp servers report
+    # timings — predicted_n/predicted_ms/prompt_ms — and the
+    # OpenAI-shaped usage counts). Cleared as it is stashed,
+    # so a response carrying neither never inherits the
+    # previous request's figures.
+    _LAST_GEN_SERVER.clear()
+    _LAST_GEN_SERVER.update({
+        "timings": data.get("timings"),
+        "usage": data.get("usage"),
+    })
     content = data["choices"][0]["message"]["content"]
     if not (content or "").strip():
         # An empty reply renders as silence in the thread — the
@@ -26493,6 +26977,17 @@ class Handler(BaseHTTPRequestHandler):
                                        "and never read it back as your reply.)")
             except Exception:
                 pass
+            # v0.4.6e (#187): her own vitals ride beside the
+            # Guardian brief — the teaching always (she may not
+            # invent her speed), the measured figures when the
+            # bridge's stopwatch has any.
+            try:
+                _system_prompt += "\n\n" + VITALS_TEACHING
+                _vitals = model_vitals_block()
+                if _vitals:
+                    _system_prompt += "\n\n" + _vitals
+            except Exception:
+                pass
             # Case Files (Build 15, #161): while a case is open
             # she knows which one it is, and she can file her own
             # findings into it — her words, her name on them,
@@ -26694,9 +27189,23 @@ class Handler(BaseHTTPRequestHandler):
                 # comes out of the reply the same way — the lines
                 # are typed into this chat's session badged as
                 # hers, and the drive rides back as data.
+                # v0.4.6e (#240): the drive is gated on the turn
+                # being machine-directed (shell_turn_machine_
+                # directed) — computed here, where the operator's
+                # words and the composer's latch both live, and
+                # applied identically whether this reply was
+                # generated locally or served by a Mesh lender:
+                # the extraction below is the one funnel every
+                # reply passes through.
+                try:
+                    _shell_gate = shell_turn_machine_directed(
+                        last or "", data.get("chatId"), chat_mode)
+                except Exception:
+                    _shell_gate = True
                 try:
                     reply, _shell_drove = extract_shell_block(
-                        reply, data.get("chatId"))
+                        reply, data.get("chatId"),
+                        gate_open=_shell_gate)
                 except Exception:
                     _shell_drove = None
                 # v0.4.2e (#232): the prose guard — a turn
@@ -26712,7 +27221,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     _pre_guard = reply
                     reply = prose_guard(reply, _shell_drove, messages,
-                                        endpoint, model)
+                                        endpoint, model,
+                                        chat_id=data.get("chatId"))
                     if reply != _pre_guard and _mesh_payload \
                             and _mesh_payload.get("servedBy") == "mesh":
                         _mesh_payload = {

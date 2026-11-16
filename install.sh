@@ -94,6 +94,16 @@ if [ "$(id -u)" -ne 0 ]; then PKG_SUDO="sudo"; fi
 # exactly as written: unprivileged, in the operator's context.
 SUDO=""
 LLAMAFILE_URL="https://huggingface.co/saintssec/navi.llamafile/resolve/main/navi.llamafile"
+# Llamafile integrity pin (#184): the sha256 of the navi.llamafile
+# this installer will accept, read from Hugging Face's own
+# X-Linked-ETag header for saintssec/navi.llamafile (the header
+# names the linked blob's sha256; X-Linked-Size at pin time was
+# 3274856644 bytes), pinned 2026-11-16. A download whose bytes do
+# not hash to exactly this value is refused by name and never
+# executed — see fetch_llamafile_verified below. When the model
+# on Hugging Face is deliberately replaced, this pin is replaced
+# in the same commit, from the same header.
+LLAMAFILE_SHA256="d2d0858c7be2567b8d54d01ae606a62be4aae9f46447bd0450f4df141d0dbcd6"
 
 # Root wearing the operator's name (sudo from an operator shell)
 # is refused BEFORE anything is touched: its $HOME, its user
@@ -142,11 +152,19 @@ STARTUP=""
 VOICE=""
 FRESH=""
 NO_RELAUNCH=""
+# Headless (#185): HEADLESS_ARG is the operator's explicit word
+# (--headless); the determination itself (flag / implied by
+# --startup boot / recorded / auto-detected) is resolved after
+# the startup mode is final — see apex_headless_decide below.
+HEADLESS_ARG=""
+HEADLESS=""
+HEADLESS_SOURCE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) INSTALL_DIR="$2"; INVOKED_DIR="$2"; shift 2 ;;
     --startup) STARTUP="$2"; shift 2 ;;
     --voice) VOICE="$2"; shift 2 ;;
+    --headless) HEADLESS_ARG=1; shift ;;
     --fresh) FRESH=1; shift ;;
     --no-relaunch) NO_RELAUNCH=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -618,6 +636,86 @@ case "$STARTUP" in
   launch|boot) ;;
   *) echo "ERROR: --startup must be launch or boot (got: $STARTUP)" >&2; exit 2 ;;
 esac
+
+# --- headless determination helpers (#185) ----------------------
+# Delimited so the build's bench can extract and run these exact
+# functions — what is benched is what ships (the voice-step
+# helpers below keep the same discipline).
+apex_headless_decide() {
+  # $1 = explicit --headless flag (1 or ""), $2 = startup mode
+  # (launch|boot), $3 = the headless choice the installed config
+  # recorded ("true", "false" or ""). Prints "<yes|no>\t<source>".
+  # Precedence, in order:
+  #   1. the explicit --headless flag — the operator's word now;
+  #   2. --startup boot implies headless: boot services are the
+  #      headless shape (the bridge unit already runs start.sh
+  #      --headless), and a seat that boots Apex as services has
+  #      no window to build;
+  #   3. the recorded choice: an install recorded headless in
+  #      its config (config "headless": true, written by the
+  #      config stamp below) stays headless across updates —
+  #      the same carry the startup choice itself rides (#75),
+  #      and the carry the updater's apply path reads back;
+  #   4. auto-detection: no $DISPLAY and no $WAYLAND_DISPLAY and
+  #      no graphical session type — there is no display for a
+  #      window or a menu entry to live on (Spartan0311's
+  #      headless Debian LXC is exactly this shape).
+  # A recorded "false" never vetoes auto-detection: it records
+  # that a past install ran headed, not that this seat has a
+  # display today.
+  if [ -n "$1" ]; then
+    printf 'yes\tthe explicit --headless flag\n'; return 0
+  fi
+  if [ "$2" = "boot" ]; then
+    printf 'yes\timplied by --startup boot — boot services are the headless shape\n'; return 0
+  fi
+  if [ "$3" = "true" ]; then
+    printf 'yes\tthe recorded choice from the installed config\n'; return 0
+  fi
+  if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    case "${XDG_SESSION_TYPE:-}" in
+      x11|wayland|mir) ;;
+      *)
+        printf 'yes\tauto-detected — no DISPLAY, no WAYLAND_DISPLAY and no graphical session on this seat\n'; return 0
+        ;;
+    esac
+  fi
+  printf 'no\ta display is present on this seat (or a graphical session is recorded)\n'; return 0
+}
+# --- end headless determination helpers ---
+
+# The headless determination (#185), resolved now that the
+# startup mode is final. It governs three things below, and
+# only those: the Rust/Tauri shell build is skipped ENTIRELY
+# (no toolchain fetch, no cargo build, no owed window), the
+# application-menu entry is not created, and the determination
+# is recorded — in the installed config beside the startup
+# choice (the stamp below) and in the install record — where
+# the updater's apply helper reads it back and carries it.
+_cfg_headless=""
+_hl_cfg_src="$INSTALL_DIR"
+if [ ! -f "$_hl_cfg_src/config/navi.config.json" ] && [ -n "$FOUNDATION_SRC" ]; then
+  _hl_cfg_src="$FOUNDATION_SRC"
+fi
+if [ -f "$_hl_cfg_src/config/navi.config.json" ]; then
+  _cfg_headless="$(python3 -c "import json,sys
+try:
+    v = json.load(open(sys.argv[1])).get('headless')
+    print('true' if v is True else ('false' if v is False else ''))
+except Exception:
+    print('')" "$_hl_cfg_src/config/navi.config.json" 2>/dev/null || true)"
+fi
+_hl_out="$(apex_headless_decide "$HEADLESS_ARG" "$STARTUP" "$_cfg_headless")"
+_hl_yn="${_hl_out%%	*}"
+HEADLESS_SOURCE="${_hl_out#*	}"
+if [ "$_hl_yn" = "yes" ]; then
+  HEADLESS=1
+  echo "    headless: yes — $HEADLESS_SOURCE (#185)"
+  echo "    her window is not built and no menu entry is created on a headless install."
+else
+  HEADLESS=""
+  echo "    headless: no — $HEADLESS_SOURCE (#185)"
+fi
 
 
 # --- Stopping a running bridge — a proof, not a gesture (.91, #91) --
@@ -1237,6 +1335,65 @@ is_html_file() {
   [ -f "$1" ] && head -c 4096 "$1" 2>/dev/null | grep -qiE '<!doctype html|<html'
 }
 
+# --- llamafile integrity helpers (#184) -------------------------
+# Delimited so the build's bench can extract and run these exact
+# functions against fixture downloads — what is benched is what
+# ships (the voice-step helpers keep the same discipline).
+llamafile_verify_file() {
+  # $1 = file, $2 = expected sha256. 0 only on an exact match.
+  [ -f "$1" ] || return 1
+  [ -n "$2" ] || return 1
+  local got=""
+  got="$(sha256sum "$1" 2>/dev/null | awk '{print $1}')"
+  [ -n "$got" ] && [ "$got" = "$2" ]
+}
+
+llamafile_verify_check() {
+  # $1 = file, $2 = expected sha256. The task's own shape:
+  # `sha256sum -c` against the pin, the file named beside it.
+  # 0 only when sha256sum itself reports OK.
+  [ -f "$1" ] || return 1
+  printf '%s  %s\n' "$2" "$1" | sha256sum -c - >/dev/null 2>&1
+}
+
+fetch_llamafile_verified() {
+  # $1 = destination, $2 = URL, $3 = pinned sha256. Downloads to
+  # a temp name beside the destination, verifies the bytes
+  # against the pin with sha256sum -c, and moves the file into
+  # place ONLY on a match (#184). Returns:
+  #   0 — downloaded, verified, in place;
+  #   2 — the download itself failed (nothing landed);
+  #   1 — INTEGRITY FAILURE: the bytes are not the pinned bytes.
+  #       The temp file is deleted, the destination is never
+  #       created, and the refusal is named on stderr. Nothing
+  #       anywhere in this installer executes a llamafile this
+  #       function has not verified: the only download path
+  #       lands here, and a carried or operator-seeded binary is
+  #       the operator's own file, never a download.
+  local dest="$1" url="$2" want="$3" tmp="$1.partial"
+  rm -f "$tmp"
+  if ! curl -fL -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    return 2
+  fi
+  if ! llamafile_verify_check "$tmp" "$want"; then
+    local got=""
+    got="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
+    rm -f "$tmp"
+    echo "ERROR: LLAMAFILE INTEGRITY FAILURE (#184): the downloaded navi.llamafile does not match the pinned sha256." >&2
+    echo "       pinned: $want" >&2
+    echo "       got:    ${got:-<unreadable>}" >&2
+    echo "       The download was deleted and NOTHING was installed or executed from it. This is the" >&2
+    echo "       refusal that keeps a tampered or truncated model binary off the machine: re-run the" >&2
+    echo "       installer to download again; if the mismatch repeats, do not work around it — the" >&2
+    echo "       bytes on the far end are not the bytes this build pins." >&2
+    return 1
+  fi
+  mv -f "$tmp" "$dest"
+  return 0
+}
+# --- end llamafile integrity helpers ---
+
 # --- Carry helpers (law D reads) --------------------------------
 # Every carry READ goes through these: tar with the doctrine's
 # exclusions — regenerable bytecode is never read at all (it
@@ -1496,11 +1653,25 @@ fi
 if [ ! -f "$STAGE_DIR/navi.llamafile" ]; then
   echo "==> Downloading the Navi llamafile"
   echo "    from: $LLAMAFILE_URL"
-  if ! curl -fL -o "$STAGE_DIR/navi.llamafile" "$LLAMAFILE_URL"; then
+  echo "    pinned sha256 (#184): $LLAMAFILE_SHA256"
+  # The download lands verified or not at all (#184): a temp
+  # name, sha256sum -c against the pin, a move into place only
+  # on a match — see fetch_llamafile_verified above. Its exit
+  # codes keep the two failures apart: 2 is a failed download,
+  # 1 is the named integrity refusal (already printed there).
+  _llama_rc=0
+  fetch_llamafile_verified "$STAGE_DIR/navi.llamafile" "$LLAMAFILE_URL" "$LLAMAFILE_SHA256" || _llama_rc=$?
+  if [ "$_llama_rc" -eq 1 ]; then
+    echo "ERROR: aborting on the llamafile integrity refusal above — the live tree is untouched." >&2
+    echo "       The staged tree is left at $STAGE_DIR for inspection; nothing was stopped or replaced." >&2
+    exit 1
+  fi
+  if [ "$_llama_rc" -ne 0 ]; then
     echo "ERROR: the model download failed — aborting with the live tree untouched." >&2
     echo "       The staged tree is left at $STAGE_DIR for inspection; nothing was stopped or replaced." >&2
     exit 1
   fi
+  echo "    llamafile verified against the pinned sha256 (#184) — in place."
   if is_html_file "$STAGE_DIR/navi.llamafile"; then
     rm -f "$STAGE_DIR/navi.llamafile"
     echo "ERROR: the download produced an HTML page, not the llamafile binary." >&2
@@ -1520,12 +1691,19 @@ chmod +x "$STAGE_DIR/bridge.py" "$STAGE_DIR/start.sh" "$STAGE_DIR/run-llamafile.
 # still names the old build's port and the old location; left alone,
 # the bridge once bound that stale port while its launcher polled
 # the new one. The operator's own settings stay untouched.
-$SUDO python3 - "$STAGE_DIR/config/navi.config.json" "$STARTUP" "$INSTALL_DIR" "8675" <<'PY'
+$SUDO python3 - "$STAGE_DIR/config/navi.config.json" "$STARTUP" "$INSTALL_DIR" "8675" "$HEADLESS" <<'PY'
 import json, sys
 path, mode, install_dir, port = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+headless = sys.argv[5] if len(sys.argv) > 5 else ""
 with open(path) as f:
     cfg = json.load(f)
 cfg["startup"] = "on-ui-launch" if mode == "launch" else "on-boot"
+# The headless determination rides the config beside the
+# startup choice (#185): the same record the startup choice is
+# carried by, so a later install — and the updater's apply
+# helper, which reads this config — carries the determination
+# instead of re-guessing it from the room it happens to run in.
+cfg["headless"] = bool(headless)
 cfg.setdefault("bridge", {})["host"] = "127.0.0.1"
 cfg["bridge"]["port"] = port
 cfg["install_dir"] = install_dir
@@ -1768,6 +1946,15 @@ PROVISIONED_MARK="$INSTALL_DIR/.apex-provisioned"
 printf '{"operator": "%s", "at": "%s", "build": "%s"}\n' "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" > "$PROVISIONED_MARK"
 
 
+# Headless (#185): a headless install creates NO application-
+# menu entry — there is no desktop session on the seat to hold
+# one, and a .desktop file pointing at a window that will never
+# be built is litter, not a launcher. The entry in the install
+# tree (assets/navi-apex.desktop, generated into the stage) is
+# the template, not a menu entry, and still lands as always.
+if [ -n "$HEADLESS" ]; then
+  echo "==> Headless install (#185): no application-menu entry is created — there is no desktop here to hold one"
+else
 echo "==> Registering Apex in the application menu"
 ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
 APP_DIR="$HOME/.local/share/applications"
@@ -1792,32 +1979,12 @@ if [ -n "$MENU_ICON" ]; then
 else
   echo "    launcher installed: $APP_DIR/navi-apex.desktop (icon: fallback — no icon file in this copy of the sources)"
 fi
-
-if [ "$STARTUP" = "boot" ]; then
-  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
-  UNIT_DIR="$HOME/.config/systemd/user"
-  mkdir -p "$UNIT_DIR"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-llamafile.service > "$UNIT_DIR/navi-llamafile.service"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" systemd/navi-bridge.service > "$UNIT_DIR/navi-bridge.service"
-  systemctl --user daemon-reload
-  systemctl --user enable --now navi-llamafile.service
-  systemctl --user enable --now navi-bridge.service
-  echo "    services enabled: navi-llamafile.service, navi-bridge.service"
-  # User services start at LOGIN, not boot, unless lingering is
-  # on for the user. Try to enable it; when this session cannot,
-  # print the exact command instead of leaving the operator to
-  # believe boot-start works when it does not (Build 12, #142).
-  if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
-    echo "    linger: already on — the services start at boot"
-  elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
-    echo "    linger: enabled — the services start at boot, before any login"
-  else
-    echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
-    echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
-  fi
-else
-  echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
 fi
+
+# Boot-service registration does NOT happen here (#183): it is
+# the LAST provisioning act, after the voice step and the shell
+# step, further below — nothing a unit executes may be written
+# after the unit is started. See the registration block there.
 
 
 # --- voice-step helpers (v0.3.0e Build 6, #221/#222/#225) -------
@@ -2164,7 +2331,11 @@ if [ -n "$SCRIPT_DIR" ] && [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
   PKG_SHELL_HASH="$(shell_sources_hash "$SCRIPT_DIR/shell")"
 fi
 SHELL_SKIP=""
-if [ -z "$FRESH" ]; then
+# Headless (#185): the whole verify-then-skip decision below is
+# a window question, and a headless install has no window to
+# verify — the determination skips the build outright (the
+# build step names the skip), so none of these branches run.
+if [ -z "$FRESH" ] && [ -z "$HEADLESS" ]; then
   STAMP=""
   if [ -f "$INSTALL_DIR/navi-apex-shell.stamp" ]; then STAMP="$(cat "$INSTALL_DIR/navi-apex-shell.stamp")"; fi
   if [ ! -x "$INSTALL_DIR/navi-apex-shell" ]; then
@@ -2230,7 +2401,9 @@ fi
 # cause) never fails the install: it says so plainly below, and
 # start.sh's browser fallback covers launching.
 echo "==> Checking for a Rust toolchain (her window needs one)"
-if [ -n "$SHELL_SKIP" ]; then
+if [ -n "$HEADLESS" ]; then
+  echo "    headless install (#185): no Rust toolchain is needed — her window is not built on this seat, and none is fetched."
+elif [ -n "$SHELL_SKIP" ]; then
   echo "    her window is already built from these shell sources — no Rust needed this run."
 elif [ -n "$SHELL_ICON_MISSING" ]; then
   echo "    her window cannot be built from this copy of the sources (missing icon files: $SHELL_ICON_MISSING) — no Rust needed this run; the window step below explains."
@@ -2294,7 +2467,10 @@ retire_stale_shell() {
 # an update whose window silently never came.
 SHELL_BUILD_OWED=""
 SHELL_BUILD_DONE=""
-if [ -z "$SHELL_SKIP" ] && [ -z "$SHELL_ICON_MISSING" ] \
+# Headless (#185): no window is ever OWED on a headless install —
+# the owed ledger below is what turns a missing window into a
+# failed apply, and on headless the absence is the design.
+if [ -z "$HEADLESS" ] && [ -z "$SHELL_SKIP" ] && [ -z "$SHELL_ICON_MISSING" ] \
    && { [ "$DISTRO_FAMILY" != "bazzite" ] || [ -n "$BAZZITE_BOX" ]; }; then
   SHELL_BUILD_OWED=1
 fi
@@ -2312,7 +2488,12 @@ fi
 # http://localhost:8675 either way. A failed build never
 # fails the install — it names itself and keeps the log.
 echo "==> Building the standalone window (Tauri shell)"
-if [ -n "$SHELL_SKIP" ]; then
+if [ -n "$HEADLESS" ]; then
+  echo "    SKIPPED — headless install (#185): the Rust/Tauri shell is not built on a headless seat."
+  echo "    The bridge and the dashboard are the whole product here; they run as services"
+  echo "    (or by start.sh --headless), and no window is owed, built, or expected."
+  echo "SHELL-WINDOW: skipped-headless — headless install (#185); no window is built or expected"
+elif [ -n "$SHELL_SKIP" ]; then
   echo "    already built from these exact shell sources — skipping the cargo build."
   echo "    (binary: $INSTALL_DIR/navi-apex-shell — pass --fresh, change the shell sources, or delete navi-apex-shell.stamp to force a rebuild)"
 elif [ -n "$SHELL_ICON_MISSING" ]; then
@@ -2403,7 +2584,13 @@ fi
 # stamp, sources — and saying the verdict out loud. (An apply's
 # helper reads the same disk state and fails the apply's record
 # on it; a hand install gets the words here, in the open.)
-if [ -x "$INSTALL_DIR/navi-apex-shell" ]; then
+if [ -n "$HEADLESS" ]; then
+  # Headless (#185): the disk verdict does not apply — there is
+  # no window beside start.sh by design, and a carried binary
+  # from an earlier headed install is inert scenery here (the
+  # boot units run start.sh --headless, which never opens it).
+  echo "    window: none — headless install (#185); the shell verdict does not apply."
+elif [ -x "$INSTALL_DIR/navi-apex-shell" ]; then
   SHELL_END_HASH="$(shell_sources_hash "$INSTALL_DIR/shell")"
   SHELL_END_STAMP=""
   if [ -f "$INSTALL_DIR/navi-apex-shell.stamp" ]; then SHELL_END_STAMP="$(cat "$INSTALL_DIR/navi-apex-shell.stamp")"; fi
@@ -2449,6 +2636,78 @@ if [ -f "$AUTOSTART_DIR/navi-apex.desktop" ]; then
   echo "    removed: $AUTOSTART_DIR/navi-apex.desktop (the tray autostart an earlier build registered)"
 fi
 
+
+
+# --- Boot services are registered LAST (#183) -------------------
+# The fresh --startup boot ordering, audited for v0.4.6e (#183).
+# Spartan0311's report (against an old build) said services were
+# enabled and started before bridge.py was in its final place,
+# so the first boot failed and never recovered. The .pending
+# flip that caused that shape is long gone (law B: the stage is
+# promoted by rename, whole, before the product's self-check),
+# and this block is where the ordering is now KEPT: registration
+# is the last provisioning act of the install. By the time any
+# unit is enabled or started, everything a unit executes is in
+# its final place and verified — bridge.py, start.sh and
+# run-llamafile.sh (promoted by the swap and passed by the
+# self-check), navi.llamafile (carried, or downloaded and
+# integrity-verified under #184), the config (stamped in the
+# stage, before the swap), and the voice venv (the step above:
+# the bridge unit's start.sh chooses the venv's Python AT
+# LAUNCH, so a venv created after the unit started would never
+# be adopted until a manual restart — the first boot must find
+# it already there). Nothing below this block writes a file any
+# unit executes; the relaunch that follows only ADOPTS what the
+# units started.
+#
+# The registration is also GUARDED, which it never was before:
+# daemon-reload and enable --now used to run bare under set -e,
+# so a seat whose user bus could not be reached at that moment
+# (a headless LXC before linger, an SSH session with no
+# XDG_RUNTIME_DIR) killed the installer mid-provisioning —
+# after the swap, before the install record — stranding a
+# verified tree with no receipt. Now a failed registration is
+# named, the exact commands that finish it by hand are printed,
+# and the install completes: the tree stands on its self-check,
+# not on the bus's mood.
+if [ "$STARTUP" = "boot" ]; then
+  echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$SRC_DIR/systemd/navi-llamafile.service" > "$UNIT_DIR/navi-llamafile.service"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$SRC_DIR/systemd/navi-bridge.service" > "$UNIT_DIR/navi-bridge.service"
+  _svc_ok=1
+  systemctl --user daemon-reload || _svc_ok=""
+  if [ -n "$_svc_ok" ]; then systemctl --user enable --now navi-llamafile.service || _svc_ok=""; fi
+  if [ -n "$_svc_ok" ]; then systemctl --user enable --now navi-bridge.service || _svc_ok=""; fi
+  if [ -n "$_svc_ok" ]; then
+    echo "    services enabled: navi-llamafile.service, navi-bridge.service"
+    # User services start at LOGIN, not boot, unless lingering is
+    # on for the user. Try to enable it; when this session cannot,
+    # print the exact command instead of leaving the operator to
+    # believe boot-start works when it does not (Build 12, #142).
+    if loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null | grep -qx "yes"; then
+      echo "    linger: already on — the services start at boot"
+    elif $SUDO loginctl enable-linger "$(id -un)" 2>/dev/null; then
+      echo "    linger: enabled — the services start at boot, before any login"
+    else
+      echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
+      echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
+    fi
+  else
+    echo "  *** THE BOOT SERVICES COULD NOT BE REGISTERED — systemctl --user did not answer" >&2
+    echo "  *** (no user bus is reachable from this session: a headless seat before linger is" >&2
+    echo "  *** enabled, or a session with no XDG_RUNTIME_DIR, is exactly this shape)." >&2
+    echo "  *** The install itself is complete and verified — only the registration is owed." >&2
+    echo "  *** The unit files are written at $UNIT_DIR; finish the registration from a" >&2
+    echo "  *** logged-in session with exactly:" >&2
+    echo "  ***   systemctl --user daemon-reload" >&2
+    echo "  ***   systemctl --user enable --now navi-llamafile.service navi-bridge.service" >&2
+    echo "  ***   sudo loginctl enable-linger $(id -un)" >&2
+  fi
+else
+  echo "==> Launch mode: start.sh will boot the llamafile server with the UI"
+fi
 
 
 # The old location's files are removed only now that the new
@@ -2536,8 +2795,15 @@ fi
 # doctrine's outcomes: any casualty the permissions audit left
 # behind, and the self-check's ownership verdict over the new
 # tree — merged in, best-effort, never a reason to fail here.
-printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed"}\n' \
-  "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" "$(cat "$INSTALL_DIR/VERSION")" \
+# The install record carries the headless determination too
+# (#185): a second witness beside the config's, in the record
+# that already proves the install — an apply (or a human)
+# auditing a headless seat can read the determination from
+# either place and get the same answer.
+_hl_json="false"
+if [ -n "$HEADLESS" ]; then _hl_json="true"; fi
+printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed", "headless": %s, "headlessSource": "%s"}\n' \
+  "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" "$(cat "$INSTALL_DIR/VERSION")" "$_hl_json" "$HEADLESS_SOURCE" \
   > "$INSTALL_DIR/.apex-install-record"
 python3 - "$INSTALL_DIR/.apex-install-record" "$INSTALL_DIR/config/install-self-check.json" $AUDIT_CASUALTY_LIST <<'PY' || true
 import json, sys
@@ -2583,6 +2849,9 @@ if [ "$STARTUP" = "boot" ]; then
   echo "   Startup: at boot (systemd user services: navi-llamafile, navi-bridge)"
 else
   echo "   Startup: when you launch the app (the Apex entry in your app menu, or $INSTALL_DIR/start.sh)"
+fi
+if [ -n "$HEADLESS" ]; then
+  echo "   Mode: headless (#185) — no window built, no menu entry created; the determination is recorded in the config and the install record."
 fi
 
 # --- The park (migration only) ----------------------------------
