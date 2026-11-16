@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.1"
+SHIPPED_VERSION = "0.5.2"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.17"
+BRIDGE_BUILD = "2026-11-16.18"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 17
+SHIPPED_BUILD_SEQ = 18
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -11029,9 +11029,12 @@ CASE_TEACHING = (
     "operator's intent is to start one — he says so in his own "
     "words, in whatever phrasing ('add this into a new research "
     "case', 'this needs a case', 'start a case on X') — act on "
-    "it in the SAME reply: answer him in words first, in your "
-    "own voice, then close the reply with the intake block, "
-    "exactly this form:\n"
+    "it in the SAME reply: put the intake block FIRST, before "
+    "your words, never after them — a long answer can be cut "
+    "off mid-reply, and a block that never closes files "
+    "nothing (the bridge refuses it by name and no case "
+    "exists). Open with the block, exactly this form, then "
+    "answer him in words, in your own voice:\n"
     "[[case-intake]]\n"
     "name: <the case's name>\n"
     "type: <incident|investigation|research|hunt|locate>\n"
@@ -11060,7 +11063,10 @@ CASE_TEACHING = (
     "opened or anything was filed unless that receipt says so, "
     "and never mention the block itself. Adding to an EXISTING "
     "case is not an intake — that is the open case's filing and "
-    "logging, which ride their own markers.")
+    "logging, which ride their own markers. Facts drawn from a "
+    "Wire record keep the record's values — its CVE id, CVSS, "
+    "EPSS and dates; a filing that contradicts its cited record "
+    "is flagged on its face by the bridge before it lands.")
 
 
 # ---------------- #240: the intent gate + executor hygiene ----------
@@ -24697,7 +24703,11 @@ def navi_file_finding(slug, severity, content):
         title, body = "", content
     title = " ".join(str(title).replace("#", "").split()).strip(" .:") or (
         (body[:70] + "…") if len(body) > 70 else body)
-    filed, err = case_file_entry(slug, "finding", title, body.strip(),
+    gflags = filing_grounding_flags(title, body)
+    fbody = body.strip()
+    if gflags:
+        fbody += "\n\n" + "\n".join(_grounding_flag_lines(gflags))
+    filed, err = case_file_entry(slug, "finding", title, fbody,
                                  severity or "info", False, author="navi")
     if err:
         return None
@@ -24705,7 +24715,7 @@ def navi_file_finding(slug, severity, content):
                     "Filed from the case chat as `" + filed["path"] + "`.")
     meta = _case_manifest(slug)
     return {"case": slug, "caseName": str((meta or {}).get("title") or slug),
-            "path": filed["path"], "title": title}
+            "path": filed["path"], "title": title, "grounding": gflags}
 
 
 def extract_finding_markers(reply, cfg):
@@ -24870,18 +24880,145 @@ CASELOG_RE = re.compile(r"\[\[case-log\]\](.*?)\[\[/case-log\]\]", re.I | re.S)
 CASELOG_ENTITY_TYPES = ["person", "org", "account", "system", "place", "other"]
 CASELOG_OBS_KINDS = ["ip", "domain", "url", "hash", "file", "wallet", "other"]
 CASELOG_MAX_ENTRIES = 6
+# v0.5.2e (#261): the malformed shapes, named so they can be
+# refused by name — an unclosed block, a single-bracket
+# improvisation, filing-shaped lines sitting in prose, and the
+# headed-essay shape the field produced ("Case Intake" as a
+# summary instead of a filing).
+CASELOG_OPEN_RE = re.compile(r"\[\[case-log\]\]", re.I)
+CASELOG_SINGLE_RE = re.compile(r"(?<!\[)\[case-log\](.*?)\[/case-log\]", re.I | re.S)
+CASELOG_KIND_LINE_RE = re.compile(
+    r"^\s*(entity|observable|event|lead|finding|task)\s*:\s*\S", re.I)
+CASELOG_HEADER_RE = re.compile(r"^\s{0,3}#{0,3}\s*case\s+(intake|brief|log)\b", re.I)
+
+
+# --- The grounding guard (v0.5.2e, #261, leg 3) ------------------
+# Material derived from a Wire record carries the record's
+# values — its id, its CVSS, its EPSS, its dates. A filing that
+# cites a CVE and states a score contradicting the record is
+# flagged ON ITS FACE before it lands: the flag line is part of
+# the filed text, the receipt carries the flag, and the
+# record's values govern. The guard never rewrites her words
+# and never blocks the filing — it names the contradiction
+# where the filing will be read. (The field shape it answers:
+# a case-log essay stating CVSS 10.0 where the Wire record
+# says 8.1, with an invented mechanism beside it.)
+_CVSS_CLAIM_RE = re.compile(
+    r"\bCVSS(?:\s*(?:v\d+(?:\.\d+)?|\d\.\d))?\s*(?:score)?\s*(?:of|:|=|is)?\s*(\d{1,2}(?:\.\d)?)\b", re.I)
+_EPSS_CLAIM_RE = re.compile(
+    r"\bEPSS\s*(?:score)?\s*(?:of|:|=|is)?\s*(\d{1,3}(?:\.\d+)?)\s*(%|percent)?", re.I)
+
+
+def filing_grounding_flags(title, body):
+    # Returns [{cve, field, claimed, record}] — one flag per
+    # contradicted value. A text that states the record's value
+    # anywhere is not flagged for that field (a "CVSS 3.1"
+    # version mention beside the true score is not a claim).
+    text = str(title or "") + "\n" + str(body or "")
+    flags = []
+    try:
+        ids = list(dict.fromkeys(
+            m.upper() for m in intel_mod.CVE_ID_RE.findall(text)))
+    except Exception:
+        ids = []
+    for cid in ids[:3]:
+        try:
+            item = INTEL.item(cid)
+        except Exception:
+            item = None
+        if not item:
+            continue
+        rec_cvss = item.get("cvss")
+        if isinstance(rec_cvss, (int, float)):
+            claims = []
+            for m in _CVSS_CLAIM_RE.finditer(text):
+                try:
+                    claims.append(float(m.group(1)))
+                except Exception:
+                    continue
+            if claims and all(abs(c - rec_cvss) > 0.05 for c in claims):
+                flags.append({"cve": cid, "field": "CVSS",
+                              "claimed": "%g" % claims[0],
+                              "record": "%g" % rec_cvss})
+        rec_epss = item.get("epss")
+        if isinstance(rec_epss, (int, float)):
+            rec_pct = rec_epss * 100.0
+            claims = []
+            for m in _EPSS_CLAIM_RE.finditer(text):
+                try:
+                    claimed = float(m.group(1))
+                except Exception:
+                    continue
+                claims.append(claimed if (m.group(2) or claimed > 1.0)
+                              else claimed * 100.0)
+            if claims and all(abs(c - rec_pct) > 2.0 for c in claims):
+                flags.append({"cve": cid, "field": "EPSS",
+                              "claimed": "%g" % claims[0] + "%",
+                              "record": "%g" % round(rec_pct, 1) + "%"})
+    return flags
+
+
+def _grounding_flag_lines(flags):
+    return ["⚠ Grounding flag — this filing states " + f["field"] + " "
+            + f["claimed"] + " for " + f["cve"] + "; the Wire record says "
+            + f["field"] + " " + f["record"]
+            + ". Filed as written; the record's values govern."
+            for f in flags]
 
 
 def extract_case_log(reply, slug, source_text=""):
     # Returns (clean_reply, log) where log is None when nothing
     # was logged (or no bound case), else {entries, flags,
-    # duplicates, dropped}. Blocks are stripped from the reply
-    # ALWAYS — a stray block outside a bound chat is dropped,
-    # never written anywhere.
+    # duplicates, dropped, refusals, grounding}. Blocks are
+    # stripped from the reply ALWAYS — a stray block outside a
+    # bound chat is dropped, never written anywhere.
+    # v0.5.2e (#261): a MALFORMED filing attempt in a bound chat
+    # is refused BY NAME — the refusal is appended to the reply
+    # by the bridge and rides the log payload, so the operator
+    # always knows whether a filing took. Silence was the field
+    # failure: an essay shaped like a filing, nothing filed, and
+    # no word that nothing had landed.
     blocks = CASELOG_RE.findall(reply or "")
     clean = CASELOG_RE.sub("", reply or "")
     clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-    if not blocks or not slug or _case_manifest(slug) is None:
+    if not slug or _case_manifest(slug) is None:
+        return clean, None
+    refusals = []
+    grounding = []
+    # An unclosed block is cut where it opens — half a filing
+    # is never acted on (the intake's discipline, applied here).
+    m_open = CASELOG_OPEN_RE.search(clean)
+    if m_open:
+        clean = clean[:m_open.start()].rstrip()
+        refusals.append("a case-log block opened but never closed "
+                        "([[/case-log]] never arrived) — nothing in it was filed.")
+    # Single brackets: machinery-shaped, but not the machinery.
+    if CASELOG_SINGLE_RE.search(clean):
+        clean = CASELOG_SINGLE_RE.sub("", clean)
+        clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+        refusals.append("a filing was attempted in single brackets ([case-log]) — "
+                        "the log block needs double brackets ([[case-log]] … "
+                        "[[/case-log]]); nothing was filed from it.")
+    # Filing-shaped lines sitting in prose, and the headed-essay
+    # shape: named when they read as a filing attempt — two or
+    # more kind lines, or any kind line (or the essay header)
+    # while the operator's own message asked for a filing.
+    kind_lines = [ln.strip() for ln in clean.split("\n")
+                  if CASELOG_KIND_LINE_RE.match(ln)]
+    header_hit = any(CASELOG_HEADER_RE.match(ln) for ln in clean.split("\n"))
+    swipe_intent = bool(re.search(r"\b(file|filing|swipe|log)\b",
+                                  source_text or "", re.I))
+    if len(kind_lines) >= 2 or (kind_lines and swipe_intent):
+        refusals.append(str(len(kind_lines)) + " filing-shaped line"
+                        + ("s" if len(kind_lines) != 1 else "")
+                        + " sat in the reply's prose, outside the [[case-log]] "
+                          "block — prose is not a filing, and nothing was "
+                          "written from "
+                        + ("them." if len(kind_lines) != 1 else "it."))
+    elif header_hit and swipe_intent:
+        refusals.append("the reply presented a case summary as prose — a headed "
+                        "essay is not a filing, and nothing was written from it.")
+    if not blocks and not refusals:
         return clean, None
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
     excerpt = " ".join(str(source_text or "").split())[:90]
@@ -24890,6 +25027,7 @@ def extract_case_log(reply, slug, source_text=""):
     flags = []
     duplicates = 0
     dropped = 0
+    unparsed = []
     ent_keys = {e["key"] for e in _case_register(slug, "entities")}
     obs_keys = {e["key"] for e in _case_register(slug, "observables")}
     task_keys = {e["key"] for e in _case_register(slug, "tasks")}
@@ -24905,7 +25043,7 @@ def extract_case_log(reply, slug, source_text=""):
                     other_index.setdefault(e["key"], (c["slug"], c["name"]))
     except Exception:
         other_index = {}
-    counts = {"entity": 0, "observable": 0, "event": 0, "lead": 0, "task": 0}
+    counts = {"entity": 0, "observable": 0, "event": 0, "lead": 0, "task": 0, "finding": 0}
 
     def _flag(value):
         hit = other_index.get(_register_key(value))
@@ -24915,8 +25053,10 @@ def extract_case_log(reply, slug, source_text=""):
     for block in blocks:
         for raw_line in block.split("\n"):
             line = raw_line.strip().lstrip("-").strip()
-            m = re.match(r"^(entity|observable|event|lead|task)\s*:\s*(.+)$", line, re.I)
+            m = re.match(r"^(entity|observable|event|lead|finding|task)\s*:\s*(.+)$", line, re.I)
             if not m:
+                if line:
+                    unparsed.append(line[:90])
                 continue
             kind = m.group(1).lower()
             parts = [p.strip() for p in m.group(2).split("|")]
@@ -24976,14 +25116,45 @@ def extract_case_log(reply, slug, source_text=""):
                 if not title:
                     continue
                 body = (parts[1] if len(parts) > 1 else "")
+                gflags = filing_grounding_flags(title, body)
+                gtext = ""
+                if gflags:
+                    grounding.extend(gflags)
+                    gtext = "\n" + "\n".join(_grounding_flag_lines(gflags))
                 filed, err = case_file_entry(
                     slug, "finding", title,
                     (body + "\n\n" if body else "")
-                    + "Logged by Navi from the case chat as a lead — unverified.",
+                    + "Logged by Navi from the case chat as a lead — unverified." + gtext,
                     "info", False, author="navi")
                 if not err:
                     counts["lead"] += 1
                     written.append({"kind": "lead", "label": title, "state": "lead"})
+            elif kind == "finding":
+                # v0.5.2e (#261): a real finding, not a lead —
+                # her conclusion, filed in her name from the
+                # case room, landing unverified like everything
+                # she files. An optional third part names the
+                # severity; anything else reads as info.
+                title = parts[0] if parts else ""
+                if not title:
+                    continue
+                body = (parts[1] if len(parts) > 1 else "")
+                sev = (parts[2].lower() if len(parts) > 2 else "") or "info"
+                if sev not in CASE_SEVERITIES:
+                    sev = "info"
+                gflags = filing_grounding_flags(title, body)
+                gtext = ""
+                if gflags:
+                    grounding.extend(gflags)
+                    gtext = "\n" + "\n".join(_grounding_flag_lines(gflags))
+                filed, err = case_file_entry(
+                    slug, "finding", title,
+                    (body + "\n\n" if body else "")
+                    + "Filed by Navi from the case chat as a finding — unverified." + gtext,
+                    sev, False, author="navi")
+                if not err:
+                    counts["finding"] += 1
+                    written.append({"kind": "finding", "label": title, "state": "lead"})
             elif kind == "task":
                 text = parts[0] if parts else ""
                 if not text:
@@ -24999,15 +25170,119 @@ def extract_case_log(reply, slug, source_text=""):
                 written.append({"kind": "task", "label": text, "state": "lead"})
     if written:
         bits = [str(counts[k]) + " " + k + ("s" if counts[k] != 1 else "")
-                for k in ("entity", "observable", "event", "lead", "task") if counts[k]]
+                for k in ("entity", "observable", "event", "lead", "task", "finding") if counts[k]]
         case_file_entry(slug, "timeline", "Navi logged case material",
                         "From the case chat at " + now + ": " + ", ".join(bits)
                         + ". Everything she logs lands unverified (state: lead) "
                         "until the operator promotes or strikes it on review.")
-    if not written and not flags:
+    if unparsed:
+        refusals.append(str(len(unparsed)) + " line"
+                        + ("s" if len(unparsed) != 1 else "")
+                        + " inside the case-log block could not be read as "
+                          "filings (“" + unparsed[0] + "”) — "
+                        + ("they were" if len(unparsed) != 1 else "it was")
+                        + " not written to the case. A filing line reads "
+                          "entity:/observable:/event:/lead:/finding:/task: …")
+    if refusals:
+        # The refusal rides the reply itself (the intake's
+        # shape): the operator reads that the filing did not
+        # land in the same breath as the answer that tried it.
+        rline = ("— **Filing did not land:** " + " ".join(refusals)
+                 + " The case holds only what its receipts name.")
+        clean = (clean + "\n\n" + rline) if clean else rline
+    if not written and not flags and not refusals and not grounding:
         return clean, None
     return clean, {"entries": written, "flags": flags,
-                   "duplicates": duplicates, "dropped": dropped}
+                   "duplicates": duplicates, "dropped": dropped,
+                   "refusals": refusals, "grounding": grounding}
+
+
+# --- Filing a reply into its case (v0.5.2e, #261, leg 1) --------
+# The deterministic door beside the conversational one: the
+# operator taps "File into this case" on one of Navi's replies
+# in a case chat, and this files that exact reply as a finding
+# on the bound case — provenance in the note (the source chat,
+# the action, the timestamp), the grounding guard run over it
+# like every filing in this build, and a receipt appended INTO
+# the chat by the bridge from what it actually did. No model
+# in the loop: the tap either files, or names why it cannot.
+def case_file_reply(chat_id, text):
+    # Returns (filing, error) — filing {case, caseName, path,
+    # grounding} on success.
+    chat = None
+    if chat_id is not None:
+        for rec in chats_all():
+            if str(rec.get("id")) == str(chat_id):
+                chat = rec
+                break
+    if chat is None:
+        return None, "No such chat."
+    slug = str(chat.get("case") or "")
+    if not slug:
+        return None, "This chat is not bound to a case — there is no case to file into."
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None, "The case this chat is bound to is not on this desk."
+    body_text = str(text or "").strip()
+    if not body_text:
+        return None, "That reply is empty — there is nothing to file."
+    case_name = str(meta.get("title") or slug)
+    title = ""
+    for ln in body_text.split("\n"):
+        cand = " ".join(ln.replace("#", " ").replace("*", " ").replace("`", " ").split()).strip(" .:—-")
+        if cand:
+            title = cand[:90]
+            break
+    if not title:
+        title = "Filed from the case chat — " + case_name
+    gflags = filing_grounding_flags(title, body_text)
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    fbody = body_text
+    if gflags:
+        fbody += "\n\n" + "\n".join(_grounding_flag_lines(gflags))
+    fbody += ("\n\n— Filed from the case chat by the operator's “File into this case” "
+              "action at " + now + ": the reply above stands as written, in Navi's "
+              "name, sourced from chat " + str(chat.get("id")) + " in the case “"
+              + case_name + "”.")
+    # Severity follows the cited record, as the Wire's own file
+    # door does: one cited CVE with a score lends its band.
+    sev = "info"
+    try:
+        _ids = list(dict.fromkeys(
+            m.upper() for m in intel_mod.CVE_ID_RE.findall(body_text)))
+        if len(_ids) == 1:
+            _item = INTEL.item(_ids[0])
+            _cvss = (_item or {}).get("cvss")
+            if isinstance(_cvss, (int, float)):
+                sev = ("critical" if _cvss >= 9 else "high" if _cvss >= 7
+                       else "medium" if _cvss >= 4 else "low")
+    except Exception:
+        sev = "info"
+    filed, err = case_file_entry(slug, "finding", title, fbody, sev, False,
+                                 author="navi")
+    if err:
+        return None, err
+    filing = {"case": slug, "caseName": case_name, "path": filed["path"],
+              "grounding": gflags}
+    # The receipt lands IN the chat, appended by the bridge —
+    # the room shows the filing because the bridge did it, not
+    # because anyone narrated it.
+    now_ms = int(time.time() * 1000)
+    rtext = ("Filed that reply into the case **" + case_name + "** as a finding — `"
+             + filed["path"] + "`. It stands in the case's findings, in my name, "
+             "exactly as written.")
+    if gflags:
+        rtext += (" One flag rides it: " + "; ".join(
+            "it states " + f["field"] + " " + f["claimed"] + " for " + f["cve"]
+            + ", the Wire record says " + f["record"] for f in gflags)
+            + " — the record's values govern.")
+    msgs = list(chat.get("messages") or [])
+    msgs.append({"who": "NAVI", "text": rtext, "exec": None, "ts": now_ms,
+                 "caseFiledReply": filing})
+    chat["messages"] = msgs
+    chat["updatedAt"] = now_ms
+    chat_write(chat)
+    return filing, None
 
 
 # --- Starting a case from chat (v0.4.5e, #241) -------------------
@@ -25135,6 +25410,7 @@ def extract_case_intake(reply, cfg, source_text=""):
     source = "case intake from chat" + ((" — reply to: “" + excerpt + "”") if excerpt else "")
     counts = {"finding": 0, "entity": 0, "observable": 0, "event": 0, "task": 0}
     dropped = tail_lines
+    grounding = []
     seen = {"entity": set(), "observable": set(), "task": set()}
     for raw in items["finding"]:
         if counts["finding"] >= CASEINTAKE_CAPS["finding"]:
@@ -25146,10 +25422,15 @@ def extract_case_intake(reply, cfg, source_text=""):
         if not title:
             dropped += 1
             continue
+        gflags = filing_grounding_flags(title, body)
+        gtext = ""
+        if gflags:
+            grounding.extend(gflags)
+            gtext = "\n" + "\n".join(_grounding_flag_lines(gflags))
         filed, ferr = case_file_entry(
             slug, "finding", title,
             (body + "\n\n" if body else "")
-            + "Swiped by Navi at case intake from the conversation — unverified.",
+            + "Swiped by Navi at case intake from the conversation — unverified." + gtext,
             "info", False, author="navi")
         if ferr:
             dropped += 1
@@ -25271,7 +25552,7 @@ def extract_case_intake(reply, cfg, source_text=""):
               "chatId": chat_id, "findings": counts["finding"],
               "entities": counts["entity"], "observables": counts["observable"],
               "events": counts["event"], "tasks": counts["task"],
-              "dropped": dropped}
+              "dropped": dropped, "grounding": grounding}
     return ((clean + "\n\n" + line) if clean else line), intake
 
 
@@ -28437,6 +28718,59 @@ class Handler(BaseHTTPRequestHandler):
                     payload["spoken"] = speak_reply(_creply, cfg)
                 self._send(200, payload)
                 return
+            # Catalog search + reference reading (v0.5.2e,
+            # #259): the same deterministic discipline as the
+            # lookup below — answered straight from the local
+            # store (and, for references, from the record's own
+            # links, read on demand and cited to the link), the
+            # catalog's stamp on the answer's face, absence
+            # stated as absence. "search the KEV for OpenSSH",
+            # "any CVEs for X this week", "what CVEs affect X",
+            # "read the references for CVE-…".
+            _rm = re.search(r"\b(?:read|follow|check|open)\s+the\s+(?:references|links|refs)\b[^.]*?\b(CVE-\d{4}-\d{4,7})\b", last or "", re.I) or re.search(r"\bwhat\s+do\s+the\s+(?:references|links)\b[^.]*?\b(CVE-\d{4}-\d{4,7})\b", last or "", re.I)
+            _sm = None
+            if not _rm:
+                _sm = (re.search(r"\bsearch\s+(?:the\s+)?(kev|catalog|store|center|cves?|vulnerabilit\w*)\s+for\s+(.+)", last or "", re.I)
+                       or re.search(r"\bany\s+(cves?|kev(?:\s+entries)?|known[-\s]exploited(?:\s+entries)?)\s+for\s+(.+)", last or "", re.I)
+                       or re.search(r"\bwhat\s+(cves?|vulnerabilit\w*)\s+(?:affect|hit)\s+(.+)", last or "", re.I))
+            if _rm or _sm:
+                try:
+                    if _rm:
+                        _ireply = INTEL.references_text(_rm.group(1).upper())
+                    else:
+                        _noun = (_sm.group(1) or "").lower()
+                        _q = (_sm.group(2) or "").strip().rstrip("?").strip()
+                        _kev_only = ("kev" in _noun) or ("known" in _noun)
+                        _matched_only = bool(re.search(r"\bmatched\b|\bmy\s+stack\b", last or "", re.I))
+                        _days = None
+                        _dm = re.search(r"\blast\s+(\d+)\s+days?\b", last or "", re.I)
+                        if _dm:
+                            _days = int(_dm.group(1))
+                            _q = re.sub(r"\s*last\s+\d+\s+days?\b", "", _q, flags=re.I).strip()
+                        elif re.search(r"\bthis\s+week\b", last or "", re.I):
+                            _days = 7
+                            _q = re.sub(r"\s*this\s+week\b", "", _q, flags=re.I).strip()
+                        elif re.search(r"\bthis\s+month\b", last or "", re.I):
+                            _days = 30
+                            _q = re.sub(r"\s*this\s+month\b", "", _q, flags=re.I).strip()
+                        elif re.search(r"\btoday\b", last or "", re.I):
+                            _days = 1
+                            _q = re.sub(r"\s*today\b", "", _q, flags=re.I).strip()
+                        _ireply = INTEL.search_text(_q, kev_only=_kev_only,
+                                                    matched_only=_matched_only,
+                                                    days=_days)
+                except Exception:
+                    _ireply = "The intel store could not be read just now — the Center's page (Apex | Apps → The Wire) shows its state."
+                payload = {
+                    "reply": _ireply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_ireply, cfg)
+                self._send(200, payload)
+                return
             # Threat intel lookup (Build 15, #165): "intel: …" or
             # "what do we know about CVE-…" is answered straight
             # from the local store by the same deterministic logic
@@ -28656,16 +28990,19 @@ class Handler(BaseHTTPRequestHandler):
                         _system_prompt += "\n\n" + _cbrief
                     _system_prompt += (
                         "\n\n[Logging this case as you work it]\n"
-                        "This conversation is the case room for the case above. When the work surfaces a new, specific, checkable detail — never chatter, never a restatement — you may log it by ending your reply with a block of exactly this form:\n"
+                        "This conversation is the case room for the case above. When the work surfaces a new, specific, checkable detail — never chatter, never a restatement — you may log it by OPENING your reply with a block of exactly this form — the block goes FIRST, before your words, never at the end: a long reply can be cut off before it finishes, and a block that never closes files nothing. Then answer in words as usual:\n"
                         "[[case-log]]\n"
                         "entity: <name> | <person|org|account|system|place> | <their role in the case>\n"
                         "observable: <value> | <ip|domain|url|hash|file|wallet|other> | <a one-line context>\n"
                         "event: <what happened> | <the detail>\n"
                         "lead: <a claim worth checking> | <why it is worth checking>\n"
+                        "finding: <a conclusion's title> | <the finding, stated plainly> | <info|low|medium|high|critical>\n"
                         "task: <a concrete next step>\n"
                         "[[/case-log]]\n"
                         "Use only the line kinds that apply; at most six lines per reply. Everything you log lands UNVERIFIED — the operator reviews it, promotes what holds, strikes what does not (a strike is noted in the timeline). Treat unverified material in the case brief above as leads: reason from them, never cite them as established. "
-                        "A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Never mention the block itself."
+                        "A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Never mention the block itself. "
+                        "The block must be EXACT — double brackets, one line per entry, the kind word first. A filing-shaped paragraph is not a filing: prose essays, single brackets, and headed summaries file NOTHING, and the bridge names the refusal in the reply. If you cannot form the block exactly, say plainly in your answer that the filing did not happen rather than narrating one. "
+                        "Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; if your text contradicts the record, the bridge flags the filing on its face."
                     )
                 except Exception:
                     pass
@@ -29810,6 +30147,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "filed": filed})
+        elif self.path == "/api/cases/file-reply":
+            # v0.5.2e (#261, leg 1): the deterministic filing
+            # door — one of Navi's replies in a case chat, filed
+            # into its bound case by the operator's tap, with
+            # provenance, the grounding guard, and the receipt
+            # appended into the chat by the bridge itself.
+            data = self._body()
+            filing, err = case_file_reply(data.get("chatId"), data.get("text"))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "filed": filing})
         elif self.path == "/api/cases/evidence":
             data = self._body()
             try:
@@ -30046,13 +30395,34 @@ class Handler(BaseHTTPRequestHandler):
                 block["cadenceHours"] = _mesh_int(data.get("cadenceHours"), 6)
             if isinstance(data.get("sources"), dict):
                 src = block.get("sources") if isinstance(block.get("sources"), dict) else {}
-                for k in ("nvd", "kev", "epss", "cisa", "rss"):
+                for k in ("nvd", "kev", "epss", "cisa", "rss", "edb"):
                     if k in data["sources"]:
                         src[k] = data["sources"][k] is not False
                 block["sources"] = src
             cfg2["intel"] = block
             save_config(cfg2)
             self._send(200, {"ok": True, "intel": intel_settings(cfg2)})
+        elif self.path == "/api/intel/search":
+            # v0.5.2e (#259): one search over the local catalog —
+            # CVE id exact/prefix, free text, vendor/product
+            # terms; KEV-only, matched-only, and date-window
+            # filters. The catalog's last-fetched stamp rides the
+            # result, so a search over a stale catalog says so on
+            # its face. Local only: no live calls per keystroke.
+            data = self._body()
+            try:
+                _days = int(data.get("days") or 0)
+            except Exception:
+                _days = 0
+            try:
+                self._send(200, INTEL.search(
+                    str(data.get("q") or ""),
+                    kev_only=data.get("kevOnly") is True,
+                    matched_only=data.get("matchedOnly") is True,
+                    days=_days or None,
+                    limit=data.get("limit") or 25))
+            except Exception as e:
+                self._send(200, {"ok": False, "error": "The intel store could not be searched: " + str(e)[:160]})
         elif self.path == "/api/intel/file":
             # Build 15 (#165 × #161): file an intel record into a
             # case as a finding. The citation travels in the note
@@ -30098,6 +30468,16 @@ class Handler(BaseHTTPRequestHandler):
                     + ((" by " + coll) if coll else "")
                     + ". Sources: NVD / CISA KEV / EPSS, as stamped in the Center.",
                 ]
+                exs = item.get("exploits") or []
+                if exs:
+                    e0 = exs[0]
+                    total_ex = item.get("exploitCount") or len(exs)
+                    body_lines += ["", "Public exploit code: EDB-" + str(e0.get("edb"))
+                                   + " (" + str(e0.get("type") or "exploit") + " · "
+                                   + str(e0.get("platform") or "unknown platform") + ")"
+                                   + ((" — plus " + str(total_ex - 1) + " more in the index")
+                                      if total_ex > 1 else "")
+                                   + " — Exploit-DB, mirrored locally and joined by CVE id."]
                 refs = item.get("refs") or []
                 if refs:
                     body_lines += ["", "References: " + " · ".join(refs[:5])]

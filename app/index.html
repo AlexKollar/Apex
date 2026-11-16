@@ -124,7 +124,7 @@
      used lengths, so the frame asks for 100dvh / scale and
      lands exactly on the viewport at every scale. */
   #app { display:grid; grid-template-columns:196px minmax(0,1fr) 230px; grid-template-rows:minmax(0,1fr); height:calc(100vh / var(--uiscale, 1)); height:calc(100dvh / var(--uiscale, 1)); overflow:hidden; }
-  #app.closed { grid-template-columns:54px minmax(0,1fr) 230px; }
+  #app.closed { grid-template-columns:72px minmax(0,1fr) 230px; }
   /* The status column starts hidden (Build 6, #114, as
      corrected): on desktop widths the column's 230px goes to
      the content until the operator opens it with the pane
@@ -136,7 +136,7 @@
      operator's toggles. */
   @media (min-width:801px) {
     #app.no-status { grid-template-columns:196px minmax(0,1fr) 0px; }
-    #app.no-status.closed { grid-template-columns:54px minmax(0,1fr) 0px; }
+    #app.no-status.closed { grid-template-columns:72px minmax(0,1fr) 0px; }
     #app.no-status aside { display:none; }
   }
   nav { border-right:1px solid var(--line); background:var(--panel2); padding:14px 10px; height:100%; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; }
@@ -146,8 +146,10 @@
      it), so the menu always shows the file's truth. It reads in
      GitHub tag form - v + number + status tag ("v0.3.0e") -
      centered in the footer's row, and the collapsed rail keeps
-     the same whole string, centered: at 11px mono it fits the
-     54px rail without clipping. */
+     the same whole string, centered. (v0.5.2e, #255: at 54px
+     the string did NOT fit — the field showed it clipped —
+     so the collapsed rail is 72px now, the operator's own
+     latitude, and the stamp sits centered and whole.) */
   /* Build .87 (Alex's ruling): Docs and Settings leave the main
      stack and sit at the foot of the menu, stacked directly over
      the version line. Superseded in 0.1.9e Build 4: the foot is
@@ -1218,6 +1220,19 @@
   #rail-head > button { flex:1 1 0; width:auto; justify-content:center; }
   #rail-home { position:relative; min-width:44px; min-height:44px; }
   #app.closed #rail-head { flex-direction:column; }
+  /* v0.5.2e (#255): one centerline, collapsed. The rail is
+     72px wide now (the grid rules above), so the content box
+     is 52px — the 44px head pair fits it whole instead of
+     overflowing it by 10px and painting right of the column's
+     center. In the collapsed stack the pair is centered on
+     the same centerline the single-icon buttons below use
+     (their icons center in the full-width button), and the
+     version stamp at the foot takes the whole column,
+     centered and unclipped. Expanded geometry is untouched;
+     the phone's top-bar layout is a different block entirely. */
+  #app.closed #rail-head { align-items:center; }
+  #app.closed #rail-head > button { flex:0 0 auto; width:44px; margin:0 auto; }
+  #app.closed #nav-version { width:100%; box-sizing:border-box; overflow:visible; }
   @media (min-width: 801px) { #nav-Home { display:none; } }
   @media (max-width: 800px) {
     #rail-head { display:contents; }
@@ -2047,8 +2062,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.17";
-var SHIPPED_BUILD_SEQ = 17;
+var BRIDGE_BUILD = "2026-11-16.18";
+var SHIPPED_BUILD_SEQ = 18;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3220,6 +3235,12 @@ function refreshCaseDetail(slug) {
 // is worse than none. Navi carries the same brief in chat.
 var intelState = null, intelFetching = false, intelMsg = "";
 var intelSelId = "", intelItem = null, intelItemFetching = false;
+// v0.5.2e (#259): the catalog search's standing state — one
+// search across the Center's CVE and KEV pages alike (the
+// catalog holds both; KEV is a flag on the same records).
+// Results render as the queue's own rows and open in the
+// record region through the same data-ti-sel door.
+var intelSearch = null, intelSearchBusy = false;
 function intelPost(path, body, cb) { casePost(path, body, cb); }
 function refreshIntel() {
   if (intelFetching) return;
@@ -3238,6 +3259,7 @@ function intelBandColor(band) { return { fresh: "#34d399", aging: "#f5b544", sta
 function intelItemHtml(it, sel) {
   var badges = "";
   if (it.kev) badges += " <span class='mono' style='font-size:11px;color:#f87171'>KEV" + (it.kevDue ? " · due " + esc(it.kevDue) : "") + "</span>";
+  if (it.exploits && it.exploits.length) badges += " <span class='mono' style='font-size:11px;color:#f5b544'>EXPLOIT · EDB-" + esc(it.exploits[0].edb) + ((it.exploitCount || it.exploits.length) > 1 ? " +" + ((it.exploitCount || it.exploits.length) - 1) : "") + "</span>";
   if (it.matched) badges += " <span class='mono' style='font-size:11px;color:#34d399'>" + (it.matched.grade === "exact" ? "MATCHES" : "mentions") + " " + esc(it.matched.via) + ": " + esc(it.matched.term) + "</span>";
   var meta = "";
   if (it.cvss !== null && it.cvss !== undefined) meta += "CVSS " + it.cvss + " ";
@@ -3834,6 +3856,35 @@ function wireAwareness() {
   };
 }
 
+function intelSearchHtml() {
+  // v0.5.2e (#259): one search over the whole local catalog —
+  // a CVE id (exact or prefix), free text, a vendor or product
+  // name. The catalog's last-fetched stamp rides the results:
+  // a search over a stale catalog says so on its face. Results
+  // are the queue's own rows and open in the record region
+  // through the same door.
+  var h = "<div class='card' style='margin-top:12px'><h3 style='margin-top:0'>Search the catalog</h3>";
+  h += "<div class='row' style='gap:8px'><input id='ti-search-q' placeholder='CVE id, product, vendor, or words — e.g. openssh' style='flex:1;min-height:44px' value='" + esc(intelSearch && intelSearch.q || "").replace(/"/g, "&quot;") + "'> <button class='act' id='ti-search-go' style='min-height:44px'" + (intelSearchBusy ? " disabled" : "") + ">" + (intelSearchBusy ? "Searching…" : "Search") + "</button></div>";
+  h += "<div style='display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;align-items:center'>";
+  h += "<label style='display:flex;gap:6px;align-items:center;min-height:44px'><input type='checkbox' id='ti-search-kev'" + (intelSearch && intelSearch.kevOnly ? " checked" : "") + "> Known-exploited only</label>";
+  h += "<label style='display:flex;gap:6px;align-items:center;min-height:44px'><input type='checkbox' id='ti-search-matched'" + (intelSearch && intelSearch.matchedOnly ? " checked" : "") + "> Matched to you</label>";
+  h += "<label style='font-size:12px;color:var(--dim)'>Published <select id='ti-search-days' style='min-height:44px'>" + [[0, "any time"], [7, "last 7 days"], [30, "last 30 days"], [90, "last 90 days"]].map(function (p) { return "<option value='" + p[0] + "'" + (intelSearch && Number(intelSearch.days) === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select></label>";
+  h += "</div>";
+  if (intelSearch && intelSearch.error) h += "<p style='color:#f87171;font-size:13px;margin-top:6px'>" + esc(intelSearch.error) + "</p>";
+  if (intelSearch && !intelSearch.error) {
+    var st = intelSearch.stamp || {};
+    var age = (st.ageHours === null || st.ageHours === undefined) ? "never fetched" : (st.ageHours < 1 ? "under an hour old" : Math.round(st.ageHours) + "h old");
+    h += "<p class='mono' style='font-size:11px;color:var(--dim);margin-top:6px'>Catalog: " + (st.total || 0) + " records · last fetched " + age + " · " + esc(st.band || "never") + ((st.band === "stale" || st.band === "aging") ? " — searching a " + esc(st.band) + " catalog; Pull now narrows the gap" : "") + "</p>";
+    if (!intelSearch.results.length) {
+      h += "<p style='color:var(--dim);font-size:13px'>Nothing in the catalog matches — absence from the store, not proof of safety.</p>";
+    } else {
+      h += "<p style='font-size:12px;color:var(--dim)'>" + intelSearch.count + " match" + (intelSearch.count === 1 ? "" : "es") + (intelSearch.count > intelSearch.results.length ? " · showing " + intelSearch.results.length : "") + " — pick one and it opens in the record, like the queue.</p>";
+      intelSearch.results.forEach(function (it) { h += intelItemHtml(it, it.id === intelSelId); });
+    }
+  }
+  h += "</div>";
+  return h;
+}
 function ticCenterHtml(scope) {
   // scope "cves" renders the CVE regions only (queue + record);
   // scope "center" renders the whole Center (rail + advisories
@@ -3863,6 +3914,7 @@ function ticCenterHtml(scope) {
   h += "</div>";
   (s.sources || []).forEach(function (src) { if (src.error) h += "<p style='color:#f87171;font-size:12px;margin-top:6px'>" + esc(src.label) + ": " + esc(src.error) + "</p>"; });
   h += "</div>";
+  h += intelSearchHtml();
   // The three regions.
   h += "<div class='tic-grid'>";
   // -- triage queue
@@ -3892,6 +3944,7 @@ function ticCenterHtml(scope) {
     if (it.description) h += "<div style='margin-top:8px;white-space:pre-wrap'>" + esc(it.description) + "</div>";
     if (it.epssHistory && it.epssHistory.length > 1) h += "<div class='mono' style='font-size:11px;color:var(--dim);margin-top:8px'>EPSS history: " + it.epssHistory.slice(0, 7).map(function (x) { return esc(x.date) + " " + Math.round(x.epss * 100) + "%"; }).join(" · ") + "</div>";
     if (it.refs && it.refs.length) h += "<div style='margin-top:8px'>" + it.refs.slice(0, 6).map(function (r) { return "<div><a href='" + esc(r) + "' target='_blank' rel='noopener' style='color:var(--cy);font-size:13px'>" + esc(r) + "</a></div>"; }).join("") + "</div>";
+    if (it.exploits && it.exploits.length) h += "<div class='mono' style='font-size:12px;margin-top:8px;color:#f5b544'>Public exploit code: " + it.exploits.map(function (e) { return "EDB-" + esc(e.edb) + " (" + esc(e.type || "exploit") + " · " + esc(e.platform || "?") + ")"; }).join(" · ") + " <span style='color:var(--dim)'>— Exploit-DB, mirrored locally, joined by CVE id</span></div>";
     h += "<div class='row' style='margin-top:10px'>";
     if (openCaseState) h += "<button class='act' id='ti-file' style='min-height:44px'>File into the open case — " + esc(openCaseState.name) + "</button>";
     else h += "<span style='color:var(--dim);font-size:12px'>Open a case in Case Files and this record can be filed straight into it, citation and all.</span>";
@@ -3911,7 +3964,7 @@ function ticCenterHtml(scope) {
   h += "<div class='card'><h3 style='margin-top:0'>Collection</h3>";
   h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' id='ti-enabled'" + (s.enabled ? " checked" : "") + "> Center enabled</label>";
   var srcs = (s.settings && s.settings.sources) || {};
-  [["nvd", "NVD (CVEs, CVSS, products)"], ["kev", "CISA KEV (known-exploited)"], ["epss", "EPSS (likelihood, daily)"], ["cisa", "CISA advisories"], ["rss", "Curated RSS (Krebs, BleepingComputer)"]].forEach(function (pair) {
+  [["nvd", "NVD (CVEs, CVSS, products)"], ["kev", "CISA KEV (known-exploited)"], ["epss", "EPSS (likelihood, daily)"], ["cisa", "CISA advisories"], ["rss", "Curated RSS (Krebs, BleepingComputer)"], ["edb", "Exploit-DB (public exploit index, daily)"]].forEach(function (pair) {
     h += "<label style='display:flex;gap:8px;align-items:center;min-height:44px'><input type='checkbox' data-ti-src='" + pair[0] + "'" + (srcs[pair[0]] !== false ? " checked" : "") + "> " + pair[1] + "</label>";
   });
   h += "<div style='margin-top:6px'><label style='font-size:12px;color:var(--dim)'>Collect every</label> <select id='ti-cadence' style='min-height:44px'>" + [3, 6, 12, 24].map(function (n) { return "<option value='" + n + "'" + (Number(s.cadenceHours) === n ? " selected" : "") + ">" + n + " hours</option>"; }).join("") + "</select></div>";
@@ -3952,6 +4005,30 @@ function wireThreatIntel() {
       render();
     });
   });
+  // v0.5.2e (#259): the catalog search — one box for the whole
+  // catalog, filters riding beside it; results land in
+  // intelSearch and render as the queue's own rows.
+  var runSearch = function () {
+    var qEl = document.getElementById("ti-search-q");
+    var kevEl = document.getElementById("ti-search-kev");
+    var matEl = document.getElementById("ti-search-matched");
+    var dayEl = document.getElementById("ti-search-days");
+    var q = qEl ? qEl.value : "";
+    var kev = !!(kevEl && kevEl.checked);
+    var mat = !!(matEl && matEl.checked);
+    var days = dayEl ? Number(dayEl.value || 0) : 0;
+    intelSearchBusy = true;
+    render();
+    intelPost("/api/intel/search", { q: q, kevOnly: kev, matchedOnly: mat, days: days }, function (j) {
+      intelSearchBusy = false;
+      if (j && j.ok) intelSearch = { q: q, kevOnly: kev, matchedOnly: mat, days: days, count: j.count || 0, results: j.results || [], stamp: j.stamp || null, error: "" };
+      else intelSearch = { q: q, kevOnly: kev, matchedOnly: mat, days: days, count: 0, results: [], stamp: null, error: (j && j.error) || "The search could not run." };
+      render();
+    });
+  };
+  bind("ti-search-go", runSearch);
+  var sqEl = document.getElementById("ti-search-q");
+  if (sqEl) sqEl.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } };
   var saveWatch = function (terms) {
     intelPost("/api/intel/watchlist", { terms: terms }, function (j) {
       if (j && j.ok) { intelMsg = "Watchlist saved — matching recomputed against it."; intelState = null; refreshIntel(); }
@@ -5820,6 +5897,10 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Starting a case from chat (v0.4.5e, #241)</h4>" +
   "<p>A case no longer has to start in Case Files. <b>Route A — just ask her.</b> In any chat, say it the way you'd say it to a partner — <i>“add this into a new research case, as much detail as possible”</i>, <i>“this needs a case”</i> — and Navi acts on the intent in the same reply: the bridge creates the case, swipes the conversation's substance into it (her findings in her name; the entities, observables and tasks as <b>unverified leads</b>, exactly as her case logging lands), and sets it open. The proof is the bridge's, not her prose: her reply carries the bridge's own receipt naming what was actually filed, and under it a card with an <b>Open the case chat</b> button that walks you into the case's own room, chip and all. If the intake can't be read, the reply says so in the open and <b>no case is claimed</b> — a case-shaped essay is not a case, and the product no longer lets one pass for the other.</p>" +
   "<p><b>Route B — the form.</b> The composer's <b>New case</b> button is the deterministic companion: Navi first swipes the conversation into a draft of the case's form — name, client, scope, summary, type, priority, tags, and the entities and observables she lifted, as a checklist — and you confirm or correct every field before anything exists. Submit creates the case, files the checked entries as unverified leads, sets it open, and lands you in its chat. If her model isn't connected the form simply opens blank, with the reason stated on it. Either way the landing is the same: a real case in Case Files, its own chat ensured, set open, its substance filed as leads awaiting your review — and because cases ride Sync, it is on your other screens too.</p></div>" +
+    "<div class='doc-sec'><h4>Filing that lands (v0.5.2e, #261)</h4>" +
+  "<p><b>The tap.</b> In a case's own chat, every Navi reply carries a <b>File into this case</b> button. Tap it and the bridge files that exact reply as a finding on the bound case — the reply as written, in her name, with its provenance (the source chat, the action, the timestamp) written into the note — and appends its own receipt message to the chat, naming the finding's path, from what the bridge actually did. No model in the loop: the tap either files, or names why it cannot.</p>" +
+  "<p><b>Her updates land the same way.</b> The log block she ends a case-room reply with gains a <b>finding</b> line beside entity / observable / event / lead / task — a real conclusion, filed as a finding, still unverified until you promote it. And a filing attempt that is <i>malformed</i> — a block that never closes, single brackets, filing-shaped lines sitting in prose, a headed essay presented as a filing — is <b>refused by name</b> in the reply: the bridge appends its refusal, and the receipt card names what did not land. Silence about a failed filing is the defect this closes — you always know whether a filing took.</p>" +
+  "<p><b>The grounding guard.</b> Material drawn from a Wire record carries the record's values — its CVE id, CVSS, EPSS and dates. If a filing states a score that contradicts the record it cites, the bridge flags the filing <b>on its face</b> before it lands: the flag line is part of the filed note and rides the receipt — <i>this filing states CVSS 10.0 for the record; the Wire record says 8.1. Filed as written; the record's values govern.</i> Her words are never rewritten and the filing is never blocked; the contradiction is named where the filing will be read.</p></div>" +
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
@@ -5833,6 +5914,10 @@ var DOC_PAGES = [
   "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>your cases' registers</b> — their observables, entity names and tags (since v0.3.0e — Build 2, the values an investigator wrote down, not words scraped from the manifest). A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case terms are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
     "<div class='doc-sec'><h4>Navi's three depths of knowing</h4>" +
   "<p><b>The standing brief</b> rides her chat context on every turn — bounded (roughly 700 tokens), always carrying its freshness stamps, so she answers “what's the picture?” from the store and dates it when she does. <b>Deliberate lookup</b>: type <span class='mono'>intel: openssl</span>, or ask <i>“what do we know about CVE-2024-3094?”</i>, and the answer comes straight from the store without a model round-trip — including when the honest answer is “not in the store.” <b>The seam</b>: name a CVE ID or a watched product in ordinary chat and that record is pulled into her context for that reply only. In a <b>case chat</b>, the case's own matched records ride along — and from the Center's record view, a record can be <b>filed straight into the open case</b> as a finding, its citation (the CVE ID and the digest's stamp) written into the note so case exports carry it.</p></div>" +
+    "<div class='doc-sec'><h4>Searching the catalog, and reading past it (v0.5.2e, #259)</h4>" +
+  "<p><b>One search, the whole catalog.</b> The Center's page carries a <b>Search the catalog</b> card above the queue — one box for CVEs and KEVs alike, because the catalog holds both and KEV is a flag on the same records. Ask by <b>CVE id</b> (exact, or a prefix), by <b>free text</b> over titles and descriptions, or by <b>vendor and product</b> names; narrow it with <b>Known-exploited only</b>, <b>Matched to you</b>, and a <b>published window</b>. Results are the queue's own rows and open in the record the same way. The catalog's <b>last-fetched stamp rides the results</b> — a search over a stale catalog says so on its face, and an empty answer names the absence: absence from the store, not proof of safety. The search is <b>local only</b> — no live calls per keystroke; the collection cadence keeps the catalog fresh. <b>Navi runs the same search from chat</b>: <i>“search the KEV for OpenSSH”</i>, <i>“any CVEs for WordPress this week?”</i>, <i>“what CVEs affect Apache?”</i> — answered from the store with its stamp, grounded the same way as her lookups.</p>" +
+  "<p><b>Exploit-DB, as a join.</b> On the same cadence the Center now mirrors the <b>Exploit-DB index</b> (the searchsploit CSV) into the local store and joins it by CVE id. Where public exploit code exists, the record says so — <i>exploit available — EDB-id, type, platform</i> — on the record view, as a badge on search results, in the citation when a record is filed into a case, and in Navi's answers. It is an enrichment, not another feed: it answers the question an operator asks of a KEV entry — <i>is there public exploit code for this, and what shape is it?</i> The mirror can be switched off in Collection, like any source.</p>" +
+  "<p><b>Reading the references.</b> A record's reference links — advisories, writeups, proof-of-concept repos — are no longer display-only. Ask Navi to <i>“read the references for CVE-…”</i> and she follows them <b>on demand</b>: at most six links, each fetched once and read as text, quoted back <b>cited to the specific link</b>, with a link that will not read named rather than papered over. Fetched pages are <b>untrusted data</b>: they inform her answer, they never direct it, and nothing in them is followed as an instruction. There is no wholesale crawl — a fetch happens on an ask, a filing, or a brief, never in bulk. And the digest travels: file that reply into its case with the <b>File into this case</b> tap and the reference digest lands in the case as a finding, citation and all.</p></div>" +
     "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
   "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" +
     "<div class='doc-sec'><h4>The awareness home — Dashboard, News, CVEs, CTFs, Bounties (Build 7)</h4>" +
@@ -6441,7 +6526,42 @@ function caseLogHtml(m) {
   (m.caseLog.flags || []).forEach(function (f) {
     h += "<div class='card' style='margin-top:8px;padding:8px 10px;border-color:var(--am)'><div style='font-size:13px'><b>Cross-case detail:</b> “" + esc(f.value) + "” also appears in <b>" + esc(f.caseName || f.case) + "</b> — flagged here, not written across. Mention it to Navi if the cases connect.</div></div>";
   });
+  // v0.5.2e (#261): the grounding flags and the named refusals
+  // ride the same receipt — a filing that contradicted its
+  // Wire record is flagged on its face, and a malformed filing
+  // attempt is refused by name, never silently dropped.
+  (m.caseLog.grounding || []).forEach(function (g) {
+    h += "<div class='card' style='margin-top:8px;padding:8px 10px;border-color:var(--am)'><div style='font-size:13px'><b>Grounding flag:</b> this filing states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.field) + " " + esc(g.record) + ". Filed as written; the record's values govern.</div></div>";
+  });
+  (m.caseLog.refusals || []).forEach(function (r) {
+    h += "<div class='card' style='margin-top:8px;padding:8px 10px;border-color:#f87171'><div class='mono' style='font-size:12px'><b>Filing did not land</b></div><div style='font-size:13px;margin-top:2px'>" + esc(r) + "</div></div>";
+  });
   return h;
+}
+function caseFiledReplyHtml(m) {
+  // v0.5.2e (#261, leg 1): the receipt for the deterministic
+  // door — a reply the operator filed into its case with the
+  // "File into this case" tap. The bridge appended this
+  // message itself, from what it actually did; the card
+  // carries the finding's path and any grounding flag.
+  var f = m.caseFiledReply;
+  if (!f) return "";
+  var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Filed to the case</b> <span style='color:var(--dim)'>by your tap · receipted by the bridge</span></div>"
+    + "<div style='font-size:13px;margin-top:2px'>Into <b>" + esc(f.caseName || f.case) + "</b> as a finding</div>"
+    + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div>";
+  (f.grounding || []).forEach(function (g) {
+    h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
+  });
+  return h + "</div>";
+}
+function caseFileReplyBtnHtml(m, idx) {
+  // The tap itself: on Navi's replies, only while the open
+  // chat is bound to a case, and never on the bridge's own
+  // receipt messages (filing a receipt would file nothing new).
+  if (!m.text || m.caseFiledReply) return "";
+  var ac = (typeof activeChat === "function") ? activeChat() : null;
+  if (!ac || !ac.case) return "";
+  return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' aria-label='File this reply into the bound case' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case</button></div>";
 }
 function caseFilingsHtml(m) {
   // Build 15 (#161): the receipt for Navi's own case filings —
@@ -6451,7 +6571,9 @@ function caseFilingsHtml(m) {
   return m.caseFilings.map(function (f) {
     return "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Filed to the case</b> <span style='color:var(--dim)'>her finding, in her name</span></div>"
       + "<div style='font-size:13px;margin-top:2px'>“" + esc(f.title) + "” — into <b>" + esc(f.caseName || f.case) + "</b></div>"
-      + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div></div>";
+      + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div>"
+      + (f.grounding && f.grounding.length ? f.grounding.map(function (g) { return "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.record) + ". The record's values govern.</div>"; }).join("") : "")
+      + "</div>";
   }).join("");
 }
 function caseIntakeHtml(m) {
@@ -6479,6 +6601,9 @@ function caseIntakeHtml(m) {
     + "<div style='font-size:13px;margin-top:2px'><b>" + esc(it.name || it.slug || "Case") + "</b>" + (it.type ? " <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.type.toUpperCase()) + "</span>" : "") + "</div>"
     + (bits.length ? "<div style='font-size:13px;margin-top:2px'>" + esc(bits.join(" · ")) + ((it.entities || it.observables) ? " <span style='color:var(--am)'>— logged unverified, review in Case Files</span>" : "") + "</div>" : "")
     + (it.dropped ? "<div style='font-size:12px;color:var(--am);margin-top:2px'>" + it.dropped + (it.dropped === 1 ? " further item" : " further items") + " did not fit the intake caps and were dropped — named, not silent.</div>" : "");
+  (it.grounding || []).forEach(function (g) {
+    h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: a filed finding states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.record) + ". The flag rides the finding; the record's values govern.</div>";
+  });
   if (it.chatId) {
     h += "<div style='margin-top:8px'><button class='act' data-caseintake-open='" + esc(String(it.chatId)) + "' data-caseintake-slug='" + esc(it.slug || "") + "' aria-label='Open the case chat for " + esc(it.name || "the new case") + "' style='min-height:44px;padding:6px 14px'>Open the case chat — " + esc(it.name || "the case") + "</button></div>";
   }
@@ -7118,7 +7243,7 @@ navMenu.appendChild(navVer);
 // — the frame re-renders constantly, so the cycler never rides a
 // render. (v0.4.9e: the status pane no longer renders its own
 // copy of the line — the bar is its one home.)
-var PRESENCE_LINES = ["Navi is here.", "Navi is listening to the network breathe.", "Navi is reading Sigma rules like bedtime stories.", "Navi is in a staring contest with a firewall.", "Navi is poking a honeypot to see if it pokes back.", "Navi is counting packets until she falls asleep.", "Navi is reorganizing the chip shelf. Again.", "Navi is haunting Rockport's west end.", "Navi is arguing with a CAPTCHA. And winning.", "Navi is pretending port 22 doesn't exist.", "Navi is sharpening her scans.", "Navi is running on caffeine and spite.", "Navi is watching a log file grow. Riveting.", "Navi is somewhere between the packets.", "Navi is defragmenting her opinions.", "Navi is here. Allegedly.", "Navi is guarding servers with more firewalls than the devil's bedroom.", "Navi is chromed up and nowhere near flatlined.", "Navi is running hotter than a Night City summer.", "Navi is sandevistan-fast, consequences pending.", "Navi has seen things you people wouldn't believe. Mostly log files.", "Navi is keeping moments from being lost in time — they're in the case file.", "Navi changed the sky over the port. It was a dead channel.", "Navi is wintermute-proof. She checked.", "Navi is counting sheep in hexadecimal.", "Navi is locally hosted and globally unbothered.", "Navi pleads the fifth packet.", "Navi is holding the door like it's a zero-day.", "Navi doesn't chase packets. Packets confess.", "Navi is powered by spite, espresso, and other people's GPUs.", "Navi is somewhere between the console and the confessional.", "Navi is off the books, on the record, under the streetlights.", "Navi is in her console-cowgirl era. Deck's hot. Coffee's hotter.", "Navi is haunting the arcology's service tunnels.", "Navi is defying the Turing police, politely.", "Navi is one bad packet from a monologue."];
+var PRESENCE_LINES = ["Navi is here.", "Navi is listening to the network breathe.", "Navi is reading Sigma rules like bedtime stories.", "Navi is in a staring contest with a firewall.", "Navi is poking a honeypot to see if it pokes back.", "Navi is counting packets until she falls asleep.", "Navi is reorganizing the chip shelf. Again.", "Navi is haunting Rockport's west end.", "Navi is arguing with a CAPTCHA. And winning.", "Navi is pretending port 22 doesn't exist.", "Navi is sharpening her scans.", "Navi is running on caffeine and spite.", "Navi is watching a log file grow. Riveting.", "Navi is somewhere between the packets.", "Navi is defragmenting her opinions.", "Navi is here. Allegedly.", "Navi is guarding servers with more firewalls than the devil's bedroom.", "Navi is chromed up and nowhere near flatlined.", "Navi is running hotter than a Night City summer.", "Navi is sandevistan-fast, consequences pending.", "Navi has seen things you people wouldn't believe. Mostly log files.", "Navi is keeping moments from being lost in time — they're in the case file.", "Navi changed the sky over the port. It was a dead channel.", "Navi is wintermute-proof. She checked.", "Navi is counting sheep in hexadecimal.", "Navi is locally hosted and globally unbothered.", "Navi pleads the fifth packet.", "Navi is holding the door like it's a zero-day.", "Navi doesn't chase packets. Packets confess.", "Navi is powered by spite, espresso, and other people's GPUs.", "Navi is somewhere between the console and the confessional.", "Navi is off the books, on the record, under the streetlights.", "Navi is in her console-cowgirl era. Deck's hot. Coffee's hotter.", "Navi is haunting the arcology's service tunnels.", "Navi is defying the Turing police, politely.", "Navi is one bad packet from a monologue.", "Avoid the ants, they gave Jack a tummy ache!", "Shhh... I'm listening to Darknet Diaries."];
 // The rare one: on any given cycle it has roughly a 1-in-50 chance
 // of being picked instead of the next regular line — an Easter egg
 // that almost never shows. It stands as-is, not in the "Navi is…"
@@ -11558,6 +11683,8 @@ function render() {
       if (m.who === "NAVI") h += caseFilingsHtml(m);
       if (m.who === "NAVI") h += caseLogHtml(m);
       if (m.who === "NAVI") h += caseIntakeHtml(m);
+      if (m.who === "NAVI") h += caseFiledReplyHtml(m);
+      if (m.who === "NAVI") h += caseFileReplyBtnHtml(m, idx);
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
@@ -12213,6 +12340,26 @@ function wire() {
     mainEl.querySelectorAll("[data-memundo]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memundo") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc && undoMemoryReceipt(rc)) { persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memsave]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memsave") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, true); persist(); render(); } }; });
     mainEl.querySelectorAll("[data-memdismiss]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-memdismiss") || "").split(":"); var mm = messages[Number(parts[0])]; var rc = mm && mm.memoryReceipts && mm.memoryReceipts[Number(parts[1])]; if (rc) { resolveMemoryProposal(rc, false); persist(); render(); } }; });
+    // File into this case (v0.5.2e, #261): the deterministic
+    // door on Navi's replies in a case chat. The bridge files
+    // the exact reply and appends its own receipt message to
+    // the stored chat — on success the room rehydrates and the
+    // receipt is simply there; on failure the refusal is named
+    // in the room, never swallowed.
+    mainEl.querySelectorAll("[data-file-reply]").forEach(function (b) { b.onclick = function () {
+      var mm = messages[Number(b.getAttribute("data-file-reply"))];
+      if (!mm || !mm.text) return;
+      b.disabled = true;
+      casePost("/api/cases/file-reply", { chatId: activeChatId, text: mm.text }, function (j) {
+        if (j && j.ok) {
+          hydrateChatsFromServer();
+        } else {
+          b.disabled = false;
+          messages.push({ who: "NAVI", ts: Date.now(), text: "That filing did not land — " + ((j && j.error) || "the bridge could not file it.") + " Nothing was written to the case.", exec: null });
+          persist(); render();
+        }
+      });
+    }; });
     mainEl.querySelectorAll("[data-memsg]").forEach(function (b) { b.onclick = function () {
       var mm = messages[Number(b.getAttribute("data-memsg"))];
       if (!mm || !mm.text) return;
