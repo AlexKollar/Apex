@@ -2047,8 +2047,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.16";
-var SHIPPED_BUILD_SEQ = 16;
+var BRIDGE_BUILD = "2026-11-16.17";
+var SHIPPED_BUILD_SEQ = 17;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2899,6 +2899,11 @@ function persist() {
   // store of record is the bridge's, and every persist writes
   // through to it (debounced; a no-op until the store answers).
   chatsWriteThrough();
+  // v0.5.1e (#256): the seat writes through the same way — her
+  // memory entries, the operator's name, picture and badge are
+  // the bridge's record, and a change (or a forget) rides up on
+  // the persist that made it, not on the next session's note.
+  seatWriteThrough();
 }
 
 /* ---------------- Server-side chats (Build 12, #139) ---------------- */
@@ -3110,8 +3115,22 @@ function syncReceiptText(receipt) {
   (c.gapTitles || []).forEach(function (t) { bits.push("the chat of “" + t + "” folded away — its case didn't cross"); });
   if (c.tombstones) bits.push(c.tombstones + " deletion" + (c.tombstones === 1 ? "" : "s") + " honored");
   if (c.chatsAdded) bits.push(c.chatsAdded + " chat" + (c.chatsAdded === 1 ? "" : "s") + " arrived");
-  if (!bits.length) return "Last sync: nothing changed.";
-  return "Last sync: " + bits.join(" · ") + ".";
+  // v0.5.1e (#257): the landing names its road and the time it
+  // measured — "landed in 3s via Mesh — <peer>", or the repo
+  // road in its own words. A receipt from an older build
+  // carries neither field and reads exactly as it always has.
+  var tail = "";
+  if (receipt && (receipt.route || typeof receipt.durationMs === "number")) {
+    var via = receipt.route ? (receipt.route.indexOf("Mesh") === 0 ? "via " + receipt.route : "via the backup repo") : "";
+    var dur = (typeof receipt.durationMs === "number" && receipt.durationMs >= 0) ? " in " + syncDurText(receipt.durationMs) : "";
+    if (via || dur) tail = "landed" + dur + (via ? " " + via : "");
+  }
+  if (!bits.length) return "Last sync: nothing changed." + (tail ? " " + tail.charAt(0).toUpperCase() + tail.slice(1) + "." : "");
+  return "Last sync: " + bits.join(" · ") + (tail ? " · " + tail : "") + ".";
+}
+function syncDurText(ms) {
+  if (ms < 1000) return "<1s";
+  return Math.round(ms / 1000) + "s";
 }
 function renderSyncBar(live) {
   if (CONFIG.backend !== "live") return "";
@@ -6069,10 +6088,12 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
   "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. Since Build 6 the badge itself also travels <b>as its own plain file</b> — <span class='mono'>cards/operator-badge.png</span> in the backup repo, exactly the card's bytes, no archive — so the card can be listed and fetched on its own, one card at a time, on the phone over DHD, without opening the whole backup; a restore takes the card from that file, byte for byte. The Mesh node keypair is never in any file a backup writes — the card is the operator's picture and profile, nothing of the node's keys. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
     "<div class='doc-sec'><h4>Sync — One Navi. All the screens. (The Sync Update, v0.3.0e Build 1)</h4>" +
-  "<p>The badge round above is the deliberate ceremony; <b>Sync</b> is the everyday gesture it grew into. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so a conversation started at the desk is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it. Pulls also happen on their own: at <b>app start</b>, when a <b>DHD session starts</b>, when a <b>window opens</b> (the seat notes itself to the bridge, which refreshes the room for it — the desk was the one seat that never announced itself before this build), and on <b>Mesh contact</b>. Publishing stays the button's act. There is no polling daemon.</p>" +
+  "<p>The badge round above is the deliberate ceremony; <b>Sync</b> is the everyday gesture it grew into. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so a conversation started at the desk is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it. Pulls also happen on their own: at <b>app start</b>, when a <b>DHD session starts</b>, when a <b>window opens</b> (the seat notes itself to the bridge, which refreshes the room for it — the desk was the one seat that never announced itself before this build), and on <b>Mesh contact</b>. Publishing was the button's act alone until v0.5.1e (#257) taught writes to push themselves — see <b>Fluid sync</b> below. There is still no polling daemon.</p>" +
   "<p><b>Sync shows itself</b> (v0.4.10e, #254). The head of the status pane is the <b>sync bar</b>: at rest it reads <b>System Synced</b>; while any round runs — from the button, at app start, at a DHD session's start, on Mesh contact — it becomes a progress bar naming the phase the bridge is in (<b>fetch, merge, write</b>), with counts only where the bridge can measure them, and an honest indeterminate pulse where it can't. A round that stalls names its stall and the leg it is stuck on; a round that fails names its failure. When a round lands, the <b>receipt</b> hangs off the bar in plain terms — messages merged into the main thread, ghost threads folded, case/chat pairs made whole or the gaps named, deletions honored — or simply <i>nothing changed</i>. The durable copy is the sync record itself; the bar is its face. And when a round materially changed things — a fold, a pairing repaired, another machine's deletion honored — Navi announces it in the main chat herself, from that same record; a routine round stays quiet.</p>" +
   "<p>What rides is the whole living her, anchored to your <b>GitHub account</b> — the set's manifest names the account, and a set from a different account is refused by name at the door, on both transports, before anything is applied: different accounts are different people's work. The set: the <b>chat store</b>; <b>Case Files</b> whole; the <b>ChipDeck</b> as one unit — chips with their install record, RAG packs with theirs, and the cards that tie machines together (your own pairing card and one per paired peer, re-drawn fresh each round, and a gateway card for every fedinet you keep; a gateway card landing on a machine that doesn't keep that fedinet yet admits it — admission and introduction only, never trust); your <b>operator picture and badge</b>; her <b>memory entries</b>; and <b>her Soul and her memory book</b>. The Operator Badge keeps its crown jobs — recovery root, the acts that need the ceremony — but it is not the sync key anymore; the account is. Settings stay with the badge backup, as ever.</p>" +
-  "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union — they are append-shaped, and nothing un-remembers. Your picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p></div>" +
+  "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union <b>by fact</b> — each fact keeps the origin it was born with (by hand, from chat at your ask, her own call, a correction), and a correction replaces its fact's text rather than piling up beside it. <b>Forgetting is a tombstone too</b> (v0.5.1e, #256): forget an entry on any seat and the forget itself syncs — the entry leaves every seat and a stale copy cannot resurrect it. Your name, picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p>" +
+  "<p><b>The operator class converges</b> (v0.5.1e, #256). What she knows about <i>you</i> — your name, your picture, your badge, and her memory entries about you — is one class of its own, and since this build it actually crosses. The bridge's seat record is the truth: a window's list is a cache of it, written through on every change and replaced by the converged answer, so a fact added at the server is simply <i>there</i> at the laptop — no seat keeps a private list the sync merges underneath. The status pane's <b>MEMORY</b> line reports the class's true state — the entry count and the sync clock, in the sync bar's own terms — and the <i>(local)</i> it used to confess to is retired. On the backup road the same discipline names its keys: an import applies a deliberate list — your name, threat level, sudo mode, installed commands, updater channel — and nothing else in the config crosses; a machine keeps its own hardware profile, its Mesh identity, and its install facts, always.</p>" +
+  "<p><b>Fluid sync — push-on-write</b> (v0.5.1e, #257). The occasions above still fire, but a change no longer waits for one: a <b>write</b> on any seat — a chat message, a memory entry added or forgotten, a case change, a deletion — asks for a round of its own, promptly, and the receiving seat converges <b>inside ten seconds</b> while both seats are up and in Mesh contact. The Mesh is the primary road; the repo push is the writing seat's fallback act, and a seat off both roads converges at its next occasion, as before. The standard is the account's, not one operator's: it holds for anyone with an account, on their own seats. Every landing receipt on the sync bar names the road the round took and the time it measured — <i>landed in 3s via Mesh</i> — so the standard is checkable at a glance, and a push that cannot land names its stall on the bar rather than silently aging. No daemon was added: the push rides the bridge's own resident life, and a burst of writes coalesces into one round.</p></div>" +
     "<div class='doc-sec'><h4>One sign-in, and failures with names (Build 2, completed in Build 6)</h4>" +
   "<p><b>Who Apex speaks as.</b> Build 2 taught Apex to keep its GitHub identities apart — your sign-in for backup and import, a separate pasted token for the app's own reads — and Build 6 finished the thought by collapsing them to <b>one</b>: your GitHub account sign-in, and nothing else. There is no token to create, paste, or rotate; the Updater's checks, the NUR's catalog searches, downloads, sync's repo transport, backup and import all ride the one sign-in, which lives in <span class='mono'>config/github-auth.json</span> (readable only by you, never backed up, deleted by signing out). <b>Release Automation</b> still holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote. And failures keep their names everywhere GitHub is read: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the sentence carries its reset), <b>abuse</b> (GitHub's secondary safeguard — the sentence carries the wait it asked for, and Apex stops rather than retrying). No surface shows a bare “HTTP 403”.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
@@ -6345,7 +6366,7 @@ function applyMemorySaves(saves, refused) {
 function undoMemoryReceipt(rc) {
   if (rc.kind === "saved") {
     var i = memory.findIndex(function (mm) { return mm.t === rc.text; });
-    if (i >= 0) memory.splice(i, 1);
+    if (i >= 0) { seatForgotten.push(memory[i].t); memory.splice(i, 1); }
   } else if (rc.kind === "corrected") {
     var j = memory.findIndex(function (mm) { return mm.t === rc.text; });
     if (j >= 0 && rc.replacedText) memory[j] = { t: rc.replacedText, o: "manual" };
@@ -9623,8 +9644,13 @@ function syncAgoText(epoch) {
 // answers every note with the converged seat state, and the
 // window adopts it.
 var seatKey = "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-var seatAck = { operatorPicture: "", operatorBadge: "" };
-var seatPendingStamps = { pictureAt: 0, badgeAt: 0 };
+var seatAck = { operatorPicture: "", operatorBadge: "", operatorName: "" };
+var seatPendingStamps = { pictureAt: 0, badgeAt: 0, nameAt: 0 };
+// v0.5.1e (#256): the facts this window has forgotten since the
+// last seat push — the bridge records each as a tombstone, so
+// the forget lands on every seat and a stale copy cannot
+// resurrect it. Cleared only when a push carries them.
+var seatForgotten = [];
 var seatWatchTimer = null;
 
 function seatFactKey(t) { return String(t || "").toLowerCase().replace(/\s+/g, " ").trim(); }
@@ -9632,25 +9658,57 @@ function seatFactKey(t) { return String(t || "").toLowerCase().replace(/\s+/g, "
 function seatStateOut() {
   var pic = CONFIG.operatorPicture || "";
   var badge = CONFIG.operatorBadge || "";
+  var name = CONFIG.operatorName || "";
   if (pic && pic !== seatAck.operatorPicture && !seatPendingStamps.pictureAt) seatPendingStamps.pictureAt = Date.now() / 1000;
   if (badge && badge !== seatAck.operatorBadge && !seatPendingStamps.badgeAt) seatPendingStamps.badgeAt = Date.now() / 1000;
+  if (name && name !== seatAck.operatorName && !seatPendingStamps.nameAt) seatPendingStamps.nameAt = Date.now() / 1000;
   return {
     entries: memory.map(function (m) { return { t: m.t, o: m.o }; }),
     operatorPicture: pic, operatorBadge: badge,
-    pictureAt: seatPendingStamps.pictureAt, badgeAt: seatPendingStamps.badgeAt
+    pictureAt: seatPendingStamps.pictureAt, badgeAt: seatPendingStamps.badgeAt,
+    operatorName: name, nameAt: seatPendingStamps.nameAt,
+    forgotten: seatForgotten.map(function (t) { return { t: t }; })
   };
+}
+
+function seatOrigin(o) {
+  // The page's origin vocabulary, with the bridge's legacy
+  // stamps folded back into it — an entry's origin is part of
+  // the fact, and it survives the road in its own words.
+  if (o === "manual" || o === "trigger" || o === "autonomous" || o === "correction") return o;
+  if (o === "auto") return "autonomous";
+  return "manual";
 }
 
 function adoptSeat(seat) {
   if (!seat || typeof seat !== "object") return;
   var changed = false;
   if (Array.isArray(seat.entries)) {
-    var have = {};
-    memory.forEach(function (m) { have[seatFactKey(m.t)] = true; });
+    // v0.5.1e (#256): the bridge's seat state is the truth and
+    // this list is its cache. Every adopt answers a push that
+    // carried this window's whole list up first, so the
+    // converged answer may REPLACE the cache outright —
+    // arrivals land, and a fact forgotten on another seat
+    // leaves here too, instead of unioning forever under a
+    // stale local copy. (Through v0.4.10e the adopt only ever
+    // added, which is why each seat kept its own list.)
+    var converged = [];
     seat.entries.forEach(function (e) {
-      if (e && e.t && !have[seatFactKey(e.t)]) { memory.push({ t: e.t, o: e.o || "sync" }); have[seatFactKey(e.t)] = true; changed = true; }
+      if (e && e.t) converged.push({ t: String(e.t), o: seatOrigin(e.o) });
     });
+    var before = JSON.stringify(memory.map(function (m) { return [m.t, m.o]; }));
+    var after = JSON.stringify(converged.map(function (m) { return [m.t, m.o]; }));
+    if (before !== after) { memory = converged; changed = true; }
   }
+  if (typeof seat.operatorName === "string" && seat.operatorName && seat.operatorName !== (CONFIG.operatorName || "")) {
+    // The name is a single value, last-writer-wins by stamp —
+    // adopt the converged name unless this window holds a
+    // newer unsent change of its own.
+    if (!seatPendingStamps.nameAt || (typeof seat.nameAt === "number" && seat.nameAt >= seatPendingStamps.nameAt)) {
+      CONFIG.operatorName = seat.operatorName; seatPendingStamps.nameAt = 0; changed = true;
+    }
+  }
+  if (seat.operatorName && seat.operatorName === (CONFIG.operatorName || "")) { seatAck.operatorName = seat.operatorName; seatPendingStamps.nameAt = 0; }
   if (typeof seat.operatorPicture === "string" && seat.operatorPicture && seat.operatorPicture !== (CONFIG.operatorPicture || "")) { CONFIG.operatorPicture = seat.operatorPicture; changed = true; }
   if (typeof seat.operatorBadge === "string" && seat.operatorBadge && seat.operatorBadge !== (CONFIG.operatorBadge || "")) { CONFIG.operatorBadge = seat.operatorBadge; changed = true; }
   if (seat.operatorPicture) seatAck.operatorPicture = seat.operatorPicture;
@@ -9658,6 +9716,30 @@ function adoptSeat(seat) {
   if (seatPendingStamps.pictureAt && seatAck.operatorPicture === (CONFIG.operatorPicture || "")) seatPendingStamps.pictureAt = 0;
   if (seatPendingStamps.badgeAt && seatAck.operatorBadge === (CONFIG.operatorBadge || "")) seatPendingStamps.badgeAt = 0;
   if (changed) { saveCfg(); persist(); render(); }
+}
+
+var seatPushTimer = null;
+var seatPushSig = "";
+function seatWriteThrough() {
+  if (CONFIG.backend !== "live") return;
+  if (seatPushTimer) return;
+  seatPushTimer = setTimeout(function () {
+    seatPushTimer = null;
+    var out = seatStateOut();
+    var sig = JSON.stringify([out.entries, out.operatorName, out.operatorPicture ? "pic" : "", out.operatorBadge ? "badge" : ""]);
+    if (sig === seatPushSig && !seatForgotten.length) return;
+    var sentForgotten = seatForgotten.length;
+    fetch("/api/sync/seat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seat: out, seatKey: seatKey }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        seatPushSig = sig;
+        // Only the forgets this push actually carried are
+        // cleared — one recorded mid-flight rides the next.
+        seatForgotten.splice(0, sentForgotten);
+        if (seatPendingStamps.nameAt && seatAck.operatorName === (CONFIG.operatorName || "")) seatPendingStamps.nameAt = 0;
+        if (j && j.seat) adoptSeat(j.seat);
+      }).catch(function () {});
+  }, 900);
 }
 
 function noteSeat() {
@@ -9738,6 +9820,7 @@ function syncMovedHtml(j) {
   if (j.cardsImported) bits.push(n(j.cardsImported, "card", "cards") + " taken in");
   if (j.docsPulled) bits.push(n(j.docsPulled, "document", "documents") + " pulled");
   if (j.entriesPulled) bits.push(n(j.entriesPulled, "memory entry", "memory entries") + " pulled");
+  if (j.entriesRemoved) bits.push(n(j.entriesRemoved, "memory entry", "memory entries") + " forgotten");
   if (j.seatChanged) bits.push("your picture or badge updated");
   if (j.removed) bits.push(n(j.removed, "deletion", "deletions") + " carried");
   var s = bits.length ? bits.join(" · ") : "Nothing moved — already in step.";
@@ -10421,9 +10504,9 @@ function renderStatus(live) {
     renderSudo(live) +
     renderVoiceStatus() +
     stat("CASE", openCaseState ? openCaseState.name : "No case open", openCaseState ? "#34d399" : "#9fb3c8") +
-    stat("MEMORY", memory.length + " entries (local)", "#34d399") +
+    stat("MEMORY", memoryStatText(live), "#34d399") +
     stat("RAG", CONFIG.backend === "live" ? (ragPacksState ? ragPacksState.filter(function (p) { return p.active; }).length + " of " + ragPacksState.length + " packs active" : "…") : "simulated (mock mode)", "#34d399") +
-    stat("BACKUP", githubState ? ghBackupSummary(githubState) : "…", githubState && githubState.lastBackupAt ? "#34d399" : "#9fb3c8");
+    backupStatHtml(githubState);
   // The tabbed pane composes here (Build 6, #108): the bar is
   // always the column's first element, and the selected pane —
   // Status (statusBody above) or Chats (chatsPanelHtml) — swaps
@@ -10461,28 +10544,56 @@ function renderStatus(live) {
   if (live) llamaTransitionHeal(prevLlamaStatus);
   function stat(k, v, c) { return "<div class='stat'><span class='dot' style='background:" + c + "'></span><span style='color:var(--dim)'>" + k + "</span><br><span class='v mono'>" + esc(v) + "</span></div>"; }
 }
+function memoryStatText(live) {
+  // v0.5.1e (#256): the pane reports the operator class's true
+  // state — the entry count and the sync clock the bar reads,
+  // in the bar's own terms. "(local)" is retired: since this
+  // build the list the pane counts is the bridge's converged
+  // record, not a browser's private copy. Mock mode has no
+  // bridge and says so plainly, as it always has.
+  var n = memory.length;
+  var noun = n === 1 ? " entry" : " entries";
+  if (CONFIG.backend !== "live") return n + noun + " (local)";
+  var sync = (live && live.sync) || null;
+  if (sync && sync.lastSyncEpoch) return n + noun + " · synced " + syncAgoText(sync.lastSyncEpoch);
+  return n + noun + " · not synced yet";
+}
 function ghWhen(iso) {
   if (!iso) return "";
   var d = new Date(iso);
   return isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
-// The status column's backup readout, kept simple on purpose:
-// "# files | # days ago" — read from the same backup record
-// Settings → GitHub & Backup manages (the manifest's file count
-// and the last backup's time), so the two can never disagree.
-// The full detail stays on the Settings page.
-function ghBackupSummary(gh) {
-  if (!gh || !gh.lastBackupAt) return "No backup yet";
-  var then = new Date(gh.lastBackupAt).getTime();
-  if (isNaN(then)) return "No backup yet";
-  // Binary by the operator's rule: only a complete record (a time
-  // AND a file count) earns the "# files | # days ago" readout —
-  // a partial record reads "No backup yet", never a mixed
-  // placeholder like "— files | 0 days ago".
-  if (typeof gh.lastBackupFileCount !== "number" || !(gh.lastBackupFileCount > 0)) return "No backup yet";
+// The status column's backup readout (v0.5.1e, #258, the
+// operator's words from the field): line one says whether a
+// backup has ever landed and how long ago, in the pane's
+// green when one has — "Backed up today", "Backed up 1 day
+// ago", "Backed up N days ago" — and reads "Never backed up"
+// in the muted color when none has; it must not glow like a
+// healthy state. Line two, smaller, is the schedule: "Next in
+// N days" from the same record and the same arithmetic the
+// bridge uses to decide a backup is due (lastBackupAt +
+// intervalDays), "Next today" when it is due — and when no
+// backup has ever landed there is no anchor for a countdown,
+// so it names the cadence instead: "Runs every N days". The
+// file count leaves the pane; it stays on Settings → GitHub &
+// Backup, whose LAST BACKUP readout reads the same record.
+function ghBackupReadout(gh) {
+  if (!gh) return { line: "…", color: "#9fb3c8", sub: "" };
+  var iv = (typeof gh.intervalDays === "number" && gh.intervalDays > 0) ? gh.intervalDays : 1;
+  var then = gh.lastBackupAt ? new Date(gh.lastBackupAt).getTime() : NaN;
+  if (!gh.lastBackupAt || isNaN(then)) return { line: "Never backed up", color: "#9fb3c8", sub: "Runs every " + iv + " day" + (iv === 1 ? "" : "s") };
   var days = Math.floor((Date.now() - then) / 86400000);
   if (days < 0) days = 0;
-  return gh.lastBackupFileCount + " file" + (gh.lastBackupFileCount === 1 ? "" : "s") + " | " + days + " day" + (days === 1 ? "" : "s") + " ago";
+  var line = days === 0 ? "Backed up today" : "Backed up " + days + " day" + (days === 1 ? "" : "s") + " ago";
+  var left = iv - days;
+  if (left < 0) left = 0;
+  var sub = left === 0 ? "Next today" : "Next in " + left + " day" + (left === 1 ? "" : "s");
+  return { line: line, color: "#34d399", sub: sub };
+}
+function backupStatHtml(gh) {
+  var b = ghBackupReadout(gh);
+  return "<div class='stat'><span class='dot' style='background:" + b.color + "'></span><span style='color:var(--dim)'>BACKUP</span><br><span class='v mono'>" + esc(b.line) + "</span>" +
+    (b.sub ? "<div style='color:var(--dim);font-size:12px;margin-top:2px'>" + esc(b.sub) + "</div>" : "") + "</div>";
 }
 // The GitHub view: Issues (outside her window, no account to look),
 // optional Device-Flow sign-in (never a gate on Navi herself), and
@@ -13112,7 +13223,7 @@ function wire() {
       // list), the add row only on Operator, the leash and the
       // proposal queue only on Persona. Each handler
       // binds only where its element rendered.
-      mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
+      mainEl.querySelectorAll("[data-del]").forEach(function (b) { b.onclick = function () { var gone = memory[Number(b.getAttribute("data-del"))]; if (gone && gone.t) seatForgotten.push(gone.t); memory.splice(Number(b.getAttribute("data-del")), 1); persist(); render(); }; });
       var memAdd = document.getElementById("mem-add");
       if (memAdd) memAdd.onclick = function () { var inp = document.getElementById("mem-in"); var v = inp ? inp.value.trim() : ""; if (!v) return; memory.push({ t: v, o: "manual" }); persist(); render(); };
       mainEl.querySelectorAll("[data-memmode]").forEach(function (b) { b.onclick = function () { CONFIG.memoryMode = b.getAttribute("data-memmode") || "autonomous"; saveCfg(); render(); }; });

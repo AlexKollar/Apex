@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.10"
+SHIPPED_VERSION = "0.5.1"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.16"
+BRIDGE_BUILD = "2026-11-16.17"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 16
+SHIPPED_BUILD_SEQ = 17
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -9245,12 +9245,24 @@ def mesh_handle_sync_exchange(handler, body):
         return 200, {"ok": False, "reason": "bad-set"}
     if not _SYNC_LOCK.acquire(False):
         return 200, {"ok": False, "reason": "busy"}
+    # v0.5.1e (#257): the lender's applies are sync-driven, not
+    # writes — the round-depth guard covers them too, so
+    # converging a borrower's set never notes a push of its own
+    # (an echo round here would collide with the borrower's
+    # next round at this very door). What the apply records —
+    # tombstones included — rides this seat's next round.
+    if _SYNC_ROUND["depth"] == 0:
+        _SYNC_ROUND["thread"] = threading.get_ident()
+    _SYNC_ROUND["depth"] += 1
     try:
         applied = sync_apply(load_config(), {
             "files": theirs,
             "manifest": data.get("manifest") if isinstance(data.get("manifest"), dict) else {},
         })
     finally:
+        _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
+        if _SYNC_ROUND["depth"] == 0:
+            _SYNC_ROUND["thread"] = None
         _SYNC_LOCK.release()
     files, manifest = _mesh_sync_set_wire()
     mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
@@ -14569,6 +14581,18 @@ GITHUB_TOKEN_PATH = os.path.join(ROOT, "config", "github-auth.json")
 GITHUB_REPO_URL = "https://github.com/AlexKollar/Apex"
 GITHUB_API_BASE = "https://api.github.com/repos/AlexKollar/Apex"
 GITHUB_BACKUP_ITEMS = ["soul", "memory", "settings", "chips", "rag", "workflows", "vault", "mesh-cards", "chats"]
+
+# v0.5.1e (#256): the operator class inside a settings import,
+# named deliberately. These keys are the operator's profile and
+# standing settings, and they — only they — cross on the apply
+# side of a backup import. Everything else in the config is
+# machine or install state (github, bridge, hardware_profile,
+# runtime, install_dir, mesh, dhd, public_server, startup,
+# persona_files, backend, live, the version stamps) and never
+# crosses: this machine keeps the facts its own install
+# detected. The voice rides its own file, as it always has.
+OPERATOR_SETTINGS_KEYS = ("operator_name", "threat_level", "sudo_mode",
+                          "installed_commands", "updater")
 # The always-ticked core (build .36): Soul, Memory, and Settings &
 # config ride in every backup automatically — they are what makes
 # an imported Navi *her*, so github_settings folds them into the
@@ -15643,7 +15667,11 @@ def github_apply_import(cfg, fetched):
             # github section, the bridge block, the install dir, or
             # (above all) the hardware profile / runtime flags: this
             # machine keeps the profile its own install detected.
-            for key in ("operator_name", "threat_level", "sudo_mode", "installed_commands"):
+            for key in OPERATOR_SETTINGS_KEYS:
+                if key == "updater":
+                    if isinstance(imported.get("updater"), dict):
+                        new_cfg["updater"] = imported["updater"]
+                    continue
                 if key in imported:
                     new_cfg[key] = imported[key]
             if "voice.json" in files:
@@ -21081,7 +21109,7 @@ def _sync_state_save(state):
 def _sync_tombstones_pruned(tombs, now=None):
     now = now if now is not None else time.time()
     out = {}
-    for kind in ("chats", "cases", "vault"):
+    for kind in ("chats", "cases", "vault", "entries"):
         rows = tombs.get(kind) if isinstance(tombs, dict) else None
         out[kind] = {}
         if isinstance(rows, dict):
@@ -21095,7 +21123,7 @@ def sync_record_tombstone(kind, key, at=None):
     # The deletion funnels' one call. Best-effort by design: a
     # tombstone that fails to record must never fail the delete
     # the operator asked for — the delete itself already happened.
-    if kind not in ("chats", "cases", "vault") or not key:
+    if kind not in ("chats", "cases", "vault", "entries") or not key:
         return
     try:
         state = _sync_state_load()
@@ -21106,6 +21134,7 @@ def sync_record_tombstone(kind, key, at=None):
             tombs[kind][str(key)] = when
         state["tombstones"] = tombs
         _sync_state_save(state)
+        sync_note_write("tombstone")
     except Exception:
         pass
 
@@ -21214,6 +21243,7 @@ def chat_write(rec):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rec, f)
     os.replace(tmp, full)
+    sync_note_write("chat")
     return rec
 
 
@@ -21926,6 +21956,29 @@ def _seat_clean_image(value):
     return _dashboard_image_field(value)
 
 
+def _seat_fact_id(text):
+    # v0.5.1e (#256): a memory entry's identity for convergence.
+    # memory_fact_key names the semantic facts (name / home /
+    # work / favorite:*) — two texts under one semantic key are
+    # the same fact, corrected. Everything else is its own fact,
+    # identified by its normalized text (the page's seatFactKey
+    # rule). Through v0.4.10e the seat machinery used
+    # memory_fact_key ALONE as the dedupe key: it returns None
+    # for ordinary facts, so every ordinary entry shared one
+    # key — the cleaner kept only the first ordinary entry and
+    # the merge refused the rest. That is the convicted heart
+    # of the operator-class gap: the road existed, and the
+    # identity function broke it.
+    k = memory_fact_key(text)
+    if k:
+        return "fact:" + k
+    return "text:" + re.sub(r"\s+", " ", str(text or "").lower()).strip()
+
+
+_SEAT_ORIGINS = ("manual", "trigger", "autonomous", "correction",
+                 "auto", "seed", "sync")
+
+
 def _seat_clean_entries(rows):
     out = []
     seen = set()
@@ -21935,12 +21988,12 @@ def _seat_clean_entries(rows):
         t = str(row.get("t") or "").strip()
         if not t:
             continue
-        key = memory_fact_key(t)
-        if key in seen:
+        fid = _seat_fact_id(t)
+        if fid in seen:
             continue
-        seen.add(key)
+        seen.add(fid)
         o = str(row.get("o") or "manual")
-        if o not in ("auto", "manual", "seed", "sync"):
+        if o not in _SEAT_ORIGINS:
             o = "manual"
         out.append({"t": t[:600], "o": o})
     return out
@@ -21962,12 +22015,18 @@ def _seat_state_load():
         badge_at = float(raw.get("badgeAt") or 0)
     except Exception:
         badge_at = 0
+    try:
+        name_at = float(raw.get("nameAt") or 0)
+    except Exception:
+        name_at = 0
     return {
         "entries": _seat_clean_entries(raw.get("entries")),
         "operatorPicture": _seat_clean_image(raw.get("operatorPicture")),
         "operatorBadge": _seat_clean_image(raw.get("operatorBadge")),
         "pictureAt": picture_at,
         "badgeAt": badge_at,
+        "operatorName": str(raw.get("operatorName") or ""),
+        "nameAt": name_at,
     }
 
 
@@ -21982,27 +22041,85 @@ def seat_state_payload():
     return _seat_state_load()
 
 
-def _seat_merge(incoming):
+def _seat_entry_tombstones():
+    # The forgotten facts, as {fact id: epoch} — the "entries"
+    # kind of the sync tombstone store (#256, on #253's model:
+    # a tombstone is a fact at any timestamp, pruned only by
+    # the standing 90-day rule).
+    try:
+        state = _sync_state_load()
+        tombs = _sync_tombstones_pruned(state.get("tombstones") or {})
+        rows = tombs.get("entries") or {}
+        return {str(k): float(v) for k, v in rows.items()
+                if isinstance(v, (int, float))}
+    except Exception:
+        return {}
+
+
+def _seat_prune_tombstoned(st, tombs=None):
+    # Drop the stored entries a tombstone covers; returns the
+    # count. Runs on every merge, so a round carrying only a
+    # tombstone still lands the forget on this seat's store.
+    if tombs is None:
+        tombs = _seat_entry_tombstones()
+    if not tombs:
+        return 0
+    kept = [r for r in st["entries"] if _seat_fact_id(r["t"]) not in tombs]
+    gone = len(st["entries"]) - len(kept)
+    st["entries"] = kept
+    return gone
+
+
+def _seat_merge(incoming, source="page"):
     # Merge a page's (or a sync set's) seat state into the stored
-    # one. Memory entries are append-shaped: the union by fact
-    # key, existing rows keep their origin. The picture and the
-    # badge are single values: last-writer-wins by the sender's
-    # stamp, and a first fill (stored empty) always lands.
+    # one — the operator class (#256): her memory entries about
+    # the operator, his name, his picture and his badge,
+    # converging as one identifiable class, with the bridge's
+    # copy the truth every page reads.
+    # Entries union by fact identity (_seat_fact_id) and keep
+    # their origins end-to-end — an arrival is never re-stamped
+    # on the road. A same-fact arrival whose text differs is a
+    # correction: its text wins. A forgotten fact is a
+    # tombstone: stored copies are pruned and arrivals it
+    # covers are refused, however fresh the offering seat's
+    # copy claims to be. The name, picture and badge are single
+    # values: last-writer-wins by the sender's stamp, and a
+    # first fill (stored empty) always lands.
     # Returns (state, changes) with the movement counted.
     if not isinstance(incoming, dict):
         incoming = {}
     with _SEAT_LOCK:
         st = _seat_state_load()
-        have = {memory_fact_key(r["t"]) for r in st["entries"]}
-        added = 0
+        changes = {"entriesAdded": 0, "entriesRemoved": 0,
+                   "pictureChanged": False, "badgeChanged": False,
+                   "nameChanged": False}
+        # The forgets this offering carries land first, so an
+        # entry offered and forgotten in the same breath is
+        # judged by the forget.
+        for row in (incoming.get("forgotten") or []):
+            t = row.get("t") if isinstance(row, dict) else row
+            t = str(t or "").strip()
+            if t:
+                sync_record_tombstone("entries", _seat_fact_id(t))
+        tombs = _seat_entry_tombstones()
+        changes["entriesRemoved"] += _seat_prune_tombstoned(st, tombs)
+        have = {}
+        for i, r in enumerate(st["entries"]):
+            have.setdefault(_seat_fact_id(r["t"]), i)
         for row in _seat_clean_entries(incoming.get("entries")):
-            k = memory_fact_key(row["t"])
-            if k not in have:
-                st["entries"].append({"t": row["t"], "o": "sync"})
-                have.add(k)
-                added += 1
-        changes = {"entriesAdded": added, "pictureChanged": False,
-                   "badgeChanged": False}
+            fid = _seat_fact_id(row["t"])
+            if fid in tombs:
+                continue
+            if fid not in have:
+                st["entries"].append({"t": row["t"], "o": row["o"]})
+                have[fid] = len(st["entries"]) - 1
+                changes["entriesAdded"] += 1
+            else:
+                cur = st["entries"][have[fid]]
+                if cur["t"] != row["t"]:
+                    cur["t"] = row["t"]
+                    if row["o"] == "correction":
+                        cur["o"] = "correction"
         for field, stamp_key, flag in (
                 ("operatorPicture", "pictureAt", "pictureChanged"),
                 ("operatorBadge", "badgeAt", "badgeChanged")):
@@ -22017,7 +22134,34 @@ def _seat_merge(incoming):
                 st[field] = val
                 st[stamp_key] = stamp or time.time()
                 changes[flag] = True
+        name = str(incoming.get("operatorName") or "")
+        if name and name != st["operatorName"]:
+            try:
+                stamp = float(incoming.get("nameAt") or 0)
+            except Exception:
+                stamp = 0
+            if not st["operatorName"] or stamp >= st["nameAt"]:
+                st["operatorName"] = name
+                st["nameAt"] = stamp or time.time()
+                changes["nameChanged"] = True
         _seat_state_save(st)
+        if changes["nameChanged"]:
+            # The bridge's own config follows the converged
+            # name, so her persona greets the operator by the
+            # name every seat agreed on.
+            try:
+                cfg = load_config()
+                if str(cfg.get("operator_name") or "") != st["operatorName"]:
+                    cfg["operator_name"] = st["operatorName"]
+                    save_config(cfg)
+            except Exception:
+                pass
+        if source == "page" and (changes["entriesAdded"]
+                                 or changes["entriesRemoved"]
+                                 or changes["pictureChanged"]
+                                 or changes["badgeChanged"]
+                                 or changes["nameChanged"]):
+            sync_note_write("seat")
         return st, changes
 
 
@@ -22374,8 +22518,9 @@ def _sync_apply_seat(fetched, summary):
         return
     if not isinstance(incoming, dict):
         return
-    _st, changes = _seat_merge(incoming)
+    _st, changes = _seat_merge(incoming, source="sync")
     summary["entriesPulled"] += changes["entriesAdded"]
+    summary["entriesRemoved"] = summary.get("entriesRemoved", 0) + changes.get("entriesRemoved", 0)
     if changes["pictureChanged"] or changes["badgeChanged"]:
         summary["seatChanged"] = True
 
@@ -22851,6 +22996,7 @@ def sync_apply(cfg, fetched):
                           + summary["casesAdded"] + summary["casesUpdated"]
                           + summary["deckFilesPulled"] + summary["cardsImported"]
                           + summary["docsPulled"] + summary["entriesPulled"]
+                          + summary.get("entriesRemoved", 0)
                           + (1 if summary["seatChanged"] else 0))
     return summary
 
@@ -22913,6 +23059,11 @@ def _sync_record_result(state, trigger, result):
         "counts": receipt,
         "material": bool(receipt.get("material")),
         "roundId": result.get("roundId") or "",
+        # v0.5.1e (#257): the round's measured duration rides
+        # the receipt — the bar names the road and the time it
+        # actually took, measured, never asserted.
+        "durationMs": (result.get("durationMs")
+                       if isinstance(result.get("durationMs"), (int, float)) else None),
     }
     _sync_state_save(state)
 
@@ -22934,6 +23085,7 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "cardsImported": summary.get("cardsImported", 0),
         "docsPulled": summary.get("docsPulled", 0),
         "entriesPulled": summary.get("entriesPulled", 0),
+        "entriesRemoved": summary.get("entriesRemoved", 0),
         "seatChanged": bool(summary.get("seatChanged")),
         "removed": summary["removedChats"] + summary["removedCases"] + summary["removedNotes"],
         "needsEyes": eyes,
@@ -23152,6 +23304,107 @@ def _sync_fail_record(trigger, out):
         pass
 
 
+# -- Push-on-write (v0.5.1e, #257) --------------------------------
+# Occasions (the button, app start, a DHD session, Mesh
+# contact) cannot meet a ten-second standard by construction:
+# a change waits for the other seat's next occasion. So a
+# WRITE on this seat asks for a round of its own: the note
+# coalesces a burst of writes into one round; the round rides
+# the Mesh when a peer's road is lit and the repo otherwise;
+# its landing is receipted like any other round's, with the
+# road and the measured duration on the bar. No new daemon:
+# the note rides the bridge's own life, in a timer thread off
+# the write's path. A seat with no road (Mesh dark, signed
+# out) notes nothing and names nothing — the occasions carry
+# its writes, as they always have. A push that cannot land
+# names its stall through the same fail record a failed round
+# uses, rather than silently aging.
+_SYNC_ROUND = {"depth": 0, "thread": None}
+_SYNC_PUSH = {"lock": threading.Lock(), "timer": None,
+              "attempts": 0, "kinds": set()}
+_SYNC_PUSH_COALESCE = 1.25
+_SYNC_PUSH_RETRY = 3.0
+
+
+def sync_note_write(kind=""):
+    # The write funnels' one call (chat_write, the seat merge,
+    # the case mutators, the tombstone record). Best-effort by
+    # design: noting a write must never fail the write itself.
+    # Writes that happen INSIDE a round, on the round's own
+    # thread (convergence landing the other seat's set), note
+    # nothing — that round already is the propagation. A write
+    # landing on another thread while a round runs is an
+    # independent act: it notes, and its push fires behind the
+    # round (or retries past it).
+    try:
+        if _SYNC_ROUND["depth"] > 0 and _SYNC_ROUND.get("thread") == threading.get_ident():
+            return
+        with _SYNC_PUSH["lock"]:
+            _SYNC_PUSH["kinds"].add(str(kind or "write"))
+            if _SYNC_PUSH["timer"] is not None:
+                return
+            t = threading.Timer(_SYNC_PUSH_COALESCE, _sync_push_fire)
+            t.daemon = True
+            _SYNC_PUSH["timer"] = t
+            t.start()
+    except Exception:
+        pass
+
+
+def _sync_push_fire():
+    with _SYNC_PUSH["lock"]:
+        _SYNC_PUSH["timer"] = None
+        kinds = set(_SYNC_PUSH["kinds"])
+        _SYNC_PUSH["kinds"] = set()
+    if not kinds:
+        return
+    if not _sync_mesh_peers() and not github_auth():
+        with _SYNC_PUSH["lock"]:
+            _SYNC_PUSH["attempts"] = 0
+        return
+    result = None
+    try:
+        result = sync_round(load_config(), "push")
+    except Exception:
+        result = None
+    if isinstance(result, dict) and result.get("ok"):
+        with _SYNC_PUSH["lock"]:
+            _SYNC_PUSH["attempts"] = 0
+        return
+    # Any first failure earns exactly one retry: the commonest
+    # cause is a collision with a round already in flight on
+    # one seat or the other (the lender answers "busy" rather
+    # than waiting), and a retry a few seconds later lands
+    # behind it. A retry that also fails leaves the rounds'
+    # own named receipts standing — except the held shape,
+    # which no round records (a busy round returns before
+    # recording), so the push names that stall itself.
+    with _SYNC_PUSH["lock"]:
+        _SYNC_PUSH["attempts"] += 1
+        attempts = _SYNC_PUSH["attempts"]
+        if attempts < 2:
+            _SYNC_PUSH["kinds"] |= kinds
+    if attempts < 2:
+        with _SYNC_PUSH["lock"]:
+            if _SYNC_PUSH["timer"] is None:
+                t = threading.Timer(_SYNC_PUSH_RETRY, _sync_push_fire)
+                t.daemon = True
+                _SYNC_PUSH["timer"] = t
+                t.start()
+        return
+    with _SYNC_PUSH["lock"]:
+        _SYNC_PUSH["attempts"] = 0
+        _SYNC_PUSH["kinds"] = set()
+    held = result is None or (isinstance(result, dict)
+                              and (result.get("state") == "held"
+                                   or result.get("kind") == "busy"))
+    if held:
+        _sync_fail_record("push", {
+            "ok": False, "state": "held",
+            "route": (result or {}).get("route") or "",
+            "error": "Push stalled — a sync round was already running and the retry could not land either. The write is safe on this seat; the next occasion carries it."})
+
+
 def sync_round(cfg, trigger="button", open_chat_id=""):
     # The full round behind the Sync control: pull, converge,
     # push. One round at a time, across every trigger — a second
@@ -23160,6 +23413,10 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         return {"ok": False, "state": "held", "kind": "busy", "route": "Backup repo",
                 "error": "A sync round is already running — this one is held, and the running round's verdict is the one that counts."}
     round_id = uuid.uuid4().hex[:12]
+    if _SYNC_ROUND["depth"] == 0:
+        _SYNC_ROUND["thread"] = threading.get_ident()
+    _SYNC_ROUND["depth"] += 1
+    _round_t0 = time.time()
     _sync_progress_set("fetch", trigger, round_id)
     try:
         # Build 6 (#176 phase 2): a lit Mesh road carries the
@@ -23174,6 +23431,7 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
             mesh_result = None
         if mesh_result is not None:
             mesh_result["roundId"] = round_id
+            mesh_result["durationMs"] = int((time.time() - _round_t0) * 1000)
             state = _sync_state_load()
             _sync_record_result(state, trigger, mesh_result)
             state["lastRoute"] = mesh_result["route"]
@@ -23182,6 +23440,7 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         if not github_auth():
             out = _sync_auth_error()
             out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _round_t0) * 1000)
             _sync_fail_record(trigger, out)
             return out
         fetched, fail = sync_fetch(cfg)
@@ -23189,6 +23448,7 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
             out = {"ok": False, "route": "Backup repo"}
             out.update(fail)
             out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _round_t0) * 1000)
             _sync_fail_record(trigger, out)
             return out
         _sync_progress_set("merge")
@@ -23198,6 +23458,7 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
             out = {"ok": False, "route": "Backup repo"}
             out.update(got[1] or _sync_auth_error())
             out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _round_t0) * 1000)
             _sync_fail_record(trigger, out)
             return out
         auth, base = got[0]
@@ -23229,11 +23490,13 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
             out = {"ok": False, "route": "Backup repo"}
             out.update(fail)
             out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _round_t0) * 1000)
             _sync_fail_record(trigger, out)
             return out
         result = _sync_finish_summary(summary, written, open_chat_id, local_ids)
         result["pushedChats"] = pushed_chats
         result["roundId"] = round_id
+        result["durationMs"] = int((time.time() - _round_t0) * 1000)
         state = _sync_state_load()
         _sync_record_result(state, trigger, result)
         state["lastRoute"] = "Backup repo"
@@ -23241,6 +23504,9 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         return result
     finally:
         _sync_progress_set("done")
+        _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
+        if _SYNC_ROUND["depth"] == 0:
+            _SYNC_ROUND["thread"] = None
         _SYNC_LOCK.release()
 
 
@@ -23252,6 +23518,10 @@ def sync_pull_round(cfg, trigger):
     if not _SYNC_LOCK.acquire(False):
         return None
     round_id = uuid.uuid4().hex[:12]
+    if _SYNC_ROUND["depth"] == 0:
+        _SYNC_ROUND["thread"] = threading.get_ident()
+    _SYNC_ROUND["depth"] += 1
+    _round_t0 = time.time()
     _sync_progress_set("fetch", trigger, round_id)
     try:
         # Build 6 (#176 phase 2): a lit Mesh road answers a
@@ -23266,6 +23536,7 @@ def sync_pull_round(cfg, trigger):
             result = _sync_finish_summary(mesh_hit[1], 0, "", set())
             result["route"] = mesh_hit[0]
             result["roundId"] = round_id
+            result["durationMs"] = int((time.time() - _round_t0) * 1000)
             state = _sync_state_load()
             _sync_record_result(state, trigger, result)
             state["lastRoute"] = mesh_hit[0]
@@ -23283,6 +23554,7 @@ def sync_pull_round(cfg, trigger):
         summary = sync_apply(cfg, fetched)
         result = _sync_finish_summary(summary, 0, "", set())
         result["roundId"] = round_id
+        result["durationMs"] = int((time.time() - _round_t0) * 1000)
         state = _sync_state_load()
         _sync_record_result(state, trigger, result)
         return result
@@ -23290,6 +23562,9 @@ def sync_pull_round(cfg, trigger):
         return None
     finally:
         _sync_progress_set("done")
+        _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
+        if _SYNC_ROUND["depth"] == 0:
+            _SYNC_ROUND["thread"] = None
         _SYNC_LOCK.release()
 
 
@@ -24049,6 +24324,7 @@ def case_create(name, client, scope, fields=None):
     # Build 2 (#199): a case is born with its four registers.
     for reg in ("entities", "observables", "evidence", "tasks"):
         _register_write(slug, reg, [])
+    sync_note_write("case")
     return case_detail_payload(slug), None
 
 
@@ -24104,6 +24380,7 @@ def case_update(slug, fields):
             pairs.append((k, v))
     with open(os.path.join(d, "case.md"), "w", encoding="utf-8") as f:
         f.write(_fm_render(pairs, body))
+    sync_note_write("case")
     return case_detail_payload(slug), None
 
 
@@ -24129,6 +24406,7 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
             text = text[:idx + 1] + entry + text[idx + 1:]
         with open(tpath, "w", encoding="utf-8") as f:
             f.write(text)
+        sync_note_write("case")
         return {"path": "cases/" + slug + "/timeline.md"}, None
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     if kind == "evidence-note":
@@ -24163,6 +24441,7 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
         n += 1
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
+    sync_note_write("case")
     return {"path": "cases/" + slug + "/" + sub + "/" + fname}, None
 
 
@@ -24199,6 +24478,7 @@ def case_add_evidence(slug, filename, data, description="", acquired="", custody
         "custody": str(custody or "").strip() or "Filed via Case Files; SHA-256 computed by the bridge at filing time.",
         "author": "operator", "filed": now,
     }, str(description or "").strip())
+    sync_note_write("case")
     return {"name": saved, "size": len(data or b""), "sha256": digest}, None
 
 
@@ -24480,6 +24760,7 @@ def case_register_add(slug, register, heading, fields, body):
         clean.setdefault("done", "no")
     if not _register_append(slug, register, heading, clean, str(body or "")):
         return None, "The entry could not be written."
+    sync_note_write("case")
     return case_detail_payload(slug), None
 
 
@@ -24522,6 +24803,7 @@ def case_review(slug, register, key, action):
                             + ". The strike is recorded here; the finding itself is removed.")
         else:
             return None, "Unknown review action."
+        sync_note_write("case")
         return case_detail_payload(slug), None
     if register in ("entities", "observables"):
         entries = _case_register(slug, register)
@@ -24545,6 +24827,7 @@ def case_review(slug, register, key, action):
                             + ". The strike is recorded here; the entry itself is removed.")
         else:
             return None, "Unknown review action."
+        sync_note_write("case")
         return case_detail_payload(slug), None
     if register == "tasks":
         entries = _case_register(slug, "tasks")
@@ -24558,6 +24841,7 @@ def case_review(slug, register, key, action):
         else:
             return None, "Unknown review action."
         _register_write(slug, "tasks", entries)
+        sync_note_write("case")
         return case_detail_payload(slug), None
     return None, "Unknown register."
 
@@ -25028,6 +25312,7 @@ def case_register_add_lead(slug, register, heading, fields, body):
     clean["source"] = "swiped from chat — the New case form"
     if not _register_append(slug, register, heading, clean, str(body or "")):
         return None, "The entry could not be written."
+    sync_note_write("case")
     return case_detail_payload(slug), None
 
 
@@ -29844,7 +30129,7 @@ class Handler(BaseHTTPRequestHandler):
             # the window adopts what the round settled.
             data = self._body()
             if isinstance(data.get("seat"), dict):
-                _seat_merge(data.get("seat"))
+                _seat_merge(data.get("seat"), source="round")
             result = sync_round(load_config(), "button", str(data.get("openChatId") or ""))
             if isinstance(result, dict):
                 result["seat"] = seat_state_payload()
