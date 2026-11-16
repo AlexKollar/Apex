@@ -915,7 +915,10 @@ def main():
     # back through both.
     _log_handle = None
     try:
-        _log_handle = open(job["installLog"], "wb")
+        # "a+b", not a write-only mode: the recovery below
+        # reads the log back through this same handle after
+        # the swap, and a write-only handle cannot be read.
+        _log_handle = open(job["installLog"], "a+b")
         proc = subprocess.run(
             ["bash", os.path.join(pkg_dir, "install.sh"),
              "--startup", startup, "--voice", voice,
