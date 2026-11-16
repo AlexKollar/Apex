@@ -1170,10 +1170,13 @@
   .fed-grid .card { margin-top:0; }
   @media (max-width: 800px) { .fed-grid { grid-template-columns:1fr; } }
 
-  /* Notifications (v0.4.7e, #242): the bell is a direct child of
-     the nav, so it rides BOTH canvases — the desktop rail and
-     the phone top bar the nav becomes at ≤800px — and never
-     hides inside the collapsible #nav-menu. Its badge is a calm
+  /* Notifications (v0.4.7e, #242; placement v0.4.8e, #247): the
+     bell is a direct child of the nav, standing at the top of
+     the rail above Home, so it rides BOTH canvases — the
+     desktop rail and the phone top bar the nav becomes at
+     ≤800px — and never hides inside the collapsible #nav-menu.
+     On the phone a scoped order in the ≤800px block keeps it in
+     its #242 slot at the bar's right end. Its badge is a calm
      accent chip. The panel follows the Quick Sync card idiom
      (#176): shade + card, bottom-right on desktop, a bottom
      sheet on a phone, the house easing on the way in, and no
@@ -1195,7 +1198,7 @@
   .notif-empty { color:var(--dim); font-size:13px; padding:10px 0 4px; }
   @media (max-width: 800px) {
     #notifPanel { left:12px; right:12px; bottom:12px; width:auto; }
-    #notif-bell { width:auto; justify-content:center; }
+    #notif-bell { width:auto; justify-content:center; order:2; }
   }
   /* Home's Needs-your-eyes card (v0.4.7e, #242): the panel's
      twin on the board, in the Brief/Situation family — the
@@ -2003,8 +2006,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.13";
-var SHIPPED_BUILD_SEQ = 13;
+var BRIDGE_BUILD = "2026-11-16.14";
+var SHIPPED_BUILD_SEQ = 14;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -5720,7 +5723,7 @@ var DOC_PAGES = [
   "<div class='doc-sec'><h4>Home is the board only (v0.3.0e \u2014 Build 4)</h4>" +
   "<p>Build 4 narrows Home to the <b>board itself</b>: the situation strip and the four glance cards \u2014 Top News, Newest CVEs, Next CTFs, Bounties \u2014 and nothing else. The tab set retired, and <b>feed health moved to the top of the News view</b>, in the same collapsible field with the same persisted choice. Every family is now its own view, reached by the Open button on its glance card or through the menu; each carries a way back to the board, and the News view carries the doors to the CVE and KEV families, so nothing the tabs pointed at is stranded. Home is built as a host surface \u2014 the board is its first resident, not its last word. The menu rail also lights <b>exactly one entry</b> now: the board lights Home, a family lights The Wire.</p></div>" +
     "<div class='doc-sec'><h4>Notifications \u2014 Needs your eyes (v0.4.7e, #242)</h4>" +
-  "<p>The <b>bell</b> in the rail \u2014 in the top bar on a phone \u2014 carries a badge with the unread count. Tapping it opens the <b>Needs your eyes</b> panel: every item with its title, its story, and when it landed, each with a <b>Go</b> button that takes you to the surface it belongs to \u2014 a federation knock to Federation, a DHD summons to DHD, a case item to that case in Case Files, an account item to Settings \u2014 and marks the item read on the way. <b>Mark all read</b> clears the whole list's unread state in one tap. The same card stands <b>first on Home</b> whenever anything is unread, carrying the first four; a quiet list shows nothing at all.</p>" +
+  "<p>The <b>bell</b> at the top of the rail, above Home \u2014 in the top bar on a phone \u2014 carries a badge with the unread count. Tapping it opens the <b>Needs your eyes</b> panel: every item with its title, its story, and when it landed, each with a <b>Go</b> button that takes you to the surface it belongs to \u2014 a federation knock to Federation, a DHD summons to DHD, a case item to that case in Case Files, an account item to Settings \u2014 and marks the item read on the way. <b>Mark all read</b> clears the whole list's unread state in one tap. The same card stands <b>first on Home</b> whenever anything is unread, carrying the first four; a quiet list shows nothing at all.</p>" +
   "<p><b>What notifies</b> is what needs the operator: federation knocks waiting on your admission, devices asking to pair at the door, case entries that landed as unverified leads, an Edge update staged and waiting on the Updater. <b>What never does</b>: routine traffic \u2014 feed pulls, ordinary replies, a sync that simply worked. Navi also <b>announces a notification in chat herself</b> when it lands, in her own words; the bell is the record, the announcement is the tap on the shoulder. Read state lives in the <b>bridge</b>, not in any browser window, so every seat agrees on what has been seen.</p></div>" 
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
@@ -6894,19 +6897,25 @@ dockBtn.onclick = function () {
   render();
 };
 navEl.appendChild(dockBtn);
-// The notifications bell (v0.4.7e, #242): created here, in the
-// toggleBtn/dockBtn idiom, and appended to navEl AFTER the dock
-// toggle — a direct child of the nav, so it sits in the desktop
-// rail AND in the phone top bar the nav becomes at ≤800px,
-// never inside the collapsible #nav-menu. Its badge paints from
-// notifState via paintNotifBadge(); the button binds once, here.
+// The notifications bell (v0.4.7e, #242; moved v0.4.8e, #247):
+// created here, in the toggleBtn/dockBtn idiom, and inserted
+// BEFORE #nav-menu — a direct child of the nav standing at the
+// top of the rail, above Home, on the desktop canvas and
+// through DHD alike. As first shipped it was appended last and
+// rendered at the foot of the rail, under the version line;
+// the operator ruled the bell belongs at the head of the
+// column. It still never hides inside the collapsible
+// #nav-menu, and on the phone it rides the top bar in its #242
+// slot (the ≤800px order guard in the stylesheet). Its badge
+// paints from notifState via paintNotifBadge(); the button
+// binds once, here.
 var notifBtn = document.createElement("button");
 notifBtn.id = "notif-bell";
 notifBtn.type = "button";
 notifBtn.innerHTML = "<span class='ic'><svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg></span><span id='notif-badge' style='display:none'>0</span>";
 notifBtn.setAttribute("aria-label", "Notifications");
 notifBtn.onclick = function () { openNotifPanel(); };
-navEl.appendChild(notifBtn);
+navEl.insertBefore(notifBtn, navMenu);
 // Tapping back into the content dismisses whichever overlay is up
 // (build .64) — reachable whenever an overlay leaves content
 // exposed, and the same gesture on the bar's own toggles.

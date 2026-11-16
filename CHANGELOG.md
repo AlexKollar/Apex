@@ -2,6 +2,12 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.4.8
+
+Release tag: v0.4.8e — chapter 0.4's eighth Edge build under patch-per-build versioning. One item, a field ruling from the operator's first look at v0.4.7e: the notifications bell moves to the top of the rail (#247).
+
+- **The bell stands above Home (#247).** As shipped in v0.4.7e the bell was appended to the nav last, so on desktop and through DHD it rendered at the bottom of the rail, under the version line — grouped with the build furniture instead of the navigation, in the last place eyes land. It is now inserted ahead of the menu: a direct child of the nav at the head of the column, above Home, first in the rail after the wordmark and the collapse toggle. Nothing else about #242 changes — the same bridge-held record and its four producers, the same announcements in Navi's own words, the same Needs-your-eyes panel and Home card, read state still bridge state end to end so bell, store, and reload agree. The phone keeps its #242 design: the bell still rides the top bar as the nav's own child, in the same slot at the bar's right end — a scoped order in the phone stylesheet block keeps it there now that its seat in the DOM has moved — and it still never hides inside the collapsible menu.
+
 ## 0.4.7
 
 Release tag: v0.4.7e — chapter 0.4's seventh Edge build under patch-per-build versioning. Navi learns to tap her operator on the shoulder: a notifications system whose record the bridge holds and whose word she speaks herself (#242). The build's other item, the Home visual pass (#243), ships in the dashboard half of this build.
