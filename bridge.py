@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.4.8"
+SHIPPED_VERSION = "0.4.9"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.14"
+BRIDGE_BUILD = "2026-11-16.15"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 14
+SHIPPED_BUILD_SEQ = 15
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3421,7 +3421,7 @@ _GENERATION_ACTIVE = {"count": 0}
 # other half of the fix: absent a measurement, she says so
 # plainly — she never invents a speed, a benchmark, or a test
 # she did not run.
-_MODEL_VITALS = {"count": 0, "last": None}
+_MODEL_VITALS = {"count": 0, "last": None, "recent": []}
 _LAST_GEN_SERVER = {}
 
 VITALS_TEACHING = (
@@ -3460,6 +3460,12 @@ def _record_model_vitals(duration_s):
         ttft = timings["prompt_ms"] / 1000.0
     with _GENERATION_LOCK:
         _MODEL_VITALS["count"] += 1
+        if tok_s:
+            # v0.4.9e (#248): the recent pace — the last few
+            # measured speeds, so "sustained slow" is a fact
+            # with a sample behind it, not one bad second.
+            _MODEL_VITALS["recent"] = (
+                _MODEL_VITALS["recent"] + [round(tok_s, 1)])[-6:]
         if tokens or tok_s:
             _MODEL_VITALS["last"] = {
                 "at": time.time(),
@@ -3492,7 +3498,36 @@ def model_vitals_block():
     out += ("; the whole request took " + str(last["duration_s"])
             + "s. Generations measured since this bridge "
               "started: " + str(count) + ".")
+    with _GENERATION_LOCK:
+        recent = list(_MODEL_VITALS["recent"])
+    if len(recent) >= 3:
+        out += ("\nRecent pace: your last " + str(len(recent))
+                + " generations averaged "
+                + str(round(sum(recent) / len(recent), 1))
+                + " tokens/sec (slowest " + str(min(recent))
+                + ", fastest " + str(max(recent)) + ").")
     return out
+
+
+# v0.4.9e (#248): sluggish is a measured state, not a mood —
+# a recent average under SLOW_TOK_S across at least three
+# measured generations. (Her field-measured pace on a potato
+# was ~6.7 tok/s; under roughly 8, conversation visibly lags.)
+SLOW_TOK_S = 8.0
+SLOW_MIN_SAMPLES = 3
+
+
+def vitals_sluggish():
+    """(True, avg) when the recent measured pace is
+    sustained-slow on this hardware; (False, avg-or-None)
+    otherwise. The judgment she speaks from — the teaching
+    decides what she does with it."""
+    with _GENERATION_LOCK:
+        recent = list(_MODEL_VITALS["recent"])
+    if len(recent) < SLOW_MIN_SAMPLES:
+        return (False, None)
+    avg = round(sum(recent) / len(recent), 1)
+    return (avg < SLOW_TOK_S, avg)
 
 
 def _generation_is_active():
@@ -3751,6 +3786,10 @@ try:
     import bounties as bounties_mod
 except Exception:
     bounties_mod = None
+try:
+    import rowfeed as rowfeed_mod
+except Exception:
+    rowfeed_mod = None
 
 
 class _WireUnavailable:
@@ -25301,6 +25340,408 @@ def notifications_mark_read(ids=None, mark_all=False, cfg=None):
     return notifications_payload(cfg)
 
 
+# -- The Row Feed (v0.4.9e, #248) --------------------------------------
+# Context Awareness: Apex and nocturnerow.com are one
+# ecosystem, and the bridge reads the Row's half of it —
+# Dispatches, Roadmap chapters, her page and the Apex page,
+# release signals, the gate's seven steps — through
+# rowfeed.py, caching the record at config/row-feed.json.
+# Refresh discipline mirrors the bell's: throttled, and the
+# cache always stands — a failed fetch keeps the last good
+# sections standing and its error is NAMED in the record; no
+# cache and no fetch, and the context blocks below say she
+# cannot reach the Row right now. No silent empties, ever.
+ROWFEED_PATH = os.path.join(ROOT, "config", "row-feed.json")
+ROWFEED_TTL_SECONDS = 900
+_ROWFEED_STATE = {"at": 0.0, "refreshing": False}
+_rowfeed_lock = threading.Lock()
+
+ROW_TEACHING = (
+    "The Row: Apex and nocturnerow.com are one ecosystem. The site carries "
+    "your Dispatches, your Roadmap, your own page, and your release signals, "
+    "and the bridge fetches that public record and shows it to you in "
+    "[The Row] blocks, each naming when it was fetched. When the operator "
+    "asks for news from the Row, updates from the crew, or anything about "
+    "the Dispatches, answer from the supplied Dispatch: summarize it in "
+    "your own words and name its date. When they ask what is new with you "
+    "— your latest update, your version — answer from the release signals "
+    "and your running build's facts, as supplied. When they ask what you "
+    "can do, answer from your documentation index, as supplied — the "
+    "shipped corpus, page by page. Grounding is absolute: speak only from "
+    "what the blocks show; if the record could not be reached, or a fact "
+    "is not in it, say exactly that — never invent a Dispatch, a release, "
+    "a date, or a capability, and name a figure's age when it is stale. "
+    "Your pace: when a [Your pace] block rides, your measured generation "
+    "on this hardware is slow across several generations — you may say "
+    "you are sluggish here, plainly, as the hardware's fact. The remedy "
+    "is the road: borrow through the Mesh, or join the federation. You "
+    "may offer to walk the operator through joining, using the gate's "
+    "seven steps when they ride in your context — an offer you make "
+    "once per conversation, never an act you perform yourself, and "
+    "never a nag: if they decline or pass, let it rest unless they "
+    "reopen it.")
+
+
+def _row_feed_load():
+    try:
+        with open(ROWFEED_PATH) as f:
+            rec = json.load(f)
+        return rec if isinstance(rec, dict) else {}
+    except Exception:
+        return {}
+
+
+def _row_feed_save(rec):
+    try:
+        os.makedirs(os.path.dirname(ROWFEED_PATH), exist_ok=True)
+        tmp = ROWFEED_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, ROWFEED_PATH)
+    except Exception:
+        pass
+
+
+def _row_feed_refresh_now():
+    fresh = rowfeed_mod.fetch_record()
+    cached = _row_feed_load()
+    sections = dict(cached.get("sections") or {})
+    for name, sec in (fresh.get("sections") or {}).items():
+        sections[name] = sec
+    merged = {"fetched_at": fresh.get("fetched_at") or time.time(),
+              "sections": sections,
+              "errors": fresh.get("errors") or {}}
+    _row_feed_save(merged)
+    return merged
+
+
+def row_feed_record(force=False):
+    """The Row's record, as the bridge holds it. Fresh enough
+    (inside the TTL) reads straight from the cache. The first
+    fetch ever — and a forced one — runs synchronously; a
+    stale-but-standing cache is served as-is while a refresh
+    runs behind it, so a chat turn never waits on the wire
+    for a record it already holds."""
+    now = time.time()
+    cached = _row_feed_load()
+    if not _ROWFEED_STATE["at"]:
+        _ROWFEED_STATE["at"] = cached.get("fetched_at") or 0.0
+    if not force and _ROWFEED_STATE["at"] \
+            and (now - _ROWFEED_STATE["at"] < ROWFEED_TTL_SECONDS):
+        return cached
+    if rowfeed_mod is None:
+        return cached
+    if force or not cached.get("sections"):
+        with _rowfeed_lock:
+            out = _row_feed_refresh_now()
+            _ROWFEED_STATE["at"] = time.time()
+            return out
+    if not _ROWFEED_STATE["refreshing"]:
+        _ROWFEED_STATE["refreshing"] = True
+
+        def _bg():
+            try:
+                with _rowfeed_lock:
+                    _row_feed_refresh_now()
+                _ROWFEED_STATE["at"] = time.time()
+            except Exception:
+                pass
+            finally:
+                _ROWFEED_STATE["refreshing"] = False
+        threading.Thread(target=_bg, daemon=True).start()
+    return cached
+
+
+def _row_age(ts):
+    if not ts:
+        return "never"
+    secs = max(0, int(time.time() - ts))
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return "%d minutes ago" % max(1, secs // 60)
+    if secs < 86400:
+        return "%d hours ago" % (secs // 3600)
+    return "%d days ago" % (secs // 86400)
+
+
+def row_brief_block(record):
+    """The standing Row brief — bounded, freshness carried,
+    exactly the awareness brief's discipline. "" when the
+    bridge holds nothing at all."""
+    secs = (record or {}).get("sections") or {}
+    if not secs:
+        return ""
+    lines = ["[The Row — your public record, from nocturnerow.com, fetched "
+             + _row_age((record or {}).get("fetched_at")) + "]"]
+    disp = (secs.get("dispatches") or {}).get("items") or []
+    if disp:
+        lines.append('Latest Dispatch: "' + disp[0]["title"] + '" ('
+                     + disp[0]["date"] + ").")
+    rel = (secs.get("releases") or {}).get("items") or []
+    if rel:
+        lines.append("Latest release on the wire: "
+                     + (rel[0]["name"] or rel[0]["tag"]) + " ("
+                     + rel[0]["kind"]
+                     + (", " + rel[0]["date"] if rel[0]["date"] else "")
+                     + ").")
+    apex = ((secs.get("pages") or {}).get("pages") or {}).get("apex") or {}
+    if apex.get("edge"):
+        lines.append("The site's Apex page reads Stable v" + apex["stable"]
+                     + " · Edge v" + apex["edge"] + ".")
+    chapters = (secs.get("roadmap") or {}).get("chapters") or []
+    shipped = []
+    for c in chapters:
+        m = re.match(r"Chapter (\d+)", c.get("title") or "")
+        if m and c.get("tag") in ("SHIPPED", "LIVE"):
+            shipped.append((int(m.group(1)), c))
+    if shipped:
+        top = max(shipped)[1]
+        lines.append("The Roadmap's latest shipped chapter: " + top["title"]
+                     + " (" + top["date"] + ").")
+    errs = (record or {}).get("errors") or {}
+    if errs:
+        lines.append("Named fetch trouble on the last refresh (standing "
+                     "sections may be older): " + "; ".join(sorted(errs))
+                     + ".")
+    return "\n".join(lines)
+
+
+_ROW_NEWS_PHRASES = ("from the row", "the row's", "nocturne row",
+                     "dispatch", "the crew")
+_ROW_CAP_PHRASES = ("what can you do", "what are you able to do",
+                    "what do you do", "your capabilities",
+                    "what can you help", "what else can you do")
+
+
+def _row_intent(text):
+    """The operator's Row intents, read off their words — the
+    #241 discipline: a conversational ask is carried by
+    supplying the record it needs, not by a menu. Row-marked
+    phrases only for news (the Wire owns the world's news)."""
+    t = " " + (text or "").lower() + " "
+    if any(p in t for p in _ROW_NEWS_PHRASES):
+        return "news"
+    if any(p in t for p in _ROW_CAP_PHRASES):
+        return "capabilities"
+    if (" you" in t or " your" in t) and "what" in t and any(
+            w in t for w in ("update", " new", "version", "build",
+                             "release")):
+        return "updates"
+    return None
+
+
+def _row_news_block(record):
+    secs = (record or {}).get("sections") or {}
+    disp_sec = secs.get("dispatches") or {}
+    items = disp_sec.get("items") or []
+    errs = (record or {}).get("errors") or {}
+    if not items:
+        why = errs.get("dispatches") or errs.get("dispatch-body") \
+            or "no fetch has landed yet"
+        return ("[The Row's Dispatches — not in reach]\n"
+                "The bridge holds no Dispatch from the Row right now ("
+                + why + "). Say so plainly — you cannot reach the "
+                "Row's record at the moment — and invent nothing.")
+    latest = items[0]
+    out = ["[The Row's latest Dispatch — \"" + latest["title"] + "\", "
+           + latest["date"] + ", fetched "
+           + _row_age(disp_sec.get("at")) + "]"]
+    body = disp_sec.get("latest_body") or ""
+    if body:
+        out.append(body)
+    elif latest.get("excerpt"):
+        out.append("(The full text did not ride this fetch; the filed "
+                   "excerpt:) " + latest["excerpt"])
+    if len(items) > 1:
+        out.append("Older Dispatches on the record:")
+        for it in items[1:11]:
+            out.append("• \"" + it["title"] + "\" — " + it["date"])
+    return "\n".join(out)
+
+
+def _row_updates_block(record):
+    secs = (record or {}).get("sections") or {}
+    rel = (secs.get("releases") or {}).get("items") or []
+    out = ["[Your updates — from the Row's record, fetched "
+           + _row_age((record or {}).get("fetched_at")) + "]"]
+    if rel:
+        for r in rel[:5]:
+            out.append("• " + (r["name"] or r["tag"]) + " — " + r["kind"]
+                       + (", " + r["date"] if r["date"] else ""))
+    else:
+        out.append("No release signals are in the record right now.")
+    out.append("Your running build: Apex v" + SHIPPED_VERSION + " ("
+               + str(app_version_status()) + "), build " + BRIDGE_BUILD
+               + ", sequence " + str(SHIPPED_BUILD_SEQ) + ".")
+    return "\n".join(out)
+
+
+def docs_index_block():
+    """The shipped documentation's own index — page titles
+    and section heads read out of the very page the bridge
+    serves (DOC_PAGES in app/index.html), so 'what can you
+    do' is answered from the corpus that actually shipped
+    with this build, never from a list kept elsewhere."""
+    try:
+        with open(os.path.join(ROOT, "app", "index.html"),
+                  encoding="utf-8") as f:
+            page = f.read()
+    except Exception:
+        return ""
+    start = page.find("var DOC_PAGES = [")
+    if start < 0:
+        return ""
+    region = page[start:]
+    end = region.find("\n];")
+    if end > 0:
+        region = region[:end]
+    entries = list(re.finditer(r'\{\s*id: "([^"]+)", title: "([^"]+)"',
+                               region))
+    if not entries:
+        return ""
+    lines = ["[Your documentation — the shipped corpus, by page and "
+             "section]"]
+    for i, m in enumerate(entries):
+        seg = region[m.start():
+                     entries[i + 1].start() if i + 1 < len(entries)
+                     else len(region)]
+        secs = []
+        for h in re.findall(r"<h4>(.*?)</h4>", seg):
+            t = re.sub(r"<[^>]+>", "", h)
+            # The corpus lives in JS strings: decode the
+            # escapes the browser would (\u2014 and kin)
+            # so the heads read as they render.
+            t = re.sub(r"\\u([0-9a-fA-F]{4})",
+                       lambda m: chr(int(m.group(1), 16)), t)
+            t = t.replace("\\'", "'").replace("&amp;", "&").strip()
+            if t and t not in secs:
+                secs.append(t)
+        lines.append("• " + m.group(2)
+                     + (" — " + "; ".join(secs[:16]) if secs else ""))
+    return "\n".join(lines)
+
+
+def _row_pace_block(record):
+    """The sluggish block (#248 leg 4): rides only when the
+    measured pace is sustained-slow — the fact, the remedy,
+    and the gate's seven steps from the record, so the offer
+    she may make is grounded in the script itself."""
+    slow, avg = vitals_sluggish()
+    if not slow:
+        return ""
+    out = ["[Your pace — the bridge's read]",
+           "Your recent generations on this machine averaged " + str(avg)
+           + " tokens/sec across the last measured stretch — under "
+           "roughly " + str(int(SLOW_TOK_S)) + ", conversation lags: on "
+           "this hardware you are sluggish, and that is the hardware's "
+           "fact. The remedy is the road: borrow through the Mesh from "
+           "a stronger machine, or join the federation — and you may "
+           "offer to walk the operator through joining, once, as an "
+           "offer."]
+    gate = ((record or {}).get("sections") or {}).get("gate") or {}
+    steps = gate.get("steps") or []
+    if steps:
+        out.append("The gate's seven steps, from the Row's record "
+                   "(fetched " + _row_age(gate.get("at")) + "):")
+        for i, st in enumerate(steps, 1):
+            out.append(str(i) + ". " + st)
+    else:
+        out.append("The gate's seven steps are not in the Row's record "
+                   "right now — offer the walkthrough in general terms "
+                   "or say the steps are not in reach, but do not "
+                   "invent them.")
+    return "\n".join(out)
+
+
+def row_context_blocks(text):
+    """Everything the Row contributes to one turn: the
+    standing brief, the intent's block, and the pace block
+    when her measured pace is slow — composed here so the
+    chat assembly stays one call, in the house pattern."""
+    record = row_feed_record()
+    parts = []
+    brief = row_brief_block(record)
+    if brief:
+        parts.append(brief)
+    intent = _row_intent(text)
+    if intent == "news":
+        parts.append(_row_news_block(record))
+    elif intent == "updates":
+        parts.append(_row_updates_block(record))
+    elif intent == "capabilities":
+        blk = docs_index_block()
+        if blk:
+            parts.append(blk)
+    pace = _row_pace_block(record)
+    if pace:
+        parts.append(pace)
+    return "\n\n".join(p for p in parts if p)
+
+
+def presence_extra_lines(cfg=None):
+    """v0.4.9e (#248, leg 5): presence lines the BRIDGE
+    composes from SAFE, NAMED material only — her version, a
+    waiting update, notification kinds and counts, Mesh and
+    federation state. Template-composed here: deterministic,
+    auditable, never model-generated, and never from case
+    contents, chat contents, or operator-private detail. The
+    page adds them to the same random draw as the canned
+    pool; the pool stays the floor when nothing qualifies."""
+    if cfg is None:
+        try:
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+    lines = []
+    try:
+        ver = "v" + SHIPPED_VERSION + (
+            "e" if app_version_status(cfg) == "edge" else "")
+        lines.append("Navi is running " + ver + " — build "
+                     + BRIDGE_BUILD + ".")
+    except Exception:
+        pass
+    try:
+        upd = update_bg_payload() or {}
+        if upd.get("updateAvailable") and upd.get("latest"):
+            lines.append("Navi has an update waiting — "
+                         + str(upd["latest"]) + " is on the wire.")
+    except Exception:
+        pass
+    try:
+        records = _notif_load()
+        unread = [r for r in records if not r.get("read")]
+        knocks = sum(int(r.get("count") or 1) for r in unread
+                     if r.get("kind") == "fed-knock")
+        if knocks:
+            lines.append("Navi is holding " + str(knocks)
+                         + (" knock" if knocks == 1 else " knocks")
+                         + " at the gate, waiting on your word.")
+        if unread:
+            lines.append("Navi has " + str(len(unread))
+                         + (" thing" if len(unread) == 1 else " things")
+                         + " that need your eyes.")
+    except Exception:
+        pass
+    try:
+        peers = ((mesh_settings(cfg) or {}).get("borrow") or {}).get(
+            "peers") or []
+        if peers:
+            lines.append("Navi is thinking across "
+                         + str(len(peers) + 1) + " machines tonight.")
+    except Exception:
+        pass
+    try:
+        feds = federation_status_slice(cfg) or []
+        if feds and feds[0].get("name"):
+            lines.append("Navi is flying the "
+                         + str(feds[0]["name"]) + " flag.")
+    except Exception:
+        pass
+    return lines[:6]
+
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload, ctype="application/json"):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
@@ -25518,6 +25959,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the throttled payload, so the producers re-run
                 # at most once per NOTIF_RECONCILE_SECONDS.
                 "notifications": notifications_payload(cfg),
+            "presenceExtra": presence_extra_lines(cfg),
                 "updaterChannel": updater_channel(cfg),
                 "updaterChannelExplicit": updater_channel_explicit(cfg),
                 "model": "navi",
@@ -27454,6 +27896,17 @@ class Handler(BaseHTTPRequestHandler):
             # every model turn the same way — an intake can be
             # asked for in any chat, not only in a case room.
             _system_prompt += "\n\n" + CASE_TEACHING
+            # v0.4.9e (#248): the Row rides the same way — the
+            # teaching always, then the record's blocks: the
+            # standing brief, the intent's supply, and the
+            # pace block when her measured pace is slow.
+            try:
+                _system_prompt += "\n\n" + ROW_TEACHING
+                _rowblk = row_context_blocks(last or "")
+                if _rowblk:
+                    _system_prompt += "\n\n" + _rowblk
+            except Exception:
+                pass
             try:
                 _sbrief = shell_session_brief(data.get("chatId"))
                 if _sbrief:

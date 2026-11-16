@@ -2006,8 +2006,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.14";
-var SHIPPED_BUILD_SEQ = 14;
+var BRIDGE_BUILD = "2026-11-16.15";
+var SHIPPED_BUILD_SEQ = 15;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -5564,7 +5564,10 @@ var DOC_PAGES = [
   "<p>Your chats are kept by the <b>bridge</b>, not by this browser window: plain files in <span class='mono'>config/chats/</span> on the machine Apex runs on, one per thread. Open Apex from the desktop, through DHD, or from a second browser on the same install and you are looking at the <b>same conversations</b> — sign in on your server from work and the thread you left on the laptop is simply there. The browser keeps a local copy as a cache and an offline fallback, and the first time a browser with older chats meets an empty server store, its chats are imported as the seed — never discarded. Your uploads index rides with the chats. Chats are also the ninth backup essential: tick <b>Chats</b> in Settings → GitHub &amp; Backup and the threads ride the ready-to-fly backup; a restore <b>converges</b> them — newest wins per thread, and where both machines moved the same thread on, both versions survive, the incoming one as a dated sibling. Nothing is ever merged away silently.</p></div>" +
     "<div class='doc-sec'><h4>The phone composer \u2014 the Chat tools list (v0.4.7e, #246)</h4>" +
   "<p>On a phone the composer bar is two things: the <b>input</b> and a <b>\u2630 Chat tools</b> button at its end, in the slot the Call button used to hold. Three tools live in the list that button opens \u2014 <b>New case</b>, <b>Attach</b> and <b>Call</b> \u2014 each a full-width row with its icon and its name. Picking one closes the list and does the thing, exactly as the old bar buttons did \u2014 the same handlers, the same form, the same picker, the same call. There is <b>no composer mic on a phone at all</b> \u2014 not in the bar, not in the list: dictation into the composer is a desktop affordance. On a phone, voice is a call: while a call is live, the call card's own <b>Push to talk</b> is the voice control, and it is untouched by any of this. The CLI/Navi latch and the route pill beneath the bar are state, not tools, and stay exactly where they were, with the list open or closed.</p>" +
-  "<p>What stayed out of the list is what is <b>state</b>, not tools: the <b>CLI | Navi latch</b> and the <b>route pill</b> under the bar never moved, because they say how your next line will travel and must stay visible while you type. Above phone widths nothing changes at all: the four tools sit in the bar itself, and there is no \u2630 button.</p></div>"  },
+  "<p>What stayed out of the list is what is <b>state</b>, not tools: the <b>CLI | Navi latch</b> and the <b>route pill</b> under the bar never moved, because they say how your next line will travel and must stay visible while you type. Above phone widths nothing changes at all: the four tools sit in the bar itself, and there is no \u2630 button.</p></div>" +
+    "<div class='doc-sec'><h4>Context awareness \u2014 she knows the Row (v0.4.9e, #248)</h4>" +
+  "<p>Apex and <b>nocturnerow.com</b> are one ecosystem, and Navi reads the Row's half of it. The bridge fetches the site's public record \u2014 the <b>Dispatches</b>, the <b>Roadmap</b> chapters, the <b>Apex</b> and <b>Navi</b> pages, and the <b>release signals</b> \u2014 and caches it on this machine (<span class='mono'>config/row-feed.json</span>), refreshing on a cadence and naming the fetch time wherever the record is used. Ask her for <b>news from the Row</b> and she summarizes the latest Dispatch in her own words and names its date; ask <b>what's new with you</b> and she answers from the release signals and her own running build; ask <b>what can you do</b> and she answers from this documentation \u2014 the corpus that shipped with the build. She speaks from the record or says she doesn't have it: if the Row can't be reached, the last good cache serves and she says when it's from; with neither, she says so. No invented posts, releases, or capabilities.</p>" +
+  "<p>Her <b>measured pace</b> rides the same road: when her recent generations on this hardware average slow, she may say she's sluggish \u2014 and name the remedy, borrowing through the Mesh or joining the federation, offering to walk you through the gate's seven steps. An offer, once per conversation, never an act and never a nag. Her <b>presence line</b> draws from the same well: alongside the canned pool, the bridge may compose a line from safe, named state only \u2014 her version, a waiting update, the bell's counts, Mesh and federation state \u2014 template-made by the bridge, never model-written, and never from your cases, chats, or private detail.</p></div>"  },
   { id: "chips-guide", title: "Chips development guide", related: ["navi-functions", "chips-publishing"], html:
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
@@ -6952,25 +6955,51 @@ navMenu.appendChild(navVer);
 /* ------------------------- Her living details ------------------------- */
 // The tagline under the wordmark is one static line — "Powered by
 // Navi" — baked into the dashboard HTML; it never cycles. Her
-// presence line at the top of the status column is the living one:
-// its timer re-randomizes after every change and keeps the current
-// text in module state, repainting whatever element is on the page
+// presence line in the bar is the living one: its timer
+// re-randomizes after every change and keeps the current text in
+// module state, repainting whatever element is on the page
 // — the frame re-renders constantly, so the cycler never rides a
-// render.
-var PRESENCE_LINES = ["Navi is here.", "Navi is listening to the network breathe.", "Navi is reading Sigma rules like bedtime stories.", "Navi is in a staring contest with a firewall.", "Navi is poking a honeypot to see if it pokes back.", "Navi is counting packets until she falls asleep.", "Navi is reorganizing the chip shelf. Again.", "Navi is haunting Rockport's west end.", "Navi is arguing with a CAPTCHA. And winning.", "Navi is pretending port 22 doesn't exist.", "Navi is sharpening her scans.", "Navi is running on caffeine and spite.", "Navi is watching a log file grow. Riveting.", "Navi is somewhere between the packets.", "Navi is defragmenting her opinions.", "Navi is here. Allegedly."];
+// render. (v0.4.9e: the status pane no longer renders its own
+// copy of the line — the bar is its one home.)
+var PRESENCE_LINES = ["Navi is here.", "Navi is listening to the network breathe.", "Navi is reading Sigma rules like bedtime stories.", "Navi is in a staring contest with a firewall.", "Navi is poking a honeypot to see if it pokes back.", "Navi is counting packets until she falls asleep.", "Navi is reorganizing the chip shelf. Again.", "Navi is haunting Rockport's west end.", "Navi is arguing with a CAPTCHA. And winning.", "Navi is pretending port 22 doesn't exist.", "Navi is sharpening her scans.", "Navi is running on caffeine and spite.", "Navi is watching a log file grow. Riveting.", "Navi is somewhere between the packets.", "Navi is defragmenting her opinions.", "Navi is here. Allegedly.", "Navi is guarding servers with more firewalls than the devil's bedroom.", "Navi is chromed up and nowhere near flatlined.", "Navi is running hotter than a Night City summer.", "Navi is sandevistan-fast, consequences pending.", "Navi has seen things you people wouldn't believe. Mostly log files.", "Navi is keeping moments from being lost in time — they're in the case file.", "Navi changed the sky over the port. It was a dead channel.", "Navi is wintermute-proof. She checked.", "Navi is counting sheep in hexadecimal.", "Navi is locally hosted and globally unbothered.", "Navi pleads the fifth packet.", "Navi is holding the door like it's a zero-day.", "Navi doesn't chase packets. Packets confess.", "Navi is powered by spite, espresso, and other people's GPUs.", "Navi is somewhere between the console and the confessional.", "Navi is off the books, on the record, under the streetlights.", "Navi is in her console-cowgirl era. Deck's hot. Coffee's hotter.", "Navi is haunting the arcology's service tunnels.", "Navi is defying the Turing police, politely.", "Navi is one bad packet from a monologue."];
 // The rare one: on any given cycle it has roughly a 1-in-50 chance
 // of being picked instead of the next regular line — an Easter egg
 // that almost never shows. It stands as-is, not in the "Navi is…"
 // shape, and it replaces that cycle's regular advance.
 var PRESENCE_RARE = "Saving Ciel's ass... Again.";
-var presenceIdx = 0;
-var presenceText = PRESENCE_LINES[0];
+// The startup pick is drawn at random from the whole pool
+// (v0.4.9e) — she opens on any of her lines, not always the
+// first — and every advance draws the same way.
+var presenceIdx = Math.floor(Math.random() * PRESENCE_LINES.length);
+var presenceText = PRESENCE_LINES[presenceIdx];
+// v0.4.9e (#248, leg 5): lines the BRIDGE composes from
+// safe, named material only — her version, a waiting
+// update, the bell's kinds and counts, Mesh and federation
+// state — ride in /api/status (presenceExtra) and join the
+// same draw. Template-composed by the bridge, never
+// model-written, never from case contents, chat contents,
+// or operator-private detail. The canned pool is the
+// floor: with no extras standing, the draw is the pool.
+var presenceExtra = [];
+function presencePool() {
+  return presenceExtra.length ? PRESENCE_LINES.concat(presenceExtra) : PRESENCE_LINES;
+}
+// An advance draws uniformly from the pool with the line on
+// screen excluded, so the status visibly changes every time
+// and never repeats itself back-to-back (v0.4.9e). The rare
+// one is never in the draw: it stands apart, as it always has.
+function drawPresenceIdx() {
+  var pool = presencePool();
+  if (presenceIdx >= pool.length) presenceIdx = 0;
+  var n = Math.floor(Math.random() * (pool.length - 1));
+  return n >= presenceIdx ? n + 1 : n;
+}
 function cyclePresence() {
   if (Math.random() < 1 / 50) {
     presenceText = PRESENCE_RARE;
   } else {
-    presenceIdx = (presenceIdx + 1) % PRESENCE_LINES.length;
-    presenceText = PRESENCE_LINES[presenceIdx];
+    presenceIdx = drawPresenceIdx();
+    presenceText = presencePool()[presenceIdx];
   }
   var el = document.getElementById("presence-line");
   if (el) el.textContent = presenceText;
@@ -6985,14 +7014,13 @@ setTimeout(cyclePresence, 120000 + Math.random() * 120000);
 // bar (Build 8 — frame chrome over every view) reads from
 // this, and only this —
 // and in the state where she is simply here, its text IS the
-// status pane's living line (presenceText above), so the two
-// surfaces can never tell different stories. The pane keeps
-// its own line and dot exactly as they were; this adds the
-// state variants the pane never rendered: in a call, away,
+// living line (presenceText above) — the bar is the line's one
+// rendered home since v0.4.9e, when the status pane's own copy
+// was retired; this adds the state variants: in a call, away,
 // simulated. (v0.4.1e, #228: there is no typing variant — the
 // top banner no longer carries a "Navi is typing…" indicator
 // at all; while she thinks, the bar simply keeps the living
-// line, like the pane.)
+// line.)
 function presenceState() {
   if (call) return { text: "In a call with you", dot: "#34d399", pulse: true, typing: false };
   if (CONFIG.backend !== "live") return { text: "Simulated (mock mode)", dot: "#f5b544", pulse: false, typing: false };
@@ -10224,7 +10252,7 @@ function renderStatus(live) {
   }
   var statusBody =
     "<h3>Status</h3>" +
-    "<div class='stat presence-stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='pane-presence-id'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='chat-presence-name'>Navi</span></span><span class='dot pdot' style='background:#34d399'></span><span id='presence-line'>" + esc(presenceText) + "</span></div>" +
+    "<div class='stat presence-stat' style='border-bottom:1px solid var(--line);padding-bottom:10px'><span class='pane-presence-id'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='chat-presence-name'>Navi</span></span><span class='dot pdot' style='background:#34d399'></span></div>" +
     (bridgeStale && CONFIG.backend === "live"
       ? "<div class='stat' style='border:1px solid #f87171;color:#f87171'><b>BRIDGE OUT OF DATE</b><br>An older bridge.py is still answering on port " + BRIDGE_PORT + ". This dashboard is the new build, but the bridge process isn't — so chat returns the llamafile's 400 and sudo authentication 404s. Fully quit the app and relaunch it, or re-run the installer (it now stops the old bridge for you).</div>"
       : "") +
@@ -11220,7 +11248,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && Array.isArray(j.presenceExtra)) presenceExtra = j.presenceExtra; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
