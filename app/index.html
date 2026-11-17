@@ -446,6 +446,18 @@
   #app.vault-focus .vault-pair .vault-files { display:none; }
   #app.vault-focus .vault-pair .vault-editor { grid-column:1; }
   #vault-focus-btn { min-width:40px; min-height:40px; }
+  /* The Vault's mobile furniture (v0.5.9e, #279): the New
+     button and the reader's back button exist in the markup
+     at every width and show only in the phone block below —
+     the desktop desk never sees them. The create sheet rides
+     the #270 overlay pattern (fixed, portaled to <body>):
+     a centered panel on a wide screen (it can only be opened
+     from the phone furniture, but the shape is defined
+     whole), a bottom sheet on a phone. */
+  .vault-new-open { display:none; }
+  .vault-back { display:none; }
+  #vault-shade { position:fixed; inset:0; z-index:120; background:rgba(0,0,0,.45); }
+  #vault-sheet { position:fixed; z-index:121; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,calc(100vw - 48px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:16px 18px 18px; animation:notif-in .65s cubic-bezier(.22,.8,.3,1); }
   /* Studio focus mode (0.1.9e Build 13, issue #146): the
      Vault's #135 idiom in the same shape — the app rail, the
      status column and the presence bar yield, and inside the
@@ -1133,6 +1145,32 @@
        meets the 44px floor. */
     #view-root.vault-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; }
     .vault-pair { grid-template-rows:minmax(120px, 38%) minmax(0, 1fr); }
+    /* The two-state Vault (v0.5.9e, #279): on a phone the
+       desk is a list OR a reader, never a stack of both. The
+       state lives in vaultReader; render() reflects it as
+       .vault-reading on the view root, and these rules do
+       the rest — LIST (the entry state): the pair collapses
+       to the files card alone, full height, the notes the
+       first content under the search row. READER: the files
+       card yields and the editor takes the whole view. The
+       intro paragraph clamps to one line; the RECENT chips
+       scroll inside their own row and the page never scrolls
+       sideways; the standing create card and the head's
+       Daily/Export buttons retire into the New sheet, whose
+       opener and the reader's back button take their place. */
+    #view-root.vault-view .vault-intro { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #view-root.vault-view .vault-recents { flex-wrap:nowrap; overflow-x:auto; max-width:100%; scrollbar-width:none; }
+    #view-root.vault-view .vault-recents > * { flex:0 0 auto; }
+    #view-root.vault-view:not(.vault-reading) .vault-pair { grid-template-rows:minmax(0, 1fr); }
+    #view-root.vault-view:not(.vault-reading) .vault-editor { display:none; }
+    #view-root.vault-view.vault-reading .vault-pair { grid-template-rows:minmax(0, 1fr); }
+    #view-root.vault-view.vault-reading .vault-files { display:none; }
+    #view-root.vault-view.vault-reading .vault-editor { grid-row:1; }
+    #view-root.vault-view .vault-create { display:none; }
+    #view-root.vault-view #vault-daily, #view-root.vault-view #vault-export { display:none; }
+    .vault-new-open { display:inline-block; min-height:44px; }
+    .vault-back { display:inline-block; min-height:44px; }
+    #vault-sheet { left:12px; right:12px; top:auto; bottom:12px; transform:none; width:auto; max-height:76vh; }
     #app.vault-focus { padding-top:0; }
     #app.vault-focus .vault-pair { grid-template-rows:minmax(0, 1fr); }
     #app.vault-focus .vault-pair .vault-editor { grid-row:1; }
@@ -1712,7 +1750,7 @@ var NAV_GROUPS = {
   // retired into the CTFs tab inside it (the board's home now).
   // Display only: the view keys (ThreatIntel, CTFBoard) and every
   // internal name stay exactly as they were; only the labels moved.
-  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["The Wire", "ThreatIntel"], ["Vault", "Vault"], ["The Dossier", "Dossier"]] },
+  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["The Wire", "ThreatIntel"], ["The Dossier", "Dossier"], ["Vault", "Vault"]] },
   utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
 };
 var NAV_FLAT = ["Chat"];
@@ -2142,8 +2180,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.24";
-var SHIPPED_BUILD_SEQ = 24;
+var BRIDGE_BUILD = "2026-11-17.25";
+var SHIPPED_BUILD_SEQ = 25;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3291,6 +3329,9 @@ function renderBootStatus(boot) {
 // same files and counts what it withholds.
 var casesState = null, casesFetching = false;
 var caseDetailState = null, caseDetailFetching = false;
+// v0.5.9e (#280): the finding whose delete confirm stands
+// open in the case view — the finding's file name.
+var cfDelArm = "";
 var caseMsg = "", caseReportState = null, caseDragOver = false;
 var caseEditOpen = false, caseEditMsg = "";
 var caseDeleteArm = "";   // Build 15 (#163): the slug whose delete confirm is showing, if any
@@ -4214,6 +4255,22 @@ function caseFilesHtml() {
     d.findings.forEach(function (f) {
       h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div class='md' style='margin-top:4px'>" + mdToHtml(f.body, "cases/" + d.slug + "/") + "</div>"
         + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
+        // The delete door (v0.5.9e, #280): every finding
+        // carries one. A finding born from a dossier element
+        // deletes the ELEMENT — from the dossier, every case
+        // it stands in, the Vault formations — and the arm
+        // strip says so before it fires; any other finding
+        // is removed from this case alone. The case's
+        // custody record keeps the line either way.
+        + (cfDelArm === f.file
+          ? "<div class='card' style='margin-top:6px;border-color:#f87171'><p style='font-size:13px'>"
+            + (f.element
+              ? "Delete <b>" + esc(f.title) + "</b>? It is a dossier element — it also leaves " + (f.homes && f.homes.dossier ? "the dossier <b>" + esc(f.homes.dossier) + "</b>" : "its dossier") + (f.homes && f.homes.cases && f.homes.cases.length > 1 ? ", every case it stands in (" + f.homes.cases.length + ")" : "") + " and the Vault formations. Every case it leaves keeps a custody line naming this case as where it was deleted from."
+              : (f.elements && f.elements.length
+                ? "Delete <b>" + esc(f.title) + "</b>? This filing carries " + f.elements.length + " dossier element(s) into this case. Deleting the filing removes it from this case and its formed Vault document only — the elements stay in their dossier, where each can be deleted on its own."
+                : "Delete <b>" + esc(f.title) + "</b>? It leaves this case and its formed Vault document; nothing else is touched. The case's custody record keeps the line."))
+            + "</p><div class='row' style='margin-top:6px'><input class='grow' id='cf-del-reason' type='text' placeholder='Reason (optional) — irrelevant / repeat / incorrect…' aria-label='Reason for deleting (optional)'><button class='ghost' data-cf-delfinding-ok='" + esc(f.file) + "' style='min-height:44px;color:#f87171'>Delete</button><button class='ghost' data-cf-delfinding-no='1' style='min-height:44px'>Keep it</button></div></div>"
+          : "<div class='row' style='margin-top:6px'><button class='ghost' data-cf-delfinding='" + esc(f.file) + "' style='min-height:44px' aria-label='Delete finding " + esc(f.title) + "'>Delete</button></div>")
         + "</div>";
     });
     h += "</div>";
@@ -4543,6 +4600,22 @@ function wireCaseFiles() {
       render();
     });
   });
+  // The finding delete door (v0.5.9e, #280): arm, keep,
+  // fire — the fire posts to the bridge's case door, which
+  // routes element findings to the global delete.
+  mainEl.querySelectorAll("[data-cf-delfinding]").forEach(function (b) { b.onclick = function () { cfDelArm = b.getAttribute("data-cf-delfinding"); render(); }; });
+  mainEl.querySelectorAll("[data-cf-delfinding-no]").forEach(function (b) { b.onclick = function () { cfDelArm = ""; render(); }; });
+  mainEl.querySelectorAll("[data-cf-delfinding-ok]").forEach(function (b) { b.onclick = function () {
+    if (!caseDetailState) return;
+    var slug = caseDetailState.slug;
+    var r = document.getElementById("cf-del-reason");
+    cfDelArm = "";
+    casePost("/api/cases/delete-finding", { case: slug, file: b.getAttribute("data-cf-delfinding-ok"), reason: r ? r.value.trim() : "" }, function (j) {
+      if (j.ok && j.case) { caseDetailState = j.case; caseMsg = "Deleted — the case's custody record carries the line."; }
+      else caseMsg = j.error || "The finding could not be deleted.";
+      render();
+    });
+  }; });
   // Build 2 (#199): one-tap review + register adds.
   mainEl.querySelectorAll("[data-cf-review]").forEach(function (b) { b.onclick = function () {
     if (!caseDetailState) return;
@@ -5374,6 +5447,19 @@ var vaultConfirmPath = null;
 var vaultConfirmFolder = null;
 var vaultCollapsed = {};
 var vaultMissing = null;
+// v0.5.9e (#279): the mobile two-state furniture — the
+// reader state (list is the entry state; opening a note
+// enters the reader), the list's scroll memory for the way
+// back, and the create sheet's open flag. All three are
+// cleared by any view switch (render() owns that, beside
+// vaultFocus). vaultCaseEls caches a formed case document's
+// elements for the Vault door of #280's delete.
+var vaultReader = false;
+var vaultListScroll = 0;
+var vaultSheetOpen = false;
+var vaultCaseEls = null;
+var vaultCaseElsFetching = false;
+var vaultElArm = "";
 // The path of the note currently being dragged (build .73): tracked
 // in a variable, not only in the dataTransfer, whose custom type
 // some webviews drop. A drag that ends anywhere but on a folder
@@ -5571,8 +5657,8 @@ function vaultHtml() {
   // filed from chat is simply there — no manual app refresh.
   if (!vaultLoading && Date.now() - vaultLoadedAt > 4000) vaultLoad();
   var h = "<h3 class='vault-head'>Vault · the shared desk</h3>";
-  h += "<p class='vault-head' style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
-  h += "<div class='row vault-head'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button></div>";
+  h += "<p class='vault-head vault-intro' style='color:var(--dim)'>A folder of plain markdown notes — in the live app it is a real folder at <span class='mono'>config/vault/</span> that Obsidian opens as-is. Her side is <b>Navi's Desk</b>; yours is <b>Operator</b>. Drop .md files onto this view to import them.</p>";
+  h += "<div class='row vault-head'><input class='grow' id='vault-search' type='text' placeholder='Search the vault — titles and text…' aria-label='Search the vault'><button class='ghost' id='vault-daily'>Daily note</button><button class='ghost' id='vault-export'>Export vault</button><button class='act vault-new-open' id='vault-new-open' aria-label='Create — new note, folder, daily note, export'>＋ New</button></div>";
   h += "<div id='vault-search-results' class='vault-head'></div>";
   if (vaultMsg) h += "<p role='status' class='vault-head'>" + esc(vaultMsg) + "</p>";
   if (vaultMissing) {
@@ -5582,7 +5668,7 @@ function vaultHtml() {
   var templates = vaultState.notes.filter(function (n) { return n.path.indexOf("Templates/") === 0; });
   var recent = vaultState.notes.slice().sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); }).slice(0, 5);
   if (recent.length) {
-    h += "<div class='row vault-head' style='margin-top:8px'><span class='mono' style='font-size:10px;color:var(--dim)'>RECENT</span>" + recent.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.title) + "</button>"; }).join("") + "</div>";
+    h += "<div class='row vault-head vault-recents' style='margin-top:8px'><span class='mono' style='font-size:10px;color:var(--dim)'>RECENT</span>" + recent.map(function (n) { return "<button class='ghost' data-vault-open='" + vaultEnc(n.path) + "'>" + esc(n.title) + "</button>"; }).join("") + "</div>";
   }
   // Obsidian-style layout (build .73; rebuilt in build .80,
   // issue #68; placement reversed in 0.1.9e Build 11, issue
@@ -5605,11 +5691,11 @@ function vaultHtml() {
   // order, decide the sides. On narrow screens the pair
   // stacks with the tree first (see the phone CSS block,
   // which restates the same pins for the stacked rows).
-  var filesHtml = "<div class='card vault-files'><div class='row' style='flex-wrap:wrap'><input class='grow' id='vault-new-name' type='text' style='flex:1 1 55%;min-width:0' placeholder='New note name…' aria-label='New note name'>" +
+  var filesHtml = "<div class='card vault-files'><div class='vault-create'><div class='row' style='flex-wrap:wrap'><input class='grow' id='vault-new-name' type='text' style='flex:1 1 55%;min-width:0' placeholder='New note name…' aria-label='New note name'>" +
     "<select id='vault-new-folder' aria-label='New note folder' title='Folder for the new note' style='flex:1 1 45%;min-width:0'><option value=''>Vault root</option>" + vaultState.folders.map(function (f) { return "<option value='" + esc(f) + "'>" + esc(f) + "</option>"; }).join("") + "</select>" +
     (templates.length ? "<select id='vault-new-template' aria-label='Start from a template' title='Start from a template' style='flex:1 1 45%;min-width:0'><option value=''>No template</option>" + templates.map(function (t) { return "<option value='" + vaultEnc(t.path) + "'>" + "Template: " + esc(t.title) + "</option>"; }).join("") + "</select>" : "") +
     "<button class='act' id='vault-new-create' style='white-space:nowrap;flex:0 0 auto'>New note</button></div>" +
-    "<div class='row' style='margin-top:6px'><input class='grow' id='vault-folder-name' type='text' placeholder='New folder…' aria-label='New folder name'><button class='ghost' id='vault-folder-add'>Add folder</button></div>" +
+    "<div class='row' style='margin-top:6px'><input class='grow' id='vault-folder-name' type='text' placeholder='New folder…' aria-label='New folder name'><button class='ghost' id='vault-folder-add'>Add folder</button></div></div>" +
     "<div data-vault-drop='' title='Drop a note here to move it to the vault root' style='margin-top:8px;border-top:1px solid var(--line);padding-top:6px'><b>▾ Vault root</b> <span style='color:var(--dim)'>" + vaultState.notes.filter(function (n) { return n.path.indexOf("/") === -1; }).length + "</span></div>" +
     "<div style='margin-top:2px'>" + vaultFolderHtml("", 0) + "</div>" +
     "<p class='mono' style='font-size:11px;color:var(--dim);margin-top:6px'>" + vaultState.notes.length + " notes · " + vaultState.notes.reduce(function (acc, n) { return acc + vaultWordCount(n.content); }, 0) + " words</p></div>";
@@ -5617,7 +5703,7 @@ function vaultHtml() {
   if (cur) {
     if (vaultDraftPath !== cur.path) { vaultDraft = cur.content; vaultDraftPath = cur.path; }
     var split = vaultSplitFm(vaultDraft != null ? vaultDraft : cur.content);
-    h += "<div class='vault-pair'><div class='card vault-editor' data-vault-curmode='" + vaultMode + "'><div class='row'><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
+    h += "<div class='vault-pair'><div class='card vault-editor' data-vault-curmode='" + vaultMode + "'><div class='row'><button class='ghost vault-back' id='vault-back' aria-label='Back to the note list'>← Notes</button><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
       ["edit", "split", "preview"].map(function (m) { return "<button class='" + (vaultMode === m ? "act" : "ghost") + "' data-vault-mode='" + m + "'>" + (m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview") + "</button>"; }).join("") +
       "<button class='ghost' id='vault-focus-btn' data-vault-focus='1' aria-pressed='" + (vaultFocus ? "true" : "false") + "' aria-label='" + (vaultFocus ? "Exit focus — restore the full Vault view" : "Expand the editor to fill the window") + "' title='" + (vaultFocus ? "Exit focus (Esc)" : "Focus — the editor fills the window") + "'>" + vaultFocusGlyph() + "</button></div>" +
       "<p class='mono' id='vault-saved' style='font-size:11px;color:var(--dim)'>Saved · " + vaultWordCount(vaultDraft || "") + " words" + (split.fm ? " · frontmatter kept raw, exactly as written" : "") + "</p>";
@@ -5627,6 +5713,31 @@ function vaultHtml() {
     if (vaultMode !== "edit") {
       h += "<div class='card vault-preview' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body, cur.path.indexOf("/") === -1 ? "" : cur.path.slice(0, cur.path.lastIndexOf("/") + 1)) + "</div></div>";
     }
+    // v0.5.9e (#280, the Vault door): a formed case document
+    // (cases/<slug>.md) names the dossier elements standing
+    // in it, each with its delete — the same global delete
+    // the dossier and case doors fire, from here.
+    var _formed = /^cases\/([^/]+)\.md$/.exec(cur.path);
+    if (_formed) {
+      var _fslug = _formed[1];
+      if (CONFIG.backend === "live" && (!vaultCaseEls || vaultCaseEls.slug !== _fslug) && !vaultCaseElsFetching) vaultFetchCaseEls(_fslug);
+      h += "<div class='card' style='margin-top:8px'><p class='mono' style='font-size:10px;color:var(--dim)'>DOSSIER ELEMENTS IN THIS DOCUMENT</p>";
+      if (vaultCaseEls && vaultCaseEls.slug === _fslug) {
+        if (!vaultCaseEls.elements.length) h += "<p style='color:var(--dim);font-size:12px'>No dossier elements stand in this case.</p>";
+        vaultCaseEls.elements.forEach(function (el) {
+          h += "<div class='row' style='margin-top:4px'><span class='grow' style='font-size:13px'>" + esc(el.label) + "</span>";
+          if (vaultElArm === el.id) {
+            h += "<span style='font-size:12px;color:var(--dim)'>Deletes it from the dossier, every case, and the Vault.</span><button class='ghost' data-vault-el-delok='" + esc(el.id) + "' style='color:#f87171;min-height:44px'>Delete everywhere</button><button class='ghost' data-vault-el-delno='1' style='min-height:44px'>Keep it</button>";
+          } else {
+            h += "<button class='ghost' data-vault-el-del='" + esc(el.id) + "' aria-label='Delete element " + esc(el.label) + " everywhere' style='min-height:44px'>Delete</button>";
+          }
+          h += "</div>";
+        });
+      } else {
+        h += "<p style='color:var(--dim);font-size:12px'>Reading the case…</p>";
+      }
+      h += "</div>";
+    }
     h += "<div class='vault-links' style='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px'>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>BACKLINKS</p>" + (cur.backlinks.length ? cur.backlinks.map(function (b) { return "<button class='ghost' data-vault-open='" + vaultEnc(b) + "'>" + esc(b) + "</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>Nothing links here yet.</p>") + "</div>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>OUTGOING LINKS</p>" + (cur.outgoing.length ? cur.outgoing.map(function (t) { return "<button class='ghost' data-vault-wiki='" + vaultEnc(t) + "'>[[" + esc(t) + "]]</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>No wikilinks in this note.</p>") + "</div>" +
@@ -5635,11 +5746,58 @@ function vaultHtml() {
   } else {
     h += "<div class='vault-pair'><div class='card vault-editor'><p style='color:var(--dim)'>Pick a note in the tree — or make one. <b>Welcome.md</b> explains the desk. In chat, try “file a note: …” and watch her side of the desk.</p></div>";
   }
+  // The create sheet (v0.5.9e, #279): every create act —
+  // new note, new folder, daily note, export — behind the
+  // one New button, in a floating sheet on the #270 pattern
+  // (portaled to <body> by render(); shade / × / Esc close).
+  // Its controls carry their own ids and fire the same acts
+  // as the desktop card's; on a phone the card's copies are
+  // retired by CSS and this sheet is the only door.
+  if (vaultSheetOpen) {
+    h += "<div id='vault-shade'></div>";
+    h += "<div id='vault-sheet' role='dialog' aria-modal='true' aria-label='Create in the vault'>"
+      + "<div class='row'><b class='grow'>Create</b><button class='ghost' id='vault-sh-x' aria-label='Close the create sheet' style='min-width:44px;min-height:44px'>×</button></div>"
+      + "<div class='row' style='margin-top:8px'><input class='grow' id='vault-sh-name' type='text' placeholder='New note name…' aria-label='New note name'></div>"
+      + "<div class='row' style='margin-top:6px'><select id='vault-sh-folder' aria-label='New note folder'><option value=''>Vault root</option>" + vaultState.folders.map(function (f) { return "<option value='" + esc(f) + "'>" + esc(f) + "</option>"; }).join("") + "</select>"
+      + (templates.length ? "<select id='vault-sh-template' aria-label='Start from a template'><option value=''>No template</option>" + templates.map(function (t) { return "<option value='" + vaultEnc(t.path) + "'>" + "Template: " + esc(t.title) + "</option>"; }).join("") + "</select>" : "")
+      + "</div>"
+      + "<div class='row' style='margin-top:6px'><button class='act' id='vault-sh-create' style='min-height:44px'>New note</button></div>"
+      + "<div class='row' style='margin-top:10px'><input class='grow' id='vault-sh-foldername' type='text' placeholder='New folder…' aria-label='New folder name'><button class='ghost' id='vault-sh-addfolder' style='min-height:44px'>Add folder</button></div>"
+      + "<div class='row' style='margin-top:10px'><button class='ghost' id='vault-sh-daily' style='min-height:44px'>Daily note</button><button class='ghost' id='vault-sh-export' style='min-height:44px'>Export vault</button></div>"
+      + "</div>";
+  }
   return h + filesHtml + "</div>";
+}
+// The formed case document's elements, for the Vault door
+// of the element delete (#280): read from the case detail —
+// single-element findings by their stamp, whole-dossier
+// filings by the labels they carry.
+function vaultFetchCaseEls(slug) {
+  vaultCaseElsFetching = true;
+  fetch("/api/cases/detail?case=" + encodeURIComponent(slug)).then(function (r) { return r.json(); }).then(function (j) {
+    vaultCaseElsFetching = false;
+    var els = [];
+    if (j && j.ok && j.case) {
+      (j.case.findings || []).forEach(function (f) {
+        if (f.element) els.push({ id: f.element, label: f.title });
+        else if (f.elements && f.elements.length) f.elements.forEach(function (eid) { els.push({ id: eid, label: (f.elementLabels && f.elementLabels[eid]) || eid }); });
+      });
+    }
+    vaultCaseEls = { slug: slug, elements: els };
+    if (view === "Vault") render();
+  }).catch(function () { vaultCaseElsFetching = false; vaultCaseEls = { slug: slug, elements: [] }; });
 }
 function vaultOpenPath(path) {
   var hit = vaultState && vaultState.notes.filter(function (n) { return n.path === path; })[0];
-  if (hit) { vaultSel = path; vaultDraftPath = null; vaultMissing = null; render(); }
+  if (hit) {
+    // v0.5.9e (#279): opening a note enters the reader
+    // state; the list's scroll is remembered for the way
+    // back. (The state only has teeth in the phone CSS —
+    // the desktop desk ignores it.)
+    vaultListScroll = (window.scrollY || (document.documentElement && document.documentElement.scrollTop) || 0);
+    vaultReader = true;
+    vaultSel = path; vaultDraftPath = null; vaultMissing = null; render();
+  }
   else {
     // Never fail silently onto the placeholder (build .73): say why,
     // in plain words, and pull a fresh listing in case the tree was
@@ -5706,6 +5864,13 @@ document.addEventListener("keydown", function (e) {
 // focus is on and the Studio is what is on screen.
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape" && studioFocus && view === "Chips" && chipsTab === "studio") { e.preventDefault(); e.stopImmediatePropagation(); studioFocus = false; render(); }
+});
+
+// The create sheet's keyboard door (v0.5.9e, #279): the
+// same one-press-one-thing discipline — Escape closes the
+// sheet while it is open over the Vault.
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && vaultSheetOpen && view === "Vault") { e.preventDefault(); e.stopImmediatePropagation(); vaultSheetOpen = false; render(); }
 });
 
 function stripLeadH1(md, rel) {
@@ -5992,7 +6157,11 @@ var DOC_PAGES = [
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" +
     "<div class='doc-sec'><h4>Reading: rendered markdown, images as images (v0.5.3e, #265)</h4>" +
   "<p>The Vault's preview renders notes through the product's one markdown renderer — the same one chat, these Docs and Case Files use — so a note reads as the document it is. <b>Images present as images:</b> a reference to a file in the Vault (a screenshot dropped beside the note, an evidence picture) is served by the bridge and shown inline; a data image shows as itself; an <b>external</b> image URL is shown as a link and never auto-fetched — opening a note must not announce the reader to a third-party host. The renderer escapes first and constructs only its own tags, so a note's content can never inject markup or script into the page.</p>" +
-  "<p><b>Formed case files.</b> Under <span class='mono'>cases/</span> the bridge also keeps one formed document per case — <span class='mono'>cases/&lt;name&gt;.md</span> — the whole case as a single readable file (manifest, findings in filed order, registers, evidence with its images, timeline, each entry under its provenance), formed from the case's folder and kept current by the bridge. It is the case's reading copy in the Vault; the folder remains the working record.</p></div>" },
+  "<p><b>Formed case files.</b> Under <span class='mono'>cases/</span> the bridge also keeps one formed document per case — <span class='mono'>cases/&lt;name&gt;.md</span> — the whole case as a single readable file (manifest, findings in filed order, registers, evidence with its images, timeline, each entry under its provenance), formed from the case's folder and kept current by the bridge. It is the case's reading copy in the Vault; the folder remains the working record.</p></div>" +
+    "<div class='doc-sec'><h4>On a phone: a list and a reader (v0.5.9e, #279)</h4>" +
+  "<p>At phone widths the Vault is <b>two states, one column</b>. The <b>list</b> is the entry state: the search pinned at the top, the RECENT chips in their own sideways-scrolling row (the page itself never scrolls sideways), and the note tree as full-width rows under it — the notes are the first content, not a card below a card. Open a note and the <b>reader</b> takes the whole view; its <b>← Notes</b> button returns to the list with its scroll position and your selection exactly as you left them. The header paragraph rests at a single line — this page keeps the full text.</p>" +
+  "<p><b>Creating lives behind one New button.</b> New note, new folder, the daily note and the export all open from the <b>＋ New</b> button beside the search, in a floating sheet (tap the shade, the ×, or Escape to close it). The standing create card does not exist at phone widths; on the desktop nothing changes — the card stays where it always was, and the sheet's controls fire the very same acts.</p>" +
+  "<p><b>A formed case document names its elements.</b> Open one (<span class='mono'>cases/&lt;name&gt;.md</span>) and a strip in the reader lists the dossier elements standing in the case, each with its <b>Delete</b> — the Vault door of the element delete (#280): confirm, and the element leaves the dossier, every case, and the Vault formations at once, with the case's custody record keeping the line.</p></div>" },
   { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
   "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
@@ -6021,6 +6190,9 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
+    "<div class='doc-sec'><h4>Deleting a finding, and the custody record (v0.5.9e, #280)</h4>" +
+  "<p>Every finding carries a <b>Delete</b>. The confirm names what will happen before it fires, and there are two shapes: a finding that is <b>not</b> a dossier element is removed from this case and its formed Vault document, and nothing else is touched; a finding born from a <b>dossier element</b> deletes the element itself — from its dossier, from <b>every</b> case it stands in, and from the Vault formations — because the element is one thing with several homes, and deleting it in one home while it stands in the others would leave the record lying. A reason (<i>irrelevant / repeat / incorrect</i>) is optional on either shape, never required.</p>" +
+  "<p>Either way, the case keeps the receipt: a line in its <b>custody record</b> (<span class='mono'>custody.md</span> in the case folder) naming the finding or element, when it left, <b>where it was deleted from</b> (the dossier / this case / another case / the Vault), and the reason if one was given. The custody record is part of the case folder — it rides Sync and backups with the case — but it is not part of the formed document: a formed case file holds the case's substance, and a deletion leaves no residue in it beyond the custody line's home in the folder.</p></div>" +
     "<div class='doc-sec'><h4>The report export</h4>" +
   "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
   { id: "threat-intelligence", title: "The Wire — the Center", related: ["case-files", "mesh"], html:
@@ -6203,7 +6375,11 @@ var DOC_PAGES = [
   "<p><b>The Dossier</b> (Apex | Apps → The Dossier) is Apex's people-finding app (#260). Tabs across the top — <b>Person, Username, Email, Phone, Photo</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link.</p>" +
   "<p><b>The runs.</b> Every run is bridge-side, public, passive and keyless, and every result is cited to its source: the handle swept across public platforms by polite profile checks; an email's posture from its MX, SPF and DMARC records, plus breach <b>presence</b> only — credential content never enters the kit; a phone's facts from the number's own structure and public sources, with cited search pointers in its common formats; a held domain's facts from RDAP, DNS, certificate transparency and its TLS certificate. Absence is named plainly — <i>no public record found</i> — never dressed up, and a hit is a lead, never a conclusion.</p>" +
   "<p><b>The registry check</b> is the Person tab's anchor: it stands at the registries' own doors — the national NSOPW search and the state registry — and cites them; it does not mirror them, and a same-name hit is an unverified lead to disambiguate. When a record exists, its <b>own identifiers</b> — its listed aliases, a held domain — are what enrichment fans out from, so a name-collision guess never inherits a stranger's record. The Photo tab reads an image's EXIF metadata <b>fully locally</b> — nothing is uploaded anywhere, and no face recognition is performed, ever.</p>" +
-  "<p><b>Cases, both ways.</b> Open an OSINT case from a dossier — the dossier stands as its subject — and file a dossier, or a single run's findings, into any case, with provenance on the face; case files hold case substance only. <b>Navi is the second door:</b> <span class='mono'>dossier: person &lt;name&gt;</span>, <span class='mono'>sweep the handle &lt;name&gt;</span>, <span class='mono'>look up &lt;email&gt;</span>, <span class='mono'>look up the number &lt;phone&gt;</span> — her runs land in the same history, and while a dossier is open she holds it as context.</p></div>" },
+  "<p><b>Cases, both ways.</b> Open an OSINT case from a dossier — the dossier stands as its subject — and file a dossier, or a single run's findings, into any case, with provenance on the face; case files hold case substance only. <b>Navi is the second door:</b> <span class='mono'>dossier: person &lt;name&gt;</span>, <span class='mono'>sweep the handle &lt;name&gt;</span>, <span class='mono'>look up &lt;email&gt;</span>, <span class='mono'>look up the number &lt;phone&gt;</span> — her runs land in the same history, and while a dossier is open she holds it as context.</p></div>" +
+    "<div class='doc-sec'><h4>The built dossier, and deleting an element (v0.5.9e, #280)</h4>" +
+  "<p><b>The open dossier reads as one document</b> made of its <b>elements</b> — one element per run — grouped by kind (person, username, email, phone, photo), each carrying its provenance on its face: the key it ran on, the door it came through, its sources with their verdicts, and the time it landed. An element that has been filed into cases names them, by name — the typed links, readable. The whole document renders through the product's one markdown renderer, exactly as Case Files and the Vault render: a rendered document, and any HTML a source filed stays inert text.</p>" +
+  "<p><b>An element can be deleted — and deletion is global.</b> Every element carries a <b>Delete</b> button; the confirm names the blast radius first (this dossier, the cases it stands in by name, the Vault formations), and a reason — <i>irrelevant / repeat / incorrect</i> — is optional, never required. Confirm, and the element leaves <b>every home at once</b>: the dossier, every case it was filed into, and the Vault's formed documents. The same delete stands at three doors — the dossier, the case (any finding's Delete; an element finding routes to the global delete), and the Vault (a formed case document lists its elements with their deletes) — and in chat: tell Navi <i>“delete the dossier element &lt;key&gt;”</i> and she acts on it, receipted from what the bridge actually did. She never deletes unbidden.</p>" +
+  "<p><b>What remains is the custody line.</b> When a case loses an element — from any door — the case keeps one line in its custody record (<span class='mono'>custody.md</span>, in the case folder): the element's identity, when it left, where it was deleted from (the dossier / this case / another case / the Vault), and the reason if one was given. The formed case document carries no residue of the element at all. A case finding that is <i>not</i> a dossier element deletes from its case alone, the same custody line kept. A filing that carries several elements (a whole dossier filed at once) is a filing, not an element: deleting it from a case removes the filing there, and the elements stay in their dossier, each deletable on its own. Repeats are handled by deletion only — there is no merge for elements. Deletion crosses Sync as a fact about the element, so a stale copy on another seat cannot re-file what was deleted: the re-filing is refused, by name.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
     "<div class='doc-sec'><h4>The container node</h4>" +
   "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
@@ -8356,6 +8532,13 @@ function fedConfirmHtml(fedId) {
 // here (mdToHtml, the #265 escape-first road), never raw.
 var dzState = null, dzFetching = false, dzTab = "person";
 var dzMsg = "", dzMsgOk = false;
+// v0.5.9e (#280): the delete arm — the element id whose
+// confirm strip stands open, and the optional reason typed
+// into it. The confirm names the blast radius before it
+// fires; the reason, if given, rides the custody lines.
+var dzDelArm = "", dzDelReason = "";
+var DZ_KIND_ORDER = ["person", "username", "email", "phone", "photo", "record"];
+function dzElementLabel(e) { return e.kind === "record" ? "the record" : e.kind + ": " + e.key; }
 var DZ_TABS = [["person", "Person"], ["username", "Username"], ["email", "Email"], ["phone", "Phone"], ["photo", "Photo"]];
 function refreshDossier(rerender) {
   if (CONFIG.backend !== "live" || dzFetching) return;
@@ -8376,6 +8559,7 @@ function dossierAct(action, body) {
       if (j && j.ok === false) { dzMsg = j.error || "The bridge did not answer that act."; dzMsgOk = false; }
       else if (action === "open-case" && j.caseSlug) { dzMsg = "OSINT case opened: " + j.caseSlug + " — the dossier stands as its subject."; dzMsgOk = true; }
       else if (action === "file" && j.filed) { dzMsg = "Filed into the case at " + j.filed.path + "."; dzMsgOk = true; }
+      else if (action === "delete-element" && j.deleted) { dzMsg = "Deleted " + j.deleted.label + " — from this dossier" + (j.deleted.casesCleaned && j.deleted.casesCleaned.length ? ", from " + j.deleted.casesCleaned.length + " case(s), and from the Vault formations" : "") + ". The cases' custody records carry the line."; dzMsgOk = true; dzDelArm = ""; dzDelReason = ""; }
       else if (action === "merge") { dzMsg = "Merged — one dossier, every key."; dzMsgOk = true; }
       else { dzMsg = ""; }
       if (view === "Dossier") render();
@@ -8425,7 +8609,39 @@ function dossierHtml() {
   if (open) {
     h += "<div class='card'><div class='row'><b class='grow' style='font-size:15px'>" + esc(open.title) + "</b><span style='color:var(--dim);font-size:12px'>opened " + esc(open.created) + " · updated " + esc(open.updated) + "</span></div>";
     if (open.keys && open.keys.length) h += "<p style='margin-top:6px'>" + open.keys.map(function (k) { return "<span class='ic mono' style='margin-right:6px'>" + esc(k.type) + ": " + esc(k.value) + "</span>"; }).join("") + "</p>";
-    if (open.markdown) h += "<div class='md' style='margin-top:8px'>" + mdToHtml(open.markdown) + "</div>";
+    // The built dossier (v0.5.9e, #280): ONE rendered
+    // document made of its elements — grouped by kind, each
+    // element carrying its provenance (key, door, sources,
+    // when) and its typed case links by name, each rendered
+    // through the same escape-first renderer as Case Files
+    // and the Vault: the document reads rendered, and HTML
+    // a source filed stays inert text. A dossier whose store
+    // predates elements reads as the blob it always was.
+    if (open.elements && open.elements.length) {
+      h += "<div class='dz-elements' style='margin-top:8px'>";
+      DZ_KIND_ORDER.forEach(function (kind) {
+        var group = open.elements.filter(function (e) { return e.kind === kind; });
+        if (!group.length) return;
+        h += "<h4 style='margin:12px 0 4px'>" + esc(kind === "record" ? "Record" : kind.charAt(0).toUpperCase() + kind.slice(1)) + "</h4>";
+        group.forEach(function (e) {
+          h += "<div class='dz-element' style='border-top:1px solid var(--line);padding:8px 0'>";
+          h += "<div class='row'><b class='grow' style='font-size:13px'>" + esc(dzElementLabel(e)) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(e.at || "") + (e.door ? " · " + esc(e.door) + " door" : "") + "</span>"
+            + (dzDelArm === e.id ? "" : "<button class='ghost' data-dzdel='" + esc(e.id) + "' aria-label='Delete element " + esc(dzElementLabel(e)) + " everywhere'>Delete</button>")
+            + "</div>";
+          if (e.sources && e.sources.length) h += "<div style='color:var(--dim);font-size:12px'>" + e.sources.map(function (s) { return esc(s.name) + " (" + esc(s.verdict) + ")"; }).join(" · ") + "</div>";
+          if (e.cases && e.cases.length) h += "<div style='font-size:12px'>Filed into: " + e.cases.map(function (c) { return "<b>" + esc(c.name) + "</b>"; }).join(", ") + "</div>";
+          h += "<div class='md'>" + mdToHtml(e.markdown || "") + "</div>";
+          if (dzDelArm === e.id) {
+            h += "<div class='card' style='margin-top:6px;border-color:#f87171'><p style='font-size:13px'>Delete <b>" + esc(dzElementLabel(e)) + "</b> everywhere? It leaves this dossier"
+              + (e.cases && e.cases.length ? ", the case(s) it stands in — " + e.cases.map(function (c) { return esc(c.name); }).join(", ") + " —" : "")
+              + " and the Vault formations. The cases keep a custody line naming where it was deleted from; nothing else remains.</p>"
+              + "<div class='row' style='margin-top:6px'><input class='grow' id='dz-del-reason' type='text' placeholder='Reason (optional) — irrelevant / repeat / incorrect…' aria-label='Reason for deleting (optional)' value='" + esc(dzDelReason) + "'><button class='ghost' data-dzdelok='" + esc(e.id) + "' style='color:#f87171'>Delete everywhere</button><button class='ghost' data-dzdelno='1'>Keep it</button></div></div>";
+          }
+          h += "</div>";
+        });
+      });
+      h += "</div>";
+    } else if (open.markdown) h += "<div class='md' style='margin-top:8px'>" + mdToHtml(open.markdown) + "</div>";
     else h += "<p style='color:var(--dim)'>No runs yet — every key above opens this same dossier.</p>";
     if (open.mergedFrom && open.mergedFrom.length) h += "<p style='color:var(--dim);font-size:12px'>Merged in: " + open.mergedFrom.map(function (m) { return esc(m.title); }).join(", ") + ".</p>";
     h += "<p style='color:var(--dim);font-size:12px'>" + (open.links ? open.links.length : 0) + " typed link(s) on this dossier — keys, sources, merges, case inclusions, stored as data.</p>";
@@ -8465,6 +8681,11 @@ function wireDossier() {
   document.querySelectorAll("[data-dzopen]").forEach(function (b) { b.onclick = function () { dossierAct("open", { dossierId: b.getAttribute("data-dzopen") }); }; });
   document.querySelectorAll("[data-dzmerge]").forEach(function (b) { b.onclick = function () { if (dzState && dzState.open) dossierAct("merge", { keepId: dzState.open.id, dropId: b.getAttribute("data-dzmerge") }); }; });
   document.querySelectorAll("[data-dzfile-run]").forEach(function (b) { b.onclick = function () { var sel = document.getElementById("dz-case-sel"); if (sel && sel.value && dzState && dzState.open) dossierAct("file", { dossierId: dzState.open.id, runId: b.getAttribute("data-dzfile-run"), "case": sel.value }); }; });
+  // The element delete (#280): arm, keep, fire. The reason
+  // is read at fire time; it is optional and never required.
+  document.querySelectorAll("[data-dzdel]").forEach(function (b) { b.onclick = function () { dzDelArm = b.getAttribute("data-dzdel"); dzDelReason = ""; render(); }; });
+  document.querySelectorAll("[data-dzdelno]").forEach(function (b) { b.onclick = function () { dzDelArm = ""; dzDelReason = ""; render(); }; });
+  document.querySelectorAll("[data-dzdelok]").forEach(function (b) { b.onclick = function () { var r = document.getElementById("dz-del-reason"); dossierAct("delete-element", { elementId: b.getAttribute("data-dzdelok"), from: "dossier", reason: r ? r.value.trim() : "" }); }; });
   var runBtn = document.getElementById("dz-run");
   if (runBtn) runBtn.onclick = function () {
     if (dzTab === "photo") {
@@ -8783,6 +9004,53 @@ function fedichatCreateHtml(room) {
   h += "</div>";
   return h;
 }
+// The Vault create sheet's wiring (v0.5.9e, #279): bound
+// by render() after the sheet is portaled to <body>, the
+// #270 overlay pattern. Every control fires the same act
+// as its desktop-card twin — the sheet is a second door to
+// the same machinery, never a second implementation. A
+// successful create closes the sheet and the new note
+// opens in the reader, as the card's create does.
+function bindVaultSheet() {
+  var close = function () { vaultSheetOpen = false; render(); };
+  var shade = document.getElementById("vault-shade");
+  if (shade) shade.onclick = close;
+  var x = document.getElementById("vault-sh-x");
+  if (x) x.onclick = close;
+  var create = document.getElementById("vault-sh-create");
+  if (create) create.onclick = function () {
+    var nm = document.getElementById("vault-sh-name"); var name = nm ? nm.value.trim().replace(/\.md$/i, "") : "";
+    if (!name) return;
+    var fo = document.getElementById("vault-sh-folder"); var folder = fo ? fo.value : "";
+    var tp = document.getElementById("vault-sh-template");
+    var content = "# " + name + "\n\n";
+    if (tp && tp.value) { var tpl = vaultState.notes.filter(function (n) { return n.path === decodeURIComponent(tp.value); })[0]; if (tpl) content = tpl.content.split("Untitled").join(name); }
+    var path = (folder ? folder + "/" : "") + name + ".md";
+    vaultSel = path;
+    vaultSheetOpen = false;
+    vaultApply("save", { path: path, content: content });
+  };
+  var addFolder = document.getElementById("vault-sh-addfolder");
+  if (addFolder) addFolder.onclick = function () { var fi = document.getElementById("vault-sh-foldername"); var name = fi ? fi.value.trim() : ""; if (name) { vaultSheetOpen = false; vaultApply("folder", { path: name }); } };
+  var daily = document.getElementById("vault-sh-daily");
+  if (daily) daily.onclick = function () {
+    var today = new Date().toISOString().slice(0, 10); var path = "Daily/" + today + ".md";
+    vaultSheetOpen = false;
+    if (vaultState && vaultState.notes.some(function (n) { return n.path === path; })) vaultOpenPath(path);
+    else { vaultSel = path; vaultApply("save", { path: path, content: "# " + today + "\n\n## Today\n\n- \n" }); }
+  };
+  var exp = document.getElementById("vault-sh-export");
+  if (exp) exp.onclick = function () {
+    vaultSheetOpen = false;
+    if (CONFIG.backend === "live") { window.open("/api/vault/export", "_blank"); vaultMsg = "Exported the vault as a .zip of the folder — unzip it and Obsidian opens it as-is."; render(); return; }
+    var bundle = vaultState.notes.map(function (n) { return "<!-- " + n.path + " -->\n\n" + n.content; }).join("\n\n---\n\n");
+    var url = URL.createObjectURL(new Blob([bundle], { type: "text/markdown" }));
+    var a = document.createElement("a"); a.href = url; a.download = "apex-vault-export.md"; a.click(); URL.revokeObjectURL(url);
+    vaultMsg = "Mock mode exports a single markdown bundle; the live bridge exports the real .zip of the folder.";
+    render();
+  };
+}
+
 function bindFedichatOverlays() {
   // The tray/window close furniture. The overlays are
   // portaled to <body> by render(); this runs from the
@@ -12298,7 +12566,7 @@ function render() {
   // A portaled article reader from the previous render is
   // taken down before the new view paints — it lives at <body>
   // level, outside the view root's HTML (Build 10, #196).
-  document.querySelectorAll("body > #wire-reader, body > #wire-reader-shade, body > #fc-tray, body > #fc-win, body > #fc-shade").forEach(function (n) { n.remove(); });
+  document.querySelectorAll("body > #wire-reader, body > #wire-reader-shade, body > #fc-tray, body > #fc-win, body > #fc-shade, body > #vault-shade, body > #vault-sheet").forEach(function (n) { n.remove(); });
   if (!wireReader) document.body.classList.remove("reader-open");
   // Focus return for the chat composer: render() rebuilds the whole
   // view, which would strand the operator's cursor after every send.
@@ -12325,6 +12593,11 @@ function render() {
   // around another view.
   if (view !== "Vault") vaultFocus = false;
   appEl.classList.toggle("vault-focus", vaultFocus);
+  // The Vault's mobile furniture (#279) belongs to the
+  // Vault: leaving the view resets the reader to the list
+  // and closes the create sheet, so neither can hang over
+  // another view.
+  if (view !== "Vault") { vaultReader = false; vaultSheetOpen = false; vaultElArm = ""; }
   // The room's overlays (#270) belong to the room: leaving
   // the view closes them, so a tray can never hang over
   // another destination.
@@ -12888,6 +13161,12 @@ function render() {
     if (n && n.parentNode !== document.body) document.body.appendChild(n);
   });
   if (document.getElementById("fc-tray") || document.getElementById("fc-win")) bindFedichatOverlays();
+  // The Vault's create sheet (#279) rides the same road.
+  ["vault-shade", "vault-sheet"].forEach(function (id) {
+    var n = document.getElementById(id);
+    if (n && n.parentNode !== document.body) document.body.appendChild(n);
+  });
+  if (document.getElementById("vault-sheet")) bindVaultSheet();
   // Replay the view-entrance motion on every render so switching
   // views (and tabs) glides instead of snapping.
   mainEl.classList.remove("view-in");
@@ -12898,6 +13177,7 @@ function render() {
   mainEl.classList.toggle("chat-view", view === "Chat");
   mainEl.classList.toggle("docs-view", view === "Docs");
   mainEl.classList.toggle("vault-view", view === "Vault");
+  mainEl.classList.toggle("vault-reading", view === "Vault" && vaultReader && !!vaultSel);
   mainEl.classList.toggle("fedichat-view", view === "FediChat");
   wire();
   if (view === "Docs") docsRestoreNav();
@@ -13930,6 +14210,32 @@ function wire() {
       vaultMsg = "Mock mode exports a single markdown bundle; the live bridge exports the real .zip of the folder.";
       render();
     };
+    // The mobile furniture (#279): the New button opens
+    // the create sheet; the reader's back button returns to
+    // the list with its scroll and the selection intact.
+    var newOpen = vq("#vault-new-open");
+    if (newOpen) newOpen.onclick = function () { vaultSheetOpen = true; render(); };
+    var backBtn = vq("#vault-back");
+    if (backBtn) backBtn.onclick = function () {
+      vaultReader = false; render();
+      window.scrollTo(0, vaultListScroll || 0);
+    };
+    // The Vault door of the element delete (#280): arm,
+    // disarm, fire — the confirm names the blast radius
+    // inline, the fire goes to the same bridge act the
+    // dossier door uses, with the door marked "vault".
+    vqa("[data-vault-el-del]").forEach(function (b) { b.onclick = function () { vaultElArm = b.getAttribute("data-vault-el-del"); render(); }; });
+    vqa("[data-vault-el-delno]").forEach(function (b) { b.onclick = function () { vaultElArm = ""; render(); }; });
+    vqa("[data-vault-el-delok]").forEach(function (b) { b.onclick = function () {
+      var eid = b.getAttribute("data-vault-el-delok");
+      vaultElArm = "";
+      fetch("/api/dossier", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete-element", elementId: eid, from: "vault" }) }).then(function (r) { return r.json(); }).then(function (j) {
+        vaultCaseEls = null;
+        if (j && j.ok) vaultMsg = "Deleted the element everywhere — the dossier, every case, the Vault.";
+        else vaultMsg = (j && j.error) || "The element could not be deleted.";
+        refreshVault();
+      }).catch(function () { vaultMsg = "The element could not be deleted — the bridge did not answer."; render(); });
+    }; });
     var ed = vq("#vault-ed");
     if (ed) ed.oninput = function () {
       vaultDraft = ed.value;

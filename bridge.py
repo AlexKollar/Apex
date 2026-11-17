@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.8"
+SHIPPED_VERSION = "0.5.9"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.24"
+BRIDGE_BUILD = "2026-11-17.25"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 24
+SHIPPED_BUILD_SEQ = 25
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -23107,7 +23107,7 @@ def _sync_state_load():
             state.update({k: raw[k] for k in state if k in raw})
             tombs = raw.get("tombstones")
             if isinstance(tombs, dict):
-                for kind in ("chats", "cases", "vault"):
+                for kind in ("chats", "cases", "vault", "dossier"):
                     if isinstance(tombs.get(kind), dict):
                         state["tombstones"][kind] = {
                             str(k): float(v) for k, v in tombs[kind].items()
@@ -23138,7 +23138,7 @@ def _sync_state_save(state):
 def _sync_tombstones_pruned(tombs, now=None):
     now = now if now is not None else time.time()
     out = {}
-    for kind in ("chats", "cases", "vault", "entries"):
+    for kind in ("chats", "cases", "vault", "entries", "dossier"):
         rows = tombs.get(kind) if isinstance(tombs, dict) else None
         out[kind] = {}
         if isinstance(rows, dict):
@@ -23152,7 +23152,7 @@ def sync_record_tombstone(kind, key, at=None):
     # The deletion funnels' one call. Best-effort by design: a
     # tombstone that fails to record must never fail the delete
     # the operator asked for — the delete itself already happened.
-    if kind not in ("chats", "cases", "vault", "entries") or not key:
+    if kind not in ("chats", "cases", "vault", "entries", "dossier") or not key:
         return
     try:
         state = _sync_state_load()
@@ -24771,7 +24771,8 @@ def _sync_apply_tombstones(tombs, summary):
     # copies no newer than the deletion itself. Returns the set of
     # tombstone keys that were SUPERSEDED by newer local work (the
     # caller drops them from the stored set).
-    dropped = {"chats": set(), "cases": set(), "vault": set()}
+    dropped = {"chats": set(), "cases": set(), "vault": set(),
+               "dossier": set()}
     chat_tombs = tombs.get("chats") or {}
     if MAIN_CHAT_ID in {str(k) for k in chat_tombs}:
         # v0.3.0e Build 1 (#200): the main chat cannot be
@@ -24825,6 +24826,38 @@ def _sync_apply_tombstones(tombs, summary):
                     dropped["vault"].add(safe)
         except Exception:
             continue
+    # v0.5.9e (#280): dossier element tombstones — an element
+    # deleted on the other seat dies here too, everywhere it
+    # stands (the store, this seat's case findings, the
+    # formations), with custody lines written by the same
+    # funnel a local delete uses. An element tombstone is a
+    # fact, like a chat's (#253): it is never superseded by
+    # newer work, because a re-run mints a NEW element — the
+    # deleted one's identity never legitimately returns. The
+    # finding files the purge removes are vault-tombstoned in
+    # the same act, and those tombstones join this round's set
+    # so the converge below cannot re-write the files from the
+    # remote copy in the very round that deleted them.
+    dossier_tombs = tombs.get("dossier") or {}
+    if dossier_tombs:
+        try:
+            with DOSSIER_LOCK:
+                _dz_store = _dossier_store()
+                _dz_held = {e["id"] for d in _dz_store["dossiers"]
+                            for e in d.get("elements") or []}
+                for eid in dossier_tombs:
+                    if eid not in _dz_held:
+                        continue
+                    _res, _err = element_delete(
+                        eid, "sync", "", record_tombstone=False)
+                    if _res:
+                        summary["removedElements"] = \
+                            summary.get("removedElements", 0) + 1
+                        for _rel in _res.get("vaultTombstones") or []:
+                            tombs.setdefault("vault", {})[_rel] = \
+                                time.time()
+        except Exception:
+            pass
     return dropped
 
 
@@ -24980,7 +25013,7 @@ def sync_apply(cfg, fetched):
                 continue
             kept.append(raw)
         remote_chats = kept
-    for kind in ("chats", "cases", "vault"):
+    for kind in ("chats", "cases", "vault", "dossier"):
         for key in dropped[kind]:
             merged[kind].pop(key, None)
     state["tombstones"] = merged
@@ -25958,6 +25991,13 @@ def _case_findings(slug):
                 "state": (str(meta.get("state") or "").lower()
                           if str(meta.get("state") or "").lower() in ("lead", "confirmed")
                           else ("lead" if str(meta.get("author") or "").lower() == "navi" else "confirmed")),
+                # v0.5.9e (#280): the identity stamps a filing
+                # was born with — a dossier element's id, its
+                # dossier, or the element ids a whole-dossier
+                # filing carries.
+                "element": str(meta.get("element") or ""),
+                "dossierId": str(meta.get("dossier") or ""),
+                "elements": [p.strip() for p in str(meta.get("elements") or "").split(",") if p.strip()],
                 "body": body.strip(),
             })
     out.sort(key=lambda f: (CASE_SEVERITIES.index(f["severity"]), f["file"]))
@@ -26119,6 +26159,9 @@ def _dossier_store():
         if isinstance(data, dict):
             data.setdefault("dossiers", [])
             data.setdefault("runs", [])
+            for d in data["dossiers"]:
+                if isinstance(d, dict) and "elements" not in d:
+                    _dossier_elements_migrate(data, d)
             return data
     except Exception:
         pass
@@ -26155,10 +26198,74 @@ def dossier_new(store, title):
          or "Untitled dossier", "created": _dossier_now(),
          "updated": _dossier_now(), "keys": [], "links": [],
          "runIds": [], "markdown": "", "caseSlug": "",
-         "mergedFrom": []}
+         "mergedFrom": [], "elements": []}
     store["dossiers"].append(d)
     store["openId"] = d["id"]
     return d
+
+
+# -- Elements (v0.5.9e, #280) ------------------------------------
+# A dossier's content is ELEMENTS: one per run, each with a
+# stable identity (the run's id), a kind (the key type that
+# produced it), its provenance (key, door, sources, when) and
+# its markdown section. The dossier's document is DERIVED —
+# the sections joined in order, exactly the append
+# dossier_record_run has always performed — so what the view
+# shows is what the store holds, and deleting an element
+# re-derives the document without it. Dossiers born before
+# elements existed are migrated on load: their runs become
+# their elements, and any document text no surviving run
+# accounts for (a run pruned by the history cap) is carried
+# as one "record" element, labeled as what it is.
+
+def _dossier_replay_markdown(elements):
+    blob = ""
+    for e in elements or []:
+        section = str(e.get("markdown") or "").strip()
+        if not section:
+            continue
+        blob = (blob.rstrip("\n") + "\n\n" + section
+                + "\n").strip() + "\n"
+    return blob
+
+
+def _dossier_elements_migrate(store, d):
+    runs = {r["id"]: r for r in store.get("runs") or []}
+    elements = []
+    seen = set()
+    for rid in d.get("runIds") or []:
+        r = runs.get(rid)
+        if r is None or rid in seen:
+            continue
+        seen.add(rid)
+        elements.append({
+            "id": rid, "kind": str(r.get("keyType") or "record"),
+            "key": str(r.get("key") or ""), "at": str(r.get("at") or ""),
+            "door": str(r.get("door") or ""),
+            "sources": r.get("sources") or [],
+            "markdown": str(r.get("markdown") or "")})
+    blob = str(d.get("markdown") or "")
+    if _dossier_replay_markdown(elements) != blob:
+        rest = blob
+        for e in elements:
+            section = str(e.get("markdown") or "").strip()
+            if section and section in rest:
+                rest = rest.replace(section, "", 1)
+        rest = re.sub(r"\n{3,}", "\n\n", rest).strip()
+        if rest:
+            elements.append({
+                "id": "record-" + hashlib.sha256(
+                    d["id"].encode()).hexdigest()[:12],
+                "kind": "record", "key": d["title"],
+                "at": str(d.get("created") or ""), "door": "record",
+                "sources": [], "markdown": rest})
+            d["markdown"] = _dossier_replay_markdown(elements)
+    d["elements"] = elements
+    return d
+
+
+def dossier_element_label(e):
+    return str(e.get("kind") or "record") + ": " + str(e.get("key") or "")
 
 
 def _dossier_link(d, kind, frm, to, label):
@@ -26189,6 +26296,15 @@ def dossier_record_run(store, d, run):
     store["runs"].append(run)
     store["runs"] = store["runs"][-DOSSIER_RUN_CAP:]
     d["runIds"].append(run["id"])
+    # v0.5.9e (#280): the run is also the dossier's element —
+    # the same act, recorded once, in the shape the view and
+    # the delete doors consume.
+    d.setdefault("elements", []).append({
+        "id": run["id"], "kind": str(run.get("keyType") or "record"),
+        "key": str(run.get("key") or ""), "at": run["at"],
+        "door": str(run.get("door") or ""),
+        "sources": run.get("sources") or [],
+        "markdown": str(run.get("markdown") or "")})
     for s in run.get("sources") or []:
         _dossier_link(d, "source", "run:" + run["id"],
                       s.get("url") or s.get("name") or "",
@@ -26222,10 +26338,14 @@ def dossier_merge(store, keep_id, drop_id):
     for r in store["runs"]:
         if r.get("dossierId") == drop["id"]:
             r["dossierId"] = keep["id"]
-    if drop["markdown"]:
-        keep["markdown"] = (keep["markdown"].rstrip("\n")
-                            + "\n\n" + drop["markdown"].strip()
-                            + "\n").strip() + "\n"
+    # v0.5.9e (#280): the dropped dossier's elements move with
+    # everything else, and the kept document is re-derived
+    # from them — the same join the append order produced.
+    _kept_ids = {e["id"] for e in keep.get("elements") or []}
+    for e in drop.get("elements") or []:
+        if e["id"] not in _kept_ids:
+            keep.setdefault("elements", []).append(e)
+    keep["markdown"] = _dossier_replay_markdown(keep.get("elements"))
     keep["mergedFrom"].append({"id": drop["id"],
                                "title": drop["title"],
                                "at": _dossier_now()})
@@ -26856,6 +26976,25 @@ def dossier_run(store, key_type, value, door, extra=None,
 
 def dossier_payload(store):
     open_d = dossier_get(store, store.get("openId") or "")
+    if open_d is not None:
+        # v0.5.9e (#280): each element of the open dossier
+        # names the cases it has been filed into — by name,
+        # resolved from the manifests — so the dossier view
+        # shows the typed links on the element itself. The
+        # enrichment rides a copy: the store keeps elements
+        # clean of derived data.
+        open_d = json.loads(json.dumps(open_d))
+        try:
+            _map = _finding_element_map()
+            _names = {}
+            for _slug in _case_slugs():
+                _m = _case_manifest(_slug) or {}
+                _names[_slug] = str(_m.get("title") or _slug)
+            for _e in open_d.get("elements") or []:
+                _e["cases"] = [{"slug": s, "name": _names.get(s, s)}
+                               for s in _map.get(_e["id"], [])]
+        except Exception:
+            pass
     return {
         "ok": True,
         "dossiers": [{"id": d["id"], "title": d["title"],
@@ -26863,7 +27002,8 @@ def dossier_payload(store):
                       "updated": d["updated"],
                       "keys": d["keys"],
                       "caseSlug": d.get("caseSlug") or "",
-                      "runs": len(d["runIds"])}
+                      "runs": len(d["runIds"]),
+                      "elements": len(d.get("elements") or [])}
                      for d in store["dossiers"]],
         "open": open_d,
         "runs": list(reversed(store["runs"]))[:60],
@@ -26971,7 +27111,11 @@ def dossier_act(data, via_dhd=False):
                                          "no runs yet)"))
             case_file_entry(detail["slug"], "finding",
                             "Subject dossier — " + d["title"],
-                            body, author="operator")
+                            body, author="operator",
+                            meta_pairs=[("dossier", d["id"]),
+                                        ("elements", ",".join(
+                                            e["id"] for e in
+                                            d.get("elements") or []))])
             _dossier_save(store)
             out = dossier_payload(store)
             out["caseSlug"] = detail["slug"]
@@ -26989,13 +27133,42 @@ def dossier_act(data, via_dhd=False):
                 if r["id"] == str(data.get("runId") or ""):
                     run = r
                     break
+            if str(data.get("runId") or ""):
+                # v0.5.9e (#280): a named run is refused BY
+                # NAME when it cannot be filed — never silently
+                # widened into a whole-dossier filing. The
+                # tombstone check comes FIRST: a deleted
+                # element's run record survives in the history
+                # (history is history), but the element itself
+                # is dead, and a stale copy cannot re-file it.
+                _tombs = (_sync_state_load().get("tombstones")
+                          or {}).get("dossier") or {}
+                if str(data.get("runId")) in _tombs:
+                    out = dossier_payload(store)
+                    out["ok"] = False
+                    out["error"] = ("That element was deleted — "
+                                    "a stale copy cannot re-file "
+                                    "it.")
+                    return out
+                if run is None:
+                    out = dossier_payload(store)
+                    out["ok"] = False
+                    out["error"] = ("No such run on this dossier: "
+                                    + str(data.get("runId")))
+                    return out
             if run is not None:
                 title = ("Dossier element — " + run["keyType"]
                          + ": " + run["key"])
                 body = run["markdown"]
+                meta_pairs = [("element", run["id"]),
+                              ("dossier", d["id"])]
             else:
                 title = "Dossier — " + d["title"]
                 body = d["markdown"] or "(the dossier holds no runs yet)"
+                meta_pairs = [("dossier", d["id"]),
+                              ("elements", ",".join(
+                                  e["id"] for e in
+                                  d.get("elements") or []))]
             body = ("Filed from The Dossier at " + _dossier_now()
                     + " by the operator — an OSINT element of "
                     "dossier '" + d["title"] + "' (" + d["id"]
@@ -27003,7 +27176,8 @@ def dossier_act(data, via_dhd=False):
                     "case. Contents are unverified leads until "
                     "promoted.\n\n" + body)
             filed, err = case_file_entry(slug, "finding", title,
-                                         body, author="operator")
+                                         body, author="operator",
+                                         meta_pairs=meta_pairs)
             if err:
                 out = dossier_payload(store)
                 out["ok"] = False
@@ -27015,6 +27189,32 @@ def dossier_act(data, via_dhd=False):
             _dossier_save(store)
             out = dossier_payload(store)
             out["filed"] = filed
+            return out
+        if action == "delete-element":
+            # v0.5.9e (#280): the element dies in every home —
+            # this store, every case it was filed into, the
+            # Vault formations. The door it was deleted FROM
+            # (dossier / Vault) rides the custody lines.
+            _from = str(data.get("from") or "dossier")
+            if _from not in ("dossier", "vault"):
+                _from = "dossier"
+            result, err = element_delete(
+                str(data.get("elementId") or ""), _from,
+                str(data.get("reason") or ""))
+            if err:
+                out = dossier_payload(store)
+                out["ok"] = False
+                out["error"] = err
+                return out
+            out = dossier_payload(store)
+            out["deleted"] = result
+            if result["unmatched"]:
+                out["ok"] = False
+                out["error"] = (
+                    "Deleted from the dossier, but the filed "
+                    "copy in " + ", ".join(result["unmatched"])
+                    + " no longer matches the element and "
+                    "still stands — delete it from that case.")
             return out
         return dossier_payload(store)
 
@@ -27103,6 +27303,371 @@ def dossier_chat_reply(last):
             + d["title"] + "'): keys tried: " + keys
             + ". The run is in The Dossier's history "
             "(Apex | Apps → The Dossier).")
+
+
+# -- Element deletion (v0.5.9e, #280) -----------------------------
+# One element, one life across every home (OPERATOR RULED
+# 2026-11-17: propagation is global, incl. the Vault). The
+# homes: the dossier store; every case the element was filed
+# into (as a finding — singly, by the element door, or inside
+# a whole-dossier filing whose frontmatter names the elements
+# it carries); the Vault formations, which are DERIVED from
+# the first two and re-form without it. Deleting through ANY
+# door — the dossier view, a case view, the Vault view, a
+# chat instruction, or a sync tombstone arriving from another
+# seat — removes it from all of them. The deletion itself is
+# a tombstone FACT on the element's identity (kind "dossier"
+# in the sync tombstone store): seats converge on the
+# absence, and a stale copy can never re-file what was
+# deleted. When a case loses an element, the case's custody
+# record (custody.md in the case folder — it rides Sync with
+# the folder and is never formed into the case document)
+# gains a line naming the element, when, and deleted-from-
+# where; the formed document carries no residue (#266).
+
+def _case_slugs():
+    root = os.path.join(VAULT_DIR, "cases")
+    out = []
+    if os.path.isdir(root):
+        for slug in sorted(os.listdir(root)):
+            if os.path.isdir(os.path.join(root, slug)) \
+                    and _case_manifest(slug) is not None:
+                out.append(slug)
+    return out
+
+
+def _finding_element_map():
+    """{element_id: [case slugs]} — every case whose findings
+    carry the element, singly (frontmatter "element") or
+    inside a whole-dossier filing (frontmatter "elements")."""
+    out = {}
+    for slug in _case_slugs():
+        d = _case_dir(slug)
+        fdir = os.path.join(d, "findings") if d else ""
+        if not fdir or not os.path.isdir(fdir):
+            continue
+        for name in sorted(os.listdir(fdir)):
+            if not name.lower().endswith(".md"):
+                continue
+            try:
+                with open(os.path.join(fdir, name),
+                          encoding="utf-8") as f:
+                    meta, _body = _fm_parse(f.read())
+            except Exception:
+                continue
+            ids = []
+            if meta.get("element"):
+                ids.append(str(meta["element"]))
+            for part in str(meta.get("elements") or "").split(","):
+                part = part.strip()
+                if part:
+                    ids.append(part)
+            for eid in ids:
+                out.setdefault(eid, [])
+                if slug not in out[eid]:
+                    out[eid].append(slug)
+    return out
+
+
+def _case_custody_append(slug, title, lines):
+    d = _case_dir(slug)
+    if not d:
+        return
+    meta = _case_manifest(slug) or {}
+    path = os.path.join(d, "custody.md")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        text = "# Custody — " + str(meta.get("title") or slug) + "\n"
+    entry = ("\n## " + _dossier_now() + " — " + title + "\n\n"
+             + "\n".join("- " + ln for ln in lines) + "\n")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.rstrip("\n") + "\n" + entry)
+    except Exception:
+        pass
+    sync_note_write("case")
+
+
+def _element_from_label(from_door, from_slug, slug):
+    if from_door == "dossier":
+        return "the dossier"
+    if from_door == "vault":
+        return "the Vault"
+    if from_door == "sync":
+        return "another seat (sync)"
+    if from_door == "case":
+        return "this case" if slug == from_slug else "another case"
+    return str(from_door)
+
+
+def _case_purge_element(slug, element_id, section, from_door,
+                        from_slug, reason, label):
+    """Remove one element from one case: its single-element
+    findings are deleted, its section is cut from any
+    whole-dossier filing that carries it, the custody record
+    gains the removal line, and the case re-forms. Returns
+    {removed, rewritten, unmatched, vaultTombstones}."""
+    out = {"removed": 0, "rewritten": 0, "unmatched": False,
+           "vaultTombstones": []}
+    d = _case_dir(slug)
+    fdir = os.path.join(d, "findings") if d else ""
+    if not fdir or not os.path.isdir(fdir):
+        return out
+    sec = str(section or "").strip()
+    touched = False
+    for name in sorted(os.listdir(fdir)):
+        if not name.lower().endswith(".md"):
+            continue
+        full = os.path.join(fdir, name)
+        try:
+            with open(full, encoding="utf-8") as f:
+                text = f.read()
+        except Exception:
+            continue
+        meta, body = _fm_parse(text)
+        single = str(meta.get("element") or "") == element_id
+        listed = [p.strip() for p in
+                  str(meta.get("elements") or "").split(",")
+                  if p.strip()]
+        if single or listed == [element_id]:
+            try:
+                os.remove(full)
+            except Exception:
+                continue
+            rel = "cases/" + slug + "/findings/" + name
+            sync_record_tombstone("vault", rel)
+            out["vaultTombstones"].append(rel)
+            out["removed"] += 1
+            touched = True
+        elif element_id in listed:
+            if sec and ("\n\n" + sec) in body:
+                new_body = body.replace("\n\n" + sec, "", 1)
+            elif sec and (sec + "\n\n") in body:
+                new_body = body.replace(sec + "\n\n", "", 1)
+            else:
+                # The filed copy no longer matches the element
+                # (a hand edit in the folder, most likely): the
+                # element still stands in this case, and the
+                # caller names it — never a silent half-delete.
+                out["unmatched"] = True
+                continue
+            meta["elements"] = ",".join(
+                p for p in listed if p != element_id)
+            try:
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(_fm_render(list(meta.items()), new_body))
+            except Exception:
+                out["unmatched"] = True
+                continue
+            out["rewritten"] += 1
+            touched = True
+    if touched:
+        lines = ["element: " + element_id + " (" + label + ")",
+                 "deleted from: " + _element_from_label(
+                     from_door, from_slug, slug)]
+        if reason:
+            lines.append("reason: " + reason)
+        _case_custody_append(slug, "Element removed — " + label,
+                             lines)
+        try:
+            case_ensure_formed(slug)
+        except Exception:
+            pass
+    return out
+
+
+def element_delete(element_id, from_door, reason="",
+                   from_slug="", record_tombstone=True):
+    """The one deletion funnel, every door. Assumes
+    DOSSIER_LOCK is held by the caller. Returns
+    (result, None) or (None, named error)."""
+    element_id = str(element_id or "")
+    reason = str(reason or "").strip()
+    store = _dossier_store()
+    d = None
+    el = None
+    for cand in store["dossiers"]:
+        for e in cand.get("elements") or []:
+            if e["id"] == element_id:
+                d, el = cand, e
+                break
+        if d is not None:
+            break
+    if d is None:
+        tombs = (_sync_state_load().get("tombstones")
+                 or {}).get("dossier") or {}
+        if element_id in tombs:
+            return None, ("That element was already deleted — "
+                          "its tombstone stands, and a stale "
+                          "copy cannot bring it back.")
+        return None, "No such element: " + (element_id or "(none)")
+    label = dossier_element_label(el)
+    section = str(el.get("markdown") or "")
+    homes = _finding_element_map().get(element_id, [])
+    d["elements"] = [e for e in d.get("elements") or []
+                     if e["id"] != element_id]
+    d["markdown"] = _dossier_replay_markdown(d["elements"])
+    d["updated"] = _dossier_now()
+    _dossier_link(d, "removal", "element:" + element_id,
+                  "dossier:" + d["id"],
+                  "element removed — " + label + " (deleted from "
+                  "the " + str(from_door) + " door"
+                  + (("; reason: " + reason) if reason else "")
+                  + ")")
+    store["runs"].append({
+        "id": _dossier_id("removal"), "dossierId": d["id"],
+        "keyType": "removal", "key": label,
+        "door": str(from_door), "at": _dossier_now(),
+        "summary": "Element removed — " + label
+                   + " — deleted from the " + str(from_door)
+                   + " door" + (("; reason: " + reason)
+                                 if reason else ""),
+        "sources": [], "markdown": ""})
+    store["runs"] = store["runs"][-DOSSIER_RUN_CAP:]
+    _dossier_save(store)
+    result = {"element": element_id, "label": label,
+              "dossier": d["title"], "casesCleaned": [],
+              "findingsRemoved": 0, "sectionsRemoved": 0,
+              "unmatched": [], "vaultTombstones": []}
+    for slug in homes:
+        purged = _case_purge_element(
+            slug, element_id, section, from_door, from_slug,
+            reason, label)
+        if purged["removed"] or purged["rewritten"]:
+            result["casesCleaned"].append(slug)
+        result["findingsRemoved"] += purged["removed"]
+        result["sectionsRemoved"] += purged["rewritten"]
+        result["vaultTombstones"].extend(purged["vaultTombstones"])
+        if purged["unmatched"]:
+            result["unmatched"].append(slug)
+    if record_tombstone:
+        sync_record_tombstone("dossier", element_id)
+    return result, None
+
+
+def case_delete_finding(slug, fname, reason=""):
+    """The case door (v0.5.9e, #280): delete one finding from
+    a case. A finding carrying a dossier element routes to
+    the global element delete — the element dies in every
+    home, this case included. Any other finding (including a
+    whole-dossier filing, which is a filing, not an element)
+    is removed from this case alone, with the removal on the
+    case's custody record. Assumes DOSSIER_LOCK is held."""
+    reason = str(reason or "").strip()
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    fname = os.path.basename(str(fname or ""))
+    full = os.path.join(d, "findings", fname)
+    if not fname or not os.path.isfile(full):
+        return None, "No such finding in this case."
+    try:
+        with open(full, encoding="utf-8") as f:
+            meta, _body = _fm_parse(f.read())
+    except Exception:
+        return None, "The finding could not be read."
+    if meta.get("element"):
+        return element_delete(str(meta["element"]), "case",
+                              reason, from_slug=slug)
+    title = str(meta.get("title") or fname)
+    try:
+        os.remove(full)
+    except Exception:
+        return None, "The finding could not be removed."
+    rel = "cases/" + slug + "/findings/" + fname
+    sync_record_tombstone("vault", rel)
+    lines = ["finding: " + fname + " (" + title + ")",
+             "deleted from: this case"]
+    if reason:
+        lines.append("reason: " + reason)
+    _case_custody_append(slug, "Finding removed — " + title, lines)
+    try:
+        case_ensure_formed(slug)
+    except Exception:
+        pass
+    sync_note_write("case")
+    return {"finding": fname, "title": title, "local": True,
+            "casesCleaned": [slug], "findingsRemoved": 1}, None
+
+
+def dossier_delete_chat_reply(last):
+    """The conversational delete door (v0.5.9e, #280 — the
+    intent doctrine): "delete the dossier element <name>"
+    acts through the bridge on the OPEN dossier, receipted
+    from what the bridge actually did. Navi never deletes
+    unbidden — this route fires only on the operator's named
+    instruction, and an instruction that names nothing the
+    dossier holds is refused by name. Returns None when the
+    words are not a delete instruction."""
+    text = (last or "").strip()
+    m = re.match(r"(?i)(?:please\s+)?(?:delete|drop|remove)\s+"
+                 r"(?:the\s+)?(?:dossier\s+)?element\s+(.+)$", text)
+    if not m:
+        return None
+    ask = m.group(1).strip().rstrip(".! ")
+    with DOSSIER_LOCK:
+        store = _dossier_store()
+        d = dossier_get(store, store.get("openId") or "")
+        if d is None:
+            return ("No dossier is open — open one in The "
+                    "Dossier first, then name the element.")
+        elements = d.get("elements") or []
+        if not elements:
+            return ("No element on the open dossier ('" + d["title"]
+                    + "') matches '" + ask + "' — nothing was "
+                    "deleted. It holds no elements to delete.")
+        low = ask.lower()
+        hit = None
+        for e in elements:
+            if e["id"] == ask:
+                hit = e
+                break
+        if hit is None:
+            for e in elements:
+                label = dossier_element_label(e).lower()
+                if low in (label, str(e.get("key") or "").lower(),
+                           str(e.get("kind") or "").lower() + " "
+                           + str(e.get("key") or "").lower()):
+                    hit = e
+                    break
+        if hit is None:
+            cands = [e for e in elements
+                     if low and low in dossier_element_label(e).lower()]
+            if len(cands) == 1:
+                hit = cands[0]
+            elif len(cands) > 1:
+                return ("More than one element matches '" + ask
+                        + "': " + "; ".join(
+                            dossier_element_label(e) + " (" + e["id"]
+                            + ")" for e in cands)
+                        + ". Name the one you mean by its id.")
+        if hit is None:
+            return ("No element named '" + ask + "' stands in "
+                    "the open dossier ('" + d["title"]
+                    + "'). Its elements: " + "; ".join(
+                        dossier_element_label(e)
+                        for e in elements) + ".")
+        result, err = element_delete(hit["id"], "navi")
+        if err:
+            return err
+    homes = ["the dossier '" + result["dossier"] + "'"]
+    if result["casesCleaned"]:
+        homes.append(str(len(result["casesCleaned"]))
+                     + " case(s): "
+                     + ", ".join(result["casesCleaned"]))
+    homes.append("the Vault formations")
+    out = ("Deleted element " + result["label"] + " ("
+           + result["element"] + ") — removed from "
+           + ", ".join(homes) + ". The removal is on the "
+           "dossier's history and each case's custody record.")
+    if result["unmatched"]:
+        out += (" Named failure: the filed copy in "
+                + ", ".join(result["unmatched"])
+                + " no longer matches the element and still "
+                "stands — delete it from that case.")
+    return out
 
 
 # --- Case registers (v0.3.0e Build 2, #199 — prep Part 2) -------
@@ -27385,6 +27950,35 @@ def case_detail_payload(slug):
     _evidence_register_sync(slug)
     detail = _case_head(slug, meta)
     detail["findings"] = _case_findings(slug)
+    # v0.5.9e (#280): a finding carrying a dossier element
+    # names its homes, so the delete confirm in the case view
+    # shows the blast radius before it fires — the dossier it
+    # lives in and every case it stands in. A whole-dossier
+    # filing names the labels of the elements it carries.
+    _el_findings = [f for f in detail["findings"]
+                    if f.get("element") or f.get("elements")]
+    if _el_findings:
+        try:
+            _dz = _dossier_store()
+            _by_id = {}
+            for _d in _dz["dossiers"]:
+                for _e in _d.get("elements") or []:
+                    _by_id[_e["id"]] = (_d, _e)
+            _map = _finding_element_map()
+            for _f in _el_findings:
+                if _f.get("element"):
+                    _hit = _by_id.get(_f["element"])
+                    _f["homes"] = {
+                        "dossier": (_hit[0]["title"] if _hit
+                                    else None),
+                        "cases": _map.get(_f["element"], [])}
+                if _f.get("elements"):
+                    _f["elementLabels"] = {
+                        _eid: (dossier_element_label(_by_id[_eid][1])
+                               if _eid in _by_id else _eid)
+                        for _eid in _f["elements"]}
+        except Exception:
+            pass
     detail["evidence"] = _case_evidence(slug)
     detail["timeline"] = _case_timeline(slug)
     detail["entities"] = _case_register(slug, "entities")
@@ -27500,7 +28094,7 @@ def case_update(slug, fields):
     return case_detail_payload(slug), None
 
 
-def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator", state=None):
+def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator", state=None, meta_pairs=None):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
@@ -27541,12 +28135,20 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
         fstate = str(state or "").lower()
         if fstate not in ("lead", "confirmed"):
             fstate = "lead" if author == "navi" else "confirmed"
-        content = _fm_render([
+        pairs = [
             ("title", title), ("severity", sev),
             ("internal", "yes" if internal else "no"), ("filed", now),
             ("author", "navi" if author == "navi" else "operator"),
             ("state", fstate),
-        ], "# " + title + "\n\n" + body.strip() + "\n")
+        ]
+        # v0.5.9e (#280): identity stamps ride along when the
+        # caller files something with a life beyond this case —
+        # a dossier element ("element" + "dossier"), or a
+        # whole-dossier filing naming every element it carries
+        # ("elements") — so a later delete can find its homes.
+        for k, v in (meta_pairs or []):
+            pairs.append((str(k), str(v)))
+        content = _fm_render(pairs, "# " + title + "\n\n" + body.strip() + "\n")
     target_dir = os.path.join(d, sub)
     os.makedirs(target_dir, exist_ok=True)
     full = os.path.join(target_dir, fname)
@@ -27911,7 +28513,8 @@ def case_review(slug, register, key, action):
         if action == "promote":
             meta["state"] = "confirmed"
             pairs = [(k, meta[k]) for k in
-                     ("title", "severity", "internal", "filed", "author", "state")
+                     ("title", "severity", "internal", "filed", "author", "state",
+                      "element", "dossier", "elements")
                      if k in meta]
             with open(full, "w", encoding="utf-8") as f:
                 f.write(_fm_render(pairs, body))
@@ -32290,9 +32893,14 @@ class Handler(BaseHTTPRequestHandler):
             # the second door to the same room (#241 pattern).
             _dzreply = None
             try:
-                _dzreply = dossier_chat_reply(last or "")
+                _dzreply = dossier_delete_chat_reply(last or "")
             except Exception:
                 _dzreply = None
+            if not _dzreply:
+                try:
+                    _dzreply = dossier_chat_reply(last or "")
+                except Exception:
+                    _dzreply = None
             if _dzreply:
                 payload = {
                     "reply": _dzreply,
@@ -33737,6 +34345,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "filed": filed})
+        elif self.path == "/api/cases/delete-finding":
+            # v0.5.9e (#280): the case door for element/finding
+            # deletion. A finding carrying a dossier element
+            # routes to the global delete (every home); any
+            # other finding is removed from this case alone.
+            # Either way the case's custody record gains the
+            # line and the response carries the fresh detail.
+            data = self._body()
+            with DOSSIER_LOCK:
+                _res, _err = case_delete_finding(
+                    str(data.get("case") or ""),
+                    str(data.get("file") or ""),
+                    str(data.get("reason") or ""))
+            if _err:
+                self._send(200, {"ok": False, "error": _err})
+            else:
+                self._send(200, {"ok": True, "deleted": _res,
+                                 "case": case_detail_payload(
+                                     str(data.get("case") or ""))})
         elif self.path == "/api/cases/file-reply":
             # v0.5.2e (#261, leg 1): the deterministic filing
             # door — one of Navi's replies in a case chat, filed
