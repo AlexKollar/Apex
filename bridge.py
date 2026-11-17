@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.3"
+SHIPPED_VERSION = "0.5.4"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-16.19"
+BRIDGE_BUILD = "2026-11-16.20"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 19
+SHIPPED_BUILD_SEQ = 20
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -6545,6 +6545,25 @@ def mesh_handle_roster(handler, body):
 # signed roster — no roster entry, no room, reading or writing;
 # there is no guest mode.
 #
+# v0.5.4e (#267 amendment, the operator's ruling 2026-11-16):
+# the room is between USERS, so the DISPLAY name is the
+# operator name from the operator card (the #256 operator
+# class — one synced, stamped value, so every seat of an
+# operator agrees). It reaches the room as a signed PRESENCE
+# line (kind "presence", body = the name): an ordinary chained
+# log line, posted by a node before its first line under a
+# name and again when the name changes — the rename rides the
+# next exchange like any line, and the latest presence line
+# per author is that author's name in the room. The node name
+# + roster number stay underneath as the signing/routing
+# identity and the /navi -<user> address; resolution and
+# completion match operator names too (the source grows,
+# never swaps). Navi's answers present as
+# "Navi(<operator name>): <reply>" (page-side grammar; the
+# log line is unchanged). Presence lines are room facts, not
+# speech: the payload seats them out of the message list, and
+# they never raise a tray record (below).
+#
 # Sync is gossip-converge on the sync exchange's pattern: any
 # two members compare have-lists and pull what they are
 # missing, in ONE two-way request; any member can carry any
@@ -6699,16 +6718,83 @@ def fedichat_chain_check(msgs):
     return {"ok": True, "at": "", "reason": ""}
 
 
+def fedichat_operator_name(cfg):
+    # This node's operator name — the operator card's name,
+    # the #256 operator class's synced single value (the
+    # bridge's config follows the converged name). "" when
+    # the operator has not named themselves yet.
+    return str((cfg or {}).get("operator_name") or "").strip()
+
+
+def _fedichat_op_names(msgs):
+    # The room's presence state as a log holds it: author
+    # node id -> the operator name from that author's LATEST
+    # presence line. Presence lines are signed like every
+    # line, so a name in the room is bound to its author's
+    # key — nobody wears another member's name.
+    out = {}
+    for m in (msgs or []):
+        if m.get("kind") == "presence":
+            name = str(m.get("body") or "").strip()
+            if name:
+                out[str(m.get("author") or "")] = name
+    return out
+
+
+def _fedichat_ensure_presence(cfg, fed, msgs):
+    # Before this node speaks (a post, or Navi's answer), its
+    # current operator name must stand in the log: if the
+    # name is set and differs from this node's latest
+    # presence line, a presence line is appended — signed,
+    # chained, converged like any line. Returns the log as
+    # it now stands (the caller's next line chains on it).
+    # An unnamed operator posts no presence and presents by
+    # node name, exactly as phase 1 did.
+    name = fedichat_operator_name(cfg)
+    if not name:
+        return msgs
+    ms = mesh_settings(cfg)
+    own = mesh_node_id() or ms["nodeId"]
+    if _fedichat_op_names(msgs).get(own) == name:
+        return msgs
+    member = _fed_member(fed, own)
+    if member is None:
+        return msgs
+    msg = {
+        "fed": fed["id"],
+        "prev": str(msgs[-1].get("id") or "") if msgs else "",
+        "author": own,
+        "authorName": str(member.get("name") or ms["nodeName"] or own[:12]),
+        "n": int(member.get("n") or 0),
+        "kind": "presence", "body": name,
+        "ts": int(time.time()),
+        "replyTo": "", "target": "",
+    }
+    msg["id"] = _fedichat_id(msg)
+    msg["sig"] = mesh_sign(_fedichat_canonical(msg))
+    _fedichat_log_append(fed["id"], msg)
+    return list(msgs) + [msg]
+
+
 def _fedichat_resolve_member(fed, ref):
     # A -<user> reference against the roster: a roster number,
     # a single-word node name, or the longest node name the
     # reference starts with (node names carry spaces — "Member
-    # One" completes whole). Returns (member, rest) or
-    # (None, ref).
+    # One" completes whole). Since v0.5.4e the OPERATOR names
+    # the room holds (presence) resolve too, on the same
+    # longest-prefix terms — the address book grows, it never
+    # swaps: node names and roster numbers keep working.
+    # Returns (member, rest) or (None, ref).
     members = [m for m in _fed_roster_members(fed) if isinstance(m, dict)]
+    op_names = _fedichat_op_names(fedichat_log_read(fed["id"]))
     low = str(ref or "").lower()
-    for m in sorted(members, key=lambda x: -len(str(x.get("name") or ""))):
-        name = str(m.get("name") or "")
+    named = []
+    for m in members:
+        named.append((str(m.get("name") or ""), m))
+        op = op_names.get(str(m.get("nodeId") or ""))
+        if op:
+            named.append((op, m))
+    for name, m in sorted(named, key=lambda x: -len(x[0])):
         if name and low.startswith(name.lower()):
             tail = str(ref)[len(name):]
             if tail == "" or tail.startswith(" "):
@@ -6716,6 +6802,7 @@ def _fedichat_resolve_member(fed, ref):
     first, _sep, rest = str(ref or "").partition(" ")
     for m in members:
         if str(m.get("name") or "").lower() == first.lower() \
+                or op_names.get(str(m.get("nodeId") or ""), "").lower() == first.lower() \
                 or (first.isdigit() and int(first) == int(m.get("n") or 0)):
             return m, rest.strip()
     return None, str(ref or "")
@@ -6763,6 +6850,7 @@ def fedichat_post(cfg, fed_id, body):
         if not payload:
             return None, "A question needs words — /navi on its own asks nothing."
     msgs = fedichat_log_current(cfg, fed["id"])
+    msgs = _fedichat_ensure_presence(cfg, fed, msgs)
     msg = {
         "fed": fed["id"],
         "prev": str(msgs[-1].get("id") or "") if msgs else "",
@@ -6800,7 +6888,7 @@ def _fedichat_refusal_reason(fed, msg, members, per_author):
             return "it is missing its " + k + " — refused as malformed"
     if str(msg.get("fed") or "") != fed["id"]:
         return "it belongs to a different room — refused"
-    if str(msg.get("kind") or "") not in ("msg", "me", "navi-q", "navi-a"):
+    if str(msg.get("kind") or "") not in ("msg", "me", "navi-q", "navi-a", "presence"):
         return "its kind is not a room kind — refused as malformed"
     if not isinstance(msg.get("body"), str) or len(str(msg.get("body"))) > FEDICHAT_BODY_CAP:
         return "its body is over the room's cap — refused"
@@ -6820,6 +6908,69 @@ def _fedichat_refusal_reason(fed, msg, members, per_author):
     return ""
 
 
+FEDICHAT_ARRIVALS_PATH = os.path.join(ROOT, "config", "fedichat-arrivals.json")
+FEDICHAT_ARRIVALS_CAP = 32
+
+
+def _fedichat_arrivals_load():
+    try:
+        with open(FEDICHAT_ARRIVALS_PATH) as f:
+            data = json.load(f)
+        rounds = data.get("rounds") if isinstance(data, dict) else None
+        if isinstance(rounds, list):
+            return [r for r in rounds if isinstance(r, dict) and r.get("id")]
+    except Exception:
+        pass
+    return []
+
+
+def _fedichat_arrivals_save(rounds):
+    try:
+        os.makedirs(os.path.dirname(FEDICHAT_ARRIVALS_PATH), exist_ok=True)
+        tmp = FEDICHAT_ARRIVALS_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"rounds": rounds[-FEDICHAT_ARRIVALS_CAP:]}, f, indent=2)
+        os.replace(tmp, FEDICHAT_ARRIVALS_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def _fedichat_journal_arrival(cfg, fed, accepted_msgs):
+    # One arrival round, journaled for the tray (#242's
+    # producer (f) speaks for this journal): the lines a merge
+    # just landed that this node did NOT author and that are
+    # speech. Presence lines are room facts, not arrivals; the
+    # node's own lines never notify it of itself (a carrier
+    # can hand a node its own pruned words back — accepted,
+    # and silent). One merge = one round = one tray record,
+    # however many lines rode it.
+    try:
+        ms = mesh_settings(cfg)
+        own = mesh_node_id() or ms["nodeId"]
+        fresh = [m for m in (accepted_msgs or [])
+                 if str(m.get("author") or "") != own
+                 and m.get("kind") in ("msg", "me", "navi-q", "navi-a")]
+        if not fresh:
+            return
+        rounds = _fedichat_arrivals_load()
+        seq = 1 + max([int(r.get("seq") or 0) for r in rounds] + [0])
+        rounds.append({
+            "id": "fedichat:" + fed["id"] + ":" + str(seq),
+            "seq": seq, "fed": fed["id"],
+            "room": _fedichat_room_name(fed),
+            "count": len(fresh),
+            "authors": [str(m.get("author") or "") for m in fresh],
+            "names": [str(m.get("authorName") or "") for m in fresh],
+            "firstBody": str(fresh[0].get("body") or "")[:200]
+                         if len(fresh) == 1 else "",
+            "at": int(time.time()),
+        })
+        _fedichat_arrivals_save(rounds)
+    except Exception:
+        pass
+
+
 def fedichat_merge(cfg, fed, offered):
     # Converge offered messages into the local log. Returns
     # {accepted: [ids], refusals: [{id, reason}]} — every
@@ -6833,6 +6984,7 @@ def fedichat_merge(cfg, fed, offered):
                for m in _fed_roster_members(fed) if isinstance(m, dict)}
     per_author = {}
     accepted, refusals = [], []
+    accepted_msgs = []
     pending = [m for m in (offered or []) if isinstance(m, dict)]
     progress = True
     while pending and progress:
@@ -6853,6 +7005,7 @@ def fedichat_merge(cfg, fed, offered):
                 _fedichat_log_append(fed["id"], msg)
                 known.add(mid)
                 accepted.append(mid)
+                accepted_msgs.append(msg)
                 per_author[str(msg.get("author") or "")] = \
                     per_author.get(str(msg.get("author") or ""), 0) + 1
             pending.remove(msg)
@@ -6860,6 +7013,8 @@ def fedichat_merge(cfg, fed, offered):
     for msg in pending:
         refusals.append({"id": str(msg.get("id") or ""),
                          "reason": "its chain parent is not held here — named, not healed; it lands when the parent arrives"})
+    if accepted_msgs:
+        _fedichat_journal_arrival(cfg, fed, accepted_msgs)
     return {"accepted": accepted, "refusals": refusals}
 
 
@@ -7099,15 +7254,20 @@ def fedichat_navi_serve(cfg, fed):
     live = cfg.get("live") if isinstance(cfg.get("live"), dict) else {}
     endpoint = str(live.get("llamafile_endpoint") or "http://127.0.0.1:8080")
     model = str(live.get("model_name") or "navi")
+    op_names = _fedichat_op_names(msgs)
     recent = []
     for m in msgs[-12:]:
-        who = str(m.get("authorName") or "?")
+        if m.get("kind") == "presence":
+            continue
+        who = op_names.get(str(m.get("author") or "")) \
+            or str(m.get("authorName") or "?")
         if m.get("kind") == "navi-a":
             who = "Navi (" + who + ")"
         recent.append(who + ": " + str(m.get("body") or ""))
     prompt = ("Room " + _fedichat_room_name(fed) + ", fedinet \"" + str(fed.get("name") or "")
               + "\". Recent lines:\n" + "\n".join(recent)
-              + "\n\n" + str(q.get("authorName") or "A member") + " asks you: "
+              + "\n\n" + (op_names.get(str(q.get("author") or ""))
+                          or str(q.get("authorName") or "A member")) + " asks you: "
               + str(q.get("body") or ""))
     try:
         reply = llamafile_chat(
@@ -7118,6 +7278,7 @@ def fedichat_navi_serve(cfg, fed):
     reply = str(reply or "").strip()
     if not reply:
         return {"answered": 0, "deferred": "the model did not answer"}
+    msgs = _fedichat_ensure_presence(cfg, fed, msgs)
     member = _fed_member(fed, own)
     msg = {
         "fed": fed["id"],
@@ -7150,6 +7311,7 @@ def fedichat_payload(cfg, via_dhd=False):
         if _fed_member(fed, own) is None:
             continue
         msgs = fedichat_log_current(cfg, fed["id"])
+        op_names = _fedichat_op_names(msgs)
         members = []
         for m in _fed_roster_members(fed):
             if not isinstance(m, dict):
@@ -7157,6 +7319,7 @@ def fedichat_payload(cfg, via_dhd=False):
             members.append({"n": int(m.get("n") or 0),
                             "nodeId": str(m.get("nodeId") or ""),
                             "name": str(m.get("name") or ""),
+                            "opName": op_names.get(str(m.get("nodeId") or ""), ""),
                             "self": str(m.get("nodeId") or "") == own})
         notes = _FEDICHAT_NOTES.get(fed["id"]) or {}
         rooms.append({
@@ -7168,10 +7331,11 @@ def fedichat_payload(cfg, via_dhd=False):
                 "body": str(m.get("body") or ""), "ts": int(m.get("ts") or 0),
                 "author": str(m.get("author") or ""),
                 "authorName": str(m.get("authorName") or ""),
+                "opName": op_names.get(str(m.get("author") or ""), ""),
                 "n": int(m.get("n") or 0),
                 "self": str(m.get("author") or "") == own,
                 "replyTo": str(m.get("replyTo") or ""),
-            } for m in msgs[-300:]],
+            } for m in msgs[-300:] if m.get("kind") != "presence"],
             "held": len(msgs),
             "chain": fedichat_chain_check(msgs),
             "syncNotes": notes.get("lines") or [],
@@ -26938,10 +27102,16 @@ def badge_sync_dismiss(op_id):
 # exception, ruled in v0.4.10e (#254): a sync that materially
 # changed things — a fold, a pairing repair, a tombstone honored —
 # is an act, and producer (e) below speaks for exactly those.
+# A second ruled addition, v0.5.4e (#267): FediChat arrivals —
+# lines that LAND in a room from other members are an act the
+# operator waits on without knowing it, so producer (f) speaks
+# for the bridge's arrival journal: one record per arrival
+# round, naming the room. The operator's own lines never
+# journal, so they never notify.
 #
 # A record: {id, kind, title, body, target, created, read,
 # announced, count}. Reconcile computes the WANTED set from the
-# four producers and folds it into the store: a wanted id with no
+# producers and folds it into the store: a wanted id with no
 # record is born (and announced); a record still wanted is
 # refreshed in place — and if its count grew, it goes unread
 # again, because new material needs eyes; a record no longer
@@ -27175,6 +27345,63 @@ def _notif_wanted_sync():
     }]
 
 
+def _notif_wanted_fedichat(cfg):
+    # Producer (f) (v0.5.4e, #267): FediChat arrivals. The
+    # bridge journals one entry per arrival round at merge
+    # time (_fedichat_journal_arrival); this producer speaks
+    # for the journal — one record per round, naming the
+    # room, its count the round's line count. A single-line
+    # round names its author (operator name where the room
+    # holds one, the journaled node name otherwise) and
+    # carries the line itself. Rounds retire as the journal's
+    # cap ages them out; read state is the tray's own.
+    items = []
+    rounds = _fedichat_arrivals_load()
+    if not rounds:
+        return items
+    feds = {str(f.get("id") or ""): f for f in federation_settings(cfg)}
+    op_cache = {}
+    for r in rounds:
+        fed_id = str(r.get("fed") or "")
+        room = str(r.get("room") or "#fedichat")
+        count = r.get("count") if isinstance(r.get("count"), int) else 1
+        authors = [str(a or "") for a in (r.get("authors") or [])]
+        names = [str(n or "") for n in (r.get("names") or [])]
+        if fed_id not in op_cache:
+            fed = feds.get(fed_id)
+            op_cache[fed_id] = _fedichat_op_names(
+                fedichat_log_read(fed_id)) if fed is not None else {}
+        op_names = op_cache[fed_id]
+
+        def display(i):
+            if i < len(authors) and op_names.get(authors[i]):
+                return op_names[authors[i]]
+            if i < len(names) and names[i]:
+                return names[i]
+            return "A member"
+        if count == 1:
+            title = "New line in " + room
+            body = display(0) + ": " + str(r.get("firstBody") or "")
+        else:
+            title = "New lines in " + room
+            seen = []
+            for i in range(len(authors)):
+                d = display(i)
+                if d not in seen:
+                    seen.append(d)
+            body = ("From " + ", ".join(seen[:3])
+                    + (" and others" if len(seen) > 3 else "") + ".")
+        items.append({
+            "id": str(r.get("id") or ""),
+            "kind": "fedichat",
+            "title": title,
+            "body": body,
+            "target": {"view": "FediChat", "fedinetId": fed_id},
+            "count": count,
+        })
+    return items
+
+
 def _notif_announce_line(rec):
     # Navi's line, composed FROM THE RECORD (deterministic
     # templates per kind — no model call): her voice, warm and
@@ -27186,6 +27413,7 @@ def _notif_announce_line(rec):
         "case-review": "Case Files — ",
         "update": "Good news — ",
         "sync": "Sync — ",
+        "fedichat": "FediChat — ",
     }.get(rec.get("kind"), "A word — ")
     line = framing + str(rec.get("title") or "") + ": " + str(rec.get("body") or "")
     if rec.get("kind") == "fed-knock":
@@ -27259,6 +27487,7 @@ def notifications_reconcile(cfg=None):
             ("case-review", lambda: _notif_wanted_case_reviews()),
             ("update", lambda: _notif_wanted_update()),
             ("sync", lambda: _notif_wanted_sync()),
+            ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
         )
         for kind, produce in producers:
             try:
