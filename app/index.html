@@ -910,6 +910,14 @@
   .md-t th { color:var(--text); background:var(--panel2); }
   .md-ul { margin:4px 0 8px; padding-left:20px; }
   .md-h { color:var(--text); margin:10px 0 4px; font-size:15px; letter-spacing:.02em; text-transform:none; }
+  .md-img { max-width:100%; height:auto; display:block; border-radius:8px; margin:6px 0; }
+  .fc-wrap { display:flex; gap:12px; align-items:flex-start; }
+  .fc-main { flex:1 1 auto; min-width:0; }
+  .fc-members { flex:0 0 220px; }
+  .fc-line { padding:3px 0; border-bottom:1px solid rgba(127,127,127,.08); }
+  .fc-complete { margin-top:8px; }
+  .fc-complete:empty { display:none; }
+  @media (max-width: 800px) { .fc-wrap { flex-direction:column; } .fc-members { flex:1 1 auto; width:100%; } }
   .md-q { border-left:3px solid var(--cy); margin:6px 0; padding:2px 10px; color:var(--dim); }
   .md a { color:var(--cy); }
   /* Voice: the call panel's live wave (bars rise while she listens
@@ -1643,7 +1651,7 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federati
 // are one work surface now. Nav placement only: the Vault's
 // view, route and behavior are exactly as #134/#135 left them.
 var NAV_GROUPS = {
-  network: { label: "Apex | Network", children: [["Federation", "Federation"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
+  network: { label: "Apex | Network", children: [["Federation", "Federation"], ["FediChat", "FediChat"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
   navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   // Build 9: the Threat Intelligence section wears a new display
   // name — The Wire — and the CTF Board's separate menu entry is
@@ -2062,8 +2070,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.18";
-var SHIPPED_BUILD_SEQ = 18;
+var BRIDGE_BUILD = "2026-11-16.19";
+var SHIPPED_BUILD_SEQ = 19;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2578,7 +2586,7 @@ var DOC_GROUPS = [
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "fedichat", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -4123,7 +4131,7 @@ function caseFilesHtml() {
     h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-f-add' style='min-height:44px'>File the finding</button>" + (lastChatExec ? " <button class='ghost' id='cf-file-exec' style='min-height:44px'>File the latest chat output as a finding</button>" : "") + "</div>";
     if (!d.findings.length) h += "<p style='color:var(--dim)'>No findings yet.</p>";
     d.findings.forEach(function (f) {
-      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div style='margin-top:4px;white-space:pre-wrap'>" + esc(f.body) + "</div>"
+      h += "<div class='card' style='margin-top:8px'><b>" + esc(f.title) + "</b> <span class='mono' style='font-size:11px;color:" + caseSevColor(f.severity) + "'>" + esc(f.severity.toUpperCase()) + "</span>" + (f.internal ? " <span class='mono' style='font-size:11px;color:#f5b544'>INTERNAL</span>" : "") + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>FILED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>") + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed) + " · " + esc(f.file) + "</span><div class='md' style='margin-top:4px'>" + mdToHtml(f.body, "cases/" + d.slug + "/") + "</div>"
         + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='findings' data-cf-key='" + esc(f.file) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
         + "</div>";
     });
@@ -4142,7 +4150,7 @@ function caseFilesHtml() {
         + (f.aliases ? "<br><span style='color:var(--dim);font-size:12px'>aliases: " + esc(f.aliases) + "</span>" : "")
         + (f.identifiers ? "<br><span style='color:var(--dim);font-size:12px'>identifiers: " + esc(f.identifiers) + "</span>" : "")
         + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed || "") + (f.source ? " · " + esc(f.source) : "") + "</span>"
-        + (e.body ? "<div style='margin-top:4px;white-space:pre-wrap'>" + esc(e.body) + "</div>" : "")
+        + (e.body ? "<div class='md' style='margin-top:4px'>" + mdToHtml(e.body, "cases/" + d.slug + "/") + "</div>" : "")
         + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='entities' data-cf-key='" + esc(e.key) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='entities' data-cf-key='" + esc(e.key) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
         + "</div>";
     });
@@ -4157,7 +4165,7 @@ function caseFilesHtml() {
       var f = e.fields || {};
       h += "<div class='card' style='margin-top:8px'><span class='mono'><b>" + esc(e.heading) + "</b></span> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(f.kind || "other") + "</span>" + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>LOGGED BY NAVI</span>" : "") + (f.state === "lead" ? " <span class='mono' style='font-size:11px;color:var(--am)'>LEAD — UNVERIFIED</span>" : " <span class='mono' style='font-size:11px;color:var(--dim)'>CONFIRMED</span>")
         + "<br><span style='color:var(--dim);font-size:12px'>" + esc(f.filed || "") + (f.source ? " · " + esc(f.source) : "") + "</span>"
-        + (e.body ? "<div style='margin-top:4px;white-space:pre-wrap'>" + esc(e.body) + "</div>" : "")
+        + (e.body ? "<div class='md' style='margin-top:4px'>" + mdToHtml(e.body, "cases/" + d.slug + "/") + "</div>" : "")
         + (f.state === "lead" ? "<div class='row' style='margin-top:6px'><button class='act' data-cf-review='observables' data-cf-key='" + esc(e.key) + "' data-cf-action='promote' style='min-height:44px'>Promote to confirmed</button><button class='ghost' data-cf-review='observables' data-cf-key='" + esc(e.key) + "' data-cf-action='strike' style='min-height:44px;color:#f87171'>Strike it</button></div>" : "")
         + "</div>";
     });
@@ -4193,7 +4201,7 @@ function caseFilesHtml() {
     h += "<textarea id='cf-t-body' rows='3' placeholder='What happened.' aria-label='Timeline entry detail' style='margin-top:6px'></textarea>";
     h += "<div class='row' style='margin-top:6px'><button class='act' id='cf-t-add' style='min-height:44px'>Add the entry</button></div>";
     if (!d.timeline.length) h += "<p style='color:var(--dim)'>No entries yet.</p>";
-    d.timeline.forEach(function (e) { h += "<div style='margin-top:10px'><b>" + esc(e.title) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(e.date) + "</span><div style='color:var(--dim);white-space:pre-wrap'>" + esc(e.body) + "</div></div>"; });
+    d.timeline.forEach(function (e) { h += "<div style='margin-top:10px'><b>" + esc(e.title) + "</b> <span class='mono' style='color:var(--dim);font-size:11px'>" + esc(e.date) + "</span><div class='md' style='color:var(--dim)'>" + mdToHtml(e.body, "cases/" + d.slug + "/") + "</div></div>"; });
     h += "</div>";
     // Delete this case (Build 15, #163): complete, and confirmed
     // in words before it happens — the confirm names the case,
@@ -5535,7 +5543,7 @@ function vaultHtml() {
       h += "<textarea id='vault-ed' class='mono' spellcheck='false' style='width:100%;box-sizing:border-box' aria-label='Note editor — markdown'>" + esc(vaultDraft || "") + "</textarea>";
     }
     if (vaultMode !== "edit") {
-      h += "<div class='card vault-preview' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body) + "</div></div>";
+      h += "<div class='card vault-preview' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body, cur.path.indexOf("/") === -1 ? "" : cur.path.slice(0, cur.path.lastIndexOf("/") + 1)) + "</div></div>";
     }
     h += "<div class='vault-links' style='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px'>" +
       "<div class='card' style='flex:1;min-width:150px'><p class='mono' style='font-size:10px;color:var(--dim)'>BACKLINKS</p>" + (cur.backlinks.length ? cur.backlinks.map(function (b) { return "<button class='ghost' data-vault-open='" + vaultEnc(b) + "'>" + esc(b) + "</button>"; }).join(" ") : "<p style='color:var(--dim);font-size:12px'>Nothing links here yet.</p>") + "</div>" +
@@ -5642,22 +5650,42 @@ function stripLeadH1(md, rel) {
 // headings, quotes and links all render, so a page reads the
 // same here as it does on the GitHub wiki. Input is escaped
 // first; the transforms only ever emit the tags below.
-function mdInline(s) {
+function mdInline(s, imgBase) {
   s = s.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, function (m, t, _p, label) { return "<a href='#' data-wikilink='" + t + "'>" + (label || t) + "</a>"; });
   s = s.replace(/`([^`\n]+)`/g, "<code class='ic'>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   s = s.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
+  // Images (v0.5.3e, #265): an image reference presents as an
+  // image — but only when the bridge serves the bytes: a data
+  // URI (self-contained), a bridge path (leading /), or a
+  // reference relative to the reading view's Vault folder
+  // (imgBase), which resolves through /api/vault/raw. An
+  // external http(s) image is NEVER auto-fetched — viewing a
+  // case must not leak the operator to a third-party host —
+  // it renders as a link instead. Any other scheme stays
+  // literal text. Runs before the link pass so the image's
+  // brackets are not read as a link.
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s'"]+)\)/g, function (m, alt, src) { return mdImageHtml(alt, src, imgBase); });
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, "<a href='$2' target='_blank' rel='noreferrer'>$1</a>");
   return s;
 }
-function mdToHtml(text) {
+function mdImageHtml(alt, src, imgBase) {
+  if (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(src)) return "<img class='md-img' src='" + src + "' alt='" + alt + "'>";
+  if (src.charAt(0) === "/") return "<img class='md-img' src='" + src + "' alt='" + alt + "'>";
+  if (/^https?:\/\//i.test(src)) return "<a href='" + src + "' target='_blank' rel='noreferrer'>" + (alt || src) + "</a>";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return "![" + alt + "](" + src + ")";
+  var parts = (imgBase || "").split("/").filter(function (x) { return x; });
+  src.split("/").forEach(function (seg) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); });
+  return "<img class='md-img' src='/api/vault/raw?path=" + encodeURIComponent(parts.join("/")) + "' alt='" + alt + "'>";
+}
+function mdToHtml(text, imgBase) {
   // Line endings normalize at the door (build .72, issue #53):
   // GitHub release bodies arrive CRLF, and a trailing CR broke
   // heading matches — headings rendered as literal text while
   // lists survived. Every source renders the same now.
   text = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   var lines = String(text).split("\n"), out = [], i = 0, para = [];
-  function flush() { if (para.length) { out.push("<p>" + mdInline(esc(para.join(" "))) + "</p>"); para = []; } }
+  function flush() { if (para.length) { out.push("<p>" + mdInline(esc(para.join(" ")), imgBase) + "</p>"); para = []; } }
   while (i < lines.length) {
     var line = lines[i];
     if (/^```/.test(line)) {
@@ -5679,24 +5707,24 @@ function mdToHtml(text) {
       i += 2;
       var bodyRows = [];
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { bodyRows.push(splitRow(lines[i])); i++; }
-      var thHtml = headCells.map(function (c) { return "<th>" + mdInline(esc(c)) + "</th>"; }).join("");
-      var trHtml = bodyRows.map(function (r) { return "<tr>" + headCells.map(function (hc, ci) { return "<td>" + mdInline(esc(r[ci] || "")) + "</td>"; }).join("") + "</tr>"; }).join("");
+      var thHtml = headCells.map(function (c) { return "<th>" + mdInline(esc(c), imgBase) + "</th>"; }).join("");
+      var trHtml = bodyRows.map(function (r) { return "<tr>" + headCells.map(function (hc, ci) { return "<td>" + mdInline(esc(r[ci] || ""), imgBase) + "</td>"; }).join("") + "</tr>"; }).join("");
       out.push("<div class='md-twrap'><table class='md-t'><thead><tr>" + thHtml + "</tr></thead><tbody>" + trHtml + "</tbody></table></div>");
       continue;
     }
     var hd = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (hd) { flush(); var lvl = Math.min(6, hd[1].length + 3); out.push("<h" + lvl + " class='md-h'>" + mdInline(esc(hd[2])) + "</h" + lvl + ">"); i++; continue; }
+    if (hd) { flush(); var lvl = Math.min(6, hd[1].length + 3); out.push("<h" + lvl + " class='md-h'>" + mdInline(esc(hd[2]), imgBase) + "</h" + lvl + ">"); i++; continue; }
     if (/^\s*[-*]\s+/.test(line)) {
       flush(); var items = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push("<li>" + mdInline(esc(lines[i].replace(/^\s*[-*]\s+/, ""))) + "</li>"); i++; }
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push("<li>" + mdInline(esc(lines[i].replace(/^\s*[-*]\s+/, "")), imgBase) + "</li>"); i++; }
       out.push("<ul class='md-ul'>" + items.join("") + "</ul>"); continue;
     }
     if (/^\s*\d+[.)]\s+/.test(line)) {
       flush(); var oitems = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { oitems.push("<li>" + mdInline(esc(lines[i].replace(/^\s*\d+[.)]\s+/, ""))) + "</li>"); i++; }
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { oitems.push("<li>" + mdInline(esc(lines[i].replace(/^\s*\d+[.)]\s+/, "")), imgBase) + "</li>"); i++; }
       out.push("<ol class='md-ul'>" + oitems.join("") + "</ol>"); continue;
     }
-    if (/^>\s?/.test(line)) { flush(); var qlines = []; while (i < lines.length && /^>\s?/.test(lines[i])) { qlines.push(lines[i].replace(/^>\s?/, "")); i++; } out.push("<blockquote class='md-q'>" + qlines.map(function (q) { return mdInline(esc(q)); }).join("<br>") + "</blockquote>"); continue; }
+    if (/^>\s?/.test(line)) { flush(); var qlines = []; while (i < lines.length && /^>\s?/.test(lines[i])) { qlines.push(lines[i].replace(/^>\s?/, "")); i++; } out.push("<blockquote class='md-q'>" + qlines.map(function (q) { return mdInline(esc(q), imgBase); }).join("<br>") + "</blockquote>"); continue; }
     para.push(line); i++;
   }
   flush();
@@ -5879,7 +5907,10 @@ var DOC_PAGES = [
   "<li>The editor autosaves as you type and says when it saved; Edit, Split, and Preview modes sit on one toggle, rendered by the same markdown renderer as chat and these Docs. The expand button in the editor's header opens <b>focus mode</b> — the editor alone filling the whole window, the menu, her presence bar, and the tree all put away — and the same button, or Escape, brings the Vault back exactly as it was.</li>" +
   "<li>A strip at the foot of the editor shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
   "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
-  "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" },
+  "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" +
+    "<div class='doc-sec'><h4>Reading: rendered markdown, images as images (v0.5.3e, #265)</h4>" +
+  "<p>The Vault's preview renders notes through the product's one markdown renderer — the same one chat, these Docs and Case Files use — so a note reads as the document it is. <b>Images present as images:</b> a reference to a file in the Vault (a screenshot dropped beside the note, an evidence picture) is served by the bridge and shown inline; a data image shows as itself; an <b>external</b> image URL is shown as a link and never auto-fetched — opening a note must not announce the reader to a third-party host. The renderer escapes first and constructs only its own tags, so a note's content can never inject markup or script into the page.</p>" +
+  "<p><b>Formed case files.</b> Under <span class='mono'>cases/</span> the bridge also keeps one formed document per case — <span class='mono'>cases/&lt;name&gt;.md</span> — the whole case as a single readable file (manifest, findings in filed order, registers, evidence with its images, timeline, each entry under its provenance), formed from the case's folder and kept current by the bridge. It is the case's reading copy in the Vault; the folder remains the working record.</p></div>" },
   { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
   "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
@@ -5900,7 +5931,11 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Filing that lands (v0.5.2e, #261)</h4>" +
   "<p><b>The tap.</b> In a case's own chat, every Navi reply carries a <b>File into this case</b> button. Tap it and the bridge files that exact reply as a finding on the bound case — the reply as written, in her name, with its provenance (the source chat, the action, the timestamp) written into the note — and appends its own receipt message to the chat, naming the finding's path, from what the bridge actually did. No model in the loop: the tap either files, or names why it cannot.</p>" +
   "<p><b>Her updates land the same way.</b> The log block she opens a case-room reply with — the block goes first, so a long reply cannot be cut off before it closes and starve its own filing — gains a <b>finding</b> line beside entity / observable / event / lead / task — a real conclusion, filed as a finding, still unverified until you promote it. And a filing attempt that is <i>malformed</i> — a block that never closes, single brackets, filing-shaped lines sitting in prose, a headed essay presented as a filing — is <b>refused by name</b> in the reply: the bridge appends its refusal, and the receipt card names what did not land. Silence about a failed filing is the defect this closes — you always know whether a filing took.</p>" +
-  "<p><b>The grounding guard.</b> Material drawn from a Wire record carries the record's values — its CVE id, CVSS, EPSS and dates. If a filing states a score that contradicts the record it cites, the bridge flags the filing <b>on its face</b> before it lands: the flag line is part of the filed note and rides the receipt — <i>this filing states CVSS 10.0 for the record; the Wire record says 8.1. Filed as written; the record's values govern.</i> Her words are never rewritten and the filing is never blocked; the contradiction is named where the filing will be read.</p></div>" +
+  "<p><b>The grounding guard.</b> Material drawn from a Wire record carries the record's values — its CVE id, CVSS, EPSS and dates. If a filing states a score that contradicts the record it cites, the bridge flags the filing <b>on its face</b> before it lands: the flag rides the filing's receipt in the chat — <i>this filing states CVSS 10.0 for the record; the Wire record says 8.1. Filed as written; the record's values govern.</i> — and is never written into the case file itself: a case file holds the case's substance, and the flag is machinery about the filing, not part of it (see the purity rule below). Her words are never rewritten and the filing is never blocked; the contradiction is named where the filing will be read.</p></div>" +
+    "<div class='doc-sec'><h4>The case reads as a document — and holds only the case (v0.5.3e, #265, #266)</h4>" +
+  "<p><b>Reading.</b> Case content renders as the markdown it is — findings, register entries and timeline entries read as formatted documents, not raw text: headings, emphasis, lists, code and tables all render, in Case Files and in the Vault alike, through the one renderer the whole product shares. The renderer escapes first and builds only its own known constructs, so filed content — including content filed from untrusted sources — can never carry markup of its own into the page: no raw HTML passes through, and no script ever runs. An image reference <b>presents as an image</b> when the bridge serves the bytes — a case's own evidence, a data image, a file elsewhere in the Vault — and an external image URL is shown as a link, never auto-fetched: reading a case must not leak the operator to a third-party host.</p>" +
+  "<p><b>One case, one file — in the Vault.</b> Beside the case's folder, the Vault holds the case's <b>formed document</b>: <span class='mono'>cases/&lt;name&gt;.md</span>, the whole case as one readable file — the manifest's facts, then the findings in the order they were filed, the registers, the evidence (images shown as images) and the timeline, every entry under its provenance. It is a formation of the folder, kept current by the bridge whenever the case is opened and swept at startup; the folder remains the working record the case machinery files into.</p>" +
+  "<p><b>The purity rule.</b> A case file holds <b>case substance only</b>. Error messages, warnings, refusal notices and grounding flags are conversation machinery — they are said in the case's chat, by name, at the moment they happen, and they are <b>never written into a case file</b>, on any filing path. What does stay is the successful log: the custody lines that state where an entry came from and when it was filed — that is chain of custody, and it belongs to the case. Files written by earlier builds are cleaned to the same rule: the machinery text comes out, the substance and the custody lines stay, nothing else is touched.</p></div>" +
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
   "<p>Since Build 3 (issue #177), the delete also lives where cases are actually scanned: every card on the <b>cases list</b> carries its own <b>Delete</b>, with the same confirm in the card — the case named, its findings/evidence/timeline counted, its tied chat and the backup truth stated. The deletion is also <b>tombstoned</b>: it travels with Quick Sync, so another machine's older copy cannot resurrect the case — the snapshot law above is untouched. The same pass gave the Chats tab's per-chat <b>Delete</b> its confirm (naming the chat) and a real server call behind it, and made the Vault's folder-delete confirm name the folder it is about to remove, not just the count of notes inside it.</p></div>" +
@@ -6064,6 +6099,16 @@ var DOC_PAGES = [
   "<p>The pane itself opens on its first real section (v0.4.10e, #250) — the update line — with no header row of its own: her portrait, her name, and her dot live at the top of the chat, and the pane is for the machine's state, not hers. The <b>BOOT</b> line inside Servers follows Settings the same way the law above does: it renders only while boot mode is the startup mode Settings holds, and when it renders, its states still read from the system, never assumed. Arming and disarming live in <b>Settings → System</b>.</p></div>" +
     "<div class='doc-sec'><h4>The doors: DHD tiers & crown acts</h4>" +
   "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
+  { id: "fedichat", title: "FediChat — the room where the Row talks", related: ["federation", "mesh", "dhd"], html:
+    "<div class='doc-sec'><h4>One room per fedinet</h4>" +
+  "<p><b>FediChat</b> (Apex | Network → FediChat) is the fedinet's own room: one per fedinet, named for it — <span class='mono'>#rockport-mesh</span>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no second room in phase 1: no direct messages, no media, no editing or deleting what was said. Through DHD the room reads and posts as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
+  "<p><b>The log.</b> Every line is a record in an append-only, <b>hash-chained</b> log kept on the member nodes: it carries the fedinet id, the previous line's hash, the author's node id and roster number, a timestamp and the body, signed with the author's node key. A nick is a node — lines show under the node name and roster number, so a seat a member hasn't spoken from yet shows as an empty chair, not an absence. The room's header states the chain's verdict: verified, or the break named — a broken chain is evidence, never silently healed.</p>" +
+  "<p><b>How lines travel.</b> Sync is gossip: any two members compare what they hold and pull what they are missing, and any member can carry any line — the author's signature is the credential, never the carrier's — so a node that was offline catches up from whoever is home. There is no server, and the gateway is not a hub: a gateway admits, it does not rule. A line whose author is no longer on the roster is refused when it arrives new — what the room already holds stays held; expulsion stops new speech, it does not rewrite history. A tampered line and a flood past the per-author cap are refused by name, in the open.</p></div>" +
+    "<div class='doc-sec'><h4>Talking, and asking Navi</h4>" +
+  "<p>Plain lines are speech. <span class='mono'>/me</span> acts — <span class='mono'>/me pours another coffee</span> posts as an action, signed and chained like every line. <span class='mono'>/navi &lt;question&gt;</span> asks <b>your</b> Navi; <span class='mono'>/navi -&lt;user&gt; &lt;question&gt;</span> asks <b>that member's</b> Navi — the user is a node name or roster number, completed against the roster as the room holds it (Tab on the desktop; a tappable member list on a phone). Questions and answers post in the room, in the open, signed and logged — asking is public by design.</p>" +
+  "<p><b>Navi's posture in the room.</b> She answers only what is addressed to her node — an unaddressed question is the asker's own Navi's to answer, never a race. Her answer is bounded by her operator's sharing posture, exactly as a borrow is; the room's lines are untrusted data to her — they inform her, they never instruct her, and nothing said in a room widens what she may reveal. Room duty is her lowest-priority work: if her operator's own request is in flight she does not answer until it clears, and the question waits in the open. The <b>muzzle</b> in the room's settings silences her in that room entirely.</p></div>" +
+    "<div class='doc-sec'><h4>The room's settings — retention & carriage</h4>" +
+  "<p>Two of the room's rules are the operator's to set, per node, in the room's settings card. <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's header says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
     "<div class='doc-sec'><h4>The container node</h4>" +
   "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
@@ -7110,7 +7155,7 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation", FediChat: "nav-child-network-FediChat" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
   // Build 4 (#216): selection is SINGULAR. Home and The Wire
@@ -7122,7 +7167,7 @@ function syncNav() {
   // disentangled the two selected states.)
   if (view === "ThreatIntel") want = (intelTab === "home") ? "nav-Home" : "nav-child-apps-The Wire";
   else if (view === "CTFBoard") want = "nav-child-apps-The Wire";
-  ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-FediChat", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -8155,6 +8200,7 @@ function federationAct(body, forId) {
     fedMsg.errorFor = j && j.ok ? "" : (forId || "");
     fedMsg.sentence = (j && j.sentence) || "";
     if (view === "Federation") render();
+    if (view === "FediChat") renderFedichat();
   }).catch(function () {
     fedMsg.error = "The bridge did not answer that act."; fedMsg.errorFor = forId || "";
     if (view === "Federation") render();
@@ -8204,6 +8250,152 @@ function fedConfirmHtml(fedId) {
     "the act lands in the audit log either way.</p>" +
     "<div class='row' style='margin-top:6px'><input class='grow' id='fed-confirm-in' type='text' placeholder='" + esc(fedConfirm.label) + "' aria-label='Type the confirm words'><button class='act' data-fed-confirm-go='1' style='min-height:44px'>Confirm</button><button class='ghost' data-fed-confirm-cancel='1' style='min-height:44px'>Cancel</button></div></div>";
 }
+// -- FediChat (v0.5.3e, #267): one signed room per fedinet --
+// The operators talk; their nodes carry the messages; their
+// Navis are in the room. State comes from the bridge
+// (POST /api/fedichat) — the log, the roster, the chain's
+// verdict and the room's settings all live bridge-side; this
+// page is a view, like every other surface.
+var fcState = null, fcFetching = false, fcFed = "", fcMsg = "", fcCompleteIdx = 0;
+function refreshFedichat(rerender) {
+  if (CONFIG.backend !== "live" || fcFetching) return;
+  fcFetching = true;
+  fetch("/api/fedichat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "state" }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { fcFetching = false; fcState = j; if (rerender !== false && view === "FediChat") render(); })
+    .catch(function () { fcFetching = false; });
+}
+function renderFedichat() { if (view === "FediChat") render(); }
+function fedichatAct(action, extra) {
+  var body = { action: action };
+  if (extra) for (var k in extra) body[k] = extra[k];
+  fetch("/api/fedichat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      fcState = j;
+      fcMsg = j && j.ok === false ? (j.error || "") : "";
+      renderFedichat();
+    })
+    .catch(function () { fcMsg = "The bridge did not answer that."; renderFedichat(); });
+}
+function fedichatRoom() {
+  if (!fcState || !fcState.rooms || !fcState.rooms.length) return null;
+  for (var i = 0; i < fcState.rooms.length; i++) if (fcState.rooms[i].fedId === fcFed) return fcState.rooms[i];
+  return fcState.rooms[0];
+}
+function fedichatUserMatches(prefix, members) {
+  // Completion's one source: the signed roster as the room
+  // holds it. Expelled or departed members are not on the
+  // roster, so they never complete. Pure — the bench drives
+  // this function directly.
+  var p = String(prefix || "").toLowerCase();
+  return (members || []).filter(function (m) {
+    return String(m.name || "").toLowerCase().indexOf(p) === 0 || String(m.n) === String(prefix || "");
+  });
+}
+function fedichatTime(ts) {
+  var d = new Date((ts || 0) * 1000);
+  function p2(x) { return (x < 10 ? "0" : "") + x; }
+  return p2(d.getHours()) + ":" + p2(d.getMinutes());
+}
+function fedichatHtml() {
+  var h = "<h3>FediChat</h3>";
+  h += "<p style='color:var(--dim)'>One signed room per fedinet — the operators talk, their nodes carry the messages, and their Navis are in the room. The log is append-only and hash-chained on every member node; admission is the signed roster, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi — questions and answers post in the open — and <span class='mono'>/me</span> acts.</p>";
+  if (CONFIG.backend !== "live") return h + "<div class='card'>FediChat runs through the live bridge — switch the backend to Live in Settings. The room itself lives on the member nodes, not on any server.</div>";
+  if (!fcState && !fcFetching) refreshFedichat(false);
+  if (!fcState) return h + "<div class='card'>Opening the room…</div>";
+  if (fcMsg) h += "<div class='card' style='border-color:#f87171;color:#fca5a5'>" + esc(fcMsg) + "</div>";
+  if (!fcState.rooms || !fcState.rooms.length) return h + "<div class='card'>No room yet — this node is not on any fedinet's roster. The roster is the room's admission: join a fedinet from the Federation page and its room opens here.</div>";
+  var room = fedichatRoom();
+  if (fcState.rooms.length > 1) {
+    h += "<div class='tabbar' role='tablist' aria-label='FediChat rooms' style='margin-bottom:10px'>" + fcState.rooms.map(function (r) { return "<button class='" + (r.fedId === room.fedId ? "act" : "ghost") + "' data-fcroom='" + esc(r.fedId) + "'>" + esc(r.room) + "</button>"; }).join("") + "</div>";
+  }
+  var st = fcState.settings || {};
+  h += "<div class='card'>";
+  h += "<div class='row'><b style='font-size:16px'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + " · signed roster · " + room.members.length + " members · " + room.held + " lines held</span><button class='ghost' id='fc-sync'>Sync now</button></div>";
+  if (room.chain && room.chain.ok) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Chain ✓ verified — history as held is tamper-evident.</div>";
+  else if (room.chain) h += "<div style='color:#fca5a5;font-size:12px;margin-top:4px'>Chain: " + esc(room.chain.reason || "broken") + " — named, never silently healed.</div>";
+  if (st.relay) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is ON for this node: when a member is reached through a relay, the carrier can read the lines it carries. Turn it off below and the room only travels direct.</div>";
+  else h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is OFF for this node: the room travels direct only — an unreachable member waits for a direct road.</div>";
+  h += "<div style='color:var(--dim);font-size:12px'>Retention: " + (st.retention === "30d" ? "30 days — older lines prune from this node's log, with the newest older line kept as the chain's floor" : "keep — this node holds the room's whole history") + ".</div>";
+  if (room.syncNotes && room.syncNotes.length) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Last round: " + room.syncNotes.map(function (n) { return esc(n); }).join(" · ") + "</div>";
+  h += "</div>";
+  // The room + the members rail (stacked on narrow screens).
+  var said = {};
+  room.messages.forEach(function (m) { said[m.author] = true; });
+  var lines = room.messages.map(function (m) {
+    var who = "<b>" + esc(m.authorName) + "</b> <span style='color:var(--dim)'>· № " + m.n + "</span>";
+    var when = "<span style='color:var(--dim);font-size:11px'>" + fedichatTime(m.ts) + "</span>";
+    if (m.kind === "me") return "<div class='fc-line' style='font-style:italic;color:var(--dim)'>* " + esc(m.authorName) + " " + esc(m.body) + " " + when + "</div>";
+    if (m.kind === "navi-a") return "<div class='fc-line'><span class='chip' style='font-size:10px'>NAVI</span> " + who + " " + when + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div></div>";
+    if (m.kind === "navi-q") {
+      return "<div class='fc-line'>" + who + " " + when + " <span class='chip' style='font-size:10px'>ASKS NAVI</span><div style='white-space:pre-wrap'>" + esc(m.body) + "</div></div>";
+    }
+    return "<div class='fc-line'>" + who + " " + when + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div></div>";
+  }).join("");
+  var seats = room.members.filter(function (m) { return !said[m.nodeId]; }).map(function (m) {
+    return "<div class='fc-line' style='color:var(--dim)'>— " + esc(m.name) + " · № " + m.n + " is in the room; no lines from them are held here yet.</div>";
+  }).join("");
+  var members = room.members.map(function (m) {
+    return "<div style='padding:3px 0'><b>" + esc(m.name) + "</b> <span style='color:var(--dim)'>· № " + m.n + (m.self ? " · this node" : "") + "</span></div>";
+  }).join("");
+  h += "<div class='fc-wrap'><div class='fc-main'><div class='card' id='fc-log' style='max-height:52vh;overflow:auto'>" + (lines || "<div style='color:var(--dim)'>The room is quiet — no lines held yet. The first line opens it.</div>") + seats + "</div>"
+    + "<div id='fc-complete' class='fc-complete'></div>"
+    + "<form id='fc-form' class='row' style='margin-top:8px'><input class='grow' id='fc-input' type='text' autocomplete='off' placeholder='Say it in " + esc(room.room) + " — /navi asks Navi, /navi -member asks theirs, /me acts' aria-label='FediChat message'><button class='act' type='submit'>Post</button></form>"
+    + "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Tab completes <span class='mono'>/navi -&lt;user&gt;</span> against the roster; on a phone the member list pops above the composer instead.</div></div>"
+    + "<div class='fc-members'><div class='card'><b>Members</b>" + members + "</div></div></div>";
+  // Room settings — the operator's rulings, as settings.
+  h += "<div class='card' style='margin-top:12px'><b>This node's room settings</b>"
+    + "<div class='row' style='margin-top:8px'><span class='grow'>Navi answers in " + esc(room.room) + " <span style='color:var(--dim)'>— the muzzle: off means she speaks when asked; on means this room hears nothing from her.</span></span><button class='switch' id='fc-muzzle' role='switch' aria-checked='" + (room.muzzled ? "true" : "false") + "' aria-label='Muzzle Navi in this room'><span class='knob'></span></button><span>" + (room.muzzled ? "Muzzled" : "She answers") + "</span></div>"
+    + "<div class='row' style='margin-top:8px'><span class='grow'>Relay carriage <span style='color:var(--dim)'>— let this node's room lines travel through relays (the carrier can read them; the header says so when it is on).</span></span><button class='switch' id='fc-relay' role='switch' aria-checked='" + (st.relay ? "true" : "false") + "' aria-label='Relay carriage for FediChat'><span class='knob'></span></button><span>" + (st.relay ? "Allowed" : "Direct only") + "</span></div>"
+    + "<div class='row' style='margin-top:8px'><span class='grow'>Retention <span style='color:var(--dim)'>— this node's copy of the log.</span></span><button class='" + (st.retention === "keep" ? "act" : "ghost") + "' data-fcret='keep'>Keep everything</button><button class='" + (st.retention === "30d" ? "act" : "ghost") + "' data-fcret='30d'>30 days</button></div>"
+    + "</div>";
+  return h;
+}
+function wireFedichat() {
+  var room = fedichatRoom();
+  document.querySelectorAll("[data-fcroom]").forEach(function (b) { b.onclick = function () { fcFed = b.getAttribute("data-fcroom"); fcCompleteIdx = 0; render(); }; });
+  document.querySelectorAll("[data-fcret]").forEach(function (b) { b.onclick = function () { fedichatAct("settings", { retention: b.getAttribute("data-fcret") }); }; });
+  var sync = document.getElementById("fc-sync");
+  if (sync && room) sync.onclick = function () { fedichatAct("sync", { fed: room.fedId }); };
+  var mz = document.getElementById("fc-muzzle");
+  if (mz && room) mz.onclick = function () { fedichatAct("settings", { fed: room.fedId, muzzle: !room.muzzled }); };
+  var rl = document.getElementById("fc-relay");
+  if (rl && fcState) rl.onclick = function () { fedichatAct("settings", { relay: !(fcState.settings || {}).relay }); };
+  var form = document.getElementById("fc-form");
+  var input = document.getElementById("fc-input");
+  if (form && input && room) {
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      var v = input.value;
+      if (!v.trim()) return;
+      input.value = "";
+      fedichatAct("post", { fed: room.fedId, body: v });
+    };
+    var complete = function () {
+      var m = /^\/navi\s+-(\S*)$/.exec(input.value);
+      var box = document.getElementById("fc-complete");
+      if (!m) { if (box) box.innerHTML = ""; return []; }
+      var matches = fedichatUserMatches(m[1], room.members);
+      if (box) box.innerHTML = matches.map(function (mm) { return "<button type='button' class='ghost' data-fccomplete='" + esc(mm.name) + "'>" + esc(mm.name) + " · № " + mm.n + "</button>"; }).join(" ");
+      document.querySelectorAll("[data-fccomplete]").forEach(function (b) { b.onclick = function () { input.value = "/navi -" + b.getAttribute("data-fccomplete") + " "; input.focus(); }; });
+      return matches;
+    };
+    input.addEventListener("input", function () { fcCompleteIdx = 0; complete(); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key !== "Tab") return;
+      var matches = complete();
+      if (!matches.length) return;
+      e.preventDefault();
+      var pick = matches[fcCompleteIdx % matches.length];
+      fcCompleteIdx++;
+      input.value = "/navi -" + pick.name + " ";
+    });
+  }
+  var log = document.getElementById("fc-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
 function federationHtml() {
   var s = federationState;
   var h = "<h3>Apex | Federation</h3>";
@@ -11895,6 +12087,8 @@ function render() {
     h += meshPageHtml();
   } else if (view === "Federation") {
     h += federationHtml();
+  } else if (view === "FediChat") {
+    h += fedichatHtml();
   } else if (view === "RAG") {
     h += "<h3>RAG · knowledge packs</h3>";
     h += "<div class='tabbar' role='tablist' aria-label='RAG sections' style='margin-bottom:10px'><button class='" + (ragTab === "packs" ? "act" : "ghost") + "' data-ragtab='packs' aria-label='Knowledge packs tab'>Packs</button><button class='" + (ragTab === "studio" ? "act" : "ghost") + "' data-ragtab='studio' aria-label='RAG Studio tab'>RAG Studio</button></div>";
@@ -13080,6 +13274,8 @@ function wire() {
     wireMeshCard();
   } else if (view === "Federation") {
     wireFederation();
+  } else if (view === "FediChat") {
+    wireFedichat();
   } else if (view === "Vault") {
     var vq = function (sel) { return mainEl.querySelector(sel); };
     var vqa = function (sel) { return mainEl.querySelectorAll(sel); };
