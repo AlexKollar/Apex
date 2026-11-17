@@ -421,14 +421,13 @@
   #vault-ed { flex:1 1 auto; min-height:0; resize:none; }
   .vault-editor .vault-preview { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
   /* The preview card is the editor card drawn again (a .card
-     inside the .card): outside Preview's own mode the editor
-     column reads it as the note's rendered half and gives it
-     no flex share — in Edit the textarea takes the column's
-     whole free height, in Split the two split it, and the
-     strip rides the foot either way (Build 11 bake find:
-     the blanket flex above handed the preview a half share
-     in Edit too, and the textarea stopped mid-column). */
-  .vault-editor[data-vault-curmode='edit'] .vault-preview { flex:0 0 auto; }
+     inside the .card): it IS the note in the viewer state
+     (#284) — the textarea replaces it whole in the editing
+     state, never beside it, so each takes the column's
+     whole free height (the flex rules above) and the strip
+     rides the foot either way. The press that opens the
+     editor is the text's own cursor. */
+  .vault-preview[data-vault-pressedit] { cursor:text; }
   /* Vault focus mode (0.1.9e Build 11, issue #135): the
      editor alone in the window — the app rail, the status
      column, the presence bar and the Vault's own head rows
@@ -2189,8 +2188,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.26";
-var SHIPPED_BUILD_SEQ = 26;
+var BRIDGE_BUILD = "2026-11-17.27";
+var SHIPPED_BUILD_SEQ = 27;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2298,9 +2297,9 @@ function readmeEdHtml(ed, kind, key) {
   if (!ed || !ed.open) return "";
   var h = "<div style='margin-top:8px;border-top:1px solid var(--border);padding-top:8px'><b style='font-size:12px'>README.md</b> <span style='color:var(--dim);font-size:12px'>" + (ed.edited ? "your edited version — it ships in the export and the upload alike" : "the generated version") + "</span>";
   if (ed.loading) h += "<br><span style='color:var(--dim);font-size:12px'>Loading the README…</span>";
-  else if (ed.preview) h += "<div class='md' style='border:1px solid var(--line);border-radius:6px;padding:10px 12px;max-height:280px;overflow:auto;margin-top:6px'>" + mdToHtml(ed.text || "") + "</div>";
+  else if (ed.preview) h += "<div class='md flip-scroll' data-readmepress='" + kind + ":" + esc(key) + "' title='Press inside the text to edit' style='border:1px solid var(--line);border-radius:6px;padding:10px 12px;max-height:280px;overflow:auto;margin-top:6px;cursor:text'>" + mdToHtml(ed.text || "") + "</div>";
   else h += "<div class='mded' style='margin-top:6px'><pre aria-hidden='true'>" + highlightMd(ed.text || "") + "\n</pre><textarea data-readmearea='" + kind + ":" + esc(key) + "' spellcheck='false' aria-label='README markdown editor'>" + esc(ed.text || "") + "</textarea></div>";
-  h += "<div style='margin-top:6px'><button class='ghost' data-readmepreview='" + kind + ":" + esc(key) + "'>" + (ed.preview ? "Back to editing" : "Preview") + "</button> <button class='act' data-readmesave='" + kind + ":" + esc(key) + "'>Save README</button> <button class='ghost' data-readmerestore='" + kind + ":" + esc(key) + "'>Restore generated README</button> <button class='ghost' data-readmeclose='" + kind + ":" + esc(key) + "'>Close</button>" + (ed.msg ? " <span style='font-size:12px;color:#34d399'>" + esc(ed.msg) + "</span>" : "") + (ed.err ? " <span style='font-size:12px;color:#f5b544'>" + esc(ed.err) + "</span>" : "") + "</div></div>";
+  h += "<div style='margin-top:6px'><button class='act' data-readmesave='" + kind + ":" + esc(key) + "'>Save README</button> <button class='ghost' data-readmerestore='" + kind + ":" + esc(key) + "'>Restore generated README</button> <button class='ghost' data-readmeclose='" + kind + ":" + esc(key) + "'>Close</button>" + (ed.msg ? " <span style='font-size:12px;color:#34d399'>" + esc(ed.msg) + "</span>" : "") + (ed.err ? " <span style='font-size:12px;color:#f5b544'>" + esc(ed.err) + "</span>" : "") + "</div></div>";
   return h;
 }
 var ragEdit = null;          // {slug, sourceKey} while RAG Studio edits an existing pack
@@ -5684,7 +5683,12 @@ var vaultState = null;
 var vaultSel = null;
 var vaultDraft = null;
 var vaultDraftPath = null;
-var vaultMode = "split";
+// v0.5.11e (#284): the note's one state — rendered (the
+// viewer) or editing. There is no mode trio and no split
+// view anywhere in the MD system: a note opens rendered,
+// and pressing inside its text opens the editor on the
+// same words. Switching notes resets to the viewer.
+var vaultEditing = false;
 var vaultFocus = false;
 var vaultMsg = "";
 var vaultLoading = false;
@@ -5948,17 +5952,15 @@ function vaultHtml() {
     "<p class='mono' style='font-size:11px;color:var(--dim);margin-top:6px'>" + vaultState.notes.length + " notes · " + vaultState.notes.reduce(function (acc, n) { return acc + vaultWordCount(n.content); }, 0) + " words</p></div>";
   var cur = vaultState.notes.filter(function (n) { return n.path === vaultSel; })[0];
   if (cur) {
-    if (vaultDraftPath !== cur.path) { vaultDraft = cur.content; vaultDraftPath = cur.path; }
+    if (vaultDraftPath !== cur.path) { vaultDraft = cur.content; vaultDraftPath = cur.path; vaultEditing = false; }
     var split = vaultSplitFm(vaultDraft != null ? vaultDraft : cur.content);
-    h += "<div class='vault-pair'><div class='card vault-editor' data-vault-curmode='" + vaultMode + "'><div class='row'><button class='ghost vault-back' id='vault-back' aria-label='Back to the note list'>← Notes</button><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
-      ["edit", "split", "preview"].map(function (m) { return "<button class='" + (vaultMode === m ? "act" : "ghost") + "' data-vault-mode='" + m + "'>" + (m === "edit" ? "Edit" : m === "split" ? "Split" : "Preview") + "</button>"; }).join("") +
-      "<button class='ghost' id='vault-focus-btn' data-vault-focus='1' aria-pressed='" + (vaultFocus ? "true" : "false") + "' aria-label='" + (vaultFocus ? "Exit focus — restore the full Vault view" : "Expand the editor to fill the window") + "' title='" + (vaultFocus ? "Exit focus (Esc)" : "Focus — the editor fills the window") + "'>" + vaultFocusGlyph() + "</button></div>" +
+    h += "<div class='vault-pair'><div class='card vault-editor'><div class='row'><button class='ghost vault-back' id='vault-back' aria-label='Back to the note list'>← Notes</button><b class='mono' style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>" + esc(cur.path) + "</b>" +
+      "<button class='ghost' id='vault-focus-btn' data-vault-focus='1' aria-pressed='" + (vaultFocus ? "true" : "false") + "' aria-label='" + (vaultFocus ? "Exit focus — restore the full Vault view" : "Expand the note to fill the window") + "' title='" + (vaultFocus ? "Exit focus (Esc)" : "Focus — the note fills the window") + "'>" + vaultFocusGlyph() + "</button></div>" +
       "<p class='mono' id='vault-saved' style='font-size:11px;color:var(--dim)'>Saved · " + vaultWordCount(vaultDraft || "") + " words" + (split.fm ? " · frontmatter kept raw, exactly as written" : "") + "</p>";
-    if (vaultMode !== "preview") {
+    if (vaultEditing) {
       h += "<textarea id='vault-ed' class='mono' spellcheck='false' style='width:100%;box-sizing:border-box' aria-label='Note editor — markdown'>" + esc(vaultDraft || "") + "</textarea>";
-    }
-    if (vaultMode !== "edit") {
-      h += "<div class='card vault-preview' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body, cur.path.indexOf("/") === -1 ? "" : cur.path.slice(0, cur.path.lastIndexOf("/") + 1)) + "</div></div>";
+    } else {
+      h += "<div class='card vault-preview' data-vault-pressedit='1' title='Press inside the text to edit' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body, cur.path.indexOf("/") === -1 ? "" : cur.path.slice(0, cur.path.lastIndexOf("/") + 1)) + "</div></div>";
     }
     // v0.5.9e (#280, the Vault door): a formed case document
     // (cases/<slug>.md) names the dossier elements standing
@@ -6043,7 +6045,7 @@ function vaultOpenPath(path) {
     // the desktop desk ignores it.)
     vaultListScroll = (window.scrollY || (document.documentElement && document.documentElement.scrollTop) || 0);
     vaultReader = true;
-    vaultSel = path; vaultDraftPath = null; vaultMissing = null; render();
+    vaultSel = path; vaultDraftPath = null; vaultMissing = null; vaultEditing = false; render();
   }
   else {
     // Never fail silently onto the placeholder (build .73): say why,
@@ -6100,7 +6102,7 @@ function vaultImportFiles(files, folder) {
 // own Escape handler and consumes the key, so one press does
 // one thing. Entering and leaving touch nothing but the
 // vaultFocus flag and the render: the draft, the selected
-// note and the mode survive the round trip exactly.
+// note and the editing state survive the round trip exactly.
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape" && vaultFocus && view === "Vault") { e.preventDefault(); e.stopImmediatePropagation(); vaultFocus = false; render(); }
 });
@@ -6394,11 +6396,11 @@ var DOC_PAGES = [
   "<p><b>Obsidian compatible, by construction:</b></p><ul>" +
   "<li>Open <span class='mono'>config/vault/</span> in Obsidian as a vault and everything just works — the same files, both ways.</li>" +
   "<li>YAML frontmatter is preserved exactly as written; the editor shows it raw and the preview never mangles it.</li>" +
-  "<li><span class='mono'>[[wikilinks]]</span> and <span class='mono'>#tags</span> are first-class text: clicking a wikilink in Preview jumps to that note, or offers to create it.</li></ul></div>" +
+  "<li><span class='mono'>[[wikilinks]]</span> and <span class='mono'>#tags</span> are first-class text: clicking a wikilink in the rendered note jumps to that note, or offers to create it.</li></ul></div>" +
     "<div class='doc-sec'><h4>Working in it, and how Navi uses it</h4>" +
   "<p><b>In the Vault view:</b></p><ol>" +
   "<li>The file tree sits in its own column on the left of the editor, Obsidian-style — the pair spans the full width of the view and fills its height, the tree scrolling its own length while the editor reaches the bottom of the window — and carries New note, New folder, Rename, Delete (with a confirm), and Move. Drag a note onto a folder header — targets light up while you drag, and a drop anywhere else changes nothing — or open the note's ⋯ menu, pick Move, and choose the folder, which is how it works by touch. Every note and folder carries that one ⋯ menu — Move, Rename, and Delete (with a confirm) for notes, New note and Delete for folders — so the names get the tree's width to themselves. Drop markdown files from your computer onto the vault to import them — other file types are refused in plain words.</li>" +
-  "<li>The editor autosaves as you type and says when it saved; Edit, Split, and Preview modes sit on one toggle, rendered by the same markdown renderer as chat and these Docs. The expand button in the editor's header opens <b>focus mode</b> — the editor alone filling the whole window, the menu, her presence bar, and the tree all put away — and the same button, or Escape, brings the Vault back exactly as it was.</li>" +
+  "<li>A note opens <b>rendered</b> — press inside the text and the editor opens on the same words, autosaving as you type and saying when it saved; the renderer is the same one chat and these Docs use. The expand button in the note's header opens <b>focus mode</b> — the note alone filling the whole window, the menu, her presence bar, and the tree all put away — and the same button, or Escape, brings the Vault back exactly as it was.</li>" +
   "<li>A strip at the foot of the editor shows each note's Backlinks, Outgoing links, and Tags; the top bar searches the whole vault, opens (or creates) today's Daily note, and exports the vault as a .zip of the folder itself. Files in a <span class='mono'>Templates/</span> folder are offered as starting templates for new notes.</li></ol>" +
   "<p><b>Her side of the desk</b> is <span class='mono'>Navi's Desk/</span>: when a conversation produces something worth keeping — a decision, a finding, something you asked her to remember — she files a dated note there and tells you she did; when a vault note informs one of her answers, she names it as a source, the way she names a RAG pack. <b>Your side</b> is <span class='mono'>Operator/</span>, and she never edits it silently: she writes there only when you ask her to in chat, and she says what she filed.</p>" +
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" +
@@ -6408,7 +6410,9 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>On a phone: a list and a reader (v0.5.9e, #279)</h4>" +
   "<p>At phone widths the Vault is <b>two states, one column</b>. The <b>list</b> is the entry state: the search pinned at the top, the RECENT chips in their own sideways-scrolling row (the page itself never scrolls sideways), and the note tree as full-width rows under it — the notes are the first content, not a card below a card. Open a note and the <b>reader</b> takes the whole view; its <b>← Notes</b> button returns to the list with its scroll position and your selection exactly as you left them. The header paragraph rests at a single line — this page keeps the full text.</p>" +
   "<p><b>Creating lives behind one New button.</b> New note, new folder, the daily note and the export all open from the <b>＋ New</b> button beside the search, in a floating sheet (tap the shade, the ×, or Escape to close it). The standing create card does not exist at phone widths; on the desktop nothing changes — the card stays where it always was, and the sheet's controls fire the very same acts.</p>" +
-  "<p><b>A formed case document names its elements.</b> Open one (<span class='mono'>cases/&lt;name&gt;.md</span>) and a strip in the reader lists the dossier elements standing in the case, each with its <b>Delete</b> — the Vault door of the element delete (#280): confirm, and the element leaves the dossier, every case, and the Vault formations at once, with the case's custody record keeping the line.</p></div>" },
+  "<p><b>A formed case document names its elements.</b> Open one (<span class='mono'>cases/&lt;name&gt;.md</span>) and a strip in the reader lists the dossier elements standing in the case, each with its <b>Delete</b> — the Vault door of the element delete (#280): confirm, and the element leaves the dossier, every case, and the Vault formations at once, with the case's custody record keeping the line.</p></div>" +
+    "<div class='doc-sec'><h4>Reading first, everywhere (v0.5.11e, #284)</h4>" +
+  "<p>Markdown documents across Apex open <b>rendered</b> — a Vault note, and the README documents on the Chips and Knowledge screens alike. <b>Press inside the text</b> and the editor opens on the same words, automatically; the document's standing way out — backing out of the note, saving the README — returns it to its rendered form. There is <b>no split view anywhere</b> in the app, and no Edit / Preview mode buttons: the rendered document is the resting state, and the press is the only door into the editor. A press on a wikilink or a link inside the text still follows it — reading furniture keeps its acts.</p></div>" },
   { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
   "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
@@ -14402,7 +14406,6 @@ function wire() {
     vqa("[data-vault-foldelok]").forEach(function (b) { b.onclick = function () { var f = decodeURIComponent(b.getAttribute("data-vault-foldelok")); vaultConfirmFolder = null; vaultApply("delfolder", { path: f }); }; });
     vqa("[data-vault-foldelcancel]").forEach(function (b) { b.onclick = function () { vaultConfirmFolder = null; render(); }; });
     vqa("[data-vault-newin]").forEach(function (b) { b.onclick = function () { vaultFolderMenuPath = null; var sel = document.getElementById("vault-new-folder"); if (sel) sel.value = decodeURIComponent(b.getAttribute("data-vault-newin")); var nm = document.getElementById("vault-new-name"); if (nm) nm.focus(); }; });
-    vqa("button[data-vault-mode]").forEach(function (b) { b.onclick = function () { vaultMode = b.getAttribute("data-vault-mode"); render(); }; });
     vqa("[data-vault-focus]").forEach(function (b) { b.onclick = function () { vaultFocus = !vaultFocus; render(); }; });
     vqa("[data-vault-createmissing]").forEach(function (b) { b.onclick = function () { var t = vaultMissing; vaultMissing = null; if (t) { vaultSel = t + ".md"; vaultApply("save", { path: t + ".md", content: "# " + t + "\n\n" }); } }; });
     vqa("[data-vault-dismissmissing]").forEach(function (b) { b.onclick = function () { vaultMissing = null; render(); }; });
@@ -14506,6 +14509,36 @@ function wire() {
         refreshVault();
       }).catch(function () { vaultMsg = "The element could not be deleted — the bridge did not answer."; render(); });
     }; });
+    // Press-inside opens the editor (v0.5.11e, #284): a
+    // press in the rendered note's text swaps the viewer
+    // for the editor on the same words — the draft is
+    // untouched by the swap. Presses on the note's own
+    // working furniture (wikilinks, links, buttons) keep
+    // their acts, and a press that ends as a text
+    // selection is a read, not an edit.
+    var vp = vq("[data-vault-pressedit]");
+    if (vp) vp.onclick = function (ev) {
+      var t = ev.target;
+      if (t.closest && t.closest("a, button, input, select, textarea, label, [data-wikilink]")) return;
+      var selTx = window.getSelection ? String(window.getSelection()) : "";
+      if (selTx) return;
+      var r0 = vp.getBoundingClientRect();
+      var frac = r0.height > 0 ? Math.min(1, Math.max(0, ((ev.clientY || 0) - r0.top) / r0.height)) : 0;
+      vaultEditing = true; render();
+      var ed2 = document.getElementById("vault-ed");
+      if (ed2) {
+        ed2.focus();
+        // Best-effort caret: the pressed point's depth in
+        // the rendered note maps to the same depth in the
+        // source's lines — the neighborhood, not the letter.
+        try {
+          var dlines = String(vaultDraft || "").split("\n");
+          var li = Math.min(dlines.length - 1, Math.floor(frac * dlines.length));
+          var off = 0; for (var di = 0; di < li; di++) off += dlines[di].length + 1;
+          ed2.setSelectionRange(off, off);
+        } catch (e) {}
+      }
+    };
     var ed = vq("#vault-ed");
     if (ed) ed.oninput = function () {
       vaultDraft = ed.value;
@@ -14929,12 +14962,17 @@ function wire() {
     mainEl.querySelectorAll("[data-chippub]").forEach(function (b) { b.onclick = function () { var file = b.getAttribute("data-chippub"); var c = wfData && wfData.chips ? wfData.chips.find(function (x) { return x.file === file; }) : null; chipPub[file] = chipPub[file] && chipPub[file].open ? { open: false } : { open: true, repo: repoSlug(c ? c.name : String(file).replace(/\.png$/i, "")) }; render(); }; });
     mainEl.querySelectorAll("[data-pubrepo]").forEach(function (inp) { inp.oninput = function () { var parts = inp.getAttribute("data-pubrepo").split(":"); var st = pubStore(parts[0])[parts.slice(1).join(":")]; if (st) st.repo = inp.value; }; });
     mainEl.querySelectorAll("[data-pubgo]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-pubgo").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var st = pubStore(kind)[key]; if (!st) return; st.busy = true; st.msg = ""; st.err = ""; render(); var url = kind === "rag" ? "/api/rag/publish" : "/api/chips/publish"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key), repo_name: st.repo } : { file: key, version: pubVersion(kind, key), repo_name: st.repo }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { st.busy = false; if (j.ok) { st.msg = (j.created ? "Repo created: " : "Repo updated: ") + (j.repo || st.repo) + (j.release ? " — release " + j.release.tag + " is published" + (j.release.asset ? ", with " + j.release.asset + " attached" : "") + "." : " — files uploaded.") + (j.assetSkipped ? " " + j.assetSkipped : ""); st.url = (j.release && j.release.url) || j.repoUrl || ""; st.err = ""; } else { st.err = j.error || "Publish failed."; } render(); }).catch(function () { st.busy = false; st.err = "The bridge didn't answer."; render(); }); }; });
-    function openReadme(kind, key) { var st = readmeStore(kind)[key]; if (st && st.open) { readmeStore(kind)[key] = { open: false }; render(); return; } readmeStore(kind)[key] = { open: true, loading: true, text: "", edited: false, msg: "", err: "" }; render(); var url = kind === "rag" ? "/api/rag/readme" : "/api/chips/readme"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key) } : { file: key, version: pubVersion(kind, key) }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { var cur = readmeStore(kind)[key]; if (!cur || !cur.open) return; cur.loading = false; if (j.ok) { cur.text = j.readme || ""; cur.edited = !!j.edited; } else { cur.err = j.error || "The README could not be loaded."; } render(); }).catch(function () { var cur = readmeStore(kind)[key]; if (cur) { cur.loading = false; cur.err = "The bridge didn't answer."; render(); } }); }
+    function openReadme(kind, key) { var st = readmeStore(kind)[key]; if (st && st.open) { readmeStore(kind)[key] = { open: false }; render(); return; } readmeStore(kind)[key] = { open: true, loading: true, preview: true, text: "", edited: false, msg: "", err: "" }; render(); var url = kind === "rag" ? "/api/rag/readme" : "/api/chips/readme"; var body = kind === "rag" ? { slug: key, version: pubVersion(kind, key) } : { file: key, version: pubVersion(kind, key) }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { var cur = readmeStore(kind)[key]; if (!cur || !cur.open) return; cur.loading = false; if (j.ok) { cur.text = j.readme || ""; cur.edited = !!j.edited; } else { cur.err = j.error || "The README could not be loaded."; } render(); }).catch(function () { var cur = readmeStore(kind)[key]; if (cur) { cur.loading = false; cur.err = "The bridge didn't answer."; render(); } }); }
     mainEl.querySelectorAll("[data-ragreadme]").forEach(function (b) { b.onclick = function () { openReadme("rag", b.getAttribute("data-ragreadme")); }; });
     mainEl.querySelectorAll("[data-chipreadme]").forEach(function (b) { b.onclick = function () { openReadme("chip", b.getAttribute("data-chipreadme")); }; });
     mainEl.querySelectorAll("[data-readmearea]").forEach(function (ta) { var pre = ta.parentElement ? ta.parentElement.querySelector("pre") : null; ta.oninput = function () { var parts = ta.getAttribute("data-readmearea").split(":"); var st = readmeStore(parts[0])[parts.slice(1).join(":")]; if (st) st.text = ta.value; if (pre) { pre.innerHTML = highlightMd(ta.value) + "\n"; pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; } }; ta.onscroll = function () { if (pre) { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; } }; });
-    mainEl.querySelectorAll("[data-readmepreview]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-readmepreview").split(":"); var st = readmeStore(parts[0])[parts.slice(1).join(":")]; if (st) { st.preview = !st.preview; render(); } }; });
-    mainEl.querySelectorAll("[data-readmesave]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-readmesave").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var st = readmeStore(kind)[key]; if (!st) return; var url = kind === "rag" ? "/api/rag/readme-save" : "/api/chips/readme-save"; var body = kind === "rag" ? { slug: key, readme: st.text } : { file: key, readme: st.text }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { if (j.ok) { st.edited = true; st.msg = "Saved — this README now ships with it."; st.err = ""; } else { st.err = j.error || "Save failed."; } render(); }).catch(function () { st.err = "The bridge didn't answer."; render(); }); }; });
+    // Press-inside opens the README editor (v0.5.11e,
+    // #284): the README opens rendered, like every MD
+    // document in Apex now; a press in its text swaps to
+    // the editor, and Save returns it to the viewer.
+    // Presses on links and buttons inside keep their acts.
+    mainEl.querySelectorAll("[data-readmepress]").forEach(function (pv) { pv.onclick = function (ev) { var t = ev.target; if (t.closest && t.closest("a, button, input, select, textarea, label")) return; var parts = pv.getAttribute("data-readmepress").split(":"); var st = readmeStore(parts[0])[parts.slice(1).join(":")]; if (st) { st.preview = false; render(); mainEl.querySelectorAll("[data-readmearea]").forEach(function (ta) { if (ta.getAttribute("data-readmearea") === pv.getAttribute("data-readmepress")) ta.focus(); }); } }; });
+    mainEl.querySelectorAll("[data-readmesave]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-readmesave").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var st = readmeStore(kind)[key]; if (!st) return; var url = kind === "rag" ? "/api/rag/readme-save" : "/api/chips/readme-save"; var body = kind === "rag" ? { slug: key, readme: st.text } : { file: key, readme: st.text }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) { if (j.ok) { st.edited = true; st.preview = true; st.msg = "Saved — this README now ships with it."; st.err = ""; } else { st.err = j.error || "Save failed."; } render(); }).catch(function () { st.err = "The bridge didn't answer."; render(); }); }; });
     mainEl.querySelectorAll("[data-readmerestore]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-readmerestore").split(":"); var kind = parts[0]; var key = parts.slice(1).join(":"); var url = kind === "rag" ? "/api/rag/readme-restore" : "/api/chips/readme-restore"; var body = kind === "rag" ? { slug: key } : { file: key }; fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function () { readmeStore(kind)[key] = { open: false }; openReadme(kind, key); }).catch(function () { render(); }); }; });
     mainEl.querySelectorAll("[data-readmeclose]").forEach(function (b) { b.onclick = function () { var parts = b.getAttribute("data-readmeclose").split(":"); readmeStore(parts[0])[parts.slice(1).join(":")] = { open: false }; render(); }; });
   }

@@ -2,6 +2,14 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.5.11
+
+Release tag: v0.5.11e — chapter 0.5's eleventh Edge build under patch-per-build versioning. Reading first: markdown documents open rendered across Apex, the editor opens on a press inside the text, and the split view is gone — from the Vault, and from every form of the MD system.
+
+- **The Vault note opens on the viewer (#284).** The Edit / Split / Preview toggle is retired, and with it the split view itself. A note now opens **rendered** — the document as it reads — on phone and desktop alike. **Press inside the text** and the editor opens on the same words, automatically; the autosave discipline is untouched, and leaving the note (backing out of the reader, opening another) returns it to its rendered form. The reader's furniture stands as it was: focus mode, the formed case document's dossier-elements strip, the backlinks / outgoing / tags strip, the ← Notes return. The phone Vault's two states (#279) hold — the reader now opens in the viewer. A press on a wikilink still follows the link; a press that ends as a text selection is a read, not an edit.
+- **The README editors follow the same law (#284).** The chip and pack README documents — the other MD editor in the app — open rendered too. The Preview button retires; a press inside the text opens the editor, and **Save README**, the standing commit act, returns the document to its rendered form. Restore and Close stand as they were.
+- **The inventory is the whole board (#284).** Every surface was inventoried: Case Files and The Dossier render their documents read-only and never carried modes; chat and the Docs render only; the Soul and Memory editors are bare textareas with an explicit Save and never had a viewer to open on. Nothing outside the two editing surfaces changed, and no mode machinery survives anywhere — the bench asserts the absence across the page, not a sample of it.
+
 ## 0.5.10
 
 Release tag: v0.5.10e — chapter 0.5's tenth Edge build under patch-per-build versioning. The Wire digs deeper: Navi can search the Wire's own sources live from chat, every Wire tab gains a fuzzy search of its own corpus, and any card can be pulled into a case's chat as reference for Navi to work from.
