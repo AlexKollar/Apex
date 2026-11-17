@@ -203,6 +203,34 @@ PREV_DIR="$PARENT_DIR/.apex-prev"
 FAILED_DIR="$PARENT_DIR/.apex-failed-$STAMP"
 CARRY_DIR="$PARENT_DIR/.apex-carry"
 
+# --- The unit templates are copied out of the blast radius (#276) ----
+# Service registration — the install's last provisioning act —
+# seds the systemd unit templates into ~/.config/systemd/user.
+# On the apply path this installer's own tree stands INSIDE
+# the install home (updates/<tag>/package), and the swap parks
+# that whole home mid-install: in the field (NeoArcadia,
+# applying v0.5.6e) the registration sed then read a path that
+# no longer existed, and the installer's tail died after the
+# swap had already landed the build. So the two templates are
+# copied NOW, before anything can move, to a scratch dir
+# outside every tree the swap renames (the stage, the home
+# and the park all live under PARENT_DIR; the scratch does
+# not), and registration reads from there. A hand run loses
+# nothing: the copies are byte-identical to the package's
+# templates, and if the copy cannot be made, registration
+# falls back to the package tree, exactly as before.
+UNIT_TEMPLATE_DIR="$SRC_DIR/systemd"
+UNIT_TEMPLATE_SCRATCH=""
+if [ -f "$SRC_DIR/systemd/navi-llamafile.service" ] && [ -f "$SRC_DIR/systemd/navi-bridge.service" ]; then
+  if UNIT_TEMPLATE_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/apex-unit-templates.XXXXXX" 2>/dev/null)" \
+     && cp "$SRC_DIR/systemd/navi-llamafile.service" "$SRC_DIR/systemd/navi-bridge.service" "$UNIT_TEMPLATE_SCRATCH/"; then
+    UNIT_TEMPLATE_DIR="$UNIT_TEMPLATE_SCRATCH"
+    trap 'rm -rf "$UNIT_TEMPLATE_SCRATCH"' EXIT
+  else
+    UNIT_TEMPLATE_SCRATCH=""
+  fi
+fi
+
 # --- The homecoming: legacy detection (#198) -------------------
 # Migration runs when this install's target is the default home
 # and a legacy tree stands at LEGACY_DIR. It runs at most once:
@@ -2698,8 +2726,11 @@ if [ "$STARTUP" = "boot" ]; then
   echo "==> Registering Apex as systemd user services — the llamafile, and the bridge headless"
   UNIT_DIR="$HOME/.config/systemd/user"
   mkdir -p "$UNIT_DIR"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$SRC_DIR/systemd/navi-llamafile.service" > "$UNIT_DIR/navi-llamafile.service"
-  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$SRC_DIR/systemd/navi-bridge.service" > "$UNIT_DIR/navi-bridge.service"
+  # The templates come from the copy taken at installer start
+  # (#276): on the apply path $SRC_DIR itself was parked by
+  # the swap long before this step runs.
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$UNIT_TEMPLATE_DIR/navi-llamafile.service" > "$UNIT_DIR/navi-llamafile.service"
+  sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$UNIT_TEMPLATE_DIR/navi-bridge.service" > "$UNIT_DIR/navi-bridge.service"
   _svc_ok=1
   systemctl --user daemon-reload || _svc_ok=""
   if [ -n "$_svc_ok" ]; then systemctl --user enable --now navi-llamafile.service || _svc_ok=""; fi

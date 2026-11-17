@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.7"
+SHIPPED_VERSION = "0.5.8"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.23"
+BRIDGE_BUILD = "2026-11-17.24"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 23
+SHIPPED_BUILD_SEQ = 24
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -14007,17 +14007,33 @@ def _release_is_newer(tag, current_number, current_status, build_seq=None):
 
 def _release_build_seq(rel):
     # A publication's place in its own version's sequence
-    # (build .86): "Build <n>" parsed from the release's name
-    # first, then its body's opening lines. None when the
-    # release carries no build number.
+    # (build .86; the stamps token is #277): the release kit
+    # stamps every build, and the stamps form "Stamps <date>
+    # / seq <n>" — searched in the release's name first, then
+    # its body's opening lines — is AUTHORITATIVE when
+    # present: prose cannot outvote it. The legacy "Build
+    # <n>" scan remains as a fallback for releases published
+    # before the stamps line, but a "Build <n>" that is part
+    # of a longer name never counts — the v0.5.7e notes'
+    # opening named the feature "FediChat Build 2", the feed
+    # read seq 2, and the identity check refused the genuine
+    # seq-23 package on every Edge seat (#277). A match
+    # immediately preceded by a letter + space is a name,
+    # not a sequence. None when the release carries no
+    # usable build number — the identity check then skips,
+    # as it always has for unstamped releases.
     name = str(rel.get("name") or "")
-    m = re.search(r"Build ([0-9]+)", name)
-    if m:
-        return int(m.group(1))
     body = str(rel.get("body") or "")
-    for line in body.splitlines()[:6]:
-        m = re.search(r"Build ([0-9]+)", line)
+    opening = [name] + body.splitlines()[:6]
+    for text in opening:
+        m = re.search(r"Stamps [0-9][0-9.\-]* / seq ([0-9]+)", text)
         if m:
+            return int(m.group(1))
+    for text in opening:
+        for m in re.finditer(r"Build ([0-9]+)", text):
+            if m.start() >= 2 and text[m.start() - 2].isalpha() \
+                    and text[m.start() - 1] == " ":
+                continue
             return int(m.group(1))
     return None
 
