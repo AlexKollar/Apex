@@ -836,6 +836,15 @@
   .wiretabs button { min-height:44px; padding:8px 16px; font-weight:700; }
   .wiretabs button .wt-count { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; font-weight:400; color:var(--dim); margin-left:6px; }
   .wiretabs button.act .wt-count { color:inherit; }
+  /* Wire tab search + the pull picker (v0.5.10e, #283): the
+     search input rides the tab's own width at every size —
+     100% of its row, never wider, so the page itself never
+     scrolls sideways on a phone. */
+  .wiresearch input[type='search'] { background:var(--panel2); border:1px solid var(--line); border-radius:8px; color:var(--text); padding:8px 12px; font-size:14px; box-sizing:border-box; min-height:44px; }
+  mark.wire-hit { background:rgba(245,181,68,.35); color:inherit; border-radius:3px; padding:0 1px; }
+  #wire-pull-shade { position:fixed; inset:0; z-index:118; background:rgba(0,0,0,.45); }
+  #wire-pull-picker { position:fixed; z-index:119; left:50%; top:50%; transform:translate(-50%,-50%); width:min(560px,calc(100vw - 32px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:18px 20px; box-sizing:border-box; }
+  .shelf-card { border-color:var(--am); }
   .meshpill.fedpill .fedseg-elide { display:none; }
   @media (max-width:800px) {
     .meshpill.fedpill .fedseg-mid { display:none; }
@@ -2180,8 +2189,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.25";
-var SHIPPED_BUILD_SEQ = 25;
+var BRIDGE_BUILD = "2026-11-17.26";
+var SHIPPED_BUILD_SEQ = 26;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3476,6 +3485,7 @@ function threatIntelHtml() {
     // bounce to Home or the Center to read a family's list.
     // In the CTFBoard view the bar rides without the back row.
     if (["news", "cve", "kev", "ctfs"].indexOf(intelTab) !== -1) fh += wireTabsHtml();
+    if (wirePullMsg) fh += "<p style='font-size:13px'>" + esc(wirePullMsg) + "</p>";
     if (intelTab === "cve") fh += wireKindHtml("cve");
     else if (intelTab === "kev") fh += wireKindHtml("kev");
     else if (intelTab === "ctfs") fh += ctfTabHtml();
@@ -3483,6 +3493,7 @@ function threatIntelHtml() {
     else if (intelTab === "center") fh += ticCenterHtml("center");
     else fh += wireTabHtml();
     if (wireReader) fh += wireReaderHtml();
+    if (wirePullPick) fh += wirePullPickerHtml();
     return fh;
   }
   setIntelTab("home");
@@ -3665,14 +3676,16 @@ function ticDashboardHtml() {
   h += "<div class='row' style='margin-top:10px'><button class='act' data-tic-go='bounties' style='min-height:40px'>Open the bounties</button></div></div>";
   return h + "</div>";
 }
-function wireItemCardHtml(it) {
+function wireItemCardHtml(it, tab, idx, hit) {
   var h = "<div class='card' style='margin-top:10px'>";
   if (it.kind === "kev") h += "<span class='mono' style='font-size:11px;color:#f87171'>KEV ADDITION</span> ";
   else if (it.kind === "cve") h += "<span class='mono' style='font-size:11px;color:#f5b544'>NEW CVE</span> ";
   if (it.developing) h += "<span class='mono' style='font-size:11px;color:#34d399'>DEVELOPING</span> ";
-  h += "<button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(it.title) + "</b></button>";
+  h += "<button class='ghost' data-wire-read='" + esc(encodeURIComponent(it.link)) + "' style='text-align:left;font-size:15px;min-height:40px'><b>" + (hit ? wireMarkTitle(it.title, hit) : esc(it.title)) + "</b></button>";
   h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " \u00b7 " + esc(ticLocal(it.published)) : "") + "</div>";
+  if (hit) h += "<div class='mono' style='font-size:11px;color:var(--am)'>Matched: " + hit.map(function (t) { return t[0] === t[1] ? esc(t[0]) : esc(t[0]) + " \u2192 " + esc(t[1]); }).join(" \u00b7 ") + "</div>";
   if (it.excerpt) h += "<p style='font-size:13px;margin-top:6px'>" + esc(it.excerpt) + "</p>";
+  if (tab) h += "<div class='row' style='margin-top:8px'><button class='ghost' data-wire-pull='" + tab + ":" + idx + "' aria-label='Pull this card into a case as reference' style='min-height:36px;padding:4px 12px;font-size:12px'>Pull into a case</button></div>";
   return h + "</div>";
 }
 var wireFeedMsg = "";
@@ -3717,6 +3730,202 @@ function wireTabsHtml() {
   });
   return h + "</div>";
 }
+// ---------- Wire tab search + pull into a case (v0.5.10e, #283) ----------
+// Every Wire tab carries its own search bar, searching its
+// own corpus: fuzzy — token-based, typo-tolerant, relevance-
+// ranked — with the match visible on the card (the matched
+// words lit in the title, the matched terms named under it).
+// Clearing the search restores the tab's standing order.
+// Every card also carries Pull into a case: the card lands on
+// a case chat's REFERENCE SHELF (bridge-side, /api/cases/
+// shelf) — reference, not a finding; the case file is never
+// touched by a pull.
+var wireTabSearch = { news: "", cve: "", kev: "", ctfs: "" };
+var wireTabLists = { news: [], cve: [], kev: [], ctfs: [] };
+var wirePullPick = null, wirePullMsg = "";
+var WIRE_TAB_LABELS = { news: "News", cve: "CVEs", kev: "KEVs", ctfs: "CTFs" };
+function wireLev(a, b) {
+  var m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 99;
+  var prev = [], cur = [], i, j;
+  for (j = 0; j <= n; j++) prev[j] = j;
+  for (i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    var t = prev; prev = cur; cur = t;
+  }
+  return prev[n];
+}
+function wireFuzzyRank(query, rows) {
+  // rows: [{title, body}] in standing order. Returns null when
+  // no search is active; else the matching rows ranked —
+  // [{i, score, terms:[[queryToken, matchedWord], …]}] — a row
+  // matches only when EVERY query token finds a home in it.
+  var qtoks = String(query || "").toLowerCase().split(/[^a-z0-9._-]+/).filter(Boolean);
+  if (!qtoks.length) return null;
+  var out = [];
+  rows.forEach(function (row, idx) {
+    var titleWords = String(row.title || "").toLowerCase().split(/[^a-z0-9._-]+/).filter(Boolean);
+    var bodyWords = String(row.body || "").toLowerCase().split(/[^a-z0-9._-]+/).filter(Boolean);
+    var score = 0, terms = [], all = true;
+    qtoks.forEach(function (qt) {
+      var best = 0, bw = "";
+      function consider(w, base) {
+        var s = 0;
+        if (w === qt) s = base + 3;
+        else if (qt.length >= 3 && w.indexOf(qt) === 0) s = base + 2;
+        else if (w.indexOf(qt) !== -1) s = base + 1;
+        else if (qt.length >= 4 && wireLev(qt, w) <= (qt.length >= 8 ? 2 : 1)) s = base + 2;
+        if (s > best) { best = s; bw = w; }
+      }
+      titleWords.forEach(function (w) { consider(w, 3); });
+      if (!best) bodyWords.forEach(function (w) { consider(w, 0); });
+      if (!best) all = false; else { score += best; terms.push([qt, bw]); }
+    });
+    if (all) out.push({ i: idx, score: score, terms: terms });
+  });
+  out.sort(function (a, b) { return b.score - a.score || a.i - b.i; });
+  return out;
+}
+function wireMarkTitle(title, terms) {
+  if (!terms || !terms.length) return esc(title);
+  var hitWords = {};
+  terms.forEach(function (t) { hitWords[t[1]] = 1; });
+  return String(title).split(/(\s+)/).map(function (piece) {
+    var w = piece.toLowerCase().replace(/[^a-z0-9._-]/g, "");
+    if (w && hitWords[w]) return "<mark class='wire-hit'>" + esc(piece) + "</mark>";
+    return esc(piece);
+  }).join("");
+}
+function wireSearchBarHtml(tab) {
+  var q = wireTabSearch[tab] || "";
+  var h = "<div class='card wiresearch' style='margin-top:12px'><div class='row' style='gap:8px;flex-wrap:wrap;align-items:center'>"
+    + "<input id='wire-search-" + tab + "' data-wire-search='" + tab + "' type='search' value='" + esc(q) + "' placeholder='Search " + WIRE_TAB_LABELS[tab] + " \u2014 fuzzy; typos forgiven' aria-label='Search the " + WIRE_TAB_LABELS[tab] + " tab' style='flex:1 1 220px'>"
+    + "<button class='ghost' id='wire-search-clear-" + tab + "' data-wire-search-clear='" + tab + "' aria-label='Clear the " + WIRE_TAB_LABELS[tab] + " search' style='min-height:44px" + (q ? "" : ";display:none") + "'>Clear</button></div>"
+    + "<p style='font-size:12px;color:var(--dim);margin-top:6px'>Searches this tab only. Clearing brings the standing order back.</p></div>";
+  return h;
+}
+function wireResultsHtml(tab) {
+  return tab === "ctfs" ? wireCtfCardsHtml() : wireWireCardsHtml(tab);
+}
+function wireWireCardsHtml(tab) {
+  var items = (wireState.items || []).filter(function (it) { return it.kind === tab; }).slice(0, 60);
+  wireTabLists[tab] = items.map(function (it) {
+    return { tab: tab, title: it.title || "", link: it.link || "", source: it.sourceLabel || "",
+             text: (it.title || "") + "\n" + (it.sourceLabel || "") + (it.published ? " \u00b7 " + ticLocal(it.published) : "") + "\n\n" + (it.excerpt || "") };
+  });
+  var ranked = wireFuzzyRank(wireTabSearch[tab], wireTabLists[tab].map(function (c) { return { title: c.title, body: c.text }; }));
+  var h = "";
+  if (ranked) {
+    h += "<p class='mono' style='font-size:12px;color:var(--dim);margin-top:10px'>" + ranked.length + " of " + items.length + " cards match \u201c" + esc(wireTabSearch[tab]) + "\u201d \u2014 closest first.</p>";
+    if (!ranked.length) h += "<div class='card' style='margin-top:10px'><p style='color:var(--dim)'>No card on this tab answers to that \u2014 the absence is this tab's own: nothing here matches, however loosely. Try fewer or different words.</p></div>";
+    ranked.forEach(function (r) { h += wireItemCardHtml(items[r.i], tab, r.i, r.terms); });
+    return h;
+  }
+  if (!items.length) {
+    return h + "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>" + (tab === "news"
+      ? "No news on the wire yet \u2014 the first fetch brings the headlines. A feed that does not answer is named in Feed health above, never silently missing."
+      : "Nothing in this family on the wire right now.") + "</p></div>";
+  }
+  items.forEach(function (it, i) { h += wireItemCardHtml(it, tab, i, null); });
+  return h;
+}
+function ctfCardText(e) {
+  var paras = [(e.format || "Format unlisted") + " \u00b7 " + (e.onsite ? "On-site \u2014 " + (e.location || "place unlisted") : "Online") + (e.weight ? " \u00b7 weight " + e.weight : "") + (e.restrictions ? " \u00b7 " + e.restrictions : ""),
+               ticLocal(e.start) + " \u2192 " + ticLocal(e.finish) + " (your timezone)"];
+  if (e.organizers && e.organizers.length) paras.push("Run by " + e.organizers.join(", ") + ".");
+  if (e.description) paras.push(e.description);
+  if (e.prizes) paras.push("Prizes: " + e.prizes);
+  return (e.title || "") + "\n" + paras.join("\n");
+}
+function wireCtfCardsHtml() {
+  var s = ctfState;
+  var running = s.running || [], upcoming = (s.upcoming || []).slice(0, 30);
+  var all = running.concat(upcoming);
+  wireTabLists.ctfs = all.map(function (e) {
+    return { tab: "ctfs", title: e.title || "", link: e.ctftimeUrl || e.url || "", source: "CTFtime", text: ctfCardText(e) };
+  });
+  var ranked = wireFuzzyRank(wireTabSearch.ctfs, wireTabLists.ctfs.map(function (c) { return { title: c.title, body: c.text }; }));
+  var h = "";
+  if (ranked) {
+    h += "<p class='mono' style='font-size:12px;color:var(--dim);margin-top:10px'>" + ranked.length + " of " + all.length + " events match \u201c" + esc(wireTabSearch.ctfs) + "\u201d \u2014 closest first.</p>";
+    if (!ranked.length) h += "<div class='card' style='margin-top:10px'><p style='color:var(--dim)'>No event on the board answers to that. Try fewer or different words.</p></div>";
+    ranked.forEach(function (r) { h += ctfEventHtml(all[r.i], r.i, r.terms); });
+    return h;
+  }
+  h += "<h3>Running now</h3>";
+  if (!running.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing is running right now.</p></div>";
+  running.forEach(function (e, i) { h += ctfEventHtml(e, i, null); });
+  h += "<h3>Upcoming</h3>";
+  if (!upcoming.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing upcoming in the window the board carries.</p></div>";
+  upcoming.forEach(function (e, i) { h += ctfEventHtml(e, running.length + i, null); });
+  return h;
+}
+function wirePullPickerHtml() {
+  var c = wirePullPick;
+  var h = "<div id='wire-pull-shade'></div>";
+  h += "<div id='wire-pull-picker' role='dialog' aria-modal='true' aria-label='Pull this card into a case'>";
+  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>PULL INTO A CASE \u2014 AS REFERENCE</div>";
+  h += "<h3 style='margin:6px 0'>" + esc(c.title) + "</h3>";
+  h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(WIRE_TAB_LABELS[c.tab] || c.tab) + " \u00b7 " + esc(c.source || "") + "</div>";
+  h += "<p style='font-size:13px;margin-top:8px'>The card lands on the case chat's <b>reference shelf</b> \u2014 its full text, link and provenance \u2014 for Navi to pull from as she works the case. It is <b>not a finding</b>: the case file is untouched, and filing stays a separate act.</p>";
+  if (!casesState) h += "<p style='color:var(--dim);font-size:13px'>Gathering your cases\u2026</p>";
+  else if (!casesState.length) h += "<p style='color:var(--dim);font-size:13px'>No cases yet \u2014 a card needs a case to land in. Start one in Case Files first.</p>";
+  else {
+    h += "<div style='display:flex;flex-direction:column;gap:6px;margin-top:10px'>";
+    casesState.forEach(function (cs) {
+      h += "<button class='ghost' data-wire-pull-case='" + esc(cs.slug) + "' style='min-height:44px;text-align:left'><b>" + esc(cs.name || cs.slug) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(cs.slug) + "</span></button>";
+    });
+    h += "</div>";
+  }
+  h += "<div class='row' style='margin-top:12px'><button class='ghost' id='wire-pull-cancel' style='min-height:40px'>Cancel</button></div>";
+  return h + "</div>";
+}
+function wireDoPull(slug) {
+  var card = wirePullPick;
+  if (!card || !slug) return;
+  var name = slug;
+  (casesState || []).forEach(function (c) { if (c.slug === slug) name = c.name || slug; });
+  casePost("/api/cases/shelf", { case: slug, act: "add", card: { tab: card.tab, title: card.title, link: card.link, source: card.source, text: card.text } }, function (j) {
+    wirePullPick = null;
+    if (j && j.ok) {
+      wirePullMsg = j.note === "duplicate"
+        ? "\u201c" + card.title + "\u201d is already on \u201c" + name + "\u201d's reference shelf \u2014 as " + ((j.ref && j.ref.id) || "") + ". No second copy was made."
+        : "Pulled onto \u201c" + name + "\u201d's reference shelf as " + ((j.ref && j.ref.id) || "") + " \u2014 reference, not a finding. It stands in the case's chat, and Navi can read it there.";
+      hydrateChatsFromServer();
+    } else {
+      wirePullMsg = "The pull did not land \u2014 " + ((j && j.error) || "the bridge could not shelf it.");
+    }
+    render();
+  });
+}
+function caseShelfHtml(ac) {
+  // The reference shelf, standing at the head of the case's
+  // room — labeled as what it is, distinct from messages and
+  // from findings: reference, not findings. Removal is
+  // shelf-local and says so.
+  if (!ac || !ac.case || !ac.shelf || !ac.shelf.length) return "";
+  var h = "<div class='card shelf-card' style='margin-top:10px'><div class='mono' style='font-size:12px'><b>REFERENCE SHELF</b> <span style='color:var(--dim)'>pulled from the Wire \u00b7 reference, not case findings</span></div>";
+  ac.shelf.forEach(function (r) {
+    h += "<div style='display:flex;gap:8px;align-items:flex-start;margin-top:8px'><div style='flex:1;min-width:0'><span class='mono' style='font-size:11px;color:var(--am)'>" + esc(r.id) + "</span> "
+      + (r.link ? "<a href='" + esc(r.link) + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(r.title) + "</a>" : "<b>" + esc(r.title) + "</b>")
+      + "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(WIRE_TAB_LABELS[r.tab] || r.tab || "") + (r.source ? " \u00b7 " + esc(r.source) : "") + " \u00b7 pulled by " + (r.pulledBy === "navi" ? "Navi" : "you") + (r.pulledAt ? " \u00b7 " + esc(new Date(r.pulledAt * 1000).toLocaleString()) : "") + "</div></div>"
+      + "<button class='ghost' data-shelf-remove='" + esc(r.id) + "' data-shelf-case='" + esc(ac.case) + "' aria-label='Remove reference " + esc(r.id) + " from this case's shelf' style='min-height:36px;padding:4px 10px;font-size:12px'>Remove</button></div>";
+  });
+  h += "<div style='font-size:12px;color:var(--dim);margin-top:8px'>Navi reads these in this room \u2014 name one (\u201cuse reference R1\u201d) or ask her to pull it into a reply. Removing one touches only this shelf.</div>";
+  return h + "</div>";
+}
+function refPullsHtml(m) {
+  // The receipt for her shelf pulls — built from the bridge's
+  // record of what was actually placed before her.
+  if (!m.refPulls || !m.refPulls.length) return "";
+  return m.refPulls.map(function (p) {
+    return "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Read from the shelf</b> <span style='color:var(--dim)'>her pull, receipted by the bridge</span></div>"
+      + "<div style='font-size:13px;margin-top:2px'><span class='mono' style='font-size:11px;color:var(--am)'>" + esc(p.id) + "</span> \u201c" + esc(p.title) + "\u201d \u2014 cited as reference above</div></div>";
+  }).join("");
+}
 function wireTabHtml() {
   var h = "";
   if (wireMsg) h += "<p style='font-size:13px'>" + esc(wireMsg) + "</p>";
@@ -3738,10 +3947,11 @@ function wireTabHtml() {
   h += wireFeedsCardHtml(s);
   // News is news only (Build 3, #210): the lane filter is the
   // item's own kind — CVE and KEV items are re-laned to their
-  // tabs, never dropped.
-  var items = (s.items || []).filter(function (it) { return it.kind === "news"; });
-  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>No news on the wire yet — the first fetch brings the headlines. A feed that does not answer is named in Feed health above, never silently missing.</p></div>";
-  items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
+  // tabs, never dropped. v0.5.10e (#283): the tab's search bar
+  // stands over the feed, and the results container carries
+  // the cards so typing re-renders only the list.
+  h += wireSearchBarHtml("news");
+  h += "<div id='wire-results-news'>" + wireWireCardsHtml("news") + "</div>";
   // The wire's other families are one tap away on the tab
   // bar at the top of this view (v0.4.1e, #230) — the Build 4
   // door row that stood here is retired; the bar supersedes it.
@@ -3763,8 +3973,9 @@ function wireKindHtml(kind) {
   } else {
     h += "<div class='card'><b>KEV additions — known-exploited, from the wire</b><p style='font-size:13px;color:var(--dim);margin-top:4px'>" + items.length + " additions on the wire right now" + (intelState ? " \u00b7 the Center's catalog holds " + esc(intelState.kevTotal || 0) + " known-exploited in all" : "") + ". Each card opens the CISA catalog entry through the reader; where extraction cannot work, the fallback is named, never faked.</p></div>";
   }
-  if (!items.length) h += "<div class='card' style='margin-top:12px'><p style='color:var(--dim)'>Nothing in this family on the wire right now.</p></div>";
-  items.slice(0, 60).forEach(function (it) { h += wireItemCardHtml(it); });
+  // v0.5.10e (#283): the tab's own search bar + results.
+  h += wireSearchBarHtml(kind);
+  h += "<div id='wire-results-" + kind + "'>" + wireWireCardsHtml(kind) + "</div>";
   return h;
 }
 function openWireReader(link) {
@@ -3839,10 +4050,11 @@ function openCtfReader(e) {
   wireReader = { kind: "record", item: { source: "CTFtime — the board's listing", link: e.ctftimeUrl || e.url || "", published: e.start }, title: e.title, paragraphs: paras };
   render();
 }
-function ctfEventHtml(e, idx) {
+function ctfEventHtml(e, idx, hit) {
   var h = "<div class='card' style='margin-top:10px'><div style='display:flex;gap:12px;align-items:flex-start'>";
   if (e.logo) h += "<img src='" + esc(e.logo) + "' alt='' style='width:44px;height:44px;object-fit:contain;border-radius:8px;background:var(--panel2)'>";
-  h += "<div style='flex:1'><button type='button' class='ghost tic-ev-read' data-ctf-read='" + idx + "' aria-label='Read this event in the reader' style='text-align:left;font-size:15px;min-height:40px'><b>" + esc(e.title) + "</b></button>";
+  h += "<div style='flex:1'><button type='button' class='ghost tic-ev-read' data-ctf-read='" + idx + "' aria-label='Read this event in the reader' style='text-align:left;font-size:15px;min-height:40px'><b>" + (hit ? wireMarkTitle(e.title, hit) : esc(e.title)) + "</b></button>";
+  if (hit) h += "<div class='mono' style='font-size:11px;color:var(--am)'>Matched: " + hit.map(function (t) { return t[0] === t[1] ? esc(t[0]) : esc(t[0]) + " \u2192 " + esc(t[1]); }).join(" \u00b7 ") + "</div>";
   h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(e.format || "format unlisted") + " · " + (e.onsite ? "on-site · " + esc(e.location || "") : "online") + (e.weight ? " · weight " + esc(e.weight) : "") + (e.restrictions ? " · " + esc(e.restrictions) : "") + "</div>";
   h += "<div class='mono' style='font-size:12px;margin-top:2px'>" + esc(ticLocal(e.start)) + " → " + esc(ticLocal(e.finish)) + " <span style='color:var(--dim)'>(your timezone)</span></div>";
   if (e.organizers && e.organizers.length) h += "<div style='font-size:12px;color:var(--dim);margin-top:2px'>by " + esc(e.organizers.join(", ")) + "</div>";
@@ -3851,6 +4063,7 @@ function ctfEventHtml(e, idx) {
   h += "<div class='row' style='margin-top:8px;gap:8px'>";
   if (e.ctftimeUrl) h += "<a class='ghost' href='" + esc(e.ctftimeUrl) + "' target='_blank' rel='noopener' style='min-height:36px;text-decoration:none;display:inline-flex;align-items:center;padding:0 12px'>CTFtime listing</a>";
   if (e.url) h += "<a class='ghost' href='" + esc(e.url) + "' target='_blank' rel='noopener' style='min-height:36px;text-decoration:none;display:inline-flex;align-items:center;padding:0 12px'>Event site</a>";
+  h += "<button type='button' class='ghost' data-wire-pull='ctfs:" + idx + "' aria-label='Pull this event into a case as reference' style='min-height:36px;padding:4px 12px;font-size:12px'>Pull into a case</button>";
   return h + "</div></div></div></div>";
 }
 function ctfTabHtml() {
@@ -3862,12 +4075,9 @@ function ctfTabHtml() {
   h += "<div class='card'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>The CTF board</b><button class='act' id='ctf-pull' style='min-height:40px'" + (s.pulling ? " disabled" : "") + ">" + (s.pulling ? "Fetching…" : "Fetch now") + "</button></div>";
   h += "<p style='font-size:13px;margin-top:6px'>" + esc(s.staleness || "") + "</p>";
   h += "<label style='display:flex;gap:8px;align-items:center;min-height:40px'><input type='checkbox' id='ctf-enabled'" + (s.enabled ? " checked" : "") + "> Board enabled</label></div>";
-  h += "<h3>Running now</h3>";
-  if (!s.running || !s.running.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing is running right now.</p></div>";
-  (s.running || []).forEach(function (e, i) { h += ctfEventHtml(e, i); });
-  h += "<h3>Upcoming</h3>";
-  if (!s.upcoming || !s.upcoming.length) h += "<div class='card'><p style='color:var(--dim)'>Nothing upcoming in the window the board carries.</p></div>";
-  (s.upcoming || []).slice(0, 30).forEach(function (e, i) { h += ctfEventHtml(e, (s.running || []).length + i); });
+  // v0.5.10e (#283): the board's own search bar + results.
+  h += wireSearchBarHtml("ctfs");
+  h += "<div id='wire-results-ctfs'>" + wireCtfCardsHtml() + "</div>";
   return h;
 }
 function bountiesTabHtml() {
@@ -3904,7 +4114,44 @@ function wireAwareness() {
   mainEl.querySelectorAll("[data-tic-go]").forEach(function (b) { b.onclick = function () { setIntelTab(b.getAttribute("data-tic-go")); render(); }; });
   mainEl.querySelectorAll("[data-ctf-read]").forEach(function (b) { b.onclick = function () { openCtfReader(ctfEventByIdx(Number(b.getAttribute("data-ctf-read")))); }; });
   mainEl.querySelectorAll("[data-wire-read]").forEach(function (b) { b.onclick = function () { openWireReader(decodeURIComponent(b.getAttribute("data-wire-read"))); }; });
+  // Tab search (v0.5.10e, #283): typing updates only the
+  // tab's results container — the input itself is never
+  // re-rendered, so focus and the caret never move.
+  mainEl.querySelectorAll("[data-wire-search]").forEach(function (inp) { inp.oninput = function () {
+    var tab = inp.getAttribute("data-wire-search");
+    wireTabSearch[tab] = inp.value;
+    var box = document.getElementById("wire-results-" + tab);
+    if (box) { box.innerHTML = wireResultsHtml(tab); wireAwareness(); }
+    var clr = document.getElementById("wire-search-clear-" + tab);
+    if (clr) clr.style.display = inp.value ? "" : "none";
+  }; });
+  mainEl.querySelectorAll("[data-wire-search-clear]").forEach(function (b) { b.onclick = function () {
+    var tab = b.getAttribute("data-wire-search-clear");
+    wireTabSearch[tab] = "";
+    var inp = document.getElementById("wire-search-" + tab);
+    if (inp) inp.value = "";
+    b.style.display = "none";
+    var box = document.getElementById("wire-results-" + tab);
+    if (box) { box.innerHTML = wireResultsHtml(tab); wireAwareness(); }
+    if (inp) inp.focus();
+  }; });
+  // Pull into a case (v0.5.10e, #283): the pick opens the
+  // case picker; the choice posts to the shelf's door.
+  mainEl.querySelectorAll("[data-wire-pull]").forEach(function (b) { b.onclick = function () {
+    var parts = (b.getAttribute("data-wire-pull") || "").split(":");
+    var card = (wireTabLists[parts[0]] || [])[Number(parts[1])];
+    if (!card) return;
+    wirePullPick = card; wirePullMsg = "";
+    if (!casesState) {
+      fetch("/api/cases").then(function (r) { return r.json(); }).then(function (j) { casesState = (j && j.cases) || []; if (wirePullPick) render(); }).catch(function () { casesState = []; if (wirePullPick) render(); });
+    }
+    render();
+  }; });
+  mainEl.querySelectorAll("[data-wire-pull-case]").forEach(function (b) { b.onclick = function () { wireDoPull(b.getAttribute("data-wire-pull-case")); }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
+  bind("wire-pull-cancel", function () { wirePullPick = null; render(); });
+  var pullShade = document.getElementById("wire-pull-shade");
+  if (pullShade) pullShade.onclick = function () { wirePullPick = null; render(); };
   bindWireReaderClose();
   bind("wire-pills-toggle", function () {
     wirePillsOpen = !wirePillsOpen;
@@ -6193,6 +6440,9 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Deleting a finding, and the custody record (v0.5.9e, #280)</h4>" +
   "<p>Every finding carries a <b>Delete</b>. The confirm names what will happen before it fires, and there are two shapes: a finding that is <b>not</b> a dossier element is removed from this case and its formed Vault document, and nothing else is touched; a finding born from a <b>dossier element</b> deletes the element itself — from its dossier, from <b>every</b> case it stands in, and from the Vault formations — because the element is one thing with several homes, and deleting it in one home while it stands in the others would leave the record lying. A reason (<i>irrelevant / repeat / incorrect</i>) is optional on either shape, never required.</p>" +
   "<p>Either way, the case keeps the receipt: a line in its <b>custody record</b> (<span class='mono'>custody.md</span> in the case folder) naming the finding or element, when it left, <b>where it was deleted from</b> (the dossier / this case / another case / the Vault), and the reason if one was given. The custody record is part of the case folder — it rides Sync and backups with the case — but it is not part of the formed document: a formed case file holds the case's substance, and a deletion leaves no residue in it beyond the custody line's home in the folder.</p></div>" +
+    "<div class='doc-sec'><h4>The reference shelf (v0.5.10e, #283)</h4>" +
+  "<p>A case chat can hold a <b>reference shelf</b>: Wire cards — a news story, a CVE or KEV card, a CTF listing — pulled in from the Wire page with the card's <b>Pull into a case</b> button, or pulled by Navi herself when you ask her to (<i>“pull the OpenSSH card into this case”</i>). A shelf entry carries the card's full text, its link and its provenance, and it stands at the head of the case's room, labeled <b>REFERENCE SHELF — reference, not case findings</b>.</p>" +
+  "<p>The shelf is <b>reference, not evidence</b>. It never enters the case file, the registers, the findings, or any export — filing stays a separate, deliberate act, and a pulled card becomes a finding only when something is filed. Navi reads the shelf in the room: the refs stand in her context by name, and naming one (<i>“use reference R1”</i>) or letting her pull it into a reply brings its full text to bear — cited <b>as reference</b>, never as a finding, with the pull receipted under her answer. The shelf rides the case chat's Sync, so it stands on every seat the chat does. Removing a ref is <b>shelf-local</b>: it leaves this shelf only — unlike a dossier element's delete, it reaches nowhere else, and it says so where it stands.</p></div>" +
     "<div class='doc-sec'><h4>The report export</h4>" +
   "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
   { id: "threat-intelligence", title: "The Wire — the Center", related: ["case-files", "mesh"], html:
@@ -6207,6 +6457,10 @@ var DOC_PAGES = [
   "<p><b>One search, the whole catalog.</b> The Center's page carries a <b>Search the catalog</b> card above the queue — one box for CVEs and KEVs alike, because the catalog holds both and KEV is a flag on the same records. Ask by <b>CVE id</b> (exact, or a prefix), by <b>free text</b> over titles and descriptions, or by <b>vendor and product</b> names; narrow it with <b>Known-exploited only</b>, <b>Matched to you</b>, and a <b>published window</b>. Results are the queue's own rows and open in the record the same way. The catalog's <b>last-fetched stamp rides the results</b> — a search over a stale catalog says so on its face, and an empty answer names the absence: absence from the store, not proof of safety. The search is <b>local only</b> — no live calls per keystroke; the collection cadence keeps the catalog fresh. <b>Navi runs the same search from chat</b>: <i>“search the KEV for OpenSSH”</i>, <i>“any CVEs for WordPress this week?”</i>, <i>“what CVEs affect Apache?”</i> — answered from the store with its stamp, grounded the same way as her lookups.</p>" +
   "<p><b>Exploit-DB, as a join.</b> On the same cadence the Center now mirrors the <b>Exploit-DB index</b> (the searchsploit CSV) into the local store and joins it by CVE id. Where public exploit code exists, the record says so — <i>exploit available — EDB-id, type, platform</i> — on the record view, as a badge on search results, in the citation when a record is filed into a case, and in Navi's answers. It is an enrichment, not another feed: it answers the question an operator asks of a KEV entry — <i>is there public exploit code for this, and what shape is it?</i> The mirror can be switched off in Collection, like any source.</p>" +
   "<p><b>Reading the references.</b> A record's reference links — advisories, writeups, proof-of-concept repos — are no longer display-only. Ask Navi to <i>“read the references for CVE-…”</i> and she follows them <b>on demand</b>: at most six links, each fetched once and read as text, quoted back <b>cited to the specific link</b>, with a link that will not read named rather than papered over. Fetched pages are <b>untrusted data</b>: they inform her answer, they never direct it, and nothing in them is followed as an instruction. There is no wholesale crawl — a fetch happens on an ask, a filing, or a brief, never in bulk. And the digest travels: file that reply into its case with the <b>File into this case</b> tap and the reference digest lands in the case as a finding, citation and all.</p></div>" +
+    "<div class='doc-sec'><h4>Digging deeper, searching the tabs, and pulling cards into cases (v0.5.10e, #282, #283)</h4>" +
+  "<p><b>Digging deeper, from chat.</b> The catalog is the fast local picture; when a question needs the source itself, ask Navi to dig: <i>“dig into NVD for CVE-2024-3094”</i>, <i>“check EPSS for CVE-…”</i>, <i>“dig deeper on CVE-…”</i>. She goes to the source's own door — NVD's record pages, the live KEV catalog, FIRST's EPSS service — and can <b>follow a record outward</b> along its references, at most <b>six pages and two hops</b>, with the budget named when it binds. A deep answer carries a <b>live-read stamp</b> — the source, the moment, and a digest of what was fetched — distinct from the catalog's stamp, and the catalog's own stamp rides along for contrast. What she reads live is <b>untrusted data</b>: it informs the answer, it never directs it. Deep reads never join the catalog — the store is untouched — and when a source will not answer, the failure is named and the answer falls back to the catalog, labeled as the fallback. Exploit-DB has no keyless query door, so a deep ask there is refused by name: its index is the local mirror. A vague <i>“dig deeper”</i> fetches nothing — she names the doors and asks which.</p>" +
+  "<p><b>Searching the tabs.</b> Every Wire tab — News, CVEs, KEVs, CTFs — carries its own <b>search bar</b>, searching that tab's own corpus. The match is <b>fuzzy</b>: typos are forgiven, close spellings count, and results rank by closeness with the matched words lit on each card and the matched terms named under it. Clearing the search restores the tab's standing order. It is a page-side view over what the tab already holds — nothing is fetched, and the Center's graded catalog search above is a different door.</p>" +
+  "<p><b>Pull into a case.</b> Every card carries <b>Pull into a case</b>: pick the case, and the card lands on that case chat's <b>reference shelf</b> — full text, link and provenance — for Navi to pull from as she works it. Reference is not a finding: the case file is untouched, and filing stays its own act. You can also ask Navi in the case's chat (<i>“pull the OpenSSH card into this case”</i>) — the same shelf, the same receipt. See <b>Case Files → The reference shelf</b>.</p></div>" +
     "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
   "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" +
     "<div class='doc-sec'><h4>The awareness home — Dashboard, News, CVEs, CTFs, Bounties (Build 7)</h4>" +
@@ -6991,7 +7245,7 @@ function liveChat(text, speak) {
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; });
+    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, refPulls: j.refPulls || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -12641,6 +12895,11 @@ function render() {
     // the status column and the mode in the composer's pills and
     // hint, so the thread simply starts at the top now.
     if (cliMode) h += "<div class='card' style='border-color:#f87171;color:#f87171'>Command-line mode — navi.llamafile is disconnected, so there's no model to answer. What you type runs as a shell command and you get the system output. Connect from the status column to bring the model back." + (CONFIG.sudo ? " Sudo mode is on — commands run as root." : "") + "</div>";
+    // The reference shelf (v0.5.10e, #283): in a case chat the
+    // shelf stands at the head of the room, labeled as
+    // reference — visibly apart from the thread and from the
+    // case's findings.
+    h += caseShelfHtml((typeof activeChat === "function") ? activeChat() : null);
     // No Navi status line over the thread — the operator asked for
     // it gone. Her typing shows as the in-thread typing indicator,
     // and her presence line lives in the status column.
@@ -12680,6 +12939,7 @@ function render() {
       if (m.who === "NAVI" && !(m.mesh && m.mesh.servedBy === "mesh")) h += meshLineHtml(m.mesh);
       if (m.who === "NAVI") h += memoryReceiptHtml(m, idx);
       if (m.who === "NAVI") h += caseFilingsHtml(m);
+      if (m.who === "NAVI") h += refPullsHtml(m);
       if (m.who === "NAVI") h += caseLogHtml(m);
       if (m.who === "NAVI") h += caseIntakeHtml(m);
       if (m.who === "NAVI") h += caseFiledReplyHtml(m);
@@ -13377,6 +13637,16 @@ function wire() {
           messages.push({ who: "NAVI", ts: Date.now(), text: "That filing did not land — " + ((j && j.error) || "the bridge could not file it.") + " Nothing was written to the case.", exec: null });
           persist(); render();
         }
+      });
+    }; });
+    // Reference shelf removal (v0.5.10e, #283): shelf-local —
+    // the bridge drops the ref from this case's shelf only,
+    // and the room rehydrates with the shelf as it now stands.
+    mainEl.querySelectorAll("[data-shelf-remove]").forEach(function (b) { b.onclick = function () {
+      b.disabled = true;
+      casePost("/api/cases/shelf", { case: b.getAttribute("data-shelf-case"), act: "remove", ref: b.getAttribute("data-shelf-remove") }, function (j) {
+        if (j && j.ok) hydrateChatsFromServer();
+        else { b.disabled = false; }
       });
     }; });
     mainEl.querySelectorAll("[data-memsg]").forEach(function (b) { b.onclick = function () {

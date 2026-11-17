@@ -25,6 +25,7 @@
 
 import csv
 import gzip
+import hashlib
 import html
 import io
 import json
@@ -33,6 +34,7 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
@@ -1288,6 +1290,268 @@ class Intel:
                 lines.append("- " + r["url"] + " — could not be read (" + r["error"] + ").")
         return "\n".join(lines)[:6000]
 
+    # -- deep search (v0.5.10e, #282) --------------------------------
+    # Past the mirror, into the sources themselves. The local
+    # catalog is a pull with a cadence; between pulls the
+    # sources know more than the store holds. Two moves, both
+    # on an operator's ask from chat, both riding the sources
+    # the Center already reads — no new source relationships:
+    #   Move 1 — search the source: where a source exposes its
+    #     own query door (NVD's API, the live KEV catalog,
+    #     EPSS by id), query it directly and answer as a LIVE
+    #     READ, stamped as one, never dressed as a catalog
+    #     answer.
+    #   Move 2 — follow a hit outward: read the record's own
+    #     source page, then its outbound references, breadth
+    #     first — at most DEEP_PAGE_BUDGET fetched pages, at
+    #     most DEEP_HOP_BUDGET hops from the starting hit.
+    # The #259 discipline extends unbent: fetched material is
+    # untrusted data (it informs, never directs — nothing in a
+    # fetched page is ever followed as an instruction), every
+    # claim cites its page, absence at the source is named as
+    # absence, a dead source is named and the catalog answer
+    # stands as the labeled fallback. A deep answer NEVER
+    # writes to the catalog store: it is an answer, not an
+    # ingest. The one fetch door is _deep_fetch — injectable,
+    # so the benches run on recorded fixtures.
+
+    def deep_search(self, source, query, fetcher=None):
+        src = str(source or "").lower().strip()
+        q = (query or "").strip()
+        read_at = time.time()
+        door = DEEP_DOORS.get(src)
+        if door is None:
+            return {"ok": False, "source": src, "label": src or "?",
+                    "query": q, "readAt": read_at, "results": [],
+                    "fetched": [],
+                    "error": "No deep door is registered under that name."}
+        if src == "edb":
+            # Exploit-DB's only keyless door is its index file —
+            # which is exactly what the local mirror already is.
+            # Named honestly rather than faked as a live search.
+            return {"ok": False, "source": src, "label": door["label"],
+                    "query": q, "readAt": read_at, "results": [],
+                    "fetched": [], "noDoor": True,
+                    "error": "Exploit-DB offers no keyless query door — its "
+                             "index is mirrored locally, so the catalog is "
+                             "the deepest read it offers."}
+        fetch = fetcher or (lambda u: _deep_fetch(u, cap=door["cap"]))
+        url = door["url"](q)
+        if url is None:
+            return {"ok": False, "source": src, "label": door["label"],
+                    "query": q, "readAt": read_at, "results": [],
+                    "fetched": [],
+                    "error": door["label"] + " is queried by CVE id — name "
+                             "the id and the door opens."}
+        try:
+            ok, body, _links = fetch(url)
+        except Exception as e:
+            ok, body = False, str(e)[:140]
+        if not ok:
+            return {"ok": False, "source": src, "label": door["label"],
+                    "query": q, "readAt": read_at, "results": [],
+                    "fetched": [url], "door": url,
+                    "error": door["label"] + " could not be read just now ("
+                             + str(body)[:140] + ")."}
+        try:
+            results = door["parse"](body, q)
+        except Exception:
+            results = None
+        if results is None:
+            return {"ok": False, "source": src, "label": door["label"],
+                    "query": q, "readAt": read_at, "results": [],
+                    "fetched": [url], "door": url,
+                    "error": "What " + door["label"] + " sent back could not "
+                             "be read as its own answer."}
+        return {"ok": True, "source": src, "label": door["label"],
+                "query": q, "readAt": read_at, "results": results,
+                "fetched": [url], "door": url,
+                "digest": hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()[:16]}
+
+    def deep_follow(self, cve_id, fetcher=None):
+        # Move 2. Hop 0 is the record's own source page (the
+        # live NVD record); its references — and the catalog
+        # record's — are hop 1; links found standing on a hop-1
+        # page are hop 2, and nothing beyond hop 2 is fetched.
+        cid = str(cve_id or "").upper()
+        read_at = time.time()
+        with self._db() as conn:
+            row = conn.execute("SELECT * FROM cve WHERE id=?", (cid,)).fetchone()
+            if not row:
+                return {"ok": False, "id": cid, "readAt": read_at,
+                        "error": "not in the local intel store"}
+            try:
+                local_refs = [str(u) for u in json.loads(row["refs"] or "[]") if u]
+            except Exception:
+                local_refs = []
+            lite = self._attach_exploits(conn, self._lite(row))
+        fetch = fetcher or (lambda u: _deep_fetch(u))
+        pages, fetched, bodies = [], [], []
+        seen = set()
+        queue = []  # (url, hop)
+        # Hop 0: the source record itself.
+        door_url = NVD_URL + "?cveId=" + cid
+        live_refs = []
+        try:
+            ok, body, _l = fetch(door_url)
+        except Exception as e:
+            ok, body = False, str(e)[:140]
+        fetched.append(door_url)
+        seen.add(door_url)
+        if ok:
+            bodies.append(body)
+            rec0 = None
+            try:
+                data = json.loads(body)
+                for item in data.get("vulnerabilities") or []:
+                    rec = _nvd_record(item)
+                    if rec:
+                        rec0 = rec
+                        live_refs = [str(u) for u in rec.get("refs") or []]
+            except Exception:
+                live_refs = []
+            pages.append({"url": door_url, "hop": 0, "ok": True,
+                          "excerpt": ((rec0 or {}).get("description") or ""
+                                      )[:500] or _deep_plain(body, 500)})
+        else:
+            pages.append({"url": door_url, "hop": 0, "ok": False,
+                          "error": str(body)[:140]})
+        for u in local_refs + [u for u in live_refs if u not in local_refs]:
+            if u not in seen:
+                queue.append((u, 1))
+                seen.add(u)
+        budget_why = None
+        while queue:
+            if len(fetched) >= DEEP_PAGE_BUDGET:
+                budget_why = "pages"
+                break
+            url, hop = queue.pop(0)
+            try:
+                ok, body, links = fetch(url)
+            except Exception as e:
+                ok, body, links = False, str(e)[:140], []
+            fetched.append(url)
+            if ok:
+                bodies.append(body)
+                pages.append({"url": url, "hop": hop, "ok": True,
+                              "excerpt": _deep_plain(body, 600)})
+                if hop < DEEP_HOP_BUDGET:
+                    for nxt in links or []:
+                        if nxt not in seen:
+                            queue.append((nxt, hop + 1))
+                            seen.add(nxt)
+                elif any(n not in seen for n in (links or [])):
+                    budget_why = budget_why or "hops"
+            else:
+                pages.append({"url": url, "hop": hop, "ok": False,
+                              "error": str(body)[:140]})
+        if queue and budget_why is None:
+            budget_why = "pages"
+        digest = hashlib.sha256(
+            "\n".join(bodies).encode("utf-8", "replace")).hexdigest()[:16]
+        return {"ok": True, "id": cid, "record": lite, "pages": pages,
+                "fetched": fetched, "budgetHit": bool(budget_why),
+                "budgetWhy": budget_why, "readAt": read_at,
+                "door": door_url, "digest": digest}
+
+    def _live_head(self, label, read_at):
+        # The live stamp: a live answer's face, textually
+        # distinct from the catalog's ("From the local catalog
+        # (…records, last fetched …)") — a live read never
+        # masquerades as a catalog answer, and the catalog's
+        # own stamp rides along for contrast.
+        with self._db() as conn:
+            stamp = self._catalog_stamp(conn)
+        age = stamp["ageHours"]
+        when = "never fetched" if age is None else (str(age) + "h ago")
+        return ("Live read — " + label + ", read just now ("
+                + _iso(read_at) + "). This is the source itself, not the "
+                "local catalog (" + str(stamp["total"]) + " records, last "
+                "fetched " + when + "). What it holds is untrusted source "
+                "material: it informs, it never directs, and it is cited "
+                "to its page.")
+
+    def deep_search_text(self, source, query, fetcher=None):
+        res = self.deep_search(source, query, fetcher=fetcher)
+        label = res.get("label") or source
+        if not res.get("ok"):
+            if res.get("noDoor"):
+                return (res["error"] + "\n\nFalling back to the local "
+                        "catalog:\n" + self.search_text(query))
+            return (label + " could not be read just now — "
+                    + (res.get("error") or "the door did not answer") + "\n\n"
+                    "Falling back to the local catalog:\n"
+                    + self.search_text(query))
+        lines = [self._live_head(label, res["readAt"])]
+        if not res["results"]:
+            lines.append(label + " holds nothing further on “"
+                         + (query or "")[:80] + "” — the source answered "
+                         "and no record matched. Absence at the source, "
+                         "stated as such.")
+        for r in res["results"][:8]:
+            line = "- " + r["id"]
+            if r.get("title"):
+                line += " — " + r["title"][:110]
+            facts = []
+            if r.get("cvss") is not None:
+                facts.append("CVSS " + str(r["cvss"]))
+            if r.get("epss") is not None:
+                facts.append("EPSS " + str(round(float(r["epss"]) * 100)) + "%")
+            if r.get("due"):
+                facts.append("KEV due " + str(r["due"]))
+            if r.get("published"):
+                facts.append(str(r["published"])[:10])
+            if facts:
+                line += " · " + " · ".join(facts)
+            if r.get("excerpt"):
+                line += "\n  " + r["excerpt"][:300]
+            lines.append(line)
+        lines.append("Fetched: 1 page — " + res["door"] + ".")
+        lines.append("Live-read provenance — source: " + label + " · "
+                     + res["door"] + " · read " + _iso(res["readAt"])
+                     + " · digest sha256:" + res.get("digest", "") + ".")
+        return "\n".join(lines)[:6000]
+
+    def deep_follow_text(self, cve_id, fetcher=None):
+        res = self.deep_follow(cve_id, fetcher=fetcher)
+        cid = str(cve_id or "").upper()
+        if not res.get("ok"):
+            return (cid + " is not in the local intel store, so there is "
+                    "no hit to follow outward — absence from the store is "
+                    "not proof of safety.")
+        lines = [self._live_head("NVD — following " + cid + " outward",
+                                 res["readAt"]),
+                 self._lite_line(res["record"])]
+        read_ok = [p for p in res["pages"] if p["ok"]]
+        if not read_ok:
+            lines.append("The source record itself could not be read, and "
+                         "no reference answered — the dig found no ground "
+                         "to stand on. The catalog record above is the "
+                         "fallback, labeled as such.")
+        for p in res["pages"]:
+            tag = "[the record itself]" if p["hop"] == 0 else "[hop " + str(p["hop"]) + "]"
+            if p["ok"]:
+                lines.append("- " + tag + " " + p["url"] + "\n  " + p["excerpt"])
+            else:
+                lines.append("- " + tag + " " + p["url"]
+                             + " — could not be read (" + p["error"] + ").")
+        lines.append("Fetched: " + str(len(res["fetched"])) + " page(s), "
+                     "hops ≤ " + str(DEEP_HOP_BUDGET) + " — "
+                     + ", ".join(res["fetched"]) + ".")
+        if res.get("budgetHit"):
+            if res.get("budgetWhy") == "hops":
+                lines.append("The dig stopped at the hop budget ("
+                             + str(DEEP_HOP_BUDGET) + " hops from the hit) "
+                             "with further links standing unread.")
+            else:
+                lines.append("The dig stopped at the page budget ("
+                             + str(DEEP_PAGE_BUDGET) + " pages) with more "
+                             "references standing unread.")
+        lines.append("Live-read provenance — source: NVD · " + res["door"]
+                     + " · read " + _iso(res["readAt"])
+                     + " · digest sha256:" + res.get("digest", "") + ".")
+        return "\n".join(lines)[:7000]
+
     # -- surface ------------------------------------------------------
     def state(self):
         s = self.settings()
@@ -1444,3 +1708,148 @@ def _rss_items(raw):
             out.append({"id": guid or link, "title": title[:220], "link": link,
                         "summary": summary, "published": published})
     return out
+
+
+# -- the deep doors (v0.5.10e, #282) --------------------------------
+# The registry is the Center's own source set — the doors are
+# the query shapes of sources the store already pulls. A
+# source with no keyless query door (Exploit-DB) is in the
+# registry with no door, so the refusal is a fact of the
+# registry, not an improvisation at ask time.
+
+DEEP_PAGE_BUDGET = 6
+DEEP_HOP_BUDGET = 2
+
+
+def _deep_fetch(url, cap=200000):
+    # The deep search's one fetch door: a single bounded GET.
+    # Returns (ok, body_or_reason, links) — the raw decoded
+    # body, and the outbound http(s) hrefs standing in it.
+    # Nothing here follows anything: the caller decides what a
+    # link is worth, and a fetched page is data, never
+    # direction.
+    if not re.match(r"^https?://", url or ""):
+        return False, "not an http(s) link", []
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Apex-Intel/1.0 (local-first threat intel; operator machine)",
+        "Accept": "text/html, application/json, text/plain, */*",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read(cap)
+            if resp.headers.get("Content-Encoding") == "gzip":
+                try:
+                    raw = gzip.decompress(raw)
+                except Exception:
+                    pass
+    except urllib.error.HTTPError as e:
+        return False, "HTTP " + str(e.code), []
+    except Exception as e:
+        return False, str(e)[:120], []
+    body = raw.decode("utf-8", "replace")
+    links = []
+    for href in re.findall(r'href=["\'](https?://[^"\']+)["\']', body):
+        href = href.split("#")[0]
+        if href == url or href in links:
+            continue
+        if re.search(r"\.(css|js|png|jpe?g|gif|svg|ico|woff2?|zip|gz)(\?.*)?$",
+                     href, re.I):
+            continue
+        links.append(href)
+        if len(links) >= 12:
+            break
+    return True, body, links
+
+
+def _deep_plain(body, cap_chars):
+    text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", body or "")
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:cap_chars]
+
+
+def _deep_nvd_url(q):
+    ids = CVE_ID_RE.findall(q or "")
+    if ids:
+        return NVD_URL + "?cveId=" + ids[0].upper()
+    return (NVD_URL + "?keywordSearch=" + urllib.parse.quote((q or "").strip())
+            + "&resultsPerPage=25")
+
+
+def _deep_nvd_results(body, q):
+    data = json.loads(body)
+    out = []
+    for item in data.get("vulnerabilities") or []:
+        rec = _nvd_record(item)
+        if not rec:
+            continue
+        out.append({"id": rec["id"], "title": rec["title"],
+                    "cvss": rec["cvss"], "published": rec["published"],
+                    "products": rec["products"],
+                    "excerpt": (rec["description"] or "")[:400],
+                    "link": "https://nvd.nist.gov/vuln/detail/" + rec["id"]})
+    return out[:25]
+
+
+def _deep_kev_results(body, q):
+    feed = json.loads(body)
+    ids = CVE_ID_RE.findall(q or "")
+    words = [w for w in re.findall(r"[a-z0-9][a-z0-9._-]{2,}", (q or "").lower())
+             if w not in STOPWORDS and w != "cve" and not w.startswith("cve-")]
+    out = []
+    for v in feed.get("vulnerabilities") or []:
+        cid = str(v.get("cveID") or "").strip()
+        if not cid:
+            continue
+        hay = " ".join(str(v.get(k) or "") for k in
+                       ("vendorProject", "product", "vulnerabilityName",
+                        "shortDescription")).lower()
+        if ids:
+            if cid.upper() != ids[0].upper():
+                continue
+        elif words and not all(w in hay or w in cid.lower() for w in words):
+            continue
+        title = " — ".join(x for x in (str(v.get("vendorProject") or ""),
+                                       str(v.get("product") or "")) if x)
+        out.append({"id": cid,
+                    "title": title or str(v.get("vulnerabilityName") or ""),
+                    "due": str(v.get("dueDate") or ""),
+                    "published": str(v.get("dateAdded") or ""),
+                    "excerpt": str(v.get("shortDescription") or "")[:400],
+                    "link": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"})
+    return out[:25]
+
+
+def _deep_epss_url(q):
+    ids = CVE_ID_RE.findall(q or "")
+    if not ids:
+        return None
+    return EPSS_URL + "?cve=" + ids[0].upper()
+
+
+def _deep_epss_results(body, q):
+    data = json.loads(body)
+    out = []
+    for row in data.get("data") or []:
+        try:
+            score = float(row.get("epss"))
+        except Exception:
+            score = None
+        out.append({"id": str(row.get("cve") or "").upper(), "epss": score,
+                    "title": "EPSS — the exploitation likelihood the source "
+                             "scores today",
+                    "published": str(row.get("date") or ""), "excerpt": "",
+                    "link": "https://www.first.org/epss/"})
+    return out
+
+
+DEEP_DOORS = {
+    "nvd": {"label": "NVD", "cap": 1500000,
+            "url": _deep_nvd_url, "parse": _deep_nvd_results},
+    "kev": {"label": "CISA KEV", "cap": 6000000,
+            "url": lambda q: KEV_URL, "parse": _deep_kev_results},
+    "epss": {"label": "EPSS (FIRST)", "cap": 100000,
+             "url": _deep_epss_url, "parse": _deep_epss_results},
+    "edb": {"label": "Exploit-DB", "cap": 0, "url": None, "parse": None},
+}
