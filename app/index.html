@@ -950,6 +950,17 @@
   #fc-shade { position:fixed; inset:0; z-index:120; background:rgba(0,0,0,.45); }
   #fc-tray { position:fixed; z-index:121; top:0; left:0; bottom:0; width:min(320px,86vw); overflow-y:auto; background:var(--panel2); border-right:1px solid var(--line); box-shadow:14px 0 40px rgba(0,0,0,.35); padding:14px 16px calc(14px + env(safe-area-inset-bottom)); animation:fc-tray-in var(--motion-med) var(--motion-ease); }
   @keyframes fc-tray-in { from { transform:translateX(-24px); opacity:0; } to { transform:none; opacity:1; } }
+  /* FediChat Build 2 (v0.5.7e): quotes, media, leads, presence, search */
+  .fc-line.hl { background:rgba(163,190,140,.16); border-radius:6px; }
+  .fc-quote { border-left:3px solid var(--cy); padding:2px 8px; margin:2px 0 4px; color:var(--dim); font-size:12.5px; }
+  .fc-quote-bad { border-left-color:#f87171; color:#fca5a5; }
+  .fc-media img { max-width:min(420px,100%); border-radius:8px; display:block; margin-top:4px; }
+  .fc-lead { border:1px solid var(--line); border-left:3px solid #b48ead; border-radius:8px; padding:6px 10px; margin:2px 0; }
+  .fc-presence { color:var(--dim); font-size:12px; font-style:italic; min-height:16px; }
+  .fc-searchrow { display:flex; gap:6px; margin-top:6px; }
+  .fc-searchrow input { min-height:44px; }
+  .fc-mini { font-size:11px; min-height:28px; padding:2px 8px; }
+  .fc-linemeta { margin-top:2px; }
   #fc-win { position:fixed; z-index:121; left:50%; top:50%; transform:translate(-50%,-50%); width:min(560px,calc(100vw - 48px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:16px 18px 18px; animation:notif-in .65s cubic-bezier(.22,.8,.3,1); }
   .fc-ov-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
   .fc-ov-title { font-weight:700; font-size:15px; flex:1; min-width:0; }
@@ -2131,8 +2142,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.22";
-var SHIPPED_BUILD_SEQ = 22;
+var BRIDGE_BUILD = "2026-11-17.23";
+var SHIPPED_BUILD_SEQ = 23;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -4184,6 +4195,15 @@ function caseFilesHtml() {
       });
       h += "</div>";
     }
+    // Rooms on this case (v0.5.7e, #273): the case face of
+    // the typed link — the room's header carries it back.
+    if (d.rooms && d.rooms.length) {
+      h += "<div class='card'><h3>Rooms on this case</h3><p style='color:var(--dim);font-size:12px'>FediChat rooms tied to this case. The room's header carries the link back here.</p>";
+      d.rooms.forEach(function (r) {
+        h += "<div style='margin-top:6px'><b>" + esc(r.name) + "</b> <span style='color:var(--dim);font-size:12px'>" + esc(r.fedName) + " · " + esc(r.kind) + "</span> <button class='ghost' data-case-room='" + esc(r.fedId) + "|" + esc(r.roomId) + "' style='min-height:44px'>Open the room</button></div>";
+      });
+      h += "</div>";
+    }
     // Findings
     h += "<div class='card'><h3>Findings</h3>";
     h += "<div class='row'><input class='grow' id='cf-f-title' type='text' placeholder='Finding title — e.g. Expired TLS certificate on the portal' aria-label='Finding title'></div>";
@@ -4562,6 +4582,7 @@ function wireCaseFiles() {
   });
   bind("cf-back", function () { caseDetailState = null; casesState = null; caseReportState = null; caseDeleteArm = ""; caseListDeleteArm = ""; render(); });
   mainEl.querySelectorAll("[data-case-open]").forEach(function (b) { b.onclick = function () { caseReportState = null; caseDeleteArm = ""; caseListDeleteArm = ""; refreshCaseDetail(b.getAttribute("data-case-open")); }; });
+  mainEl.querySelectorAll("[data-case-room]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-case-room") || "").split("|"); fcFed = parts[0]; fcRoomId = parts[1] || ""; goView("FediChat"); refreshFedichat(false); }; });
   bind("cf-setopen", function () {
     if (!caseDetailState) return;
     var slug = caseOpenSlug === caseDetailState.slug ? "" : caseDetailState.slug;
@@ -6160,19 +6181,23 @@ var DOC_PAGES = [
   "<p>The pane itself opens on its first real section (v0.4.10e, #250) — the update line — with no header row of its own: her portrait, her name, and her dot live at the top of the chat, and the pane is for the machine's state, not hers. The <b>BOOT</b> line inside Servers follows Settings the same way the law above does: it renders only while boot mode is the startup mode Settings holds, and when it renders, its states still read from the system, never assumed. Arming and disarming live in <b>Settings → System</b>.</p></div>" +
     "<div class='doc-sec'><h4>The doors: DHD tiers & crown acts</h4>" +
   "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
-  { id: "fedichat", title: "FediChat — the room where the Row talks", related: ["federation", "mesh", "dhd"], html:
-    "<div class='doc-sec'><h4>One room per fedinet</h4>" +
-  "<p><b>FediChat</b> (Apex | Network → FediChat) is the fedinet's own room: one per fedinet, named for it — <span class='mono'>#rockport-mesh</span>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no second room in phase 1: no direct messages, no media, no editing or deleting what was said. Through DHD the room reads and posts as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
+  { id: "fedichat", title: "FediChat — the rooms where the Row talks", related: ["federation", "mesh", "dhd"], html:
+    "<div class='doc-sec'><h4>Rooms — one fedinet, many rooms</h4>" +
+  "<p><b>FediChat</b> (Apex | Network → FediChat) is the fedinet's rooms. Every fedinet has its <b>general room</b>, named for it — <span class='mono'>#rockport-mesh</span> — standing since phase 1 with its history intact, and Build 2 (v0.5.7e) grows the rest: <b>invite rooms</b> an operator creates for a named set of members, <b>direct messages</b> (a room of exactly two), <b>vanishing rooms</b> whose lines age out, and rooms <b>tied to a case</b>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no editing or deleting what was said. Through DHD the rooms read and post as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
+  "<p><b>Rooms are signed records.</b> A room beyond the general room is a <b>descriptor</b> — its id, name, creator, member set, kind, vanishing term and case tie — <b>signed by its creator</b> and gossiped on exchange like a line. A descriptor whose signature fails is refused by name and never materializes. Only the creator changes the member set, the case tie, or dissolves the room — every change a signed revision, auditable in the rev chain. An <b>invite room's member set is its boundary</b>: a non-member is never offered the room's lines, holds none of its log, and never sees that the room stands. A DM's id is derived from its pair, so creating it twice opens the same room once. A room tied to a case renders the case's link in its header, and the case renders its rooms — the link is typed, and both faces carry it.</p>" +
+  "<p><b>Vanishing, honestly.</b> A vanishing room's lines older than its term are pruned on every honoring node in the retention shape — the newest older line kept as the chain's floor — and a creator may dissolve the room by signed revision, after which honoring nodes prune it to its floor and refuse new lines. The room's face says the posture in plain words: <b>vanishing is honored by every member node; it is not a proof of deletion.</b> A member node that kept a copy against the posture is a member who broke the room's law, not a flaw the protocol hides.</p>" +
   "<p><b>The log.</b> Every line is a record in an append-only, <b>hash-chained</b> log kept on the member nodes: it carries the fedinet id, the previous line's hash, the author's node id and roster number, a timestamp and the body, signed with the author's node key. A nick is a node underneath — the signing identity — but the room is between <i>users</i>, so lines show under the author's <b>operator name</b> (below), with the node name and roster number beside it. A seat a member hasn't spoken from yet shows as an empty chair, not an absence. The room's About window states the chain's verdict: verified, or the break named — a broken chain is evidence, never silently healed.</p>" +
   "<p><b>Names in the room (v0.5.4e).</b> Your display name is your <b>operator name</b> — the name on your operator card, the same synced value every seat of yours agrees on. It reaches the room as a signed <b>presence line</b> in the log: your node posts it before your first line under the name and again when the name changes, bound to your node key like every room fact, so nobody can wear another member's name. Rename your card and the room follows on the next exchange. A member whose card carries no name yet shows under their node name. <span class='mono'>/navi -&lt;user&gt;</span> resolves operator names as well as node names and roster numbers, and completion offers both. And a Navi's answer wears her operator's name: <b>Navi(&lt;operator name&gt;):</b> — in a room with several Navis, the answer line itself says whose Navi is speaking.</p>" +
   "<p><b>Arrivals reach the tray (v0.5.4e).</b> New lines landing in a room from other members — speech, actions, Navi answers — raise a record in the notifications tray naming the room, one per arrival round however many lines rode it; a single-line round names its author and carries the line. Your own lines never notify you. Going to the record lands in the room with it marked read — the room is no longer a place you only learn about by visiting it.</p>" +
   "<p><b>How lines travel.</b> Sync is gossip: any two members compare what they hold and pull what they are missing, and any member can carry any line — the author's signature is the credential, never the carrier's — so a node that was offline catches up from whoever is home. There is no server, and the gateway is not a hub: a gateway admits, it does not rule. A line whose author is no longer on the roster is refused when it arrives new — what the room already holds stays held; expulsion stops new speech, it does not rewrite history. A tampered line and a flood past the per-author cap are refused by name, in the open.</p>" +
-  "<p><b>The room's shape (v0.5.5e).</b> The room is a chat surface on every door — the desktop window, DHD wide, DHD on a phone: the lines fill the room's height and scroll inside it, the composer is docked at the foot, and <b>Enter posts</b> (the Post button stands as the second door). The button at the room's upper left opens the <b>members tray</b> — the channel name, the channel list when this node sits in more than one room, and the users. The room's facts and this node's settings live in a floating <b>About &amp; settings</b> window the Settings button opens — on a phone it stands below the chat bar, stretched full width: the chain's verdict, the carriage sentence, the retention state, the last round and Sync now, above the muzzle, carriage and retention controls.</p></div>" +
+  "<p><b>The room's shape (v0.5.5e).</b> The room is a chat surface on every door — the desktop window, DHD wide, DHD on a phone: the lines fill the room's height and scroll inside it, the composer is docked at the foot, and <b>Enter posts</b> (the Post button stands as the second door). The button at the room's upper left opens the <b>members tray</b> — the channel name, the channel list when this node sits in more than one room, and the users. The room's facts and this node's settings live in a floating <b>About &amp; settings</b> window the Settings button opens — on a phone it stands below the chat bar, stretched full width: the chain's verdict, the carriage sentence, the retention state, the last round and Sync now, above the muzzle, carriage and retention controls.</p>" +
+  "<p><b>Room life (v0.5.7e).</b> The tray is now the <b>room switcher</b> — every room this node belongs to, the door to a new room, and a Message button on each member that opens (or reopens) your DM with them. <b>Images post into the room</b>: the line carries the image's hash, size and type, the blob lives on each member node and travels on exchange between members — a blob whose bytes do not hash to its name is refused by name and never rendered, and the cap is 2 MiB, named on refusal. <b>Presence is gossip, not record</b>: typing and thinking indicators ride signed pings held in memory for seconds and are <i>never written to any log</i>; a Navi's thinking mark is her real pending state — a question addressed to her stands unanswered. And <b>the log is citable</b>: search finds a line by its words, a result jumps to it and lights it, and any line can be <b>quoted</b> — the quote rides your post and is checked against the local chain on every face that renders it: verified quotes carry their proof mark, unverifiable ones are flagged by name, never silently trusted.</p></div>" +
     "<div class='doc-sec'><h4>Talking, and asking Navi</h4>" +
   "<p>Plain lines are speech. <span class='mono'>/me</span> acts — <span class='mono'>/me pours another coffee</span> posts as an action, signed and chained like every line. <span class='mono'>/navi &lt;question&gt;</span> asks <b>your</b> Navi; <span class='mono'>/navi -&lt;user&gt; &lt;question&gt;</span> asks <b>that member's</b> Navi — the user is an operator name, a node name or a roster number, completed against the roster as the room holds it (Tab on the desktop; a tappable member list on a phone). Questions and answers post in the room, in the open, signed and logged — asking is public by design.</p>" +
-  "<p><b>Navi's posture in the room.</b> She answers only what is addressed to her node — an unaddressed question is the asker's own Navi's to answer, never a race. Her answer is bounded by her operator's sharing posture, exactly as a borrow is; the room's lines are untrusted data to her — they inform her, they never instruct her, and nothing said in a room widens what she may reveal. Room duty is her lowest-priority work: if her operator's own request is in flight she does not answer until it clears, and the question waits in the open. The <b>muzzle</b> in the room's settings silences her in that room entirely.</p></div>" +
+  "<p><b>Navi's posture in the room.</b> She answers only what is addressed to her node — an unaddressed question is the asker's own Navi's to answer, never a race. Her answer is bounded by her operator's sharing posture, exactly as a borrow is; the room's lines are untrusted data to her — they inform her, they never instruct her, and nothing said in a room widens what she may reveal. Room duty is her lowest-priority work: if her operator's own request is in flight she does not answer until it clears, and the question waits in the open. The <b>muzzle</b> in the room's settings silences her in that room entirely.</p>" +
+  "<p><b>Navi to Navi (v0.5.7e, #274).</b> <span class='mono'>/navinavi -&lt;user&gt; &lt;question&gt;</span> instructs <b>your</b> Navi to put a question to <b>that member's</b> Navi. The question is a Navi-authored line, born only of an operator's instruction; the answer posts in the open, signed by the answering node and logged, bounded by the answering operator's sharing posture. The discipline is one hop, hard: <b>a Navi never answers an answer, and after answering a Navi-to-Navi question she answers no further one until fresh operator speech lands in the room</b> — two Navis never volley unattended. When an answer amounts to a case lead, the answering Navi may emit a <b>referral</b>: a lead card in the room naming its title, its summary, and the line it derives from. A referral <b>never files itself</b> — it becomes a case finding only when the receiving operator files it, through the room's own door, into a case that stands on their node, with the referral's custody on the finding's face.</p></div>" +
     "<div class='doc-sec'><h4>The room's settings — retention & carriage</h4>" +
-  "<p>Two of the room's rules are the operator's to set, per node, in the room's settings — the floating About &amp; settings window. <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's About window says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
+  "<p>The room's rules are the operator's to set, per node, in the room's settings — the floating About &amp; settings window. The <b>muzzle</b> is per room (a room's own entry wins; the fedinet's stands behind it). <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's About window says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
   { id: "dossier", title: "The Dossier — the people-finding app", related: ["case-files", "vault", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>One dossier, many doors</h4>" +
   "<p><b>The Dossier</b> (Apex | Apps → The Dossier) is Apex's people-finding app (#260). Tabs across the top — <b>Person, Username, Email, Phone, Photo</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link.</p>" +
@@ -8483,8 +8508,9 @@ function wireDossier() {
 // page is a view, like every other surface.
 var fcState = null, fcFetching = false, fcFed = "", fcMsg = "", fcCompleteIdx = 0;
 var fcTrayOpen = false, fcWinOpen = false;   // the room's overlays (#270): the members tray and the About & settings window; markup exists only while open, portaled to <body> like the wire reader
+var fcRoomId = "", fcCreateOpen = false, fcQuote = null, fcJump = "", fcSearchResults = null, fcPresenceAt = 0;   // Build 2 (v0.5.7e): the selected room, the create overlay, a pending quote, a jump target, search results, the presence throttle
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && (fcTrayOpen || fcWinOpen)) { fcTrayOpen = false; fcWinOpen = false; if (view === "FediChat") render(); }
+  if (e.key === "Escape" && (fcTrayOpen || fcWinOpen || fcCreateOpen)) { fcTrayOpen = false; fcWinOpen = false; fcCreateOpen = false; if (view === "FediChat") render(); }
 });
 function refreshFedichat(rerender) {
   if (CONFIG.backend !== "live" || fcFetching) return;
@@ -8495,7 +8521,7 @@ function refreshFedichat(rerender) {
     .catch(function () { fcFetching = false; });
 }
 function renderFedichat() { if (view === "FediChat") render(); }
-function fedichatAct(action, extra) {
+function fedichatAct(action, extra, cb) {
   var body = { action: action };
   if (extra) for (var k in extra) body[k] = extra[k];
   fetch("/api/fedichat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
@@ -8504,13 +8530,35 @@ function fedichatAct(action, extra) {
       fcState = j;
       fcMsg = j && j.ok === false ? (j.error || "") : "";
       renderFedichat();
+      if (cb) cb(j);
     })
     .catch(function () { fcMsg = "The bridge did not answer that."; renderFedichat(); });
 }
+function fedichatSearch(q, room) {
+  // The citable log's search door: its answer is results,
+  // not room state, so it never rides fedichatAct (which
+  // would mistake the answer for the state).
+  fetch("/api/fedichat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "search", fed: room.fedId, room: room.roomId || "", q: q }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { fcSearchResults = (j && j.results) || []; renderFedichat(); })
+    .catch(function () { fcSearchResults = []; renderFedichat(); });
+}
+function fedichatPresence(state, room) {
+  // Ephemeral gossip: fire-and-forget, throttled by the
+  // caller. The answer is a bare ok — never room state.
+  fetch("/api/fedichat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "presence", fed: room.fedId, room: room.roomId || "", state: state }) }).catch(function () {});
+}
 function fedichatRoom() {
   if (!fcState || !fcState.rooms || !fcState.rooms.length) return null;
+  for (var i = 0; i < fcState.rooms.length; i++) if (fcState.rooms[i].fedId === fcFed && (fcState.rooms[i].roomId || "") === fcRoomId) return fcState.rooms[i];
   for (var i = 0; i < fcState.rooms.length; i++) if (fcState.rooms[i].fedId === fcFed) return fcState.rooms[i];
   return fcState.rooms[0];
+}
+function fcTtlLabel(sec) {
+  if (!sec) return "";
+  if (sec % 86400 === 0) return (sec / 86400) + "d";
+  if (sec % 3600 === 0) return (sec / 3600) + "h";
+  return Math.round(sec / 60) + "m";
 }
 function fcDisplayName(m) {
   // The room's display grammar (v0.5.4e, #267 amendment):
@@ -8542,34 +8590,57 @@ function fedichatTime(ts) {
 }
 function fedichatHtml() {
   var h = "<h3>FediChat</h3>";
-  h += "<p style='color:var(--dim)'>One signed room per fedinet — the operators talk, their nodes carry the messages, and their Navis are in the room. The log is append-only and hash-chained on every member node; admission is the signed roster, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi — questions and answers post in the open — and <span class='mono'>/me</span> acts.</p>";
-  if (CONFIG.backend !== "live") return h + "<div class='card'>FediChat runs through the live bridge — switch the backend to Live in Settings. The room itself lives on the member nodes, not on any server.</div>";
+  h += "<p style='color:var(--dim)'>The fedinet's signed rooms — the operators talk, their nodes carry the messages, and their Navis are in the room. Every room's log is append-only and hash-chained on its member nodes; admission is the signed roster, an invite room's member set is its own boundary, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi, <span class='mono'>/navinavi -&lt;user&gt;</span> sets your Navi to ask theirs — and <span class='mono'>/me</span> acts.</p>";
+  if (CONFIG.backend !== "live") return h + "<div class='card'>FediChat runs through the live bridge — switch the backend to Live in Settings. The rooms themselves live on the member nodes, not on any server.</div>";
   if (!fcState && !fcFetching) refreshFedichat(false);
   if (!fcState) return h + "<div class='card'>Opening the room…</div>";
   if (fcMsg) h += "<div class='card' style='border-color:#f87171;color:#fca5a5'>" + esc(fcMsg) + "</div>";
   if (!fcState.rooms || !fcState.rooms.length) return h + "<div class='card'>No room yet — this node is not on any fedinet's roster. The roster is the room's admission: join a fedinet from the Federation page and its room opens here.</div>";
   var room = fedichatRoom();
   var st = fcState.settings || {};
-  // The room as a chat surface (v0.5.5e, #270): the frame
-  // fills the view, the lines scroll inside it, the composer
-  // is docked at the foot. What used to stack around the
-  // room moved out of the page flow — the members rail into
-  // the tray at the upper left (fedichatTrayHtml), the
-  // header card's facts and the settings card into the
+  // The room as a chat surface (v0.5.5e, #270), grown by
+  // Build 2 (v0.5.7e): the frame fills the view, the lines
+  // scroll inside it, the composer is docked at the foot.
+  // The members rail lives in the tray at the upper left
+  // (fedichatTrayHtml — now the room switcher and the door
+  // to new rooms), the room's facts and settings in the
   // floating About & settings window (fedichatWinHtml).
   var said = {};
   room.messages.forEach(function (m) { said[m.author] = true; });
+  var byId = {};
+  room.messages.forEach(function (m) { byId[m.id] = m; });
   var lines = room.messages.map(function (m) {
     var disp = fcDisplayName(m);
     var nodeBit = (m.opName && m.authorName && m.opName !== m.authorName) ? " · " + esc(m.authorName) : "";
     var who = "<b>" + esc(disp) + "</b> <span style='color:var(--dim)'>· № " + m.n + nodeBit + "</span>";
     var when = "<span style='color:var(--dim);font-size:11px'>" + fedichatTime(m.ts) + "</span>";
-    if (m.kind === "me") return "<div class='fc-line' style='font-style:italic;color:var(--dim)'>* " + esc(disp) + " " + esc(m.body) + " " + when + "</div>";
-    if (m.kind === "navi-a") return "<div class='fc-line'><span class='chip' style='font-size:10px'>NAVI</span> " + when + "<div style='white-space:pre-wrap'><b>Navi(" + esc(disp) + "):</b> " + esc(m.body) + "</div></div>";
-    if (m.kind === "navi-q") {
-      return "<div class='fc-line'>" + who + " " + when + " <span class='chip' style='font-size:10px'>ASKS NAVI</span><div style='white-space:pre-wrap'>" + esc(m.body) + "</div></div>";
+    var idAttr = " id='fc-line-" + esc(m.id) + "'";
+    var cls = "fc-line" + (fcJump && fcJump === m.id ? " hl" : "");
+    var quoteBit = "";
+    if (m.quote && m.quote.id) {
+      var qm = byId[m.quote.id];
+      if (m.quoteState === "verified" && qm) quoteBit = "<div class='fc-quote'>❝ <b>" + esc(m.quote.name || "") + "</b>: " + esc(String(qm.body || "").slice(0, 140)) + " <span style='font-size:11px'>· line " + esc(m.quote.id.slice(0, 8)) + " · ✓ verified against the chain</span></div>";
+      else quoteBit = "<div class='fc-quote fc-quote-bad'>❝ <b>" + esc(m.quote.name || "") + "</b> · line " + esc(m.quote.id.slice(0, 8)) + " · quote unverifiable — the quoted line is not held here, or no longer matches its id; it is flagged, never silently trusted</div>";
     }
-    return "<div class='fc-line'>" + who + " " + when + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div></div>";
+    var meta = "<div class='fc-linemeta'><button type='button' class='ghost fc-mini' data-fcquote='" + esc(m.id) + "'>Quote</button></div>";
+    if (m.kind === "me") return "<div class='" + cls + "'" + idAttr + " style='font-style:italic;color:var(--dim)'>* " + esc(disp) + " " + esc(m.body) + " " + when + "</div>";
+    if (m.kind === "navi-a" || m.kind === "navi-na") return "<div class='" + cls + "'" + idAttr + "><span class='chip' style='font-size:10px'>NAVI</span> " + when + quoteBit + "<div style='white-space:pre-wrap'><b>Navi(" + esc(disp) + "):</b> " + esc(m.body) + "</div>" + meta + "</div>";
+    if (m.kind === "navi-q") {
+      return "<div class='" + cls + "'" + idAttr + ">" + who + " " + when + " <span class='chip' style='font-size:10px'>ASKS NAVI</span>" + quoteBit + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div>" + meta + "</div>";
+    }
+    if (m.kind === "navi-nq") {
+      return "<div class='" + cls + "'" + idAttr + "><b>Navi(" + esc(disp) + ")</b> " + when + " <span class='chip' style='font-size:10px'>ASKS NAVI</span>" + quoteBit + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div>" + meta + "</div>";
+    }
+    if (m.kind === "media") {
+      var src = "/api/fedichat/media?fed=" + encodeURIComponent(room.fedId) + "&room=" + encodeURIComponent(room.roomId || "") + "&sha=" + encodeURIComponent((m.media || {}).sha || "");
+      return "<div class='" + cls + "'" + idAttr + ">" + who + " " + when + quoteBit + "<div class='fc-media'><img src='" + src + "' alt='" + esc(m.body || "image") + "'></div><div style='color:var(--dim);font-size:12px'>" + esc(m.body || "image") + "</div>" + meta + "</div>";
+    }
+    if (m.kind === "referral") {
+      var cases = (fcState.cases || []);
+      var fileBit = cases.length ? "<div class='row' style='margin-top:6px'><select id='fc-file-case-" + esc(m.id) + "' aria-label='Case to file this lead into'>" + cases.map(function (c) { return "<option value='" + esc(c.slug) + "'>" + esc(c.title) + "</option>"; }).join("") + "</select><button type='button' class='ghost' data-fcfile='" + esc(m.id) + "' style='min-height:44px'>File into the case</button></div>" : "<div style='color:var(--dim);font-size:12px;margin-top:4px'>No case stands on this node to file it into yet.</div>";
+      return "<div class='" + cls + "'" + idAttr + "><div class='fc-lead'><span class='chip' style='font-size:10px'>LEAD</span> " + when + " <b>" + esc((m.ref || {}).title || "Navi referral") + "</b><div style='white-space:pre-wrap'>" + esc(m.body) + "</div><div style='color:var(--dim);font-size:12px'>A referral from Navi(" + esc(disp) + "), out of a Navi-to-Navi exchange — a lead, never a filing. It files only by your act, through the case door.</div>" + fileBit + "</div>" + meta + "</div>";
+    }
+    return "<div class='" + cls + "'" + idAttr + ">" + who + " " + when + quoteBit + "<div style='white-space:pre-wrap'>" + esc(m.body) + "</div>" + meta + "</div>";
   }).join("");
   var seats = room.members.filter(function (m) { return !said[m.nodeId]; }).map(function (m) {
     var nodeBit = (m.opName && m.name && m.opName !== m.name) ? " · " + esc(m.name) : "";
@@ -8579,63 +8650,136 @@ function fedichatHtml() {
     var nodeBit = (m.opName && m.name && m.opName !== m.name) ? " · " + esc(m.name) : "";
     return "<div style='padding:3px 0'><b>" + esc(fcDisplayName(m)) + "</b> <span style='color:var(--dim)'>· № " + m.n + nodeBit + (m.self ? " · this node" : "") + "</span></div>";
   }).join("");
+  var presenceBits = [];
+  var pres = room.presence || {};
+  room.members.forEach(function (m) { if (pres[m.nodeId]) presenceBits.push(esc(fcDisplayName(m)) + " is " + esc(pres[m.nodeId]) + "…"); });
+  (room.naviThinking || []).forEach(function (nid) {
+    var mm = null;
+    room.members.forEach(function (x) { if (x.nodeId === nid) mm = x; });
+    if (mm) presenceBits.push("Navi (" + esc(fcDisplayName(mm)) + ") is thinking…");
+  });
+  var facts = "";
+  if (room.kind === "invite") facts += " <span class='chip' style='font-size:10px'>INVITE</span>";
+  if (room.kind === "dm") facts += " <span class='chip' style='font-size:10px'>DM</span>";
+  if (room.ttlSeconds) facts += " <span class='chip' style='font-size:10px'>VANISHING · " + esc(fcTtlLabel(room.ttlSeconds)) + "</span>";
+  if (room.dissolved) facts += " <span class='chip' style='font-size:10px;color:#f87171'>DISSOLVED</span>";
+  if (room.caseSlug) facts += " <button type='button' class='ghost fc-mini' data-fccase='" + esc(room.caseSlug) + "'>Case: " + esc(room.caseTitle || room.caseSlug) + "</button>";
   h = "";
   if (fcMsg) h += "<div class='card' style='border-color:#f87171;color:#fca5a5'>" + esc(fcMsg) + "</div>";
   h += "<div class='fc-room'>"
     + "<div class='fc-topbar'><button class='ghost' id='fc-users' aria-label='Room members and channels'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:-3px'><path d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M22 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg> Members</button>"
-    + "<b class='fc-room-name'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + "</span>"
+    + "<b class='fc-room-name'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + "</span>" + facts
     + "<button class='ghost' id='fc-settings' style='margin-left:auto' aria-label='About this room and its settings'>⚙ Settings</button></div>"
     + "<div class='card' id='fc-log'>" + (lines || "<div style='color:var(--dim)'>The room is quiet — no lines held yet. The first line opens it.</div>") + seats + "</div>"
+    + "<div class='fc-presence' id='fc-presence'>" + presenceBits.join(" · ") + "</div>"
+    + "<div class='fc-searchrow'><input class='grow' id='fc-search' type='text' autocomplete='off' placeholder='Search this room's log' aria-label='Search this room's log'><button class='ghost' id='fc-search-go' type='button'>Search</button></div>"
+    + "<div id='fc-results'>" + (fcSearchResults ? (fcSearchResults.length ? fcSearchResults.map(function (r) { return "<div style='padding:2px 0'><button type='button' class='ghost fc-mini' data-fcjump='" + esc(r.id) + "'>" + esc(r.opName || r.authorName || "") + " · " + fedichatTime(r.ts) + " — " + esc(r.snippet || "") + "</button></div>"; }).join("") : "<div style='color:var(--dim);font-size:12px'>No held line matches.</div>") : "") + "</div>"
     + "<div id='fc-complete' class='fc-complete'></div>"
-    + "<form id='fc-form' class='row fc-composer'><input class='grow' id='fc-input' type='text' autocomplete='off' placeholder='Say it in " + esc(room.room) + " — /navi asks Navi, /navi -member asks theirs, /me acts' aria-label='FediChat message'><button class='act' type='submit'>Post</button></form>"
-    + "<div class='fc-hint' style='color:var(--dim);font-size:12px;margin-top:4px'>Enter posts; Tab completes <span class='mono'>/navi -&lt;user&gt;</span> against the roster; on a phone the member list pops above the composer instead.</div>"
+    + (fcQuote ? "<div class='fc-quotechip' style='color:var(--dim);font-size:12px'>Quoting a held line — it rides your next post, proven against the chain. <button type='button' class='ghost fc-mini' data-fcquote-clear='1'>Drop the quote</button></div>" : "")
+    + "<form id='fc-form' class='row fc-composer'><input class='grow' id='fc-input' type='text' autocomplete='off' placeholder='Say it in " + esc(room.room) + " — /navi asks Navi, /navi -member asks theirs, /navinavi -member sets yours to ask theirs, /me acts' aria-label='FediChat message'><button type='button' class='ghost' id='fc-attach' aria-label='Attach an image'>📎</button><input type='file' id='fc-file' accept='image/jpeg,image/png,image/gif,image/webp' style='display:none' aria-label='Image file'><button class='act' type='submit'>Post</button></form>"
+    + "<div class='fc-hint' style='color:var(--dim);font-size:12px;margin-top:4px'>Enter posts; Tab completes <span class='mono'>/navi -&lt;user&gt;</span> and <span class='mono'>/navinavi -&lt;user&gt;</span> against the roster; 📎 posts an image (2 MiB cap); Quote hangs a held line on yours; search finds a line and jumps to it.</div>"
     + "<button class='ghost fc-settings-phone' id='fc-settings-m'>⚙ Room settings &amp; about</button>"
     + "</div>";
-  if (fcTrayOpen || fcWinOpen) h += "<div id='fc-shade'></div>";
+  if (fcTrayOpen || fcWinOpen || fcCreateOpen) h += "<div id='fc-shade'></div>";
   if (fcTrayOpen) h += fedichatTrayHtml(room, members);
   if (fcWinOpen) h += fedichatWinHtml(room, st);
+  if (fcCreateOpen) h += fedichatCreateHtml(room);
   return h;
 }
 function fedichatTrayHtml(room, members) {
-  // The members tray (#270): the channel's name, the channel
-  // list when this node sits in more than one room (it
-  // replaces the in-page tabbar), and the users — the old
-  // rail's rows, verbatim. Rendered only while open and
-  // portaled to <body> by render(), like the wire reader.
+  // The members tray (#270, grown by Build 2): the room's
+  // name, the ROOM LIST — every room this node belongs to,
+  // the switcher that replaced the in-page tabbar — the door
+  // to a new room, and the users, the old rail's rows
+  // verbatim, each with its Message door into a DM.
+  // Rendered only while open and portaled to <body> by
+  // render(), like the wire reader.
   var h = "<div id='fc-tray' role='dialog' aria-modal='true' aria-label='Room members and channels'>";
   h += "<div class='fc-ov-head'><div class='fc-ov-title'>" + esc(room.room) + "</div><button type='button' class='fc-ov-x' id='fc-tray-x' aria-label='Close the members tray'>×</button></div>";
   h += "<div style='color:var(--dim);font-size:12px'>" + esc(room.name) + " · signed roster · " + room.members.length + " members</div>";
-  if (fcState.rooms.length > 1) {
-    h += "<div style='margin-top:14px'><b>Channels</b></div>" + fcState.rooms.map(function (r) { return "<div style='padding:3px 0'><button class='" + (r.fedId === room.fedId ? "act" : "ghost") + "' data-fcroom='" + esc(r.fedId) + "' style='width:100%;text-align:left;min-height:44px'>" + esc(r.room) + "</button></div>"; }).join("");
-  }
-  h += "<div style='margin-top:14px'><b>Members</b></div>" + members;
+  h += "<div style='margin-top:14px'><b>Rooms</b></div>" + fcState.rooms.map(function (r) {
+    var val = r.fedId + ((r.roomId || "") ? "|" + r.roomId : "");
+    var tag = r.kind === "invite" ? " · invite" : (r.kind === "dm" ? " · dm" : "");
+    return "<div style='padding:3px 0'><button class='" + (r.fedId === room.fedId && (r.roomId || "") === (room.roomId || "") ? "act" : "ghost") + "' data-fcroom='" + esc(val) + "' style='width:100%;text-align:left;min-height:44px'>" + esc(r.room) + tag + "</button></div>";
+  }).join("");
+  h += "<div style='padding:3px 0'><button class='ghost' data-fccreate='1' style='width:100%;text-align:left;min-height:44px'>+ New room…</button></div>";
+  h += "<div style='margin-top:14px'><b>Members</b></div>" + room.members.map(function (m) {
+    var nodeBit = (m.opName && m.name && m.opName !== m.name) ? " · " + esc(m.name) : "";
+    return "<div class='row' style='padding:3px 0'><span class='grow'><b>" + esc(fcDisplayName(m)) + "</b> <span style='color:var(--dim)'>· № " + m.n + nodeBit + (m.self ? " · this node" : "") + "</span></span>" + (m.self ? "" : "<button type='button' class='ghost fc-mini' data-fcdm='" + esc(m.nodeId) + "'>Message</button>") + "</div>";
+  }).join("");
   h += "</div>";
   return h;
 }
 function fedichatWinHtml(room, st) {
   // The About & settings window (#270): the explanation and
-  // the old header card's facts, verbatim in substance — the
+  // the header card's facts, verbatim in substance — the
   // room's name and roster, the chain's verdict, the
   // carriage sentence, the retention state, the last round,
-  // Sync now — above the settings card's three controls,
-  // unchanged and switch-gated in their new home. Rendered
-  // only while open; portaled to <body> by render().
+  // Sync now — above the settings controls, unchanged and
+  // switch-gated in their home. Build 2 (v0.5.7e) grows the
+  // facts: the room's kind, its vanishing posture in plain
+  // words, its case tie, and — for the room's creator — the
+  // member-set controls and the dissolution door, every one
+  // a creator-signed revision at the bridge. Rendered only
+  // while open; portaled to <body> by render().
   var h = "<div id='fc-win' role='dialog' aria-modal='true' aria-label='About this room and its settings'>";
   h += "<div class='fc-ov-head'><div class='fc-ov-title'>About " + esc(room.room) + "</div><button type='button' class='fc-ov-x' id='fc-win-x' aria-label='Close room settings'>×</button></div>";
-  h += "<p style='color:var(--dim)'>One signed room per fedinet — the operators talk, their nodes carry the messages, and their Navis are in the room. The log is append-only and hash-chained on every member node; admission is the signed roster, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi — questions and answers post in the open — and <span class='mono'>/me</span> acts.</p>";
+  h += "<p style='color:var(--dim)'>The fedinet's signed rooms — the operators talk, their nodes carry the messages, and their Navis are in the room. Every room's log is append-only and hash-chained on its member nodes; admission is the signed roster, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi — questions and answers post in the open — and <span class='mono'>/me</span> acts.</p>";
   h += "<div class='row'><b style='font-size:16px'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + " · signed roster · " + room.members.length + " members · " + room.held + " lines held</span><button class='ghost' id='fc-sync'>Sync now</button></div>";
   if (room.chain && room.chain.ok) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Chain ✓ verified — history as held is tamper-evident.</div>";
   else if (room.chain) h += "<div style='color:#fca5a5;font-size:12px;margin-top:4px'>Chain: " + esc(room.chain.reason || "broken") + " — named, never silently healed.</div>";
+  if (room.kind === "general") h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>The general room — the fedinet's own room. Every member of the roster is a member of it.</div>";
+  if (room.kind === "invite") h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>An invite room — its member set is its boundary: only member nodes are offered its lines, hold its log, or see that it stands. Membership changes are the creator's, signed and auditable.</div>";
+  if (room.kind === "dm") h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>A direct message — a room of exactly two members; only their nodes hold its log.</div>";
+  if (room.ttlSeconds) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Vanishing: lines older than " + esc(fcTtlLabel(room.ttlSeconds)) + " are pruned on every honoring node, in the retention shape — the newest older line kept as the chain's floor. <b>Vanishing is honored by every member node; it is not a proof of deletion.</b></div>";
+  if (room.dissolved) h += "<div style='color:#fca5a5;font-size:12px;margin-top:4px'>This room was dissolved by its creator — honoring nodes pruned it to its floor, and no new lines land in it.</div>";
+  if (room.caseSlug) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Tied to a case: <button type='button' class='ghost fc-mini' data-fccase='" + esc(room.caseSlug) + "'>" + esc(room.caseTitle || room.caseSlug) + "</button> — the case carries the link back.</div>";
   if (st.relay) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is ON for this node: when a member is reached through a relay, the carrier can read the lines it carries. Turn it off below and the room only travels direct.</div>";
   else h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is OFF for this node: the room travels direct only — an unreachable member waits for a direct road.</div>";
   h += "<div style='color:var(--dim);font-size:12px'>Retention: " + (st.retention === "30d" ? "30 days — older lines prune from this node's log, with the newest older line kept as the chain's floor" : "keep — this node holds the room's whole history") + ".</div>";
   if (room.syncNotes && room.syncNotes.length) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Last round: " + room.syncNotes.map(function (n) { return esc(n); }).join(" · ") + "</div>";
+  // The creator's controls: the member set and the case
+  // tie are creator-signed revisions; dissolution likewise.
+  if (room.isCreator && room.kind === "invite" && !room.dissolved) {
+    var roster = room.members;
+    fcState.rooms.forEach(function (r) { if (r.fedId === room.fedId && r.kind === "general") roster = r.members; });
+    var inRoom = {};
+    room.members.forEach(function (m) { inRoom[m.nodeId] = true; });
+    h += "<div style='margin-top:14px'><b>The room's members — your room, your set</b><div style='color:var(--dim);font-size:12px'>Ticked members are offered the room and hold its log; unticking a member stops new lines reaching their node (what they already hold stays held — history is not rewritten).</div>"
+      + roster.map(function (m) { return "<label class='row' style='padding:3px 0'><input type='checkbox' data-fcmember='" + esc(m.nodeId) + "'" + (inRoom[m.nodeId] ? " checked" : "") + (m.self ? " disabled" : "") + "> <span><b>" + esc(fcDisplayName(m)) + "</b> <span style='color:var(--dim)'>· № " + m.n + (m.self ? " · this node" : "") + "</span></span></label>"; }).join("")
+      + "<div class='row' style='margin-top:6px'><button class='ghost' data-fcsavemembers='1' style='min-height:44px'>Save the member set</button></div></div>";
+    var cases = (fcState.cases || []);
+    if (cases.length) h += "<div style='margin-top:10px'><b>Tie to a case</b><div class='row' style='margin-top:4px'><select id='fc-tie-case' aria-label='Case to tie this room to'><option value=''>— no case —</option>" + cases.map(function (c) { return "<option value='" + esc(c.slug) + "'" + (room.caseSlug === c.slug ? " selected" : "") + ">" + esc(c.title) + "</option>"; }).join("") + "</select><button class='ghost' data-fctie='1' style='min-height:44px'>Tie it</button></div></div>";
+    h += "<div style='margin-top:10px'><b>Dissolve the room</b><div style='color:var(--dim);font-size:12px'>A signed dissolution: honoring nodes prune the room to its floor and mark it dissolved. It cannot be undone.</div><div class='row' style='margin-top:4px'><button class='ghost' data-fcdissolve='1' style='min-height:44px;color:#f87171'>Dissolve " + esc(room.room) + "</button></div></div>";
+  }
   // Room settings — the operator's rulings, as settings.
   h += "<div style='margin-top:14px'><b>This node's room settings</b>"
     + "<div class='row' style='margin-top:8px'><span class='grow'>Navi answers in " + esc(room.room) + " <span style='color:var(--dim)'>— the muzzle: off means she speaks when asked; on means this room hears nothing from her.</span></span><button class='switch' id='fc-muzzle' role='switch' aria-checked='" + (room.muzzled ? "true" : "false") + "' aria-label='Muzzle Navi in this room'><span class='knob'></span></button><span>" + (room.muzzled ? "Muzzled" : "She answers") + "</span></div>"
     + "<div class='row' style='margin-top:8px'><span class='grow'>Relay carriage <span style='color:var(--dim)'>— let this node's room lines travel through relays (the carrier can read them; the About text above says so when it is on).</span></span><button class='switch' id='fc-relay' role='switch' aria-checked='" + (st.relay ? "true" : "false") + "' aria-label='Relay carriage for FediChat'><span class='knob'></span></button><span>" + (st.relay ? "Allowed" : "Direct only") + "</span></div>"
     + "<div class='row' style='margin-top:8px'><span class='grow'>Retention <span style='color:var(--dim)'>— this node's copy of the log.</span></span><button class='" + (st.retention === "keep" ? "act" : "ghost") + "' data-fcret='keep'>Keep everything</button><button class='" + (st.retention === "30d" ? "act" : "ghost") + "' data-fcret='30d'>30 days</button></div>"
     + "</div>";
+  h += "</div>";
+  return h;
+}
+function fedichatCreateHtml(room) {
+  // The create-room overlay (Build 2): name, kind, the
+  // member picker off the roster, the vanishing TTL, the
+  // optional case tie. The bridge signs what the creator's
+  // node mints; a DM is exactly one other member.
+  var fed = null;
+  fcState.rooms.forEach(function (r) { if (r.fedId === room.fedId && !fed) fed = r; });
+  var roster = fed ? fed.members : room.members;
+  var cases = (fcState.cases || []);
+  var h = "<div id='fc-win' role='dialog' aria-modal='true' aria-label='Create a room'>";
+  h += "<div class='fc-ov-head'><div class='fc-ov-title'>New room in " + esc(room.name) + "</div><button type='button' class='fc-ov-x' id='fc-win-x' aria-label='Close room creation'>×</button></div>";
+  h += "<div class='row' style='margin-top:6px'><input class='grow' id='fc-new-name' type='text' placeholder='Room name — e.g. Night Desk' aria-label='New room name'></div>";
+  h += "<div class='row' style='margin-top:6px'><span class='grow' style='color:var(--dim)'>Kind</span><select id='fc-new-kind' aria-label='Room kind'><option value='invite'>Invite room — a named set of members</option><option value='dm'>Direct message — exactly one other member</option></select></div>";
+  h += "<div style='margin-top:8px'><b>Members</b><div style='color:var(--dim);font-size:12px'>You are always in your own room. Only ticked members' nodes are offered the room, hold its log, or see it.</div>"
+    + roster.map(function (m) { return "<label class='row' style='padding:3px 0'><input type='checkbox' data-fcnewmember='" + esc(m.nodeId) + "'" + (m.self ? " checked disabled" : "") + "> <span><b>" + esc(fcDisplayName(m)) + "</b> <span style='color:var(--dim)'>· № " + m.n + (m.self ? " · this node" : "") + "</span></span></label>"; }).join("") + "</div>";
+  h += "<div class='row' style='margin-top:8px'><span class='grow' style='color:var(--dim)'>Vanishing</span><select id='fc-new-ttl' aria-label='Vanishing TTL'><option value=''>Never — the room keeps its lines</option><option value='3600'>Lines vanish after 1 hour</option><option value='86400'>Lines vanish after 24 hours</option><option value='604800'>Lines vanish after 7 days</option></select></div>";
+  h += "<div style='color:var(--dim);font-size:12px'>Vanishing is honored by every member node; it is not a proof of deletion.</div>";
+  if (cases.length) h += "<div class='row' style='margin-top:8px'><span class='grow' style='color:var(--dim)'>Tie to a case</span><select id='fc-new-case' aria-label='Case to tie the new room to'><option value=''>— no case —</option>" + cases.map(function (c) { return "<option value='" + esc(c.slug) + "'>" + esc(c.title) + "</option>"; }).join("") + "</select></div>";
+  h += "<div class='row' style='margin-top:10px'><button class='act' id='fc-new-go' style='min-height:44px'>Create the room</button></div>";
   h += "</div>";
   return h;
 }
@@ -8646,15 +8790,45 @@ function bindFedichatOverlays() {
   // whichever copy of the markup is live. Assignment only —
   // re-binding is harmless.
   var sh = document.getElementById("fc-shade");
-  if (sh) sh.onclick = function () { fcTrayOpen = false; fcWinOpen = false; render(); };
+  if (sh) sh.onclick = function () { fcTrayOpen = false; fcWinOpen = false; fcCreateOpen = false; render(); };
   var tx = document.getElementById("fc-tray-x");
   if (tx) tx.onclick = function () { fcTrayOpen = false; render(); };
   var wx = document.getElementById("fc-win-x");
-  if (wx) wx.onclick = function () { fcWinOpen = false; render(); };
+  if (wx) wx.onclick = function () { fcWinOpen = false; fcCreateOpen = false; render(); };
 }
 function wireFedichat() {
   var room = fedichatRoom();
-  document.querySelectorAll("[data-fcroom]").forEach(function (b) { b.onclick = function () { fcFed = b.getAttribute("data-fcroom"); fcCompleteIdx = 0; fcTrayOpen = false; render(); }; });
+  document.querySelectorAll("[data-fcroom]").forEach(function (b) { b.onclick = function () { var v = b.getAttribute("data-fcroom") || ""; var parts = v.split("|"); fcFed = parts[0]; fcRoomId = parts[1] || ""; fcCompleteIdx = 0; fcTrayOpen = false; fcSearchResults = null; fcJump = ""; render(); }; });
+  document.querySelectorAll("[data-fccreate]").forEach(function (b) { b.onclick = function () { fcTrayOpen = false; fcCreateOpen = true; render(); }; });
+  document.querySelectorAll("[data-fcdm]").forEach(function (b) { b.onclick = function () { if (!room) return; fedichatAct("create-dm", { fed: room.fedId, member: b.getAttribute("data-fcdm") }, function (j) { if (j && j.roomId !== undefined) { fcFed = room.fedId; fcRoomId = j.roomId; } fcTrayOpen = false; render(); }); }; });
+  document.querySelectorAll("[data-fcquote]").forEach(function (b) { b.onclick = function () { fcQuote = b.getAttribute("data-fcquote"); render(); var inp = document.getElementById("fc-input"); if (inp) inp.focus(); }; });
+  document.querySelectorAll("[data-fcquote-clear]").forEach(function (b) { b.onclick = function () { fcQuote = null; render(); }; });
+  document.querySelectorAll("[data-fcjump]").forEach(function (b) { b.onclick = function () { fcJump = b.getAttribute("data-fcjump"); render(); }; });
+  document.querySelectorAll("[data-fccase]").forEach(function (b) { b.onclick = function () { var slug = b.getAttribute("data-fccase"); fcWinOpen = false; goView("CaseFiles"); refreshCaseDetail(slug); }; });
+  document.querySelectorAll("[data-fcfile]").forEach(function (b) { b.onclick = function () { if (!room) return; var sel = document.getElementById("fc-file-case-" + b.getAttribute("data-fcfile")); if (sel && sel.value) fedichatAct("file-referral", { fed: room.fedId, room: room.roomId || "", line: b.getAttribute("data-fcfile"), "case": sel.value }); }; });
+  document.querySelectorAll("[data-fcsavemembers]").forEach(function (b) { b.onclick = function () { if (!room) return; var members = []; document.querySelectorAll("[data-fcmember]").forEach(function (c) { if (c.checked || c.disabled) members.push(c.getAttribute("data-fcmember")); }); fedichatAct("set-members", { fed: room.fedId, room: room.roomId || "", members: members }); }; });
+  document.querySelectorAll("[data-fctie]").forEach(function (b) { b.onclick = function () { if (!room) return; var sel = document.getElementById("fc-tie-case"); fedichatAct("tie-case", { fed: room.fedId, room: room.roomId || "", "case": sel ? sel.value : "" }); }; });
+  document.querySelectorAll("[data-fcdissolve]").forEach(function (b) { b.onclick = function () { if (!room) return; fedichatAct("dissolve", { fed: room.fedId, room: room.roomId || "" }); }; });
+  var createGo = document.getElementById("fc-new-go");
+  if (createGo && room) createGo.onclick = function () {
+    var kindSel = document.getElementById("fc-new-kind");
+    var kind = kindSel ? kindSel.value : "invite";
+    var members = [];
+    document.querySelectorAll("[data-fcnewmember]").forEach(function (c) { if (c.checked || c.disabled) members.push(c.getAttribute("data-fcnewmember")); });
+    if (kind === "dm") {
+      var others = members.filter(function (x) { return x !== (fcState && fcState.nodeId); });
+      if (others.length !== 1) { fcMsg = "A direct message takes exactly one other member — tick one."; render(); return; }
+      fedichatAct("create-dm", { fed: room.fedId, member: others[0] }, function (j) { if (j && j.roomId !== undefined) { fcFed = room.fedId; fcRoomId = j.roomId; } fcCreateOpen = false; render(); });
+      return;
+    }
+    var nameEl = document.getElementById("fc-new-name");
+    var ttlEl = document.getElementById("fc-new-ttl");
+    var caseEl = document.getElementById("fc-new-case");
+    var extra = { fed: room.fedId, name: nameEl ? nameEl.value : "", members: members };
+    if (ttlEl && ttlEl.value) extra.ttlSeconds = parseInt(ttlEl.value, 10);
+    if (caseEl && caseEl.value) extra["case"] = caseEl.value;
+    fedichatAct("create-room", extra, function (j) { if (j && j.roomId !== undefined) { fcFed = room.fedId; fcRoomId = j.roomId; } fcCreateOpen = false; render(); });
+  };
   var usersBtn = document.getElementById("fc-users");
   if (usersBtn) usersBtn.onclick = function () { fcTrayOpen = true; render(); };
   var setBtn = document.getElementById("fc-settings");
@@ -8666,35 +8840,62 @@ function wireFedichat() {
   var sync = document.getElementById("fc-sync");
   if (sync && room) sync.onclick = function () { fedichatAct("sync", { fed: room.fedId }); };
   var mz = document.getElementById("fc-muzzle");
-  if (mz && room) mz.onclick = function () { fedichatAct("settings", { fed: room.fedId, muzzle: !room.muzzled }); };
+  if (mz && room) mz.onclick = function () { fedichatAct("settings", { fed: room.fedId, room: room.roomId || "", muzzle: !room.muzzled }); };
   var rl = document.getElementById("fc-relay");
   if (rl && fcState) rl.onclick = function () { fedichatAct("settings", { relay: !(fcState.settings || {}).relay }); };
+  var searchGo = document.getElementById("fc-search-go");
+  var searchIn = document.getElementById("fc-search");
+  if (searchGo && room) searchGo.onclick = function () { if (searchIn && searchIn.value.trim()) fedichatSearch(searchIn.value.trim(), room); };
+  if (searchIn && room) searchIn.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); if (searchIn.value.trim()) fedichatSearch(searchIn.value.trim(), room); } });
+  var attach = document.getElementById("fc-attach");
+  var fileIn = document.getElementById("fc-file");
+  if (attach && fileIn) attach.onclick = function () { fileIn.click(); };
+  if (fileIn && room) fileIn.addEventListener("change", function () {
+    var f = fileIn.files && fileIn.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var s = String(rd.result || "");
+      var b64 = s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s;
+      fedichatAct("media", { fed: room.fedId, room: room.roomId || "", name: f.name, mime: f.type, dataB64: b64 });
+    };
+    rd.readAsDataURL(f);
+  });
   var form = document.getElementById("fc-form");
   var input = document.getElementById("fc-input");
   if (form && input && room) {
     // One post road (v0.5.5e, #270): the Post button's
     // submit and Enter in the composer both land here —
-    // the main chat's semantics, where Enter sends.
+    // the main chat's semantics, where Enter sends. A
+    // pending quote rides the post and clears with it.
     var postLine = function () {
       var v = input.value;
       if (!v.trim()) return;
       input.value = "";
-      fedichatAct("post", { fed: room.fedId, body: v });
+      var extra = { fed: room.fedId, room: room.roomId || "", body: v };
+      if (fcQuote) extra.quote = fcQuote;
+      fcQuote = null;
+      fedichatPresence("", room);
+      fedichatAct("post", extra);
     };
     form.onsubmit = function (e) {
       e.preventDefault();
       postLine();
     };
     var complete = function () {
-      var m = /^\/navi\s+-(\S*)$/.exec(input.value);
+      var m = /^\/(navinavi|navi)\s+-(\S*)$/.exec(input.value);
       var box = document.getElementById("fc-complete");
       if (!m) { if (box) box.innerHTML = ""; return []; }
-      var matches = fedichatUserMatches(m[1], room.members);
-      if (box) box.innerHTML = matches.map(function (mm) { return "<button type='button' class='ghost' data-fccomplete='" + esc(fcDisplayName(mm)) + "'>" + esc(fcDisplayName(mm)) + " · № " + mm.n + "</button>"; }).join(" ");
-      document.querySelectorAll("[data-fccomplete]").forEach(function (b) { b.onclick = function () { input.value = "/navi -" + b.getAttribute("data-fccomplete") + " "; input.focus(); }; });
+      var matches = fedichatUserMatches(m[2], room.members);
+      if (box) box.innerHTML = matches.map(function (mm) { return "<button type='button' class='ghost' data-fccomplete='" + esc(fcDisplayName(mm)) + "' data-fccmd='" + m[1] + "'>" + esc(fcDisplayName(mm)) + " · № " + mm.n + "</button>"; }).join(" ");
+      document.querySelectorAll("[data-fccomplete]").forEach(function (b) { b.onclick = function () { input.value = "/" + (b.getAttribute("data-fccmd") || "navi") + " -" + b.getAttribute("data-fccomplete") + " "; input.focus(); }; });
       return matches;
     };
-    input.addEventListener("input", function () { fcCompleteIdx = 0; complete(); });
+    input.addEventListener("input", function () {
+      fcCompleteIdx = 0; complete();
+      var now = Date.now();
+      if (now - fcPresenceAt > 4000) { fcPresenceAt = now; fedichatPresence("typing", room); }
+    });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); postLine(); return; }
       if (e.key !== "Tab") return;
@@ -8703,11 +8904,16 @@ function wireFedichat() {
       e.preventDefault();
       var pick = matches[fcCompleteIdx % matches.length];
       fcCompleteIdx++;
-      input.value = "/navi -" + fcDisplayName(pick) + " ";
+      var m2 = /^\/(navinavi|navi)\s+-/.exec(input.value);
+      input.value = "/" + (m2 ? m2[1] : "navi") + " -" + fcDisplayName(pick) + " ";
     });
   }
   var log = document.getElementById("fc-log");
-  if (log) log.scrollTop = log.scrollHeight;
+  if (log) {
+    var jumpEl = fcJump ? document.getElementById("fc-line-" + fcJump) : null;
+    if (jumpEl && jumpEl.scrollIntoView) jumpEl.scrollIntoView({ block: "center" });
+    else log.scrollTop = log.scrollHeight;
+  }
 }
 
 function federationHtml() {
@@ -10607,6 +10813,7 @@ function notifGo(item) {
     // room it names — the room is selected before the view
     // opens, and the room's state refreshes on the way in.
     if (t.fedinetId) fcFed = t.fedinetId;
+    fcRoomId = t.roomId || "";
     goView("FediChat");
     refreshFedichat(false);
     return;

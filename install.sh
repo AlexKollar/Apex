@@ -1533,7 +1533,31 @@ if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   # and the venv is only ever replaced wholesale by the voice
   # step.
   mapfile -t _fnd_ex < <(casualty_excludes_for "$FOUNDATION_SRC")
-  (cd "$FOUNDATION_SRC" && tar --exclude='./shell/target' --exclude='./updates' --exclude='*/__pycache__' --exclude='*.pyc' "${_fnd_ex[@]}" -cf - .) | (cd "$STAGE_DIR" && tar --no-same-owner -xf -)
+  # v0.5.7e (#271): the bridge is still RUNNING while the
+  # stage is assembled — it started this installer and keeps
+  # writing config/ until stop_bridge runs further down. A
+  # file changing under the source tar is the expected case
+  # on a live seat, not corruption: --warning=no-file-changed
+  # quiets the diagnostic, and the source tar's exit 1 for
+  # that case is taken soft. The carried state is made FINAL
+  # after the stop, by the refresh below — never by this
+  # snapshot. A destination failure, or a source failure
+  # beyond the changed-file case, still aborts the install
+  # by name, with the running build untouched.
+  if ! { (cd "$FOUNDATION_SRC" && tar --warning=no-file-changed --exclude='./shell/target' --exclude='./updates' --exclude='*/__pycache__' --exclude='*.pyc' "${_fnd_ex[@]}" -cf - .) | (cd "$STAGE_DIR" && tar --no-same-owner -xf -); _fnd_ps=("${PIPESTATUS[@]}"); }; then
+    :
+  fi
+  if [ "${_fnd_ps[1]:-1}" -ne 0 ]; then
+    echo "!! the stage could not be written — the install is aborted, the running build is untouched" >&2
+    exit 1
+  fi
+  if [ "${_fnd_ps[0]:-0}" -ge 2 ]; then
+    echo "!! the running tree could not be read (tar exit ${_fnd_ps[0]}) — the install is aborted, the running build is untouched" >&2
+    exit 1
+  fi
+  if [ "${_fnd_ps[0]:-0}" -eq 1 ]; then
+    echo "    note: files changed while the stage was assembled (the bridge is live and writing) — the carried state is refreshed after the bridge stops, below"
+  fi
   if [ -f "$FOUNDATION_SRC/navi.llamafile" ]; then
     rm -f "$STAGE_DIR/navi.llamafile"
     ln "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile" 2>/dev/null || cp "$FOUNDATION_SRC/navi.llamafile" "$STAGE_DIR/navi.llamafile"
@@ -2843,7 +2867,13 @@ if [ -d "$PREV_DIR" ]; then
 fi
 
 echo ""
-echo "== Apex build $BUILD_STAMP is installed at $INSTALL_DIR"
+# v0.5.7e (#271 rider): name the build that was ACTUALLY
+# installed — read the stamp back from the installed tree
+# rather than trusting this script's own constant, which
+# once printed a build three releases stale.
+INSTALLED_STAMP="$(sed -n 's/^BRIDGE_BUILD = "\(.*\)"$/\1/p' "$INSTALL_DIR/bridge.py" 2>/dev/null | head -n 1)"
+[ -n "$INSTALLED_STAMP" ] || INSTALLED_STAMP="$BUILD_STAMP"
+echo "== Apex build $INSTALLED_STAMP is installed at $INSTALL_DIR"
 echo "   Verified by the product itself: $(python3 -c "import json; print(json.load(open('$INSTALL_DIR/config/install-self-check.json'))['sentence'])" 2>/dev/null || echo 'self-check passed')"
 if [ "$STARTUP" = "boot" ]; then
   echo "   Startup: at boot (systemd user services: navi-llamafile, navi-bridge)"
