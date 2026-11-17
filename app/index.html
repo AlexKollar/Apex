@@ -912,13 +912,43 @@
   .md-ul { margin:4px 0 8px; padding-left:20px; }
   .md-h { color:var(--text); margin:10px 0 4px; font-size:15px; letter-spacing:.02em; text-transform:none; }
   .md-img { max-width:100%; height:auto; display:block; border-radius:8px; margin:6px 0; }
-  .fc-wrap { display:flex; gap:12px; align-items:flex-start; }
-  .fc-main { flex:1 1 auto; min-width:0; }
-  .fc-members { flex:0 0 220px; }
+  /* FediChat as a chat surface (v0.5.5e, #270): the room is a
+     height-bound frame, not a stack of cards — the frame class
+     lands on #view-root like chat-view / docs-view / vault-view,
+     the lines scroll inside their card, and the composer is
+     docked at the frame's foot. The members rail and the
+     header/settings cards left the page flow: the users live
+     in a tray that slides over the room from the left, and the
+     room's facts and settings live in a floating window —
+     both portaled to <body> while open, in the wire reader's
+     pattern (#196), so their fixed geometry anchors to the
+     viewport on every door. */
+  #view-root.fedichat-view { display:flex; flex-direction:column; overflow:hidden; }
+  #view-root.fedichat-view > * { flex:0 0 auto; }
+  #view-root.fedichat-view > .fc-room { flex:1 1 auto; min-height:0; }
+  .fc-room { display:flex; flex-direction:column; min-height:0; width:100%; }
+  .fc-topbar { display:flex; align-items:center; gap:8px; flex:0 0 auto; margin-bottom:8px; }
+  .fc-topbar .fc-room-name { font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #fc-log { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; margin-bottom:0; }
   .fc-line { padding:3px 0; border-bottom:1px solid rgba(127,127,127,.08); }
-  .fc-complete { margin-top:8px; }
+  .fc-complete { margin-top:8px; flex:0 0 auto; }
   .fc-complete:empty { display:none; }
-  @media (max-width: 800px) { .fc-wrap { flex-direction:column; } .fc-members { flex:1 1 auto; width:100%; } }
+  .fc-composer { flex:0 0 auto; margin-top:8px; }
+  .fc-hint { flex:0 0 auto; }
+  .fc-settings-phone { display:none; }
+  #fc-shade { position:fixed; inset:0; z-index:120; background:rgba(0,0,0,.45); }
+  #fc-tray { position:fixed; z-index:121; top:0; left:0; bottom:0; width:min(320px,86vw); overflow-y:auto; background:var(--panel2); border-right:1px solid var(--line); box-shadow:14px 0 40px rgba(0,0,0,.35); padding:14px 16px calc(14px + env(safe-area-inset-bottom)); animation:fc-tray-in var(--motion-med) var(--motion-ease); }
+  @keyframes fc-tray-in { from { transform:translateX(-24px); opacity:0; } to { transform:none; opacity:1; } }
+  #fc-win { position:fixed; z-index:121; left:50%; top:50%; transform:translate(-50%,-50%); width:min(560px,calc(100vw - 48px)); max-height:86vh; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.45); padding:16px 18px 18px; animation:notif-in .65s cubic-bezier(.22,.8,.3,1); }
+  .fc-ov-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .fc-ov-title { font-weight:700; font-size:15px; flex:1; min-width:0; }
+  .fc-ov-x { min-width:44px; min-height:44px; margin:-6px -10px 0 0; background:none; border:0; color:var(--dim); font-size:20px; cursor:pointer; }
+  @media (max-width:800px) {
+    #fc-win { left:12px; right:12px; top:auto; bottom:12px; transform:none; width:auto; max-height:76vh; }
+    #fc-settings { display:none; }
+    .fc-settings-phone { display:block; width:100%; margin-top:8px; min-height:44px; flex:0 0 auto; }
+    .fc-topbar button { min-height:44px; }
+  }
   .md-q { border-left:3px solid var(--cy); margin:6px 0; padding:2px 10px; color:var(--dim); }
   .md a { color:var(--cy); }
   /* Voice: the call panel's live wave (bars rise while she listens
@@ -1004,6 +1034,7 @@
        base rule above) on phones too. */
     #view-root.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
     #view-root.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
+    #view-root.fedichat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; }
     /* Chat's frame, height-bound (Build 10, issue #131): the
        height above reckons the chat view as the viewport minus
        the 60px top bar alone — but the view does not start
@@ -2082,8 +2113,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-16.20";
-var SHIPPED_BUILD_SEQ = 20;
+var BRIDGE_BUILD = "2026-11-16.21";
+var SHIPPED_BUILD_SEQ = 21;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -6114,15 +6145,16 @@ var DOC_PAGES = [
   { id: "fedichat", title: "FediChat — the room where the Row talks", related: ["federation", "mesh", "dhd"], html:
     "<div class='doc-sec'><h4>One room per fedinet</h4>" +
   "<p><b>FediChat</b> (Apex | Network → FediChat) is the fedinet's own room: one per fedinet, named for it — <span class='mono'>#rockport-mesh</span>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no second room in phase 1: no direct messages, no media, no editing or deleting what was said. Through DHD the room reads and posts as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
-  "<p><b>The log.</b> Every line is a record in an append-only, <b>hash-chained</b> log kept on the member nodes: it carries the fedinet id, the previous line's hash, the author's node id and roster number, a timestamp and the body, signed with the author's node key. A nick is a node underneath — the signing identity — but the room is between <i>users</i>, so lines show under the author's <b>operator name</b> (below), with the node name and roster number beside it. A seat a member hasn't spoken from yet shows as an empty chair, not an absence. The room's header states the chain's verdict: verified, or the break named — a broken chain is evidence, never silently healed.</p>" +
+  "<p><b>The log.</b> Every line is a record in an append-only, <b>hash-chained</b> log kept on the member nodes: it carries the fedinet id, the previous line's hash, the author's node id and roster number, a timestamp and the body, signed with the author's node key. A nick is a node underneath — the signing identity — but the room is between <i>users</i>, so lines show under the author's <b>operator name</b> (below), with the node name and roster number beside it. A seat a member hasn't spoken from yet shows as an empty chair, not an absence. The room's About window states the chain's verdict: verified, or the break named — a broken chain is evidence, never silently healed.</p>" +
   "<p><b>Names in the room (v0.5.4e).</b> Your display name is your <b>operator name</b> — the name on your operator card, the same synced value every seat of yours agrees on. It reaches the room as a signed <b>presence line</b> in the log: your node posts it before your first line under the name and again when the name changes, bound to your node key like every room fact, so nobody can wear another member's name. Rename your card and the room follows on the next exchange. A member whose card carries no name yet shows under their node name. <span class='mono'>/navi -&lt;user&gt;</span> resolves operator names as well as node names and roster numbers, and completion offers both. And a Navi's answer wears her operator's name: <b>Navi(&lt;operator name&gt;):</b> — in a room with several Navis, the answer line itself says whose Navi is speaking.</p>" +
   "<p><b>Arrivals reach the tray (v0.5.4e).</b> New lines landing in a room from other members — speech, actions, Navi answers — raise a record in the notifications tray naming the room, one per arrival round however many lines rode it; a single-line round names its author and carries the line. Your own lines never notify you. Going to the record lands in the room with it marked read — the room is no longer a place you only learn about by visiting it.</p>" +
-  "<p><b>How lines travel.</b> Sync is gossip: any two members compare what they hold and pull what they are missing, and any member can carry any line — the author's signature is the credential, never the carrier's — so a node that was offline catches up from whoever is home. There is no server, and the gateway is not a hub: a gateway admits, it does not rule. A line whose author is no longer on the roster is refused when it arrives new — what the room already holds stays held; expulsion stops new speech, it does not rewrite history. A tampered line and a flood past the per-author cap are refused by name, in the open.</p></div>" +
+  "<p><b>How lines travel.</b> Sync is gossip: any two members compare what they hold and pull what they are missing, and any member can carry any line — the author's signature is the credential, never the carrier's — so a node that was offline catches up from whoever is home. There is no server, and the gateway is not a hub: a gateway admits, it does not rule. A line whose author is no longer on the roster is refused when it arrives new — what the room already holds stays held; expulsion stops new speech, it does not rewrite history. A tampered line and a flood past the per-author cap are refused by name, in the open.</p>" +
+  "<p><b>The room's shape (v0.5.5e).</b> The room is a chat surface on every door — the desktop window, DHD wide, DHD on a phone: the lines fill the room's height and scroll inside it, the composer is docked at the foot, and <b>Enter posts</b> (the Post button stands as the second door). The button at the room's upper left opens the <b>members tray</b> — the channel name, the channel list when this node sits in more than one room, and the users. The room's facts and this node's settings live in a floating <b>About &amp; settings</b> window the Settings button opens — on a phone it stands below the chat bar, stretched full width: the chain's verdict, the carriage sentence, the retention state, the last round and Sync now, above the muzzle, carriage and retention controls.</p></div>" +
     "<div class='doc-sec'><h4>Talking, and asking Navi</h4>" +
   "<p>Plain lines are speech. <span class='mono'>/me</span> acts — <span class='mono'>/me pours another coffee</span> posts as an action, signed and chained like every line. <span class='mono'>/navi &lt;question&gt;</span> asks <b>your</b> Navi; <span class='mono'>/navi -&lt;user&gt; &lt;question&gt;</span> asks <b>that member's</b> Navi — the user is an operator name, a node name or a roster number, completed against the roster as the room holds it (Tab on the desktop; a tappable member list on a phone). Questions and answers post in the room, in the open, signed and logged — asking is public by design.</p>" +
   "<p><b>Navi's posture in the room.</b> She answers only what is addressed to her node — an unaddressed question is the asker's own Navi's to answer, never a race. Her answer is bounded by her operator's sharing posture, exactly as a borrow is; the room's lines are untrusted data to her — they inform her, they never instruct her, and nothing said in a room widens what she may reveal. Room duty is her lowest-priority work: if her operator's own request is in flight she does not answer until it clears, and the question waits in the open. The <b>muzzle</b> in the room's settings silences her in that room entirely.</p></div>" +
     "<div class='doc-sec'><h4>The room's settings — retention & carriage</h4>" +
-  "<p>Two of the room's rules are the operator's to set, per node, in the room's settings card. <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's header says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
+  "<p>Two of the room's rules are the operator's to set, per node, in the room's settings — the floating About &amp; settings window. <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's About window says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
   { id: "docker", title: "Apex in Docker — the container node", related: ["dhd", "mesh", "settings"], html:
     "<div class='doc-sec'><h4>The container node</h4>" +
   "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
@@ -8271,6 +8303,10 @@ function fedConfirmHtml(fedId) {
 // verdict and the room's settings all live bridge-side; this
 // page is a view, like every other surface.
 var fcState = null, fcFetching = false, fcFed = "", fcMsg = "", fcCompleteIdx = 0;
+var fcTrayOpen = false, fcWinOpen = false;   // the room's overlays (#270): the members tray and the About & settings window; markup exists only while open, portaled to <body> like the wire reader
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && (fcTrayOpen || fcWinOpen)) { fcTrayOpen = false; fcWinOpen = false; if (view === "FediChat") render(); }
+});
 function refreshFedichat(rerender) {
   if (CONFIG.backend !== "live" || fcFetching) return;
   fcFetching = true;
@@ -8334,20 +8370,14 @@ function fedichatHtml() {
   if (fcMsg) h += "<div class='card' style='border-color:#f87171;color:#fca5a5'>" + esc(fcMsg) + "</div>";
   if (!fcState.rooms || !fcState.rooms.length) return h + "<div class='card'>No room yet — this node is not on any fedinet's roster. The roster is the room's admission: join a fedinet from the Federation page and its room opens here.</div>";
   var room = fedichatRoom();
-  if (fcState.rooms.length > 1) {
-    h += "<div class='tabbar' role='tablist' aria-label='FediChat rooms' style='margin-bottom:10px'>" + fcState.rooms.map(function (r) { return "<button class='" + (r.fedId === room.fedId ? "act" : "ghost") + "' data-fcroom='" + esc(r.fedId) + "'>" + esc(r.room) + "</button>"; }).join("") + "</div>";
-  }
   var st = fcState.settings || {};
-  h += "<div class='card'>";
-  h += "<div class='row'><b style='font-size:16px'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + " · signed roster · " + room.members.length + " members · " + room.held + " lines held</span><button class='ghost' id='fc-sync'>Sync now</button></div>";
-  if (room.chain && room.chain.ok) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Chain ✓ verified — history as held is tamper-evident.</div>";
-  else if (room.chain) h += "<div style='color:#fca5a5;font-size:12px;margin-top:4px'>Chain: " + esc(room.chain.reason || "broken") + " — named, never silently healed.</div>";
-  if (st.relay) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is ON for this node: when a member is reached through a relay, the carrier can read the lines it carries. Turn it off below and the room only travels direct.</div>";
-  else h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is OFF for this node: the room travels direct only — an unreachable member waits for a direct road.</div>";
-  h += "<div style='color:var(--dim);font-size:12px'>Retention: " + (st.retention === "30d" ? "30 days — older lines prune from this node's log, with the newest older line kept as the chain's floor" : "keep — this node holds the room's whole history") + ".</div>";
-  if (room.syncNotes && room.syncNotes.length) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Last round: " + room.syncNotes.map(function (n) { return esc(n); }).join(" · ") + "</div>";
-  h += "</div>";
-  // The room + the members rail (stacked on narrow screens).
+  // The room as a chat surface (v0.5.5e, #270): the frame
+  // fills the view, the lines scroll inside it, the composer
+  // is docked at the foot. What used to stack around the
+  // room moved out of the page flow — the members rail into
+  // the tray at the upper left (fedichatTrayHtml), the
+  // header card's facts and the settings card into the
+  // floating About & settings window (fedichatWinHtml).
   var said = {};
   room.messages.forEach(function (m) { said[m.author] = true; });
   var lines = room.messages.map(function (m) {
@@ -8370,22 +8400,89 @@ function fedichatHtml() {
     var nodeBit = (m.opName && m.name && m.opName !== m.name) ? " · " + esc(m.name) : "";
     return "<div style='padding:3px 0'><b>" + esc(fcDisplayName(m)) + "</b> <span style='color:var(--dim)'>· № " + m.n + nodeBit + (m.self ? " · this node" : "") + "</span></div>";
   }).join("");
-  h += "<div class='fc-wrap'><div class='fc-main'><div class='card' id='fc-log' style='max-height:52vh;overflow:auto'>" + (lines || "<div style='color:var(--dim)'>The room is quiet — no lines held yet. The first line opens it.</div>") + seats + "</div>"
+  h = "";
+  if (fcMsg) h += "<div class='card' style='border-color:#f87171;color:#fca5a5'>" + esc(fcMsg) + "</div>";
+  h += "<div class='fc-room'>"
+    + "<div class='fc-topbar'><button class='ghost' id='fc-users' aria-label='Room members and channels'><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:-3px'><path d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M22 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg> Members</button>"
+    + "<b class='fc-room-name'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + "</span>"
+    + "<button class='ghost' id='fc-settings' style='margin-left:auto' aria-label='About this room and its settings'>⚙ Settings</button></div>"
+    + "<div class='card' id='fc-log'>" + (lines || "<div style='color:var(--dim)'>The room is quiet — no lines held yet. The first line opens it.</div>") + seats + "</div>"
     + "<div id='fc-complete' class='fc-complete'></div>"
-    + "<form id='fc-form' class='row' style='margin-top:8px'><input class='grow' id='fc-input' type='text' autocomplete='off' placeholder='Say it in " + esc(room.room) + " — /navi asks Navi, /navi -member asks theirs, /me acts' aria-label='FediChat message'><button class='act' type='submit'>Post</button></form>"
-    + "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Tab completes <span class='mono'>/navi -&lt;user&gt;</span> against the roster; on a phone the member list pops above the composer instead.</div></div>"
-    + "<div class='fc-members'><div class='card'><b>Members</b>" + members + "</div></div></div>";
+    + "<form id='fc-form' class='row fc-composer'><input class='grow' id='fc-input' type='text' autocomplete='off' placeholder='Say it in " + esc(room.room) + " — /navi asks Navi, /navi -member asks theirs, /me acts' aria-label='FediChat message'><button class='act' type='submit'>Post</button></form>"
+    + "<div class='fc-hint' style='color:var(--dim);font-size:12px;margin-top:4px'>Enter posts; Tab completes <span class='mono'>/navi -&lt;user&gt;</span> against the roster; on a phone the member list pops above the composer instead.</div>"
+    + "<button class='ghost fc-settings-phone' id='fc-settings-m'>⚙ Room settings &amp; about</button>"
+    + "</div>";
+  if (fcTrayOpen || fcWinOpen) h += "<div id='fc-shade'></div>";
+  if (fcTrayOpen) h += fedichatTrayHtml(room, members);
+  if (fcWinOpen) h += fedichatWinHtml(room, st);
+  return h;
+}
+function fedichatTrayHtml(room, members) {
+  // The members tray (#270): the channel's name, the channel
+  // list when this node sits in more than one room (it
+  // replaces the in-page tabbar), and the users — the old
+  // rail's rows, verbatim. Rendered only while open and
+  // portaled to <body> by render(), like the wire reader.
+  var h = "<div id='fc-tray' role='dialog' aria-modal='true' aria-label='Room members and channels'>";
+  h += "<div class='fc-ov-head'><div class='fc-ov-title'>" + esc(room.room) + "</div><button type='button' class='fc-ov-x' id='fc-tray-x' aria-label='Close the members tray'>×</button></div>";
+  h += "<div style='color:var(--dim);font-size:12px'>" + esc(room.name) + " · signed roster · " + room.members.length + " members</div>";
+  if (fcState.rooms.length > 1) {
+    h += "<div style='margin-top:14px'><b>Channels</b></div>" + fcState.rooms.map(function (r) { return "<div style='padding:3px 0'><button class='" + (r.fedId === room.fedId ? "act" : "ghost") + "' data-fcroom='" + esc(r.fedId) + "' style='width:100%;text-align:left;min-height:44px'>" + esc(r.room) + "</button></div>"; }).join("");
+  }
+  h += "<div style='margin-top:14px'><b>Members</b></div>" + members;
+  h += "</div>";
+  return h;
+}
+function fedichatWinHtml(room, st) {
+  // The About & settings window (#270): the explanation and
+  // the old header card's facts, verbatim in substance — the
+  // room's name and roster, the chain's verdict, the
+  // carriage sentence, the retention state, the last round,
+  // Sync now — above the settings card's three controls,
+  // unchanged and switch-gated in their new home. Rendered
+  // only while open; portaled to <body> by render().
+  var h = "<div id='fc-win' role='dialog' aria-modal='true' aria-label='About this room and its settings'>";
+  h += "<div class='fc-ov-head'><div class='fc-ov-title'>About " + esc(room.room) + "</div><button type='button' class='fc-ov-x' id='fc-win-x' aria-label='Close room settings'>×</button></div>";
+  h += "<p style='color:var(--dim)'>One signed room per fedinet — the operators talk, their nodes carry the messages, and their Navis are in the room. The log is append-only and hash-chained on every member node; admission is the signed roster, and there is no server and no hub. <span class='mono'>/navi</span> asks your Navi, <span class='mono'>/navi -&lt;user&gt;</span> asks a member's Navi — questions and answers post in the open — and <span class='mono'>/me</span> acts.</p>";
+  h += "<div class='row'><b style='font-size:16px'>" + esc(room.room) + "</b><span style='color:var(--dim)'>" + esc(room.name) + " · signed roster · " + room.members.length + " members · " + room.held + " lines held</span><button class='ghost' id='fc-sync'>Sync now</button></div>";
+  if (room.chain && room.chain.ok) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Chain ✓ verified — history as held is tamper-evident.</div>";
+  else if (room.chain) h += "<div style='color:#fca5a5;font-size:12px;margin-top:4px'>Chain: " + esc(room.chain.reason || "broken") + " — named, never silently healed.</div>";
+  if (st.relay) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is ON for this node: when a member is reached through a relay, the carrier can read the lines it carries. Turn it off below and the room only travels direct.</div>";
+  else h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Relay carriage is OFF for this node: the room travels direct only — an unreachable member waits for a direct road.</div>";
+  h += "<div style='color:var(--dim);font-size:12px'>Retention: " + (st.retention === "30d" ? "30 days — older lines prune from this node's log, with the newest older line kept as the chain's floor" : "keep — this node holds the room's whole history") + ".</div>";
+  if (room.syncNotes && room.syncNotes.length) h += "<div style='color:var(--dim);font-size:12px;margin-top:4px'>Last round: " + room.syncNotes.map(function (n) { return esc(n); }).join(" · ") + "</div>";
   // Room settings — the operator's rulings, as settings.
-  h += "<div class='card' style='margin-top:12px'><b>This node's room settings</b>"
+  h += "<div style='margin-top:14px'><b>This node's room settings</b>"
     + "<div class='row' style='margin-top:8px'><span class='grow'>Navi answers in " + esc(room.room) + " <span style='color:var(--dim)'>— the muzzle: off means she speaks when asked; on means this room hears nothing from her.</span></span><button class='switch' id='fc-muzzle' role='switch' aria-checked='" + (room.muzzled ? "true" : "false") + "' aria-label='Muzzle Navi in this room'><span class='knob'></span></button><span>" + (room.muzzled ? "Muzzled" : "She answers") + "</span></div>"
-    + "<div class='row' style='margin-top:8px'><span class='grow'>Relay carriage <span style='color:var(--dim)'>— let this node's room lines travel through relays (the carrier can read them; the header says so when it is on).</span></span><button class='switch' id='fc-relay' role='switch' aria-checked='" + (st.relay ? "true" : "false") + "' aria-label='Relay carriage for FediChat'><span class='knob'></span></button><span>" + (st.relay ? "Allowed" : "Direct only") + "</span></div>"
+    + "<div class='row' style='margin-top:8px'><span class='grow'>Relay carriage <span style='color:var(--dim)'>— let this node's room lines travel through relays (the carrier can read them; the About text above says so when it is on).</span></span><button class='switch' id='fc-relay' role='switch' aria-checked='" + (st.relay ? "true" : "false") + "' aria-label='Relay carriage for FediChat'><span class='knob'></span></button><span>" + (st.relay ? "Allowed" : "Direct only") + "</span></div>"
     + "<div class='row' style='margin-top:8px'><span class='grow'>Retention <span style='color:var(--dim)'>— this node's copy of the log.</span></span><button class='" + (st.retention === "keep" ? "act" : "ghost") + "' data-fcret='keep'>Keep everything</button><button class='" + (st.retention === "30d" ? "act" : "ghost") + "' data-fcret='30d'>30 days</button></div>"
     + "</div>";
+  h += "</div>";
   return h;
+}
+function bindFedichatOverlays() {
+  // The tray/window close furniture. The overlays are
+  // portaled to <body> by render(); this runs from the
+  // portal step and from wireFedichat, so the controls bind
+  // whichever copy of the markup is live. Assignment only —
+  // re-binding is harmless.
+  var sh = document.getElementById("fc-shade");
+  if (sh) sh.onclick = function () { fcTrayOpen = false; fcWinOpen = false; render(); };
+  var tx = document.getElementById("fc-tray-x");
+  if (tx) tx.onclick = function () { fcTrayOpen = false; render(); };
+  var wx = document.getElementById("fc-win-x");
+  if (wx) wx.onclick = function () { fcWinOpen = false; render(); };
 }
 function wireFedichat() {
   var room = fedichatRoom();
-  document.querySelectorAll("[data-fcroom]").forEach(function (b) { b.onclick = function () { fcFed = b.getAttribute("data-fcroom"); fcCompleteIdx = 0; render(); }; });
+  document.querySelectorAll("[data-fcroom]").forEach(function (b) { b.onclick = function () { fcFed = b.getAttribute("data-fcroom"); fcCompleteIdx = 0; fcTrayOpen = false; render(); }; });
+  var usersBtn = document.getElementById("fc-users");
+  if (usersBtn) usersBtn.onclick = function () { fcTrayOpen = true; render(); };
+  var setBtn = document.getElementById("fc-settings");
+  if (setBtn) setBtn.onclick = function () { fcWinOpen = true; render(); };
+  var setBtnM = document.getElementById("fc-settings-m");
+  if (setBtnM) setBtnM.onclick = function () { fcWinOpen = true; render(); };
+  bindFedichatOverlays();
   document.querySelectorAll("[data-fcret]").forEach(function (b) { b.onclick = function () { fedichatAct("settings", { retention: b.getAttribute("data-fcret") }); }; });
   var sync = document.getElementById("fc-sync");
   if (sync && room) sync.onclick = function () { fedichatAct("sync", { fed: room.fedId }); };
@@ -8396,12 +8493,18 @@ function wireFedichat() {
   var form = document.getElementById("fc-form");
   var input = document.getElementById("fc-input");
   if (form && input && room) {
-    form.onsubmit = function (e) {
-      e.preventDefault();
+    // One post road (v0.5.5e, #270): the Post button's
+    // submit and Enter in the composer both land here —
+    // the main chat's semantics, where Enter sends.
+    var postLine = function () {
       var v = input.value;
       if (!v.trim()) return;
       input.value = "";
       fedichatAct("post", { fed: room.fedId, body: v });
+    };
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      postLine();
     };
     var complete = function () {
       var m = /^\/navi\s+-(\S*)$/.exec(input.value);
@@ -8414,6 +8517,7 @@ function wireFedichat() {
     };
     input.addEventListener("input", function () { fcCompleteIdx = 0; complete(); });
     input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); postLine(); return; }
       if (e.key !== "Tab") return;
       var matches = complete();
       if (!matches.length) return;
@@ -11808,7 +11912,7 @@ function render() {
   // A portaled article reader from the previous render is
   // taken down before the new view paints — it lives at <body>
   // level, outside the view root's HTML (Build 10, #196).
-  document.querySelectorAll("body > #wire-reader, body > #wire-reader-shade").forEach(function (n) { n.remove(); });
+  document.querySelectorAll("body > #wire-reader, body > #wire-reader-shade, body > #fc-tray, body > #fc-win, body > #fc-shade").forEach(function (n) { n.remove(); });
   if (!wireReader) document.body.classList.remove("reader-open");
   // Focus return for the chat composer: render() rebuilds the whole
   // view, which would strand the operator's cursor after every send.
@@ -11835,6 +11939,10 @@ function render() {
   // around another view.
   if (view !== "Vault") vaultFocus = false;
   appEl.classList.toggle("vault-focus", vaultFocus);
+  // The room's overlays (#270) belong to the room: leaving
+  // the view closes them, so a tray can never hang over
+  // another destination.
+  if (view !== "FediChat") { fcTrayOpen = false; fcWinOpen = false; }
   // Build 13 (#146): Studio focus mode's class is the same
   // kind of reflection of the one studioFocus flag — cleared
   // by any move away from the Studio, so the collapsed frame
@@ -12384,6 +12492,14 @@ function render() {
     bindWireReaderClose();
   }
   document.body.classList.toggle("reader-open", !!_wrp);
+  // The FediChat overlays (#270) ride the same road: the tray
+  // and the About & settings window are generated inside the
+  // view's markup and anchor fixed to <body>, like the reader.
+  ["fc-shade", "fc-tray", "fc-win"].forEach(function (id) {
+    var n = document.getElementById(id);
+    if (n && n.parentNode !== document.body) document.body.appendChild(n);
+  });
+  if (document.getElementById("fc-tray") || document.getElementById("fc-win")) bindFedichatOverlays();
   // Replay the view-entrance motion on every render so switching
   // views (and tabs) glides instead of snapping.
   mainEl.classList.remove("view-in");
@@ -12394,6 +12510,7 @@ function render() {
   mainEl.classList.toggle("chat-view", view === "Chat");
   mainEl.classList.toggle("docs-view", view === "Docs");
   mainEl.classList.toggle("vault-view", view === "Vault");
+  mainEl.classList.toggle("fedichat-view", view === "FediChat");
   wire();
   if (view === "Docs") docsRestoreNav();
   if (view === "Chat") {

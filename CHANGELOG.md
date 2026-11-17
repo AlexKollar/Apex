@@ -2,6 +2,15 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.5.5
+
+Release tag: v0.5.5e — chapter 0.5's fifth Edge build under patch-per-build versioning. The FediChat room becomes a chat surface on every surface, from the operator's verdict on the phase-1 room ("good first shot — but needs work"): full height, a docked composer, Enter posting, and the room's furniture out of the page flow.
+
+- **The room is a chat surface now (#270).** The stacked cards are gone on every surface — the desktop app window, DHD at desktop width, DHD on a phone. The room is a height-bound frame in the main chat's shape: the message list fills the room's height and scrolls internally, and the composer is docked at the frame's foot. **Enter posts**, with the main chat's semantics; the Post button remains as the deterministic second door. Completion for `/navi -<user>` still pops above the composer, unchanged.
+- **The members tray (#270).** The members card left the page flow. The user-list button at the room's upper left opens a tray over the room carrying the channel name and the users list — operator name primary, roster number, node name secondary, this node marked — and, when this node sits in more than one room, the channel list for switching; the tray replaces the in-page room tabbar.
+- **The About & settings window (#270).** The header card's facts and the settings card moved into one floating window: the FediChat explanation — room name, roster size, held count, the chain's verdict, the relay-carriage sentence, the retention state, the last round, and Sync now — above the settings menu: the muzzle, relay carriage and retention controls exactly as they were, switch-gated in their new home. On a phone (≤800px) the Settings button sits below the chat bar, stretched the full width; on wider surfaces it sits with the room's top furniture, beside the user-list button.
+- **Presentation only.** The bridge machinery, the signed hash-chained log, presence, the state payloads and the tray producer are untouched — this build moves furniture, not plumbing. The in-app FediChat page describes the new layout.
+
 ## 0.5.4
 
 Release tag: v0.5.4e — chapter 0.5's fourth Edge build under patch-per-build versioning. The FediChat polish round, from the operator's rulings in the hour after phase 1 shipped: the room gets its icon, its people get their names, its Navis get their byline, and its arrivals get a voice in the tray.
