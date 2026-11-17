@@ -2,6 +2,14 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.5.12
+
+Release tag: v0.5.12e — chapter 0.5's twelfth Edge build under patch-per-build versioning. She prints, then asks: Navi's case-room answers are conversation again — whole, unparsed, unrefused — and filing is the operator's tap on the reply. The open case's action row also learns to wrap on a phone.
+
+- **Answers print whole; the log block retires (#286).** The conversational [[case-log]] path is gone — the parser, its refusal machinery, and the teaching that fed it. In a case's own chat her answer now stands exactly as composed, whatever shape it takes: a summary in finding grammar, a long answer cut off mid-thought — it prints, nothing is filed, nothing is refused, no red card hangs on it. Her model-turn teaching says the new law plainly: answers are conversation, not filings.
+- **Filing is a standing proposal (#286).** The **File into this case** button under each of her replies is the filing door from chat — it was already there; it is now the only one. Pressing it files that reply's printed text as a finding in her name, deterministically, receipted in the room — and it never blocks the conversation: each proposal stands on its own reply until pressed or ignored, and pressing an older reply's button after newer turns files that reply, not the latest. The grounding guard still rides the tap: a filed reply that contradicts the Wire record it cites is flagged on its receipt, never in the case file (#266 purity untouched). Refusal discipline lives on the deterministic doors, named once, for malformed explicit filings.
+- **The open case's buttons wrap (#285).** On phone widths the open case's action row — the open-case toggle, Export the report, Open the case chat — did not wrap: the chat button clipped at the card's edge, unreachable. At ≤800px the row now wraps and its buttons flex, so all three actions stand whole at the 44px floor; the desktop row is unchanged.
+
 ## 0.5.11
 
 Release tag: v0.5.11e — chapter 0.5's eleventh Edge build under patch-per-build versioning. Reading first: markdown documents open rendered across Apex, the editor opens on a press inside the text, and the split view is gone — from the Vault, and from every form of the MD system.

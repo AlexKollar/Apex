@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.11"
+SHIPPED_VERSION = "0.5.12"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.27"
+BRIDGE_BUILD = "2026-11-17.28"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 27
+SHIPPED_BUILD_SEQ = 28
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -13202,7 +13202,7 @@ def extract_shell_block(reply, chat_id, gate_open=True):
     """Navi drives the chat's interactive session: a [[shell]]
     block in her reply is stripped from the text, each line typed
     into the session (born here if this is her first interactive
-    need), badged "navi". Mirrors extract_case_log. Returns
+    need), badged "navi". Returns
     (clean_reply, drove_or_None).
 
     v0.4.6e (#240): the drive is GATED — with gate_open False
@@ -29062,40 +29062,17 @@ def case_review(slug, register, key, action):
     return None, "Unknown register."
 
 
-# --- Navi logs as she sees it (Build 2, #199 — prep Part 1) ------
-# In a case's BOUND chat (only there), her reply may carry an
-# invisible structured log block:
-#
-#   [[case-log]]
-#   entity: <name> | <type> | <role in the case>
-#   observable: <value> | <kind> | <context line>
-#   event: <title> | <what happened>
-#   lead: <title> | <the claim, and its reasoning>
-#   task: <a next step>
-#   [[/case-log]]
-#
-# The bridge parses, validates, dedupes and writes — she never
-# edits files. Everything she logs lands UNVERIFIED (state:
-# lead), badged as hers in the case view, with provenance:
-# author navi, the filing timestamp, and the operator message
-# it answers. Caps: at most 6 log entries per reply (findings
-# keep their own cap of 2). A detail that belongs to a
-# DIFFERENT case is flagged in the reply's receipts, never
-# written across.
-CASELOG_RE = re.compile(r"\[\[case-log\]\](.*?)\[\[/case-log\]\]", re.I | re.S)
+# v0.5.12e (#286): the conversational case-log block path is
+# RETIRED, on the operator's print-and-ask ruling — Navi's
+# case-room answers are conversation, never filings: nothing
+# in a reply is parsed, cut, or refused, and filing happens
+# only through the deterministic doors (the per-reply tap —
+# case_file_reply — the intake's swipe, the Case Files page's
+# own register forms). The block's kind vocabularies survive
+# below because those doors still use them (the intake's
+# register writes, the case draft's sanitizer).
 CASELOG_ENTITY_TYPES = ["person", "org", "account", "system", "place", "other"]
 CASELOG_OBS_KINDS = ["ip", "domain", "url", "hash", "file", "wallet", "other"]
-CASELOG_MAX_ENTRIES = 6
-# v0.5.2e (#261): the malformed shapes, named so they can be
-# refused by name — an unclosed block, a single-bracket
-# improvisation, filing-shaped lines sitting in prose, and the
-# headed-essay shape the field produced ("Case Intake" as a
-# summary instead of a filing).
-CASELOG_OPEN_RE = re.compile(r"\[\[case-log\]\]", re.I)
-CASELOG_SINGLE_RE = re.compile(r"(?<!\[)\[case-log\](.*?)\[/case-log\]", re.I | re.S)
-CASELOG_KIND_LINE_RE = re.compile(
-    r"^\s*(entity|observable|event|lead|finding|task)\s*:\s*\S", re.I)
-CASELOG_HEADER_RE = re.compile(r"^\s{0,3}#{0,3}\s*case\s+(intake|brief|log)\b", re.I)
 
 
 # --- The grounding guard (v0.5.2e, #261, leg 3) ------------------
@@ -29463,244 +29440,6 @@ def case_form_all():
     return formed
 
 
-def extract_case_log(reply, slug, source_text=""):
-    # Returns (clean_reply, log) where log is None when nothing
-    # was logged (or no bound case), else {entries, flags,
-    # duplicates, dropped, refusals, grounding}. Blocks are
-    # stripped from the reply ALWAYS — a stray block outside a
-    # bound chat is dropped, never written anywhere.
-    # v0.5.2e (#261): a MALFORMED filing attempt in a bound chat
-    # is refused BY NAME — the refusal is appended to the reply
-    # by the bridge and rides the log payload, so the operator
-    # always knows whether a filing took. Silence was the field
-    # failure: an essay shaped like a filing, nothing filed, and
-    # no word that nothing had landed.
-    blocks = CASELOG_RE.findall(reply or "")
-    clean = CASELOG_RE.sub("", reply or "")
-    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-    if not slug or _case_manifest(slug) is None:
-        return clean, None
-    refusals = []
-    grounding = []
-    # An unclosed block is cut where it opens — half a filing
-    # is never acted on (the intake's discipline, applied here).
-    m_open = CASELOG_OPEN_RE.search(clean)
-    if m_open:
-        clean = clean[:m_open.start()].rstrip()
-        refusals.append("a case-log block opened but never closed "
-                        "([[/case-log]] never arrived) — nothing in it was filed.")
-    # Single brackets: machinery-shaped, but not the machinery.
-    if CASELOG_SINGLE_RE.search(clean):
-        clean = CASELOG_SINGLE_RE.sub("", clean)
-        clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-        refusals.append("a filing was attempted in single brackets ([case-log]) — "
-                        "the log block needs double brackets ([[case-log]] … "
-                        "[[/case-log]]); nothing was filed from it.")
-    # Filing-shaped lines sitting in prose, and the headed-essay
-    # shape: named when they read as a filing attempt — two or
-    # more kind lines, or any kind line (or the essay header)
-    # while the operator's own message asked for a filing.
-    kind_lines = [ln.strip() for ln in clean.split("\n")
-                  if CASELOG_KIND_LINE_RE.match(ln)]
-    header_hit = any(CASELOG_HEADER_RE.match(ln) for ln in clean.split("\n"))
-    swipe_intent = bool(re.search(r"\b(file|filing|swipe|log)\b",
-                                  source_text or "", re.I))
-    if len(kind_lines) >= 2 or (kind_lines and swipe_intent):
-        refusals.append(str(len(kind_lines)) + " filing-shaped line"
-                        + ("s" if len(kind_lines) != 1 else "")
-                        + " sat in the reply's prose, outside the [[case-log]] "
-                          "block — prose is not a filing, and nothing was "
-                          "written from "
-                        + ("them." if len(kind_lines) != 1 else "it."))
-    elif header_hit and swipe_intent:
-        refusals.append("the reply presented a case summary as prose — a headed "
-                        "essay is not a filing, and nothing was written from it.")
-    if not blocks and not refusals:
-        return clean, None
-    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
-    excerpt = " ".join(str(source_text or "").split())[:90]
-    source = "case chat" + ((" — reply to: “" + excerpt + "”") if excerpt else "")
-    written = []
-    flags = []
-    duplicates = 0
-    dropped = 0
-    unparsed = []
-    ent_keys = {e["key"] for e in _case_register(slug, "entities")}
-    obs_keys = {e["key"] for e in _case_register(slug, "observables")}
-    task_keys = {e["key"] for e in _case_register(slug, "tasks")}
-    # Cross-case index, built once: a value another case holds
-    # is flagged, never copied across.
-    other_index = {}
-    try:
-        for c in cases_list_payload()["cases"]:
-            if c["slug"] == slug:
-                continue
-            for reg in ("entities", "observables"):
-                for e in _case_register(c["slug"], reg):
-                    other_index.setdefault(e["key"], (c["slug"], c["name"]))
-    except Exception:
-        other_index = {}
-    counts = {"entity": 0, "observable": 0, "event": 0, "lead": 0, "task": 0, "finding": 0}
-
-    def _flag(value):
-        hit = other_index.get(_register_key(value))
-        if hit and not any(f["value"] == value for f in flags):
-            flags.append({"value": value, "case": hit[0], "caseName": hit[1]})
-
-    for block in blocks:
-        for raw_line in block.split("\n"):
-            line = raw_line.strip().lstrip("-").strip()
-            m = re.match(r"^(entity|observable|event|lead|finding|task)\s*:\s*(.+)$", line, re.I)
-            if not m:
-                if line:
-                    unparsed.append(line[:90])
-                continue
-            kind = m.group(1).lower()
-            parts = [p.strip() for p in m.group(2).split("|")]
-            if sum(counts.values()) >= CASELOG_MAX_ENTRIES:
-                dropped += 1
-                continue
-            if kind == "entity":
-                name = parts[0] if parts else ""
-                if not name:
-                    continue
-                _flag(name)
-                if _register_key(name) in ent_keys:
-                    duplicates += 1
-                    continue
-                etype = (parts[1].lower() if len(parts) > 1 else "") or "other"
-                if etype not in CASELOG_ENTITY_TYPES:
-                    etype = "other"
-                role = parts[2] if len(parts) > 2 else ""
-                _register_append(slug, "entities", name, {
-                    "type": etype, "role": role, "aliases": "", "identifiers": "",
-                    "state": "lead", "author": "navi", "filed": now, "source": source,
-                }, "")
-                ent_keys.add(_register_key(name))
-                counts["entity"] += 1
-                written.append({"kind": "entity", "label": name, "state": "lead"})
-            elif kind == "observable":
-                value = parts[0] if parts else ""
-                if not value:
-                    continue
-                _flag(value)
-                if _register_key(value) in obs_keys:
-                    duplicates += 1
-                    continue
-                okind = (parts[1].lower() if len(parts) > 1 else "") or "other"
-                if okind not in CASELOG_OBS_KINDS:
-                    okind = "other"
-                ctx = parts[2] if len(parts) > 2 else ""
-                _register_append(slug, "observables", value, {
-                    "kind": okind, "state": "lead", "author": "navi",
-                    "filed": now, "source": source,
-                }, ctx)
-                obs_keys.add(_register_key(value))
-                counts["observable"] += 1
-                written.append({"kind": "observable", "label": value, "state": "lead"})
-            elif kind == "event":
-                title = parts[0] if parts else ""
-                if not title:
-                    continue
-                body = (parts[1] if len(parts) > 1 else "")
-                case_file_entry(slug, "timeline", title,
-                                (body + "\n\n" if body else "")
-                                + "Logged by Navi from the case chat — unverified.")
-                counts["event"] += 1
-                written.append({"kind": "event", "label": title, "state": "lead"})
-            elif kind == "lead":
-                title = parts[0] if parts else ""
-                if not title:
-                    continue
-                body = (parts[1] if len(parts) > 1 else "")
-                gflags = filing_grounding_flags(title, body)
-                if gflags:
-                    # v0.5.3e (#266): the flag rides this log's
-                    # payload to the thread's receipt — never
-                    # the filed note.
-                    grounding.extend(gflags)
-                filed, err = case_file_entry(
-                    slug, "finding", title,
-                    (body + "\n\n" if body else "")
-                    + "Logged by Navi from the case chat as a lead — unverified.",
-                    "info", False, author="navi")
-                if not err:
-                    counts["lead"] += 1
-                    written.append({"kind": "lead", "label": title, "state": "lead"})
-            elif kind == "finding":
-                # v0.5.2e (#261): a real finding, not a lead —
-                # her conclusion, filed in her name from the
-                # case room, landing unverified like everything
-                # she files. An optional third part names the
-                # severity; anything else reads as info.
-                title = parts[0] if parts else ""
-                if not title:
-                    continue
-                body = (parts[1] if len(parts) > 1 else "")
-                sev = (parts[2].lower() if len(parts) > 2 else "") or "info"
-                if sev not in CASE_SEVERITIES:
-                    sev = "info"
-                gflags = filing_grounding_flags(title, body)
-                if gflags:
-                    # v0.5.3e (#266): receipt-side only, as above.
-                    grounding.extend(gflags)
-                filed, err = case_file_entry(
-                    slug, "finding", title,
-                    (body + "\n\n" if body else "")
-                    + "Filed by Navi from the case chat as a finding — unverified.",
-                    sev, False, author="navi")
-                if not err:
-                    counts["finding"] += 1
-                    written.append({"kind": "finding", "label": title, "state": "lead"})
-            elif kind == "task":
-                text = parts[0] if parts else ""
-                if not text:
-                    continue
-                if _register_key(text) in task_keys:
-                    duplicates += 1
-                    continue
-                _register_append(slug, "tasks", text, {
-                    "done": "no", "author": "navi", "filed": now, "source": source,
-                }, "")
-                task_keys.add(_register_key(text))
-                counts["task"] += 1
-                written.append({"kind": "task", "label": text, "state": "lead"})
-    if written:
-        bits = [str(counts[k]) + " " + k + ("s" if counts[k] != 1 else "")
-                for k in ("entity", "observable", "event", "lead", "task", "finding") if counts[k]]
-        case_file_entry(slug, "timeline", "Navi logged case material",
-                        "From the case chat at " + now + ": " + ", ".join(bits)
-                        + ". Everything she logs lands unverified (state: lead) "
-                        "until the operator promotes or strikes it on review.")
-    if unparsed:
-        refusals.append(str(len(unparsed)) + " line"
-                        + ("s" if len(unparsed) != 1 else "")
-                        + " inside the case-log block could not be read as "
-                          "filings (“" + unparsed[0] + "”) — "
-                        + ("they were" if len(unparsed) != 1 else "it was")
-                        + " not written to the case. A filing line reads "
-                          "entity:/observable:/event:/lead:/finding:/task: …")
-    if refusals:
-        # The refusal rides the reply itself (the intake's
-        # shape): the operator reads that the filing did not
-        # land in the same breath as the answer that tried it.
-        rline = ("— **Filing did not land:** " + " ".join(refusals)
-                 + " The case holds only what its receipts name.")
-        clean = (clean + "\n\n" + rline) if clean else rline
-    if not written and not flags and not refusals and not grounding:
-        return clean, None
-    return clean, {"entries": written, "flags": flags,
-                   "duplicates": duplicates, "dropped": dropped,
-                   "refusals": refusals, "grounding": grounding}
-
-
-# --- Filing a reply into its case (v0.5.2e, #261, leg 1) --------
-# The deterministic door beside the conversational one: the
-# operator taps "File into this case" on one of Navi's replies
-# in a case chat, and this files that exact reply as a finding
-# on the bound case — provenance in the note (the source chat,
-# the action, the timestamp), the grounding guard run over it
-# like every filing in this build, and a receipt appended INTO
 # the chat by the bridge from what it actually did. No model
 # in the loop: the tap either files, or names why it cannot.
 def case_file_reply(chat_id, text):
@@ -33701,9 +33440,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Build 2 (#199): in the case's own room she
                 # works the file, not just the chat — the case
                 # brief (its contents WITH their review states)
-                # and the log block she may end a reply with.
-                # The block is stripped before the operator sees
-                # the reply; everything in it lands UNVERIFIED.
+                # rides along. v0.5.12e (#286): her answers in
+                # the room are conversation, not filings — the
+                # print-and-ask teaching below says so.
                 try:
                     _cbrief = _case_brief_block(_bound_case)
                     if _cbrief:
@@ -33717,20 +33456,10 @@ class Handler(BaseHTTPRequestHandler):
                     if _shelfblk:
                         _system_prompt += "\n\n" + _shelfblk
                     _system_prompt += (
-                        "\n\n[Logging this case as you work it]\n"
-                        "This conversation is the case room for the case above. When the work surfaces a new, specific, checkable detail — never chatter, never a restatement — you may log it by OPENING your reply with a block of exactly this form — the block goes FIRST, before your words, never at the end: a long reply can be cut off before it finishes, and a block that never closes files nothing. Then answer in words as usual:\n"
-                        "[[case-log]]\n"
-                        "entity: <name> | <person|org|account|system|place> | <their role in the case>\n"
-                        "observable: <value> | <ip|domain|url|hash|file|wallet|other> | <a one-line context>\n"
-                        "event: <what happened> | <the detail>\n"
-                        "lead: <a claim worth checking> | <why it is worth checking>\n"
-                        "finding: <a conclusion's title> | <the finding, stated plainly> | <info|low|medium|high|critical>\n"
-                        "task: <a concrete next step>\n"
-                        "[[/case-log]]\n"
-                        "Use only the line kinds that apply; at most six lines per reply. Everything you log lands UNVERIFIED — the operator reviews it, promotes what holds, strikes what does not (a strike is noted in the timeline). Treat unverified material in the case brief above as leads: reason from them, never cite them as established. "
-                        "A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Never mention the block itself. "
-                        "The block must be EXACT — double brackets, one line per entry, the kind word first. A filing-shaped paragraph is not a filing: prose essays, single brackets, and headed summaries file NOTHING, and the bridge names the refusal in the reply. If you cannot form the block exactly, say plainly in your answer that the filing did not happen rather than narrating one. "
-                        "Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; if your text contradicts the record, the bridge flags the filing on its face."
+                        "\n\n[Working this case]\n"
+                        "This conversation is the case room for the case above. Your answers here are conversation, not filings: nothing you write is filed into the case automatically, whatever shape it takes — there is no block, no format, and no filing hidden in a reply. Answer fully and plainly, in whatever form serves the question.\n"
+                        "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it, and pressing it files that reply exactly as printed, in your name, receipted in the room. You may suggest filing — \"that one is worth filing\" — and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
+                        "Treat unverified material in the case brief above as leads: reason from them, never cite them as established. A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; a reply the operator files that contradicts the record is flagged on its filing's receipt."
                     )
                 except Exception:
                     pass
@@ -33840,17 +33569,11 @@ class Handler(BaseHTTPRequestHandler):
                 # name before this payload returns, and ride back
                 # as data for the dashboard's receipt.
                 reply, _cfilings = extract_finding_markers(reply, cfg)
-                # Build 2 (#199): her case log block — bound
-                # case chats only; the block comes out of the
-                # reply, the entries land unverified in the
-                # case's registers, and the log rides back as
-                # data for the dashboard's receipt.
-                _clog = None
-                if _bound_case:
-                    try:
-                        reply, _clog = extract_case_log(reply, _bound_case, last or "")
-                    except Exception:
-                        _clog = None
+                # v0.5.12e (#286): no case-log parsing stands
+                # between Navi and the operator — a bound-case
+                # reply prints whole, exactly as composed.
+                # Filing is the operator's tap on the reply
+                # (case_file_reply), receipted in the room.
                 # v0.4.5e (#241): the case intake — her
                 # [[case-intake]] block comes out of the reply
                 # the same way; the bridge creates the case,
@@ -33917,8 +33640,6 @@ class Handler(BaseHTTPRequestHandler):
                     payload["refPulls"] = _refpulls
                 if _cfilings:
                     payload["caseFilings"] = _cfilings
-                if _clog:
-                    payload["caseLog"] = _clog
                 if _cintake:
                     payload["caseIntake"] = _cintake
                 if _shell_drove:
