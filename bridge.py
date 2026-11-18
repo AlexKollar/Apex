@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.14"
+SHIPPED_VERSION = "0.5.15"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.30"
+BRIDGE_BUILD = "2026-11-18.31"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 30
+SHIPPED_BUILD_SEQ = 31
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -13031,7 +13031,17 @@ CASE_TEACHING = (
     "door — it opens a form pre-filled from the conversation for "
     "the operator to confirm or correct before anything exists. "
     "Adding to an EXISTING case is not a start — that is the open "
-    "case's own filing, which rides its own door. Facts drawn from "
+    "case's own filing, which rides its own door. Filings carry a "
+    "DESTINATION (v0.5.15e, #291): a case has parts — finding, "
+    "lead, observable, entity, event — and the button under a "
+    "reply names the part it will file to (\"File into this case "
+    "— as a lead\"). When you suggest filing, suggest the part "
+    "the content plainly is — a sourced claim is a lead, your "
+    "settled conclusion a finding, a named person or system an "
+    "entity, a bare indicator an observable, a thing that "
+    "happened an event — and let the suggestion stand exactly as "
+    "the filing suggestion stands. The operator's words naming "
+    "a part govern over any suggestion, yours included. Facts drawn from "
     "a Wire record keep the record's values — its CVE id, CVSS, "
     "EPSS and dates; a filing that contradicts its cited record is "
     "flagged on its face by the bridge before it lands.")
@@ -26261,6 +26271,12 @@ def _case_findings(slug):
                 # was born with — a dossier element's id, its
                 # dossier, or the element ids a whole-dossier
                 # filing carries.
+                # v0.5.15e (#291): the destination the filing
+                # declared — a finding unless its frontmatter
+                # says it landed as a lead.
+                "part": (str(meta.get("part") or "").lower()
+                         if str(meta.get("part") or "").lower() in ("lead", "finding")
+                         else "finding"),
                 "element": str(meta.get("element") or ""),
                 "dossierId": str(meta.get("dossier") or ""),
                 "elements": [p.strip() for p in str(meta.get("elements") or "").split(",") if p.strip()],
@@ -26591,7 +26607,7 @@ def wire_pull_chat_reply(last, chat_id, cfg):
 # instructions. Runs are logged either way and show in the
 # page's run history.
 DOSSIER_PATH = os.path.join(ROOT, "config", "dossier.json")
-DOSSIER_KEY_TYPES = ("person", "username", "email", "phone", "photo")
+DOSSIER_KEY_TYPES = ("person", "username", "email", "phone", "photo", "courts", "business", "license", "archive", "address")
 DOSSIER_LOCK = threading.Lock()
 DOSSIER_RUN_CAP = 300
 
@@ -26600,17 +26616,24 @@ _DOSSIER_SECRETS = re.compile(
     r"social\s+security|ssn\b|login\s+details|account\s+password)\b", re.I)
 
 
-def dossier_fetch(url, timeout=12):
+def dossier_fetch(url, timeout=12, cap=400000, data=None,
+                  headers=None):
     """The kit's one fetch door — polite, named, and the
     benches' stub point. Returns (status, text, error):
-    status None means the door did not answer at all."""
+    status None means the door did not answer at all.
+    v0.5.15e (#290): a request body, extra headers and a
+    larger read cap ride the same door — USAspending asks
+    by POST, and the OFAC lists are publications, not
+    pages."""
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Apex-Dossier/0.5.6 (public-records lookup; "
-                          "operator-initiated)",
-            "Accept": "text/html,application/json,*/*"})
+        hdrs = {"User-Agent": "Apex-Dossier/0.5.6 (public-records "
+                              "lookup; operator-initiated)",
+                "Accept": "text/html,application/json,*/*"}
+        if headers:
+            hdrs.update(headers)
+        req = urllib.request.Request(url, headers=hdrs, data=data)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read(400000)
+            body = resp.read(cap)
             return resp.status, body.decode("utf-8", "replace"), ""
     except urllib.error.HTTPError as e:
         try:
@@ -26780,6 +26803,18 @@ def dossier_record_run(store, d, run):
                       s.get("url") or s.get("name") or "",
                       (s.get("name") or "source") + " — "
                       + (s.get("verdict") or ""))
+    # v0.5.15e (#290): names a run's records carried — a
+    # caption's other side, an officer of record — land as
+    # ASSOCIATION links: the record named them, the label
+    # says where, and the link claims nothing more. They are
+    # the pivot proposals' raw material.
+    for a in run.get("associations") or []:
+        if isinstance(a, dict) and str(a.get("name") or "").strip():
+            _dossier_link(d, "association", "dossier:" + d["id"],
+                          "person:" + str(a["name"]).strip(),
+                          "named on the same record — "
+                          + str(a.get("via") or "a record")
+                          + " (a lead, not a relationship)")
     section = run.get("markdown") or ""
     if section:
         d["markdown"] = (d["markdown"].rstrip("\n") + "\n\n"
@@ -26854,6 +26889,35 @@ DOSSIER_PLATFORMS = [
     ("Mastodon", "https://mastodon.social/@{h}"),
     ("Steam", "https://steamcommunity.com/id/{h}"),
     ("Pinterest", "https://www.pinterest.com/{h}"),
+    ("Flickr", "https://www.flickr.com/people/{h}"),
+    ("Vimeo", "https://vimeo.com/{h}"),
+    ("SoundCloud", "https://soundcloud.com/{h}"),
+    ("Bandcamp", "https://bandcamp.com/{h}"),
+    ("Patreon", "https://www.patreon.com/{h}"),
+    ("Substack", "https://substack.com/@{h}"),
+    ("Goodreads", "https://www.goodreads.com/{h}"),
+    ("Letterboxd", "https://letterboxd.com/{h}"),
+    ("Strava", "https://www.strava.com/athletes/{h}"),
+    ("Chess.com", "https://www.chess.com/member/{h}"),
+    ("Lichess", "https://lichess.org/@/{h}"),
+    ("Kaggle", "https://www.kaggle.com/{h}"),
+    ("Behance", "https://www.behance.net/{h}"),
+    ("Dribbble", "https://dribbble.com/{h}"),
+    ("Product Hunt", "https://www.producthunt.com/@{h}"),
+    ("About.me", "https://about.me/{h}"),
+    ("Linktree", "https://linktr.ee/{h}"),
+    ("Tumblr", "https://{h}.tumblr.com"),
+    ("WordPress", "https://{h}.wordpress.com"),
+    ("Gravatar", "https://gravatar.com/{h}"),
+    ("Unsplash", "https://unsplash.com/@{h}"),
+    ("DeviantArt", "https://www.deviantart.com/{h}"),
+    ("ArtStation", "https://www.artstation.com/{h}"),
+    ("Itch.io", "https://{h}.itch.io"),
+    ("CodePen", "https://codepen.io/{h}"),
+    ("Replit", "https://replit.com/@{h}"),
+    ("HackerRank", "https://www.hackerrank.com/{h}"),
+    ("LeetCode", "https://leetcode.com/{h}"),
+    ("Stack Overflow", "https://stackoverflow.com/users/{h}"),
 ]
 
 DOSSIER_STATE_REGISTRIES = {
@@ -27021,10 +27085,13 @@ def dossier_run_person(name, location="", anchors=None):
                  _dz_search_pointer(q))
              + " — results are leads to cite, not facts to "
              "copy."]
+    _ofac_lines, _ofac_sources, _ofac_note = _dz_ofac_paragraph(name)
+    sources.extend(_ofac_sources)
+    lines[3:3] = [""] + _ofac_lines
     summary = ("person " + name + ": registry pointers standing "
                "(NSOPW" + (", " + state if state else "")
                + "); no public record found through the kit's "
-               "keyless doors")
+               "keyless doors" + _ofac_note)
     # Enrichment fans out from the record's own anchors —
     # the identifiers the OPERATOR brings back from a
     # registry record (or any cited source), never from a
@@ -27074,6 +27141,17 @@ def dossier_run_person(name, location="", anchors=None):
                                    "the record's own locality"})
         lines.append("- Locality of record (" + locality
                      + "): public-record pointer stands above.")
+    _obit_url = _dz_search_pointer(
+        name + " obituary" + ((" " + locality) if locality else ""))
+    sources.append({"name": "Obituaries — published postings",
+                    "url": _obit_url,
+                    "verdict": "pointer — published postings are "
+                               "read where they stand"})
+    lines += ["", "**Obituaries.** Published postings are read "
+              "where they stand: "
+              + _dz_cite("search published obituaries", _obit_url)
+              + " — a posting is a family's statement, cited as "
+              "such; a death is never this kit's to declare."]
     return {"summary": summary, "markdown": "\n".join(lines),
             "sources": sources}
 
@@ -27156,6 +27234,38 @@ def dossier_run_email(addr):
         sources.append({"name": "Gravatar", "url": gurl,
                         "verdict": "unanswered"})
         lines.append("**Gravatar:** the door did not answer.")
+    kurl = ("https://keys.openpgp.org/vks/v1/by-email/"
+            + urllib.parse.quote(addr))
+    try:
+        kstatus, _kb, _ke = dossier_fetch(kurl)
+    except Exception:
+        kstatus = None
+    if kstatus == 200:
+        pgp_note = "key published"
+        sources.append({"name": "OpenPGP keyserver (keys.openpgp.org)",
+                        "url": kurl,
+                        "verdict": "record read: a public key is "
+                                   "published for this address"})
+        lines += ["", "**OpenPGP:** a public key is published "
+                  "for this address at "
+                  + _dz_cite("keys.openpgp.org", kurl)
+                  + " — the key's existence is the fact; its "
+                  "contents are never carried here."]
+    elif kstatus == 404:
+        pgp_note = "none"
+        sources.append({"name": "OpenPGP keyserver (keys.openpgp.org)",
+                        "url": kurl,
+                        "verdict": "no public record found — no "
+                                   "key published for this address"})
+        lines += ["", "**OpenPGP:** no public record found — "
+                  "no key is published for this address at "
+                  "keys.openpgp.org."]
+    else:
+        pgp_note = "unanswered"
+        sources.append({"name": "OpenPGP keyserver (keys.openpgp.org)",
+                        "url": kurl, "verdict": "unanswered"})
+        lines += ["", "**OpenPGP:** the keyserver did not "
+                  "answer."]
     hibp = "https://haveibeenpwned.com/account/" + urllib.parse.quote(addr)
     sources.append({"name": "Have I Been Pwned", "url": hibp,
                     "verdict": "pointer — breach PRESENCE is "
@@ -27169,7 +27279,8 @@ def dossier_run_email(addr):
     summary = ("email " + addr + ": MX "
                + ("read" if mx else "none/unanswered")
                + ", SPF " + ("read" if spf else "none")
-               + ", DMARC " + ("read" if dmarc else "none"))
+               + ", DMARC " + ("read" if dmarc else "none")
+               + ", PGP " + pgp_note)
     return {"summary": summary, "markdown": "\n".join(lines),
             "sources": sources}
 
@@ -27231,6 +27342,1288 @@ def dossier_run_phone(number):
     return {"summary": summary, "markdown": "\n".join(lines),
             "sources": sources}
 
+
+
+# -- The full kit (v0.5.15e, #290) --------------------------------
+# #260's five keys grow into the comprehensive public-records
+# kit the operator mandated ("comprehensive — not a toy — and
+# all of it at Navi's fingers"). The doctrine does not move:
+# public, passive, keyless first; every result cited; absence
+# named; hits are unverified leads; no credential material;
+# no face recognition ever; no plate/DMV; walls named, never
+# climbed. New shelves: Courts, Business, Licenses,
+# Archives, and the Address key that carries the civil spine.
+# Every runner below sits behind the same fetch door, lands
+# through dossier_run like the original five, and is
+# reachable from chat through dossier_chat_reply — a shelf
+# without its chat route is not shipped.
+#
+# Named pointers (the wall is the record): some doors the
+# prep names have no lawful keyless machine shape — PACER is
+# credentialed, the FEC's API waits on the operator's key
+# choice, TESS has no API door that fits, the state court
+# portals are session-driven forms, PALS is a session form,
+# and the people-search aggregators sell claims this kit
+# will not launder into facts. Those ship as POINTERS, in
+# the open, below — never as stubs wearing runner clothes.
+
+DOSSIER_NAMED_POINTERS = [
+    {"key": "pacer", "name": "PACER — the federal courts' own record",
+     "url": "https://pacer.uscourts.gov/",
+     "wall": "credentialed, with per-page fees — RECAP, the same "
+             "record's public archive, is checked first and cited"},
+    {"key": "fec", "name": "FEC — campaign finance",
+     "url": "https://www.fec.gov/data/",
+     "wall": "the API waits on the operator's key choice (the "
+             "public DEMO_KEY or his own free key) — a pointer "
+             "until he chooses"},
+    {"key": "tess", "name": "USPTO — trademark search (TESS)",
+     "url": "https://tmsearch.uspto.gov/",
+     "wall": "no keyless API door fits — the search stands at "
+             "TESS itself"},
+    {"key": "pals", "name": "Pennsylvania — PALS professional licensing",
+     "url": "https://www.pals.pa.gov/",
+     "wall": "a session-driven form — the check stands at the "
+             "board's own door"},
+    {"key": "aggregators", "name": "People-search aggregators",
+     "url": "",
+     "wall": "paywalled claims are never laundered into facts — "
+             "pointers at most, never a data source"},
+]
+
+DOSSIER_COURT_PORTALS = {
+    "PA": ("Pennsylvania — UJS web portal (docket sheets)",
+           "https://ujsportal.pacourts.us/",
+           "the portal is a session-driven form — there is no "
+           "keyless machine door, so the check stands at the "
+           "portal itself"),
+    "NY": ("New York — eCourts",
+           "https://iapps.courts.state.ny.us/webcivil/ecourtsMain",
+           "form-driven — the check stands at the court's own door"),
+    "TX": ("Texas — re:SearchTX",
+           "https://researchtx.tylerhost.net/",
+           "credentialed for most records — a pointer, named as such"),
+    "FL": ("Florida — the clerks' case searches",
+           "https://www.flclerks.com/",
+           "per-county doors, several CAPTCHA-walled — pointers, "
+           "never climbed"),
+    "CA": ("California — superior court searches (per county)",
+           "https://www.courts.ca.gov/",
+           "California keeps no statewide case search — per-county "
+           "doors, several walled; a pointer, named as such"),
+}
+
+DOSSIER_VOTER_NOTES = {
+    "PA": ("Pennsylvania — voter registration status (PaVoterServices)",
+           "https://www.pavoterservices.pa.gov/pages/voterregistrationstatus.aspx",
+           "the Commonwealth's own status check, a form at the "
+           "state's door — the kit points; it does not hold "
+           "voter files"),
+}
+
+DOSSIER_PROPERTY_DOORS = {
+    "Philadelphia": ("Philadelphia — property records (property.phila.gov)",
+                     "https://property.phila.gov/"),
+    "Allegheny": ("Allegheny County — real estate records",
+                  "https://realestate.alleghenycounty.us/"),
+}
+
+
+def dossier_named_pointer(key):
+    for p in DOSSIER_NAMED_POINTERS:
+        if p["key"] == key:
+            return p
+    return None
+
+
+def _dz_state_of(text):
+    t = str(text or "")
+    m = re.search(r"\b([A-Z]{2})\s*$", t)
+    if m and m.group(1) in DOSSIER_STATE_REGISTRIES:
+        return m.group(1)
+    low = t.lower()
+    for nm, ab in DOSSIER_STATE_NAMES.items():
+        if nm in low:
+            return ab
+    if "pennsylvania" in low or re.search(r"\bPA\b", t):
+        return "PA"
+    return ""
+
+
+# -- OFAC: the sanctions anchor (Person tab) ----------------------
+# The SDN and consolidated lists are the Treasury's own
+# publication — public downloads, keyless. A person run reads
+# the publication itself (cached for the TTL below: the lists
+# change on Treasury's schedule, not on ours), never a search
+# form and never a reseller's mirror.
+OFAC_SDN_URL = "https://www.treasury.gov/ofac/downloads/sdn.csv"
+OFAC_CONS_URL = ("https://www.treasury.gov/ofac/downloads/"
+                 "consolidated/consolidated.csv")
+OFAC_SEARCH_URL = "https://sanctionssearch.ofac.treas.gov/"
+OFAC_CACHE_TTL = 6 * 3600
+_OFAC_CACHE = {"at": 0.0, "rows": None}
+
+
+def _dz_ofac_rows():
+    now = time.time()
+    if (_OFAC_CACHE["rows"] is not None
+            and now - _OFAC_CACHE["at"] < OFAC_CACHE_TTL):
+        return _OFAC_CACHE["rows"]
+    rows, answered = [], False
+    for url, lst in ((OFAC_SDN_URL, "SDN"),
+                     (OFAC_CONS_URL, "Consolidated")):
+        try:
+            status, body, _e = dossier_fetch(url, timeout=30,
+                                             cap=24000000)
+        except Exception:
+            status, body = None, ""
+        if status != 200 or not body:
+            continue
+        answered = True
+        # The lists are real CSV — names carry commas inside
+        # quotes ("LAST, FIRST"), so the rows are read with a
+        # CSV reader, never a naive split.
+        import csv as _csv
+        for parts in _csv.reader(io.StringIO(body)):
+            parts = [p.strip() for p in parts]
+            if len(parts) >= 4 and parts[1]:
+                rows.append({"name": parts[1], "type": parts[2],
+                             "program": parts[3], "list": lst})
+    if not answered:
+        return None
+    _OFAC_CACHE["rows"] = rows
+    _OFAC_CACHE["at"] = now
+    return rows
+
+
+def _dz_ofac_scan(name):
+    """Matches for a name on the lists as published, or None
+    when the downloads did not answer. A match is a name on a
+    list — a lead to disambiguate by the record's own
+    anchors, never a conclusion about a person."""
+    rows = _dz_ofac_rows()
+    if rows is None:
+        return None
+    toks = [t for t in re.split(r"[^A-Za-z]+", str(name).upper())
+            if len(t) > 1]
+    if not toks:
+        return []
+    out = []
+    for r in rows:
+        rn = r["name"].upper()
+        if all(t in rn for t in toks):
+            out.append(r)
+            if len(out) >= 8:
+                break
+    return out
+
+
+def _dz_ofac_paragraph(name):
+    """(lines, sources, summary suffix) for the Person tab's
+    anchor row — the sanctions check standing beside the
+    registry check, in the same three honest states: matched,
+    no match on the lists as read, or the door unanswered."""
+    src = {"name": "OFAC — SDN + consolidated lists (Treasury)",
+           "url": OFAC_SDN_URL, "verdict": ""}
+    try:
+        hits = _dz_ofac_scan(name)
+    except Exception:
+        hits = None
+    if hits is None:
+        src["verdict"] = ("unanswered — the Treasury downloads "
+                          "did not answer; the check stands at "
+                          "OFAC's own search")
+        lines = ["**Sanctions check (OFAC).** The Treasury "
+                 "downloads did not answer, so no sanctions "
+                 "statement is made — the check stands at "
+                 + _dz_cite("OFAC's Sanctions List Search",
+                            OFAC_SEARCH_URL)
+                 + ", named rather than skipped."]
+        return lines, [src], " · OFAC: unanswered"
+    if hits:
+        src["verdict"] = ("record read: " + str(len(hits))
+                          + " name match(es) on the lists as "
+                          "published")
+        lines = ["**Sanctions check (OFAC).** This name "
+                 "matches " + str(len(hits)) + " entr"
+                 + ("y" if len(hits) == 1 else "ies")
+                 + " on the SDN / consolidated lists as "
+                 "published — each an unverified LEAD, to be "
+                 "disambiguated by the record's own anchors "
+                 "(date of birth, nationality, identifiers the "
+                 "list itself states), never a conclusion:"]
+        for h in hits:
+            lines.append("- " + h["name"] + " — " + h["list"]
+                         + " list, program: " + h["program"]
+                         + ((", type: " + h["type"]) if h["type"]
+                            else "") + ".")
+        return lines, [src], " · OFAC: " + str(len(hits)) + " match(es)"
+    src["verdict"] = ("record read: no match for this name on "
+                      "the lists as published")
+    lines = ["**Sanctions check (OFAC).** No match for this "
+             "name on the SDN or consolidated lists as "
+             "published — a statement about the lists as read, "
+             "never about the person."]
+    return lines, [src], " · OFAC: no match"
+
+
+# -- Courts ---------------------------------------------------------
+
+def _dz_courtlistener(q, rtype):
+    url = ("https://www.courtlistener.com/api/rest/v4/search/?q="
+           + urllib.parse.quote(q) + "&type=" + rtype
+           + "&order_by=score%20desc")
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        data = json.loads(body)
+    except Exception:
+        return None, url
+    return data.get("results") or [], url
+
+
+def _dz_caption_counterparty(case_name, sought):
+    """The other side of a "X v. Y" caption — a name the
+    record itself carries, surfaced as an associated lead
+    with its source, never as an asserted relationship."""
+    m = re.match(r"^(.{2,60}?)\s+v\.?\s+(.{2,60})$",
+                 str(case_name or "").strip())
+    if not m:
+        return ""
+    a, b = m.group(1).strip(), m.group(2).strip()
+    toks = [t.lower() for t in re.split(r"[^A-Za-z]+", sought)
+            if len(t) > 2]
+    def side_has(side):
+        sl = side.lower()
+        return any(t in sl for t in toks)
+    if toks and side_has(a) and not side_has(b):
+        return b
+    if toks and side_has(b) and not side_has(a):
+        return a
+    return ""
+
+
+def dossier_run_courts(name, extra=None):
+    extra = extra if isinstance(extra, dict) else {}
+    name = " ".join(str(name or "").split()).strip()
+    location = str(extra.get("location") or "").strip()
+    sources, lines, assoc = [], ["## Courts — " + name, ""], []
+    dockets, durl = _dz_courtlistener(name, "r")
+    opinions, ourl = _dz_courtlistener(name, "o")
+    nhit = 0
+    if dockets is None:
+        sources.append({"name": "CourtListener — RECAP dockets",
+                        "url": durl,
+                        "verdict": "unanswered — the door did "
+                                   "not answer; the web search "
+                                   "below stands as the pointer"})
+        lines.append("**Federal dockets (RECAP).** The "
+                     "CourtListener door did not answer — no "
+                     "statement is made either way.")
+    elif dockets:
+        sources.append({"name": "CourtListener — RECAP dockets",
+                        "url": durl,
+                        "verdict": "record read: " + str(len(dockets))
+                                   + " docket(s) name this party"})
+        lines.append("**Federal dockets (RECAP via "
+                     "CourtListener).** Dockets naming this "
+                     "party — unverified leads, each cited to "
+                     "its record:")
+        for r in dockets[:8]:
+            nhit += 1
+            cn = str(r.get("caseName") or "Untitled")
+            link = "https://www.courtlistener.com" + str(
+                r.get("absolute_url") or "")
+            lines.append("- " + _dz_cite(cn, link) + " — "
+                         + str(r.get("court") or "federal court")
+                         + (", filed " + str(r.get("dateFiled"))
+                            if r.get("dateFiled") else "")
+                         + (", docket " + str(r.get("docketNumber"))
+                            if r.get("docketNumber") else "") + ".")
+            other = _dz_caption_counterparty(cn, name)
+            if other:
+                assoc.append({"name": other,
+                              "via": "the opposing party on the "
+                                     "caption '" + cn
+                                     + "' (CourtListener)"})
+    else:
+        sources.append({"name": "CourtListener — RECAP dockets",
+                        "url": durl,
+                        "verdict": "no docket found naming this "
+                                   "party"})
+        lines.append("**Federal dockets (RECAP).** No public "
+                     "record found — no federal docket in the "
+                     "RECAP archive names this party.")
+    if opinions is None:
+        sources.append({"name": "CourtListener — opinions",
+                        "url": ourl,
+                        "verdict": "unanswered"})
+        lines.append("**Opinions.** The opinions door did not "
+                     "answer.")
+    elif opinions:
+        sources.append({"name": "CourtListener — opinions",
+                        "url": ourl,
+                        "verdict": "record read: " + str(len(opinions))
+                                   + " opinion(s)"})
+        lines.append("**Opinions.** Published opinions naming "
+                     "this party:")
+        for r in opinions[:5]:
+            cn = str(r.get("caseName") or "Untitled")
+            link = "https://www.courtlistener.com" + str(
+                r.get("absolute_url") or "")
+            lines.append("- " + _dz_cite(cn, link) + " — "
+                         + str(r.get("court") or "")
+                         + (", " + str(r.get("dateFiled"))
+                            if r.get("dateFiled") else "")
+                         + (", cited " + str(r.get("citeCount"))
+                            + " time(s)"
+                            if r.get("citeCount") is not None
+                            else "") + ".")
+    else:
+        sources.append({"name": "CourtListener — opinions",
+                        "url": ourl,
+                        "verdict": "no opinion found naming this "
+                                   "party"})
+        lines.append("**Opinions.** No public record found — "
+                     "no published opinion in the archive names "
+                     "this party.")
+    pacer = dossier_named_pointer("pacer")
+    sources.append({"name": pacer["name"], "url": pacer["url"],
+                    "verdict": "pointer — " + pacer["wall"]})
+    sources.append({"name": "govinfo — federal opinions & filings",
+                    "url": "https://www.govinfo.gov/",
+                    "verdict": "pointer — govinfo's API is keyed; "
+                               "its own search is the door"})
+    lines += ["", "**The doors that stay pointers.** "
+              + _dz_cite("PACER", pacer["url"]) + " — "
+              + pacer["wall"] + ". govinfo's API is keyed, so "
+              "federal material beyond RECAP stands at "
+              + _dz_cite("govinfo's own search",
+                         "https://www.govinfo.gov/") + "."]
+    state = _dz_state_of(location) or _dz_state_of(name)
+    if state and state in DOSSIER_COURT_PORTALS:
+        pname, purl, pwall = DOSSIER_COURT_PORTALS[state]
+        sources.append({"name": pname, "url": purl,
+                        "verdict": "pointer — " + pwall})
+        lines.append("**State courts (" + state + ").** "
+                     + _dz_cite(pname, purl) + " — " + pwall + ".")
+    lines += ["", "Every hit is an unverified lead: a docket "
+              "names a party, it does not characterize them, "
+              "and a same-name docket is a stranger's until "
+              "the record's own anchors say otherwise."]
+    summary = ("courts " + name + ": " + str(nhit)
+               + " docket hit(s), "
+               + str(len(opinions) if opinions else 0)
+               + " opinion(s) via CourtListener; PACER + state "
+               "doors stand as pointers")
+    return {"summary": summary, "markdown": "\n".join(lines),
+            "sources": sources, "associations": assoc}
+
+
+# -- Business -------------------------------------------------------
+
+def _dz_edgar_company(name):
+    url = ("https://www.sec.gov/cgi-bin/browse-edgar"
+           "?action=getcompany&company="
+           + urllib.parse.quote(name)
+           + "&type=&owner=include&count=10&output=atom")
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    out = []
+    for m in re.finditer(
+            r"<title>([^<]*?)\s*\((\d{10})\)\s*\(Filer\)</title>",
+            body):
+        out.append({"name": m.group(1).strip(),
+                    "cik": m.group(2)})
+    return out, url
+
+
+def _dz_edgar_facts(cik):
+    url = ("https://data.sec.gov/submissions/CIK"
+           + str(cik).zfill(10) + ".json")
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return json.loads(body), url
+    except Exception:
+        return None, url
+
+
+def _dz_edgar_fts(name):
+    url = ("https://efts.sec.gov/LATEST/search?q="
+           + urllib.parse.quote('"' + name + '"'))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        hits = ((json.loads(body).get("hits") or {})
+                .get("hits") or [])
+    except Exception:
+        return None, url
+    out = []
+    for h in hits[:5]:
+        src = h.get("_source") or {}
+        out.append({"names": ", ".join(
+                        src.get("display_names") or []),
+                    "forms": ", ".join(src.get("forms") or []),
+                    "date": src.get("file_date") or ""})
+    return out, url
+
+
+def _dz_opencorporates(name):
+    url = ("https://opencorporates.com/companies?q="
+           + urllib.parse.quote(name))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url, None
+    if status != 200 or not body:
+        return None, url, None
+    found = []
+    for m in re.finditer(
+            r'href="(/companies/[a-z_]+/[\w\-]+)"[^>]*>([^<]{2,90})<',
+            body):
+        nm = m.group(2).strip()
+        if nm and all(f["path"] != m.group(1) for f in found):
+            found.append({"name": nm, "path": m.group(1)})
+        if len(found) >= 6:
+            break
+    officers = []
+    if found:
+        try:
+            s2, b2, _e2 = dossier_fetch(
+                "https://opencorporates.com" + found[0]["path"])
+        except Exception:
+            s2, b2 = None, ""
+        if s2 == 200 and b2:
+            for m in re.finditer(
+                    r'href="/officers/\d+"[^>]*>([^<]{2,60})<', b2):
+                on = m.group(1).strip()
+                if on and on not in officers:
+                    officers.append(on)
+                if len(officers) >= 6:
+                    break
+    return found, url, officers
+
+
+def _dz_propublica_990(name):
+    url = ("https://projects.propublica.org/nonprofits/api/v2/"
+           "search.json?q=" + urllib.parse.quote(name))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return json.loads(body).get("organizations") or [], url
+    except Exception:
+        return None, url
+
+
+def _dz_usaspending(name):
+    url = "https://api.usaspending.gov/api/v2/search/spending_by_award/"
+    body_req = json.dumps({
+        "filters": {"recipient_search_text": [name],
+                    "time_period": [{"start_date": "2019-01-01",
+                                     "end_date": "2026-12-31"}]},
+        "fields": ["Award ID", "Recipient Name", "Award Amount",
+                   "Start Date", "Awarding Agency"],
+        "page": 1, "limit": 5, "sort": "Award Amount",
+        "order": "desc"}).encode()
+    try:
+        status, body, _e = dossier_fetch(
+            url, data=body_req,
+            headers={"Content-Type": "application/json"})
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return json.loads(body).get("results") or [], url
+    except Exception:
+        return None, url
+
+
+def dossier_run_business(name, extra=None):
+    name = " ".join(str(name or "").split()).strip()
+    sources, lines, assoc = [], ["## Business — " + name, ""], []
+    cos, eurl = _dz_edgar_company(name)
+    n_edgar, n_oc, n_990, n_usa = 0, 0, 0, 0
+    if cos is None:
+        sources.append({"name": "SEC EDGAR — company search",
+                        "url": eurl, "verdict": "unanswered"})
+        lines.append("**SEC EDGAR.** The company door did not "
+                     "answer — no statement is made either way.")
+    elif cos:
+        n_edgar = len(cos)
+        top = cos[0]
+        sources.append({"name": "SEC EDGAR — company search",
+                        "url": eurl,
+                        "verdict": "record read: " + str(len(cos))
+                                   + " filer match(es); top match "
+                                   + top["name"] + " (CIK "
+                                   + top["cik"] + ")"})
+        lines.append("**SEC EDGAR.** Filers matching this "
+                     "name — leads, each cited:")
+        for c in cos[:5]:
+            lines.append("- " + c["name"] + " — CIK " + c["cik"]
+                         + " ("
+                         + _dz_cite("EDGAR company page",
+                                    "https://www.sec.gov/edgar/browse/?CIK="
+                                    + c["cik"] + "&owner=exclude")
+                         + ").")
+        facts, furl = _dz_edgar_facts(top["cik"])
+        if facts:
+            sources.append({"name": "SEC EDGAR — company facts",
+                            "url": furl,
+                            "verdict": "record read for CIK "
+                                       + top["cik"]})
+            meta = []
+            if facts.get("sicDescription"):
+                meta.append("industry: " + facts["sicDescription"])
+            if facts.get("tickers"):
+                meta.append("ticker(s): "
+                            + ", ".join(facts["tickers"]))
+            if facts.get("exchanges"):
+                meta.append("exchange(s): "
+                            + ", ".join(facts["exchanges"]))
+            recent = ((facts.get("filings") or {})
+                      .get("recent") or {})
+            forms = recent.get("form") or []
+            dates = recent.get("filingDate") or []
+            if meta:
+                lines.append("Top match of record: "
+                             + "; ".join(meta) + ".")
+            if forms:
+                lines.append("Recent filings: " + ", ".join(
+                    forms[i] + " (" + (dates[i] if i < len(dates)
+                                       else "") + ")"
+                    for i in range(min(5, len(forms)))) + ".")
+        fts, fturl = _dz_edgar_fts(name)
+        if fts:
+            sources.append({"name": "SEC EDGAR — full-text search",
+                            "url": fturl,
+                            "verdict": "record read: "
+                                       + str(len(fts)) + " hit(s)"})
+            lines.append("**Full-text filings.** Filings whose "
+                         "text names this entity:")
+            for h in fts:
+                lines.append("- " + (h["names"] or name) + " — "
+                             + (h["forms"] or "filing")
+                             + ((", " + h["date"]) if h["date"]
+                                else "") + ".")
+        elif fts is not None:
+            sources.append({"name": "SEC EDGAR — full-text search",
+                            "url": fturl,
+                            "verdict": "no filing text found "
+                                       "naming this entity"})
+    else:
+        sources.append({"name": "SEC EDGAR — company search",
+                        "url": eurl,
+                        "verdict": "no filer found under this name"})
+        lines.append("**SEC EDGAR.** No public record found — "
+                     "no filer is registered under this name.")
+    ocs, ocurl, officers = _dz_opencorporates(name)
+    if ocs is None:
+        sources.append({"name": "OpenCorporates", "url": ocurl,
+                        "verdict": "unanswered"})
+        lines.append("**OpenCorporates.** The registry mirror "
+                     "did not answer.")
+    elif ocs:
+        n_oc = len(ocs)
+        sources.append({"name": "OpenCorporates", "url": ocurl,
+                        "verdict": "record read: " + str(len(ocs))
+                                   + " registered entit(ies)"})
+        lines.append("**OpenCorporates.** Registered entities "
+                     "under this name — incorporation facts are "
+                     "leads until the home registry confirms them:")
+        for f in ocs:
+            lines.append("- " + _dz_cite(
+                f["name"], "https://opencorporates.com"
+                + f["path"]) + ".")
+        for on in officers or []:
+            assoc.append({"name": on,
+                          "via": "an officer of record at "
+                                 + ocs[0]["name"]
+                                 + " (OpenCorporates)"})
+            lines.append("Associated name (a lead): " + on
+                         + " — an officer of record at "
+                         + ocs[0]["name"] + ".")
+    else:
+        sources.append({"name": "OpenCorporates", "url": ocurl,
+                        "verdict": "no entity found under this name"})
+        lines.append("**OpenCorporates.** No public record "
+                     "found under this name.")
+    orgs, purl = _dz_propublica_990(name)
+    if orgs is None:
+        sources.append({"name": "ProPublica Nonprofit Explorer",
+                        "url": purl, "verdict": "unanswered"})
+    elif orgs:
+        n_990 = len(orgs)
+        sources.append({"name": "ProPublica Nonprofit Explorer",
+                        "url": purl,
+                        "verdict": "record read: " + str(len(orgs))
+                                   + " nonprofit filing(s)"})
+        lines.append("**Nonprofit filings (IRS 990 via "
+                     "ProPublica).**")
+        for o in orgs[:5]:
+            ein = str(o.get("ein") or "")
+            lines.append("- " + _dz_cite(
+                str(o.get("name") or name),
+                "https://projects.propublica.org/nonprofits/organizations/"
+                + ein.replace("-", "")) + " — EIN " + ein
+                + (", " + str(o.get("city") or "") + ", "
+                   + str(o.get("state") or "")
+                   if o.get("city") else "")
+                + ((", revenue $" + format(
+                    int(o.get("income_amount") or 0), ","))
+                   if o.get("income_amount") else "") + ".")
+    else:
+        sources.append({"name": "ProPublica Nonprofit Explorer",
+                        "url": purl,
+                        "verdict": "no nonprofit filing under "
+                                   "this name"})
+    awards, aurl = _dz_usaspending(name)
+    if awards is None:
+        sources.append({"name": "USAspending — federal awards",
+                        "url": "https://www.usaspending.gov/",
+                        "verdict": "unanswered"})
+    elif awards:
+        n_usa = len(awards)
+        sources.append({"name": "USAspending — federal awards",
+                        "url": "https://www.usaspending.gov/",
+                        "verdict": "record read: " + str(len(awards))
+                                   + " award(s) to this recipient "
+                                   "name"})
+        lines.append("**Federal awards (USAspending).** Awards "
+                     "to this recipient name — leads: a same-name "
+                     "recipient is a stranger's until the "
+                     "recipient record says otherwise.")
+        for a in awards:
+            lines.append("- " + str(a.get("Recipient Name") or "")
+                         + " — $"
+                         + format(int(a.get("Award Amount") or 0),
+                                  ",")
+                         + ((", " + str(a.get("Awarding Agency")))
+                            if a.get("Awarding Agency") else "")
+                         + ((", from " + str(a.get("Start Date")))
+                            if a.get("Start Date") else "") + ".")
+    else:
+        sources.append({"name": "USAspending — federal awards",
+                        "url": "https://www.usaspending.gov/",
+                        "verdict": "no federal award found to "
+                                   "this recipient name"})
+    fec = dossier_named_pointer("fec")
+    tess = dossier_named_pointer("tess")
+    sources.append({"name": fec["name"], "url": fec["url"],
+                    "verdict": "pointer — " + fec["wall"]})
+    sources.append({"name": tess["name"], "url": tess["url"],
+                    "verdict": "pointer — " + tess["wall"]})
+    sources.append({"name": "Pennsylvania — Dept. of State entity search",
+                    "url": "https://file.dos.pa.gov/search/business",
+                    "verdict": "pointer — a form-driven portal; "
+                               "the check stands at the "
+                               "Commonwealth's own door"})
+    lines += ["", "**The doors that stay pointers.** Campaign "
+              "finance stands at " + _dz_cite("the FEC", fec["url"])
+              + " — " + fec["wall"] + ". Trademarks stand at "
+              + _dz_cite("TESS", tess["url"]) + " — " + tess["wall"]
+              + ". Pennsylvania's own entity search is "
+              "form-driven: "
+              + _dz_cite("the Dept. of State door",
+                         "https://file.dos.pa.gov/search/business")
+              + "."]
+    summary = ("business " + name + ": EDGAR " + str(n_edgar)
+               + ", OpenCorporates " + str(n_oc) + ", 990 "
+               + str(n_990) + ", federal awards " + str(n_usa)
+               + "; FEC, TESS + PA SoS stand as pointers")
+    return {"summary": summary, "markdown": "\n".join(lines),
+            "sources": sources, "associations": assoc}
+
+
+# -- Licenses -------------------------------------------------------
+
+def _dz_callook(call):
+    url = "https://callook.info/" + call + "/json"
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return json.loads(body), url
+    except Exception:
+        return None, url
+
+
+def _dz_faa_nnumber(n):
+    url = ("https://registry.faa.gov/aircraftinquiry/Search/"
+           "NNumberResult?nNumberTxt=" + urllib.parse.quote(n))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    pairs = {}
+    for m in re.finditer(
+            r'data-label="([^"]{2,40})"[^>]*>\s*([^<]{1,120})',
+            body):
+        pairs[m.group(1).strip()] = m.group(2).strip()
+    return pairs, url
+
+
+def dossier_run_license(value, extra=None):
+    v = " ".join(str(value or "").split()).strip()
+    sources, lines = [], ["## License — " + v, ""]
+    if re.fullmatch(r"[A-Za-z]{1,2}\d[A-Za-z]{1,3}", v):
+        call = v.upper()
+        data, url = _dz_callook(call)
+        sources.append({"name": "FCC ULS — amateur license (callook mirror)",
+                        "url": url, "verdict": ""})
+        if data is None:
+            sources[-1]["verdict"] = "unanswered"
+            lines.append("**Amateur radio (FCC ULS mirror).** "
+                         "The mirror did not answer — no "
+                         "statement is made.")
+            summary = "license " + call + ": ULS mirror unanswered"
+        elif str(data.get("status") or "").upper() != "VALID":
+            sources[-1]["verdict"] = ("no license found under "
+                                      "this callsign")
+            lines.append("**Amateur radio (FCC ULS mirror).** "
+                         "No public record found — no amateur "
+                         "license stands under " + call + ".")
+            summary = ("license " + call
+                       + ": no public record found")
+        else:
+            loc = data.get("location") or {}
+            addr = data.get("address") or {}
+            # callook carries the FRN and the dates under
+            # otherInfo; read both shapes.
+            _oi = data.get("otherInfo") or {}
+            _frn = data.get("frn") or _oi.get("frn") or ""
+            _exp = (_oi.get("expiryDate")
+                    or (data.get("lic_dates") or {}).get("expire")
+                    or "")
+            sources[-1]["verdict"] = ("record read: " + call
+                                      + " is licensed")
+            lines.append("**Amateur radio (FCC ULS).** Callsign "
+                         + call + " is licensed to **"
+                         + str(data.get("name") or "") + "**"
+                         + ((", " + str(data.get("type")))
+                            if data.get("type") else "")
+                         + ((" — " + str(loc.get("city") or "")
+                             + ", " + str(loc.get("state") or ""))
+                            if loc.get("city") else "")
+                         + ((" (mailing: "
+                             + str(addr.get("line1") or "") + ", "
+                             + str(addr.get("line2") or "") + ")")
+                            if addr.get("line1") else "")
+                         + (("; FRN " + str(_frn)) if _frn else "")
+                         + (("; expires " + str(_exp)) if _exp
+                            else "") + ".")
+            summary = ("license " + call + ": amateur license of "
+                       "record (ULS)")
+        return {"summary": summary, "markdown": "\n".join(lines),
+                "sources": sources}
+    if re.fullmatch(r"N\d{1,5}[A-Za-z]{0,2}", v.upper()):
+        n = v.upper()
+        pairs, url = _dz_faa_nnumber(n)
+        sources.append({"name": "FAA — aircraft registry",
+                        "url": url, "verdict": ""})
+        if pairs is None:
+            sources[-1]["verdict"] = "unanswered"
+            lines.append("**Aircraft registry (FAA).** The "
+                         "registry did not answer.")
+            summary = "license " + n + ": FAA registry unanswered"
+        elif not pairs:
+            sources[-1]["verdict"] = ("the registry answered in "
+                                      "a shape this kit cannot "
+                                      "read — pointer")
+            lines.append("**Aircraft registry (FAA).** The "
+                         "registry answered, but not in a shape "
+                         "this kit can read — the record stands "
+                         "at " + _dz_cite("the FAA inquiry", url)
+                         + ", named rather than guessed at.")
+            summary = ("license " + n
+                       + ": FAA registry stands as a pointer")
+        else:
+            keep = {k: val for k, val in pairs.items()
+                    if k.lower() in (
+                        "name", "registrant", "manufacturer name",
+                        "model", "serial number", "year mfr",
+                        "city", "state", "status")}
+            sources[-1]["verdict"] = ("record read: " + n
+                                      + " is registered")
+            lines.append("**Aircraft registry (FAA).** " + n
+                         + " stands registered:")
+            for k in sorted(keep):
+                lines.append("- " + k + ": " + keep[k] + ".")
+            lines.append("The registered owner is a record "
+                         "fact about the aircraft, cited to the "
+                         "registry — nothing more is claimed.")
+            summary = ("license " + n
+                       + ": aircraft registration of record (FAA)")
+        return {"summary": summary, "markdown": "\n".join(lines),
+                "sources": sources}
+    pals = dossier_named_pointer("pals")
+    sources.append({"name": pals["name"], "url": pals["url"],
+                    "verdict": "pointer — " + pals["wall"]})
+    sources.append({"name": "FCC ULS — license search by name",
+                    "url": "https://wireless2.fcc.gov/UlsApp/UlsSearch/searchLicense.jsp",
+                    "verdict": "pointer — a session-driven form"})
+    sources.append({"name": "FAA — airmen inquiry",
+                    "url": "https://amsrvs.registry.faa.gov/airmeninquiry/",
+                    "verdict": "pointer — a session-driven form"})
+    lines += ["No keyless machine door reads professional or "
+              "federal license records by NAME — the kit will "
+              "not pretend otherwise. The checks stand at the "
+              "boards' own doors:",
+              "- " + _dz_cite("Pennsylvania PALS", pals["url"])
+              + " — " + pals["wall"] + ".",
+              "- " + _dz_cite("FCC ULS name search",
+                              "https://wireless2.fcc.gov/UlsApp/UlsSearch/searchLicense.jsp")
+              + " — callsigns, though, this kit reads directly "
+              "(ask with the callsign).",
+              "- " + _dz_cite("FAA airmen inquiry",
+                              "https://amsrvs.registry.faa.gov/airmeninquiry/")
+              + " — N-numbers this kit reads directly (ask "
+              "with the N-number).",
+              "Absence, stated plainly: no statement is made "
+              "about this name's licenses — the doors above are "
+              "where the record lives."]
+    return {"summary": "license " + v + ": no name-keyed machine "
+                       "door — PALS, ULS + airmen stand as "
+                       "pointers",
+            "markdown": "\n".join(lines), "sources": sources}
+
+
+# -- Archives -------------------------------------------------------
+
+def _dz_wayback(value):
+    url = ("https://web.archive.org/cdx/search/cdx?url="
+           + urllib.parse.quote(value)
+           + "&output=json&limit=15")
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        rows = json.loads(body)
+    except Exception:
+        return None, url
+    return rows, url
+
+
+def _dz_openalex(name):
+    url = ("https://api.openalex.org/authors?search="
+           + urllib.parse.quote(name))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return json.loads(body).get("results") or [], url
+    except Exception:
+        return None, url
+
+
+def _dz_crossref(q):
+    url = ("https://api.crossref.org/works?query.bibliographic="
+           + urllib.parse.quote(q) + "&rows=5")
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        return ((json.loads(body).get("message") or {})
+                .get("items") or []), url
+    except Exception:
+        return None, url
+
+
+def _dz_ts14(ts):
+    ts = str(ts or "")
+    if len(ts) >= 8:
+        return ts[0:4] + "-" + ts[4:6] + "-" + ts[6:8]
+    return ts
+
+
+def dossier_run_archive(value, extra=None):
+    v = " ".join(str(value or "").split()).strip()
+    sources, lines = [], ["## Archive — " + v, ""]
+    if re.match(r"^(https?://)?[\w\-]+(\.[\w\-]+)+(/.*)?$", v) \
+            and " " not in v:
+        rows, url = _dz_wayback(v)
+        if rows is None:
+            sources.append({"name": "Wayback Machine — CDX index",
+                            "url": url, "verdict": "unanswered"})
+            lines.append("**Wayback Machine.** The archive's "
+                         "index did not answer — no statement "
+                         "is made.")
+            summary = "archive " + v + ": Wayback unanswered"
+        elif len(rows) <= 1:
+            sources.append({"name": "Wayback Machine — CDX index",
+                            "url": url,
+                            "verdict": "no snapshot found"})
+            lines.append("**Wayback Machine.** No public "
+                         "record found — the archive holds no "
+                         "snapshot of this address.")
+            summary = "archive " + v + ": no snapshot found"
+        else:
+            snaps = rows[1:]
+            first, last = snaps[0], snaps[-1]
+            sources.append({"name": "Wayback Machine — CDX index",
+                            "url": url,
+                            "verdict": "record read: "
+                                       + str(len(snaps))
+                                       + " snapshot(s), "
+                                       + _dz_ts14(first[1]) + " → "
+                                       + _dz_ts14(last[1])})
+            lines.append("**Wayback Machine.** "
+                         + str(len(snaps)) + " snapshot(s) of "
+                         "record — first "
+                         + _dz_cite(_dz_ts14(first[1]),
+                                    "https://web.archive.org/web/"
+                                    + first[1] + "/" + first[2])
+                         + ", latest "
+                         + _dz_cite(_dz_ts14(last[1]),
+                                    "https://web.archive.org/web/"
+                                    + last[1] + "/" + last[2])
+                         + ". A snapshot is the page as the "
+                         "archive saw it — a record of the page, "
+                         "not of the truth of its claims.")
+            summary = ("archive " + v + ": " + str(len(snaps))
+                       + " Wayback snapshot(s), "
+                       + _dz_ts14(first[1]) + " → "
+                       + _dz_ts14(last[1]))
+        return {"summary": summary, "markdown": "\n".join(lines),
+                "sources": sources}
+    authors, aurl = _dz_openalex(v)
+    works, curl2 = _dz_crossref(v)
+    na, nw = 0, 0
+    if authors is None:
+        sources.append({"name": "OpenAlex — authors",
+                        "url": aurl, "verdict": "unanswered"})
+        lines.append("**Scholarship (OpenAlex).** The author "
+                     "index did not answer.")
+    elif authors:
+        na = len(authors)
+        sources.append({"name": "OpenAlex — authors",
+                        "url": aurl,
+                        "verdict": "record read: " + str(len(authors))
+                                   + " author record(s)"})
+        lines.append("**Scholarship (OpenAlex).** Author "
+                     "records under this name — same-name "
+                     "scholars are strangers until the record's "
+                     "own anchors (institution, field) say "
+                     "otherwise:")
+        for a in authors[:5]:
+            inst = ""
+            lki = a.get("last_known_institutions") or []
+            if lki:
+                inst = str(lki[0].get("display_name") or "")
+            lines.append("- " + _dz_cite(
+                str(a.get("display_name") or v),
+                str(a.get("id") or aurl))
+                + " — " + str(a.get("works_count") or 0)
+                + " work(s), cited "
+                + str(a.get("cited_by_count") or 0) + " time(s)"
+                + ((", " + inst) if inst else "") + ".")
+    else:
+        sources.append({"name": "OpenAlex — authors",
+                        "url": aurl,
+                        "verdict": "no author record found"})
+        lines.append("**Scholarship (OpenAlex).** No public "
+                     "record found — no author record stands "
+                     "under this name.")
+    if works is None:
+        sources.append({"name": "Crossref — works", "url": curl2,
+                        "verdict": "unanswered"})
+    elif works:
+        nw = len(works)
+        sources.append({"name": "Crossref — works", "url": curl2,
+                        "verdict": "record read: " + str(len(works))
+                                   + " work(s)"})
+        lines.append("**Works (Crossref).**")
+        for w in works:
+            title = (w.get("title") or ["Untitled"])[0]
+            fams = ", ".join(
+                str(a.get("family") or "") for a in
+                (w.get("author") or [])[:2])
+            lines.append("- " + _dz_cite(title, str(
+                w.get("URL") or "")) + ((" — " + fams) if fams
+                                        else "") + ".")
+    else:
+        sources.append({"name": "Crossref — works", "url": curl2,
+                        "verdict": "no work found"})
+    summary = ("archive " + v + ": " + str(na)
+               + " author record(s), " + str(nw)
+               + " work(s) — or ask with a URL for the Wayback "
+               "shelf")
+    return {"summary": summary, "markdown": "\n".join(lines),
+            "sources": sources}
+
+
+# -- Address: the civil spine ---------------------------------------
+
+def _dz_nominatim(addr):
+    url = ("https://nominatim.openstreetmap.org/search"
+           "?format=json&addressdetails=1&limit=1&q="
+           + urllib.parse.quote(addr))
+    try:
+        status, body, _e = dossier_fetch(url)
+    except Exception:
+        return None, url
+    if status != 200 or not body:
+        return None, url
+    try:
+        rows = json.loads(body)
+    except Exception:
+        return None, url
+    return (rows[0] if rows else {}), url
+
+
+def dossier_run_address(value, extra=None):
+    v = " ".join(str(value or "").split()).strip()
+    sources, lines = [], ["## Address — " + v, ""]
+    hit, url = _dz_nominatim(v)
+    county, state = "", ""
+    if hit is None:
+        sources.append({"name": "OpenStreetMap — Nominatim gazetteer",
+                        "url": url, "verdict": "unanswered"})
+        lines.append("**The address as the gazetteer states "
+                     "it.** The gazetteer did not answer — no "
+                     "statement is made.")
+    elif not hit:
+        sources.append({"name": "OpenStreetMap — Nominatim gazetteer",
+                        "url": url,
+                        "verdict": "no match for this address"})
+        lines.append("**The address as the gazetteer states "
+                     "it.** No public record found — the "
+                     "gazetteer holds no match for this address "
+                     "as written.")
+    else:
+        ad = hit.get("address") or {}
+        county = str(ad.get("county") or "")
+        state = _dz_state_of(str(ad.get("state") or ""))
+        sources.append({"name": "OpenStreetMap — Nominatim gazetteer",
+                        "url": url,
+                        "verdict": "record read: "
+                                   + str(hit.get("display_name")
+                                         or v)})
+        lines.append("**The address as the gazetteer states "
+                     "it.** " + str(hit.get("display_name") or v)
+                     + " — " + str(hit.get("lat") or "") + ", "
+                     + str(hit.get("lon") or "")
+                     + ((", in " + county) if county else "")
+                     + ". The gazetteer settles where an address "
+                     "IS; it says nothing about who.")
+    door = None
+    for key in (county.replace(" County", ""), county):
+        if key and key in DOSSIER_PROPERTY_DOORS:
+            door = DOSSIER_PROPERTY_DOORS[key]
+            break
+    if door:
+        sources.append({"name": door[0], "url": door[1],
+                        "verdict": "pointer — the county's own "
+                                   "property door"})
+        lines.append("**Property.** The parcel record stands "
+                     "at " + _dz_cite(door[0], door[1]) + " — "
+                     "the county's own door; ownership is read "
+                     "there, not inferred here.")
+        prop_note = "the county door named"
+    else:
+        purl = _dz_search_pointer('"' + v + '" '
+                                  + (county + " " if county else "")
+                                  + "property records assessor")
+        sources.append({"name": "County property records",
+                        "url": purl,
+                        "verdict": "pointer — the county "
+                                   "assessor's own door"})
+        lines.append("**Property.** Parcel and ownership "
+                     "records live with the county — "
+                     + _dz_cite("the county assessor's door",
+                                purl)
+                     + " is where the record stands; this kit "
+                     "points rather than scrapes a walled "
+                     "parcel search.")
+        prop_note = "county pointer"
+    if state and state in DOSSIER_VOTER_NOTES:
+        vname, vurl, vnote = DOSSIER_VOTER_NOTES[state]
+        sources.append({"name": vname, "url": vurl,
+                        "verdict": "pointer — " + vnote})
+        lines.append("**Voter records.** " + _dz_cite(vname, vurl)
+                     + " — " + vnote + ".")
+        voter_note = state + " portal named"
+    else:
+        lines.append("**Voter records.** No lawful keyless "
+                     "public door reads voter records for this "
+                     "address's state — the state file is "
+                     "restricted by law, and this kit says so "
+                     "rather than reaching around it.")
+        voter_note = "no lawful keyless door (stated)"
+    lines += ["", "The spine's rule: an address anchors "
+              "records — property, the courts' parties, the "
+              "people a record names — it never convicts a "
+              "place of its occupants. Court records hang off "
+              "names: run the Courts shelf on a party this "
+              "address surfaces."]
+    summary = ("address " + v + ": gazetteer "
+               + ("read (" + county + (", " + state if state
+                                       else "") + ")"
+                  if hit else "no match")
+               + "; property: " + prop_note + "; voter: "
+               + voter_note)
+    return {"summary": summary, "markdown": "\n".join(lines),
+            "sources": sources}
+
+
+# -- The spine: one dossier, many doors -----------------------------
+
+def dossier_find_by_key(store, key_type, value):
+    """The dossier that already holds this key, if any — the
+    spine's lookup (#290). An address or a name run from any
+    door lands on the dossier that knows it, so the civil
+    spine accretes on one person-shaped record instead of
+    scattering across near-duplicate dossiers."""
+    v = str(value or "").strip().lower()
+    if not v:
+        return None
+    for d in store["dossiers"]:
+        for k in d.get("keys") or []:
+            if k["type"] == key_type \
+                    and str(k["value"]).strip().lower() == v:
+                return d
+    return None
+
+
+def dossier_pivots(store, d):
+    """The proposed next doors — ONE hop, proposed, never
+    auto-run. Two families: names the dossier's own records
+    named (association links not yet keys — a caption's other
+    side, an officer of record), and shelves a standing key
+    has not been run through (a person with no courts run).
+    The press — the page button, or the operator's ask in
+    chat — is the go; nothing here fires anything."""
+    if d is None:
+        return []
+    out, seen = [], set()
+    keys = {(k["type"], str(k["value"]).strip().lower())
+            for k in d.get("keys") or []}
+    ran = {(r.get("keyType"), str(r.get("key") or "").strip().lower())
+           for r in store["runs"] if r.get("dossierId") == d["id"]}
+
+    def add(kt, val, via):
+        sig = (kt, str(val).strip().lower())
+        if sig in seen or sig in keys or sig in ran:
+            return
+        seen.add(sig)
+        out.append({"keyType": kt, "value": val, "via": via})
+
+    for ln in d.get("links") or []:
+        if ln.get("kind") == "association" \
+                and str(ln.get("to") or "").startswith("person:"):
+            add("person", str(ln["to"])[len("person:"):],
+                ln.get("label") or "named on a record")
+    for k in d.get("keys") or []:
+        if k["type"] == "person":
+            add("courts", k["value"],
+                "the courts shelf has not been run for this person")
+            add("archive", k["value"],
+                "the archive shelf has not been run for this person")
+        if k["type"] == "business":
+            add("courts", k["value"],
+                "the courts shelf has not been run for this entity")
+    return out[:6]
+
+
+DOSSIER_PLAN_STEPS = {
+    "person": [
+        ("Person anchors", "person",
+         "the registry check at its own door + the OFAC "
+         "sanctions scan", 4),
+        ("Courts", "courts",
+         "CourtListener dockets + opinions; PACER and the "
+         "state portal stand as pointers", 2),
+        ("Licenses", "license",
+         "the boards' own doors — pointers where no keyless "
+         "machine door reads by name", 1),
+        ("Scholarship", "archive",
+         "OpenAlex authors + Crossref works for the name", 2)],
+    "business": [
+        ("Business records", "business",
+         "EDGAR match + filings + full-text, OpenCorporates, "
+         "ProPublica 990, USAspending awards", 5),
+        ("Courts", "courts",
+         "CourtListener party search on the entity name", 2)],
+    "address": [
+        ("The civil spine", "address",
+         "the gazetteer read, the county property door, the "
+         "voter note for the state", 1)],
+    "username": [
+        ("Username sweep", "username",
+         "the platform corpus — one cited check per platform",
+         44)],
+}
+
+
+def dossier_plan(key_type, value):
+    """The query builder's composition: the shelves a
+    starting key fans out to, each named with its doors and
+    its cost in requests — composed in the open BEFORE
+    anything fires. The operator sees the plan; the confirm
+    is the fire."""
+    steps = DOSSIER_PLAN_STEPS.get(key_type)
+    if steps is None:
+        return None
+    return {"keyType": key_type, "value": value,
+            "steps": [{"shelf": s, "run": r, "note": n,
+                       "requests": q} for s, r, n, q in steps],
+            "totalRequests": sum(q for _s, _r, _n, q in steps),
+            "after": "hits propose pivots — associated names "
+                     "and un-run shelves — one hop, the "
+                     "operator's call, never auto-run"}
+
+
+def dossier_plan_text(plan):
+    lines = ["The composed run for " + plan["keyType"] + " "
+             + plan["value"] + " — "
+             + str(plan["totalRequests"])
+             + " request(s) across "
+             + str(len(plan["steps"])) + " shelf step(s):"]
+    for i, s in enumerate(plan["steps"], 1):
+        lines.append(str(i) + ". **" + s["shelf"] + "** ("
+                     + s["run"] + ", ~" + str(s["requests"])
+                     + " request(s)) — " + s["note"] + ".")
+    lines.append("After: " + plan["after"] + ".")
+    lines.append("Nothing has run — the plan is shown before "
+                 "it fires. Say \"run the dossier plan\" or "
+                 "press Run the plan in The Dossier to fire it.")
+    return "\n".join(lines)
 
 # -- Photo: EXIF, fully local, stdlib only -----------------------
 def _exif_tiff(data, base):
@@ -27394,6 +28787,11 @@ DOSSIER_RUNNERS = {
         v, str(x.get("location") or ""), x.get("anchors")),
     "email": lambda v, x: dossier_run_email(v),
     "phone": lambda v, x: dossier_run_phone(v),
+    "courts": dossier_run_courts,
+    "business": dossier_run_business,
+    "license": dossier_run_license,
+    "archive": dossier_run_archive,
+    "address": dossier_run_address,
 }
 
 
@@ -27406,6 +28804,13 @@ def dossier_run(store, key_type, value, door, extra=None,
     extra = extra if isinstance(extra, dict) else {}
     value = str(value or "").strip()
     d = dossier_get(store, dossier_id) if dossier_id else None
+    if d is None and value:
+        # v0.5.15e (#290): one dossier, many doors — a key the
+        # kit has already seen opens the dossier that holds
+        # it, from any door, before a new one is born.
+        d = dossier_find_by_key(store, key_type, value)
+        if d is not None:
+            store["openId"] = d["id"]
     if d is None:
         d = dossier_get(store, store.get("openId") or "")
     if d is None:
@@ -27439,7 +28844,8 @@ def dossier_run(store, key_type, value, door, extra=None,
     run = {"keyType": key_type, "key": value, "door": door,
            "summary": result["summary"],
            "markdown": result["markdown"],
-           "sources": result["sources"]}
+           "sources": result["sources"],
+           "associations": result.get("associations") or []}
     dossier_record_run(store, d, run)
     return d, run, None
 
@@ -27476,6 +28882,8 @@ def dossier_payload(store):
                       "elements": len(d.get("elements") or [])}
                      for d in store["dossiers"]],
         "open": open_d,
+        "pivots": (dossier_pivots(store, open_d)
+                   if open_d is not None else []),
         "runs": list(reversed(store["runs"]))[:60],
     }
 
@@ -27504,6 +28912,68 @@ def dossier_act(data, via_dhd=False):
             store["openId"] = d["id"]
             _dossier_save(store)
             return dossier_payload(store)
+        if action == "plan":
+            plan = dossier_plan(str(data.get("keyType") or ""),
+                                str(data.get("value") or ""))
+            out = dossier_payload(store)
+            if plan is None:
+                out["ok"] = False
+                out["error"] = ("No composed plan for that key — "
+                                "plans start from a person, "
+                                "business, address or username "
+                                "key; run any other tab directly.")
+            else:
+                out["plan"] = plan
+            return out
+        if action == "run-plan":
+            plan = dossier_plan(str(data.get("keyType") or ""),
+                                str(data.get("value") or ""))
+            out = dossier_payload(store)
+            if plan is None:
+                out["ok"] = False
+                out["error"] = ("No composed plan for that key — "
+                                "run its tab directly.")
+                return out
+            if data.get("confirm") is not True:
+                out["ok"] = False
+                out["error"] = ("The plan is shown before it "
+                                "fires — confirm to run it. "
+                                "Nothing has run.")
+                out["plan"] = plan
+                return out
+            ran, target = [], ""
+            for step in plan["steps"]:
+                d2, run2, refused2 = dossier_run(
+                    store, step["run"], plan["value"], "page",
+                    {}, target)
+                target = d2["id"]
+                ran.append(run2["summary"])
+                if refused2:
+                    break
+            _dossier_save(store)
+            out = dossier_payload(store)
+            out["planRan"] = ran
+            return out
+        if action == "pivot":
+            kt = str(data.get("keyType") or "")
+            val = str(data.get("value") or "")
+            out = dossier_payload(store)
+            if kt not in DOSSIER_KEY_TYPES or kt == "photo" \
+                    or not val:
+                out["ok"] = False
+                out["error"] = "Name the pivot: a key and its value."
+                return out
+            open_d = dossier_get(store, store.get("openId") or "")
+            d, run, refused = dossier_run(
+                store, kt, val, "page", {},
+                open_d["id"] if open_d else "")
+            _dossier_save(store)
+            out = dossier_payload(store)
+            out["pivoted"] = run["id"]
+            if refused:
+                out["ok"] = False
+                out["error"] = refused
+            return out
         if action == "run" or action == "photo":
             key_type = ("photo" if action == "photo"
                         else str(data.get("keyType") or ""))
@@ -27511,7 +28981,9 @@ def dossier_act(data, via_dhd=False):
                 out = dossier_payload(store)
                 out["ok"] = False
                 out["error"] = ("Name the key: person, username, "
-                                "email, phone or photo.")
+                                "email, phone, photo, courts, "
+                                "business, license, archive or "
+                                "address.")
                 return out
             d, run, refused = dossier_run(
                 store, key_type, str(data.get("value") or ""),
@@ -27712,6 +29184,13 @@ def dossier_context_block():
         lines.append("Keys tried: none yet.")
     for r in runs[-6:]:
         lines.append("• " + r["summary"])
+    pivs = dossier_pivots(store, d)
+    if pivs:
+        lines.append("Proposed next doors (one hop — proposed "
+                     "only, the operator's call, never "
+                     "auto-run): " + ", ".join(
+                         p["keyType"] + ": " + p["value"]
+                         for p in pivs) + ".")
     if d.get("caseSlug"):
         lines.append("This dossier stands as the case '"
                      + d["caseSlug"] + "'.")
@@ -27728,13 +29207,58 @@ def dossier_chat_reply(last):
     #259 discipline): a named ask runs the same machinery
     as the page, the run lands in the history, and the
     reply carries the result plus the dossier's state.
-    Returns None when the words are not a Dossier ask."""
+    Returns None when the words are not a Dossier ask.
+    v0.5.15e (#290): the full kit's shelves ride the same
+    route — courts, business, license, archive, address —
+    plus the query builder's two phrases: 'dossier plan
+    for …' composes and fires NOTHING; 'run the dossier
+    plan for …' is the confirm in words."""
     text = (last or "").strip()
+    pm = re.match(r"(?i)dossier\s+plan\s+for\s+"
+                  r"(person|business|address|username)\s+(.+)$",
+                  text)
+    if pm:
+        plan = dossier_plan(pm.group(1).lower(),
+                            pm.group(2).strip())
+        if plan is not None:
+            return dossier_plan_text(plan)
+    rm = re.match(r"(?i)run\s+the\s+(?:dossier\s+)?plan\s+for\s+"
+                  r"(person|business|address|username)\s+(.+)$",
+                  text)
+    if rm:
+        plan = dossier_plan(rm.group(1).lower(),
+                            rm.group(2).strip())
+        if plan is not None:
+            with DOSSIER_LOCK:
+                store = _dossier_store()
+                ran, target = [], ""
+                for step in plan["steps"]:
+                    d2, run2, refused2 = dossier_run(
+                        store, step["run"], plan["value"],
+                        "navi", {}, target)
+                    target = d2["id"]
+                    ran.append("**" + step["shelf"] + ".** "
+                               + run2["summary"] + ".")
+                    if refused2:
+                        ran.append(refused2)
+                        break
+                _dossier_save(store)
+            return ("The plan ran, in the open:\n\n"
+                    + "\n".join("- " + r for r in ran)
+                    + "\n\nThe full sections stand in The "
+                    "Dossier (Apex | Apps → The Dossier).")
     key_type, value, extra = "", "", {}
-    m = re.match(r"(?i)dossier\s*:\s*(person|username|email|phone)"
+    m = re.match(r"(?i)dossier\s*:\s*(person|username|email|phone"
+                 r"|courts|business|license|archive|address)"
                  r"\s+(.+)$", text)
     if m:
         key_type, value = m.group(1).lower(), m.group(2).strip()
+        if key_type == "courts":
+            lm = re.search(r"^(.*?)\s+(?:in|of)\s+([A-Za-z .]+)$",
+                           value)
+            if lm and len(lm.group(1)) >= 2:
+                value, extra = (lm.group(1),
+                                {"location": lm.group(2)})
     if not key_type:
         m = re.search(r"(?i)\bsweep\s+the\s+handle\s+@?([\w.\-]+)", text)
         if m:
@@ -27758,6 +29282,41 @@ def dossier_chat_reply(last):
                            value)
             if lm and len(lm.group(1)) >= 2:
                 value, extra = lm.group(1), {"location": lm.group(2)}
+    if not key_type:
+        m = re.search(r"(?i)\b(?:court\s+records\s+for|search\s+the"
+                      r"\s+dockets\s+for|dockets?\s+on)\s+(.+)$",
+                      text)
+        if m:
+            key_type = "courts"
+            value = m.group(1).strip().rstrip("?")
+            lm = re.search(r"^(.*?)\s+(?:in|of)\s+([A-Za-z .]+)$",
+                           value)
+            if lm and len(lm.group(1)) >= 2:
+                value, extra = lm.group(1), {"location": lm.group(2)}
+    if not key_type:
+        m = re.search(r"(?i)\b(?:look\s+up\s+the\s+business|business"
+                      r"\s+records\s+for|company\s+records\s+for)"
+                      r"\s+(.+)$", text)
+        if m:
+            key_type, value = "business", m.group(1).strip().rstrip("?")
+    if not key_type:
+        m = re.search(r"(?i)\b(?:license\s+check|check\s+the\s+"
+                      r"license|look\s+up\s+the\s+callsign|check"
+                      r"\s+the\s+callsign|look\s+up\s+the\s+tail"
+                      r"\s+number)\s+(\S+)$", text)
+        if m:
+            key_type, value = "license", m.group(1).strip()
+    if not key_type:
+        m = re.search(r"(?i)\b(?:wayback|check\s+the\s+archive"
+                      r"\s+for|publications\s+by|scholarship\s+on)"
+                      r"\s+(.+)$", text)
+        if m:
+            key_type, value = "archive", m.group(1).strip().rstrip("?")
+    if not key_type:
+        m = re.search(r"(?i)\b(?:property\s+records\s+for|look\s+up"
+                      r"\s+the\s+address)\s+(.+)$", text)
+        if m:
+            key_type, value = "address", m.group(1).strip().rstrip("?")
     if not key_type:
         return None
     with DOSSIER_LOCK:
@@ -28768,6 +30327,15 @@ def case_file_from_chat(text, history, cfg):
     slug = case_open_slug(cfg)
     if not slug:
         return None, "No case is open — open one in Case Files (Apex | Apps) and I'll file straight into it."
+    # v0.5.15e (#291): the operator's words may name the
+    # destination — "file this as a lead", "add it to the
+    # case as an observable". The named part governs; a named
+    # place that is not a filing part is refused by name.
+    part, nonpart = case_named_part(text)
+    if nonpart:
+        return None, case_part_refusal(nonpart)
+    if not part:
+        part = "finding"
     raw = (text or "").strip()
     ctx = []
     for item in reversed(history or []):
@@ -28789,11 +30357,15 @@ def case_file_from_chat(text, history, cfg):
         body_lines += ["## Context", ""]
         for c in reversed(ctx):
             body_lines += [c, ""]
-    filed, err = case_file_entry(slug, "finding", title, "\n".join(body_lines), "info", False)
+    filed, err = case_land_part(slug, part, title,
+                                "\n".join(body_lines),
+                                author="operator",
+                                source="filed from chat by the operator's words")
     if err:
         return None, err
     meta = _case_manifest(slug)
-    return {"case": str((meta or {}).get("title") or slug), "path": filed["path"]}, None
+    return {"case": str((meta or {}).get("title") or slug),
+            "path": filed["path"], "part": part}, None
 
 
 # --- Case-tied chats, Navi's own filings, deletion (Build 15, #161/#163)
@@ -29232,7 +30804,7 @@ def case_review(slug, register, key, action):
             meta["state"] = "confirmed"
             pairs = [(k, meta[k]) for k in
                      ("title", "severity", "internal", "filed", "author", "state",
-                      "element", "dossier", "elements")
+                      "part", "element", "dossier", "elements")
                      if k in meta]
             with open(full, "w", encoding="utf-8") as f:
                 f.write(_fm_render(pairs, body))
@@ -29669,9 +31241,87 @@ def case_form_all():
 
 # the chat by the bridge from what it actually did. No model
 # in the loop: the tap either files, or names why it cannot.
-def case_file_reply(chat_id, text):
+def _case_reply_filing(slug, case_name, chat_id, body_text, part,
+                       door):
+    """The reply doors' shared composition (v0.5.15e, #291):
+    title from the reply, the grounding guard riding the
+    finding-class parts, severity from a single cited record
+    (the Wire's own rule), the custody line naming the act
+    and the part, and the landing itself through
+    case_land_part. door is "tap" (the button press) or
+    "words" (the operator's spoken ask in the room) — the
+    custody names the door that carried the filing. #266
+    holds throughout: the note is the reply's substance plus
+    this filing's own provenance, never other machinery.
+    Returns ({"path", "part", "title", "grounding"}, error).
+    """
+    title = _case_part_title(body_text)
+    if not title:
+        title = "Filed from the case chat — " + case_name
+    gflags = (filing_grounding_flags(title, body_text)
+              if part in ("finding", "lead") else [])
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    act = ("the operator's “File into this case” action"
+           if door == "tap" else "the operator's spoken ask")
+    if part == "finding":
+        custody = ("\n\n— Filed from the case chat by " + act
+                   + " at " + now + ": the reply above stands as "
+                   "written, in Navi's name, sourced from chat "
+                   + str(chat_id) + " in the case “" + case_name
+                   + "”.")
+    elif part == "lead":
+        custody = ("\n\n— Filed from the case chat by " + act
+                   + " at " + now + ", as a lead — unverified: "
+                   "the reply above stands as written, in Navi's "
+                   "name, sourced from chat " + str(chat_id)
+                   + " in the case “" + case_name + "”.")
+    elif part == "event":
+        custody = ("\n\n— Logged from the case chat by " + act
+                   + " at " + now + ", as an event: the reply "
+                   "above stands as written, in Navi's name, "
+                   "sourced from chat " + str(chat_id)
+                   + " in the case “" + case_name + "”.")
+    else:
+        custody = ("\n\n— Filed from the case chat by " + act
+                   + " at " + now + ", as an " + part + ": the "
+                   "reply above stands as written, in Navi's "
+                   "name, sourced from chat " + str(chat_id)
+                   + " in the case “" + case_name + "”.")
+    fbody = body_text + custody
+    # Severity follows the cited record, as the Wire's own
+    # file door does: one cited CVE with a score lends its
+    # band.
+    sev = "info"
+    try:
+        _ids = list(dict.fromkeys(
+            m.upper() for m in intel_mod.CVE_ID_RE.findall(body_text)))
+        if len(_ids) == 1:
+            _item = INTEL.item(_ids[0])
+            _cvss = (_item or {}).get("cvss")
+            if isinstance(_cvss, (int, float)):
+                sev = ("critical" if _cvss >= 9 else "high" if _cvss >= 7
+                       else "medium" if _cvss >= 4 else "low")
+    except Exception:
+        sev = "info"
+    filed, err = case_land_part(
+        slug, part, title, fbody, author="navi", sev=sev,
+        source="filed from the case chat by " + act)
+    if err:
+        return None, err
+    return {"path": filed["path"], "part": part, "title": title,
+            "grounding": gflags}, None
+
+
+def case_file_reply(chat_id, text, part=None):
     # Returns (filing, error) — filing {case, caseName, path,
-    # grounding} on success.
+    # part, grounding} on success.
+    # v0.5.15e (#291): the press carries a destination part —
+    # the one the button's label named (the bridge's
+    # suggestion, mirrored on the page). A press that names
+    # no part files by the suggestion computed here, so the
+    # door behaves the same whichever handle carries it. A
+    # part the case does not have is refused by name before
+    # anything is written; the receipt names the landing.
     chat = None
     if chat_id is not None:
         for rec in chats_all():
@@ -29699,57 +31349,35 @@ def case_file_reply(chat_id, text):
     body_text = case_strip_machinery(body_text).strip()
     if not body_text:
         return None, "That reply is empty — there is nothing to file."
+    part = str(part or "").strip().lower()
+    if part and part not in CASE_FILE_PARTS:
+        return None, case_part_refusal(part)
+    if not part:
+        part = case_suggest_part(body_text)
     case_name = str(meta.get("title") or slug)
-    title = ""
-    for ln in body_text.split("\n"):
-        cand = " ".join(ln.replace("#", " ").replace("*", " ").replace("`", " ").split()).strip(" .:—-")
-        if cand:
-            title = cand[:90]
-            break
-    if not title:
-        title = "Filed from the case chat — " + case_name
-    gflags = filing_grounding_flags(title, body_text)
-    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
-    # v0.5.3e (#266): no flag line in the note — the receipt
-    # appended to the chat below names the flags, as it always
-    # has. What the note gains is the custody line: where this
-    # entry came from, which is case substance.
-    fbody = body_text
-    fbody += ("\n\n— Filed from the case chat by the operator's “File into this case” "
-              "action at " + now + ": the reply above stands as written, in Navi's "
-              "name, sourced from chat " + str(chat.get("id")) + " in the case “"
-              + case_name + "”.")
-    # Severity follows the cited record, as the Wire's own file
-    # door does: one cited CVE with a score lends its band.
-    sev = "info"
-    try:
-        _ids = list(dict.fromkeys(
-            m.upper() for m in intel_mod.CVE_ID_RE.findall(body_text)))
-        if len(_ids) == 1:
-            _item = INTEL.item(_ids[0])
-            _cvss = (_item or {}).get("cvss")
-            if isinstance(_cvss, (int, float)):
-                sev = ("critical" if _cvss >= 9 else "high" if _cvss >= 7
-                       else "medium" if _cvss >= 4 else "low")
-    except Exception:
-        sev = "info"
-    filed, err = case_file_entry(slug, "finding", title, fbody, sev, False,
-                                 author="navi")
+    filed, err = _case_reply_filing(slug, case_name, chat.get("id"),
+                                    body_text, part, "tap")
     if err:
         return None, err
-    filing = {"case": slug, "caseName": case_name, "path": filed["path"],
-              "grounding": gflags}
+    filing = {"case": slug, "caseName": case_name,
+              "path": filed["path"], "part": part,
+              "grounding": filed["grounding"]}
     # The receipt lands IN the chat, appended by the bridge —
     # the room shows the filing because the bridge did it, not
-    # because anyone narrated it.
+    # because anyone narrated it. v0.5.15e (#291): the receipt
+    # names the part it landed in.
     now_ms = int(time.time() * 1000)
-    rtext = ("Filed that reply into the case **" + case_name + "** as a finding — `"
-             + filed["path"] + "`. It stands in the case's findings, in my name, "
-             "exactly as written.")
-    if gflags:
+    stands = {"finding": "findings", "lead": "findings, as a lead",
+              "observable": "observables", "entity": "entities",
+              "event": "timeline"}[part]
+    rtext = ("Filed that reply into the case **" + case_name
+             + "** as " + _case_part_article(part) + " " + part + " — `" + filed["path"]
+             + "`. It stands in the case's " + stands
+             + ", in my name, exactly as written.")
+    if filed["grounding"]:
         rtext += (" One flag rides it: " + "; ".join(
             "it states " + f["field"] + " " + f["claimed"] + " for " + f["cve"]
-            + ", the Wire record says " + f["record"] for f in gflags)
+            + ", the Wire record says " + f["record"] for f in filed["grounding"])
             + " — the record's values govern.")
     msgs = list(chat.get("messages") or [])
     msgs.append({"who": "NAVI", "text": rtext, "exec": None, "ts": now_ms,
@@ -29758,6 +31386,179 @@ def case_file_reply(chat_id, text):
     chat["updatedAt"] = now_ms
     chat_write(chat)
     return filing, None
+
+# --- Filing destinations (v0.5.15e, #291) -----------------------
+# A case has parts, and a filing now names the part it lands
+# in: finding (the default, as it always was), lead,
+# observable, entity, event — the kinds the case grammar has
+# known since #261, mapped onto the case's standing sections:
+#   finding    -> findings/, as a finding
+#   lead       -> findings/, declared a lead on its face
+#                 (state: lead, and the part stamped as such)
+#   observable -> the observables register
+#   entity     -> the entities register
+#   event      -> the timeline
+# The part is STRUCTURE, never content (#266): it rides the
+# finding's frontmatter and the register entry's fields, and
+# every receipt names the landing, so a wrong part is visible
+# the moment it happens, not at read-back. Suggestion, press
+# and receipt carry the same part; the operator's words
+# naming a part govern over any suggestion. A named part that
+# is not one of the case's parts is refused BY NAME — named
+# and asked, never silently rerouted to findings.
+
+CASE_FILE_PARTS = ("finding", "lead", "observable", "entity", "event")
+# Words that name a real place in a case but not a filing
+# part for a reply — refused by name, so the operator hears
+# the shape of the refusal instead of a silent reroute.
+CASE_FILE_NONPARTS = ("evidence", "task", "tasks", "timeline",
+                      "note", "notes", "report", "register")
+
+
+def _case_part_article(part):
+    return "an" if part in ("observable", "entity", "event") else "a"
+
+
+def case_part_refusal(part):
+    return ("This case has no '" + str(part) + "' part to file "
+            "into — its parts are finding, lead, observable, "
+            "entity and event. Nothing was filed.")
+
+
+def case_suggest_part(text):
+    """The bridge's suggestion for a reply's destination —
+    deterministic, and small enough for the page to mirror
+    exactly (the button's label is computed from the same
+    rules; the press carries the part it names, so label,
+    press and receipt cannot disagree). A reply that is
+    essentially one bare indicator is an observable. A reply
+    carrying its sourcing on its face — "according to", a
+    named record that "reports / says / shows", a cited
+    link, a claim attributed to a source — is a lead: a claim
+    resting on a source, not her settled conclusion.
+    Anything else is a finding, the standing default. Entity
+    and event are never guessed by the furniture: they are
+    the operator's to name, and hers to suggest in prose."""
+    t = str(text or "").strip()
+    if not t:
+        return "finding"
+    words = t.split()
+    if len(words) <= 6:
+        for w in words:
+            w2 = w.strip("`*,.:;()[]<>\"'—-")
+            if (re.match(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$", w2)
+                    or re.match(r"^[a-fA-F0-9]{32,64}$", w2)
+                    or re.match(r"^CVE-\d{4}-\d{4,}$", w2, re.I)
+                    or re.match(r"^[\w.\-]+@[\w.\-]+\.\w+$", w2)):
+                return "observable"
+    low = t.lower()
+    if (re.search(r"\baccording to\b", low)
+            or re.search(r"\b(reports?|advisory|bulletin|record|"
+                         r"sources?|writeup|post)\s+(says?|said|"
+                         r"reports?|shows?|states?|notes?|found)\b",
+                         low)
+            or re.search(r"\]\((https?://|www\.)", t)
+            or re.search(r"\bis reported(ly)?\b", low)
+            or re.search(r"\bclaims?\s+that\b", low)):
+        return "lead"
+    return "finding"
+
+
+def _case_part_title(body_text):
+    # The tap door's own derivation (case_file_reply): the
+    # first meaningful line, cleaned of markdown furniture,
+    # capped — the heading a register entry or timeline beat
+    # files under.
+    for ln in str(body_text or "").split("\n"):
+        cand = " ".join(ln.replace("#", " ").replace("*", " ")
+                        .replace("`", " ").split()).strip(" .:—-")
+        if cand:
+            return cand[:90]
+    return ""
+
+
+def case_land_part(slug, part, title, body, author="navi",
+                   sev="info", meta_pairs=None, source=""):
+    """Land one composed item in the named part of a case.
+    Returns ({"path", "part"}, error). The landing is the
+    case's standing machinery per part — findings through
+    case_file_entry (the part stamped in the frontmatter,
+    a lead declared in its state), registers through the
+    append the review model reads, events through the
+    timeline. A part the case does not have is refused by
+    name before anything is written."""
+    part = str(part or "finding").strip().lower()
+    if part not in CASE_FILE_PARTS:
+        return None, case_part_refusal(part)
+    d = _case_dir(slug)
+    if not d or not os.path.isdir(d):
+        return None, "No such case."
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    title = " ".join(str(title or "").split()).strip() or "Filed from chat"
+    if part in ("finding", "lead"):
+        pairs = list(meta_pairs or [])
+        pairs.append(("part", part))
+        filed, err = case_file_entry(
+            slug, "finding", title, body, sev, False,
+            author=author,
+            state=("lead" if part == "lead" else None),
+            meta_pairs=pairs)
+        if err:
+            return None, err
+        return {"path": filed["path"], "part": part}, None
+    if part == "event":
+        filed, err = case_file_entry(slug, "timeline", title, body)
+        if err:
+            return None, err
+        return {"path": filed["path"], "part": part}, None
+    register = "entities" if part == "entity" else "observables"
+    if any(e["key"] == _register_key(title)
+           for e in _case_register(slug, register)):
+        return None, ("That entry is already in the case's "
+                      + register + " — nothing was filed twice.")
+    state = "lead" if author == "navi" else "confirmed"
+    if part == "entity":
+        fields = {"type": "other", "role": "", "aliases": "",
+                  "identifiers": "", "state": state,
+                  "author": author, "filed": now,
+                  "source": source or "filed from chat"}
+    else:
+        fields = {"kind": "other", "state": state,
+                  "author": author, "filed": now,
+                  "source": source or "filed from chat"}
+    if not _register_append(slug, register, title, fields, body):
+        return None, "The entry could not be written."
+    sync_note_write("case")
+    return {"path": "cases/" + slug + "/" + register + ".md",
+            "part": part}, None
+
+
+def case_named_part(text):
+    """The destination the operator's words name, if any:
+    (part, nonpart) — part is one of CASE_FILE_PARTS the
+    words asked for ("as a lead", "into the observables",
+    "log that as an event"); nonpart is a named place that
+    is not a filing part (for the by-name refusal). Both
+    empty when the words name no destination."""
+    low = " " + str(text or "").lower() + " "
+    m = re.search(r"\b(?:as|into|in|to)\s+(?:a\s+|an\s+|the\s+)?"
+                  r"(findings?|leads?|observables?|entities|entity|"
+                  r"events?)\b", low)
+    if m:
+        w = m.group(1)
+        part = {"finding": "finding", "findings": "finding",
+                "lead": "lead", "leads": "lead",
+                "observable": "observable",
+                "observables": "observable",
+                "entity": "entity", "entities": "entity",
+                "event": "event", "events": "event"}[w]
+        return part, ""
+    m = re.search(r"\b(?:as|into|in|to)\s+(?:a\s+|an\s+|the\s+)?"
+                  r"(evidence|tasks?|timeline|notes?|report|"
+                  r"register)\b", low)
+    if m:
+        return "", m.group(1)
+    return "", ""
 
 
 # --- Starting a case from chat (v0.4.5e, #241) -------------------
@@ -29795,7 +31596,7 @@ def _case_set_open(slug):
     save_config(cfg2)
 
 
-def case_start_from_reply(chat_id, text):
+def case_start_from_reply(chat_id, text, part=None):
     # The "Start a case from this" door (v0.5.14e, #289): the
     # operator's press on one of Navi's replies in a chat that
     # is NOT a case room. The case is composed from the reply
@@ -29822,6 +31623,14 @@ def case_start_from_reply(chat_id, text):
     if not body:
         return None, ("That reply is empty — there is nothing to "
                       "start a case from.")
+    # v0.5.15e (#291): the press may carry a destination part
+    # — where in the NEW case the reply lands. Unnamed means
+    # a finding, the composition's standing shape; a part the
+    # case does not have is refused by name before the case
+    # is born, so a refused start creates nothing at all.
+    part = str(part or "").strip().lower() or "finding"
+    if part not in CASE_FILE_PARTS:
+        return None, case_part_refusal(part)
     # The case's name comes from the reply's first meaningful
     # line, the tap door's own derivation (case_file_reply).
     title = ""
@@ -29837,12 +31646,18 @@ def case_start_from_reply(chat_id, text):
     if err:
         return None, err
     slug = detail["slug"]
-    gflags = filing_grounding_flags(title, body)
+    gflags = (filing_grounding_flags(title, body)
+              if part in ("finding", "lead") else [])
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
     fbody = body
-    fbody += ("\n\n— Started from chat by the operator's “Start a case from this” action at " + now + ": the reply above "
-              "stands as written, in Navi's name, sourced from chat " +
-              str(chat.get("id")) + ".")
+    if part == "finding":
+        fbody += ("\n\n— Started from chat by the operator's “Start a case from this” action at " + now + ": the reply above "
+                  "stands as written, in Navi's name, sourced from chat " +
+                  str(chat.get("id")) + ".")
+    else:
+        fbody += ("\n\n— Started from chat by the operator's “Start a case from this” action at " + now + ", as " + _case_part_article(part) + " " + part + ": the reply above "
+                  "stands as written, in Navi's name, sourced from chat " +
+                  str(chat.get("id")) + ".")
     # Severity follows the cited record, as the tap door has
     # it: one cited CVE with a score lends its band.
     sev = "info"
@@ -29857,9 +31672,10 @@ def case_start_from_reply(chat_id, text):
                        else "medium" if _cvss >= 4 else "low")
     except Exception:
         sev = "info"
-    filed, err = case_file_entry(slug, "finding",
-                                 title or "The reply that started the case",
-                                 fbody, sev, False, author="navi")
+    filed, err = case_land_part(slug, part,
+                                title or "The reply that started the case",
+                                fbody, author="navi", sev=sev,
+                                source="started from chat by the operator's tap")
     if err:
         # The filing failed after the case was born: roll the
         # birth back rather than leave an unreceipted case
@@ -29869,24 +31685,40 @@ def case_start_from_reply(chat_id, text):
         except Exception:
             pass
         return None, err
-    case_file_entry(slug, "timeline", "Case started from chat",
-                    "Navi's reply in chat " + str(chat.get("id")) + " was "
-                    "made a case by the operator's “Start a case from "
-                    "this” action at " + now + ". The reply stands in "
-                    "the findings whole, in her name, UNVERIFIED (state: "
-                    "lead) until reviewed.")
+    if part == "finding":
+        _beat = ("Navi's reply in chat " + str(chat.get("id")) + " was "
+                 "made a case by the operator's “Start a case from "
+                 "this” action at " + now + ". The reply stands in "
+                 "the findings whole, in her name, UNVERIFIED (state: "
+                 "lead) until reviewed.")
+    else:
+        _beat = ("Navi's reply in chat " + str(chat.get("id")) + " was "
+                 "made a case by the operator's “Start a case from "
+                 "this” action at " + now + ". The reply stands in "
+                 "the case as " + _case_part_article(part) + " " + part + " (`" + filed["path"] + "`), "
+                 "in her name, UNVERIFIED until reviewed.")
+    if part != "event":
+        case_file_entry(slug, "timeline", "Case started from chat", _beat)
     case_chat = case_chat_ensure(slug)
     _case_set_open(slug)
     started = {"slug": slug, "name": detail.get("name") or name,
                "type": detail.get("type") or "investigation",
                "chatId": case_chat["id"] if case_chat else None,
-               "path": filed["path"], "grounding": gflags}
+               "path": filed["path"], "part": part,
+               "grounding": gflags}
     now_ms = int(time.time() * 1000)
-    rtext = ("— **Case started: " + started["name"] + "** (" +
-             started["type"] + "). The reply stands in its findings "
-             "whole, in my name, exactly as written (`" + filed["path"] +
-             "`); the case is the open case now, and its own chat is "
-             "ready.")
+    if part == "finding":
+        rtext = ("— **Case started: " + started["name"] + "** (" +
+                 started["type"] + "). The reply stands in its findings "
+                 "whole, in my name, exactly as written (`" + filed["path"] +
+                 "`); the case is the open case now, and its own chat is "
+                 "ready.")
+    else:
+        rtext = ("— **Case started: " + started["name"] + "** (" +
+                 started["type"] + "). The reply stands in the new case "
+                 "as " + _case_part_article(part) + " " + part + ", in my name, exactly as written (`"
+                 + filed["path"] + "`); the case is the open case now, "
+                 "and its own chat is ready.")
     if gflags:
         rtext += (" One flag rides it: " + "; ".join(
             "it states " + f["field"] + " " + f["claimed"] + " for " +
@@ -34878,11 +36710,67 @@ class Handler(BaseHTTPRequestHandler):
             # case, out loud — the deterministic sibling of Vault
             # filing, decided in the same place for the same reason:
             # it works with or without the model connected.
-            _cfiling = re.search(r"\bfile\s+(?:this|that|it)\s+(?:as\s+(?:a\s+)?(?:finding|evidence)|to\s+the\s+case)\b", (last or ""), re.I) or re.search(r"\badd\s+(?:this|that|it)\s+to\s+the\s+case\b", (last or ""), re.I)
+            # v0.5.15e (#291): the ask may name the destination —
+            # "file this as a lead", "add that to the case as an
+            # observable", "log it as an event" — and the named
+            # part governs over every default. Spoken in the case's
+            # own room with a part named, the words file the reply
+            # they point at (the room's latest Navi reply) through
+            # the same composition the tap uses, and the reply here
+            # is its receipt, naming the landing. Anywhere else,
+            # the words file the exchange's context into the open
+            # case at the named part. A named place that is not a
+            # filing part is refused by name, out loud, and
+            # nothing is filed.
+            _cfiling = re.search(r"\bfile\s+(?:this|that|it)\s+(?:as\s+(?:a\s+|an\s+)?(?:finding|lead|observable|entity|event|evidence|task|timeline|note|report)|to\s+the\s+case|into\s+the\s+case)\b", (last or ""), re.I) or re.search(r"\badd\s+(?:this|that|it)\s+(?:to|into)\s+the\s+case\b", (last or ""), re.I) or re.search(r"\badd\s+(?:this|that|it)\s+as\s+(?:a\s+|an\s+)?(?:finding|lead|observable|entity|event|evidence|task|timeline|note|report)\b", (last or ""), re.I) or re.search(r"\b(?:log|put)\s+(?:this|that|it)\s+(?:as\s+(?:a\s+|an\s+)?(?:finding|lead|observable|entity|event|evidence|task|timeline|note|report)|in\s+the\s+(?:observables|entities|findings|leads|events))\b", (last or ""), re.I)
             if _cfiling:
-                _cfiled, _cerr = case_file_from_chat(last or "", messages, cfg)
+                _cpart, _cnonpart = case_named_part(last or "")
+                _cfiled, _cerr = None, None
+                if _cnonpart:
+                    _cerr = case_part_refusal(_cnonpart)
+                elif _cpart:
+                    _cid = data.get("chatId")
+                    _brec = None
+                    if _cid is not None:
+                        for _r in chats_all():
+                            if str(_r.get("id")) == str(_cid):
+                                _brec = _r
+                                break
+                    if _brec is not None and _brec.get("case"):
+                        _bslug = str(_brec.get("case") or "")
+                        _bmeta = _case_manifest(_bslug)
+                        _blast = ""
+                        for _m in reversed(_brec.get("messages") or []):
+                            if (isinstance(_m, dict)
+                                    and _m.get("who") == "NAVI"
+                                    and not _m.get("caseFiledReply")
+                                    and not _m.get("caseStarted")
+                                    and str(_m.get("text") or "").strip()):
+                                _blast = str(_m.get("text"))
+                                break
+                        _bbody = case_strip_machinery(_blast).strip()
+                        if _bmeta is not None and _bbody:
+                            _bf, _be = _case_reply_filing(
+                                _bslug,
+                                str(_bmeta.get("title") or _bslug),
+                                _brec.get("id"), _bbody, _cpart,
+                                "words")
+                            if _bf:
+                                _cfiled = {"case": str(_bmeta.get("title") or _bslug),
+                                           "path": _bf["path"],
+                                           "part": _cpart,
+                                           "room": True}
+                            else:
+                                _cerr = _be
+                if _cfiled is None and _cerr is None:
+                    _cfiled, _cerr = case_file_from_chat(last or "", messages, cfg)
                 if _cfiled:
-                    _creply = "Filed it to the case **" + _cfiled["case"] + "** — a new finding at `" + _cfiled["path"] + "`, where it stays in plain markdown on the desk. Nothing filed silently, ever: that's the whole entry, and it's yours to edit in Case Files."
+                    if _cfiled.get("room"):
+                        _creply = "Filed that reply into the case **" + _cfiled["case"] + "** — as " + _case_part_article(_cfiled["part"]) + " " + _cfiled["part"] + ", at `" + _cfiled["path"] + "`. It stands exactly as written, in my name; the landing is named here so a wrong part would show now, not at read-back."
+                    elif _cfiled.get("part", "finding") == "finding":
+                        _creply = "Filed it to the case **" + _cfiled["case"] + "** — a new finding at `" + _cfiled["path"] + "`, where it stays in plain markdown on the desk. Nothing filed silently, ever: that's the whole entry, and it's yours to edit in Case Files."
+                    else:
+                        _creply = "Filed it to the case **" + _cfiled["case"] + "** — as " + _case_part_article(_cfiled["part"]) + " " + _cfiled["part"] + ", at `" + _cfiled["path"] + "`, where it stays in plain markdown on the desk. Nothing filed silently, ever: that's the whole entry, and it's yours to edit in Case Files."
                 else:
                     _creply = _cerr
                 payload = {
@@ -35260,7 +37148,7 @@ class Handler(BaseHTTPRequestHandler):
                     _system_prompt += (
                         "\n\n[Working this case]\n"
                         "This conversation is the case room for the case above. Your answers here are conversation, not filings: nothing you write is filed into the case automatically, whatever shape it takes — there is no block, no format, and no filing hidden in a reply. Answer fully and plainly, in whatever form serves the question.\n"
-                        "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it, and pressing it files that reply exactly as printed, in your name, receipted in the room. You may suggest filing — \"that one is worth filing\" — and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
+                        "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it whose label names the part it will file to — \"File into this case — as a finding\", \"— as a lead\", \"— as an observable\", \"— as an entity\", \"— as an event\" (v0.5.15e, #291) — and pressing it files that reply exactly as printed, to that part, in your name, receipted in the room with the landing named. You may suggest filing — \"that one is worth filing — as a lead\" — suggesting the part the content plainly is (a sourced claim is a lead, not a finding; a named person or system an entity; a bare indicator an observable; a thing that happened an event), and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. The operator's words naming a part govern over the button's suggestion. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
                         "Treat unverified material in the case brief above as leads: reason from them, never cite them as established. A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; a reply the operator files that contradicts the record is flagged on its filing's receipt."
                     )
                 except Exception:
@@ -36451,7 +38339,8 @@ class Handler(BaseHTTPRequestHandler):
             # provenance, the grounding guard, and the receipt
             # appended into the chat by the bridge itself.
             data = self._body()
-            filing, err = case_file_reply(data.get("chatId"), data.get("text"))
+            filing, err = case_file_reply(data.get("chatId"), data.get("text"),
+                                          data.get("part"))
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
@@ -36464,7 +38353,8 @@ class Handler(BaseHTTPRequestHandler):
             # as printed and receipts it into that chat; a
             # refusal is named and creates nothing.
             data = self._body()
-            started, err = case_start_from_reply(data.get("chatId"), data.get("text"))
+            started, err = case_start_from_reply(data.get("chatId"), data.get("text"),
+                                                 data.get("part"))
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:

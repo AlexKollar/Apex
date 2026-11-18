@@ -2193,8 +2193,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.30";
-var SHIPPED_BUILD_SEQ = 30;
+var BRIDGE_BUILD = "2026-11-18.31";
+var SHIPPED_BUILD_SEQ = 31;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -6535,12 +6535,16 @@ var DOC_PAGES = [
   "<p>A case no longer has to start in Case Files \u2014 and it no longer starts by her hand. <b>She prints, then offers.</b> In any chat that is not a case room, Navi answers first, in full: nothing about her reply is parsed for case machinery, and no reply starts a case, whatever shape it takes. Under every reply stands a <b>Start a case from this</b> button. Pressing it is your act, and it is the only way a case starts from chat: the bridge composes the case from that reply <b>exactly as printed</b> \u2014 the reply filed whole as a finding in her name (state: lead, like every filing of hers), a timeline beat naming the act \u2014 ensures the case's own chat, sets it open, and appends its own receipt to the thread, with an <b>Open the case chat</b> button on it. She may suggest starting a case when the material earns one, and let the suggestion stand: the offer never blocks the conversation, and an older reply's button still starts a case from that reply whenever you press it. The proof is the bridge's, not her prose: a case exists only when the bridge receipts it, and a case-shaped essay is not a case.</p>" +
   "<p><b>The form.</b> The composer's <b>New case</b> button is the deterministic companion: Navi first swipes the conversation into a draft of the case's form \u2014 name, client, scope, summary, type, priority, tags, and the entities and observables she lifted, as a checklist \u2014 and you confirm or correct every field before anything exists. Submit creates the case, files the checked entries as unverified leads, sets it open, and lands you in its chat. If her model isn't connected the form simply opens blank, with the reason stated on it. Either way the landing is the same: a real case in Case Files, its own chat ensured, set open, its substance filed as leads awaiting your review \u2014 and because cases ride Sync, it is on your other screens too.</p></div>" +
     "<div class='doc-sec'><h4>Filing that lands (v0.5.2e, #261)</h4>" +
-  "<p><b>The tap.</b> In a case's own chat, every Navi reply carries a <b>File into this case</b> button. Tap it and the bridge files that exact reply as a finding on the bound case — the reply as written, in her name, with its provenance (the source chat, the action, the timestamp) written into the note — and appends its own receipt message to the chat, naming the finding's path, from what the bridge actually did. No model in the loop: the tap either files, or names why it cannot.</p>" +
+  "<p><b>The tap.</b> In a case's own chat, every Navi reply carries a <b>File into this case — as a …</b> button, and the button <b>names its destination</b> (v0.5.15e, #291 — see <i>Filing has destinations</i> below). Tap it and the bridge files that exact reply at the named part on the bound case — the reply as written, in her name, with its provenance (the source chat, the action, the timestamp) written into the note — and appends its own receipt message to the chat, naming the part and the path, from what the bridge actually did. No model in the loop: the tap either files, or names why it cannot.</p>" +
   "<p><b>The tap is the only filing door from chat.</b> There is no second, hidden path: her answers are never parsed for filings, so a filing-shaped answer — a summary in finding grammar, a long answer cut off mid-thought — simply stands as the answer it is, whole, with nothing filed and nothing refused. When a reply deserves the file she can say so, and the button stands under it until you press it or the conversation moves on; an older reply's button still files <i>that</i> reply, not the latest one. A filing that cannot land — the case is gone, the note cannot be written — is named in the room by the bridge, once, on the tap that asked for it. Silence about a failed filing is still the defect this closes — you always know whether a filing took.</p>" +
   "<p><b>The grounding guard.</b> Material drawn from a Wire record carries the record's values — its CVE id, CVSS, EPSS and dates. If a filing states a score that contradicts the record it cites, the bridge flags the filing <b>on its face</b> before it lands: the flag rides the filing's receipt in the chat — <i>this filing states CVSS 10.0 for the record; the Wire record says 8.1. Filed as written; the record's values govern.</i> — and is never written into the case file itself: a case file holds the case's substance, and the flag is machinery about the filing, not part of it (see the purity rule below). Her words are never rewritten and the filing is never blocked; the contradiction is named where the filing will be read.</p></div>" +
     "<div class='doc-sec'><h4>She prints, then asks (v0.5.12e, #286)</h4>" +
   "<p>The conversational log block is <b>retired</b>. It failed in the field the way invisible machinery fails: an answer that merely <i>looked</i> like a filing — entity, observable, event, lead, finding, stated in prose — was read as one; the closing marker never arrived; and the refusal machinery fired on an answer to a plain question, twice, while nothing filed. The ruling that replaces it is the operator's: <b>Navi prints the output regardless, and asks if she should file it — without being hung up if more questions come up first.</b></p>" +
   "<p>So: her case-room answers print <b>whole</b>, always, exactly as composed — nothing parses them, gates them, or hangs a refusal on them. Filing is a standing proposal under each reply — the <b>File into this case</b> button — which the bridge answers deterministically when pressed: it files <i>that reply's</i> printed text as a finding in her name, receipted in the room, even if the conversation has moved on several turns since. Each proposal stands on its own reply until pressed or ignored; there is no pending state and there are no red cards on answers. Refusal discipline — a filing named and refused when it cannot land — lives where it belongs now: on the deterministic doors, for malformed <i>explicit</i> filings, said once.</p></div>" +
+    "<div class='doc-sec'><h4>Filing has destinations (v0.5.15e, #291)</h4>" +
+  "<p>A case is not one bucket. It has <b>parts</b> — the findings, the observables register, the entities register, the timeline — and a filing lands in one of them. Through v0.5.14e every chat filing door filed to findings whatever it was handed, so an indicator stated in a reply became a finding to be read back out of the register it belonged in. Now <b>every filing door carries its destination</b>: <b>finding</b> (the default), <b>lead</b>, <b>observable</b>, <b>entity</b>, <b>event</b>. A lead is a finding-shaped note that stands in the findings <i>as a lead</i>, unverified on its face; an observable or an entity lands in its register; an event lands on the timeline.</p>" +
+  "<p><b>The suggestion names its destination.</b> Print-first stands (#286, #289): the answer prints whole, and only then is filing offered — and the offer itself carries the part. The button under a reply reads <b>File into this case — as a lead</b> (or finding, or observable), read deterministically from the reply itself: a bare indicator in a short reply suggests <i>observable</i>; a reply reporting what a source says suggests <i>lead</i>; the rest suggest <i>finding</i>. Furniture never guesses <i>entity</i> or <i>event</i> — those are named by words. She may make the same suggestion in her own words (<i>that one is worth filing — as a lead</i>), and the receipt names the landing either way, so a wrong part shows at filing time, not at read-back.</p>" +
+  "<p><b>Your words govern.</b> Say <i>file that as a lead</i>, <i>add this to the case as an observable</i>, <i>log it as an event</i> — in the case's room the words file the reply they point at, at the part you named, over any suggestion the furniture made; anywhere else they file the exchange into the open case at that part. A named place that is <b>not</b> a filing part — evidence, tasks, the timeline asked for as a container — is refused <b>by name</b>, out loud, and nothing is filed: the refusal names the parts the case does have. Nothing is ever silently rerouted to findings. The case file itself keeps the purity rule: the part is structure in the entry's frontmatter or its register, never machinery text in the body.</p></div>" +
     "<div class='doc-sec'><h4>The case reads as a document — and holds only the case (v0.5.3e, #265, #266)</h4>" +
   "<p><b>Reading.</b> Case content renders as the markdown it is — findings, register entries and timeline entries read as formatted documents, not raw text: headings, emphasis, lists, code and tables all render, in Case Files and in the Vault alike, through the one renderer the whole product shares. The renderer escapes first and builds only its own known constructs, so filed content — including content filed from untrusted sources — can never carry markup of its own into the page: no raw HTML passes through, and no script ever runs. An image reference <b>presents as an image</b> when the bridge serves the bytes — a case's own evidence, a data image, a file elsewhere in the Vault — and an external image URL is shown as a link, never auto-fetched: reading a case must not leak the operator to a third-party host.</p>" +
   "<p><b>One case, one file — in the Vault.</b> Beside the case's folder, the Vault holds the case's <b>formed document</b>: <span class='mono'>cases/&lt;name&gt;.md</span>, the whole case as one readable file — the manifest's facts, then the findings in the order they were filed, the registers, the evidence (images shown as images) and the timeline, every entry under its provenance. It is a formation of the folder, kept current by the bridge whenever the case is opened and swept at startup; the folder remains the working record the case machinery files into.</p>" +
@@ -6744,10 +6748,14 @@ var DOC_PAGES = [
   "<p>The room's rules are the operator's to set, per node, in the room's settings — the floating About &amp; settings window. The <b>muzzle</b> is per room (a room's own entry wins; the fedinet's stands behind it). <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's About window says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
   { id: "dossier", title: "The Dossier — the people-finding app", related: ["case-files", "vault", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>One dossier, many doors</h4>" +
-  "<p><b>The Dossier</b> (Apex | Apps → The Dossier) is Apex's people-finding app (#260). Tabs across the top — <b>Person, Username, Email, Phone, Photo</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link.</p>" +
+  "<p><b>The Dossier</b> (Apex | Apps → The Dossier) is Apex's people-finding app (#260) — since v0.5.15e (#290), the <b>full kit</b>: ten tabs across the top — <b>Person, Username, Email, Phone, Photo, Courts, Business, License, Archive, Address</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link. A key the kit has seen before <b>opens the dossier that holds it</b>, from any door — one dossier, many doors, and the civil spine accretes on one record instead of scattering.</p>" +
   "<p><b>The runs.</b> Every run is bridge-side, public, passive and keyless, and every result is cited to its source: the handle swept across public platforms by polite profile checks; an email's posture from its MX, SPF and DMARC records, plus breach <b>presence</b> only — credential content never enters the kit; a phone's facts from the number's own structure and public sources, with cited search pointers in its common formats; a held domain's facts from RDAP, DNS, certificate transparency and its TLS certificate. Absence is named plainly — <i>no public record found</i> — never dressed up, and a hit is a lead, never a conclusion.</p>" +
   "<p><b>The registry check</b> is the Person tab's anchor: it stands at the registries' own doors — the national NSOPW search and the state registry — and cites them; it does not mirror them, and a same-name hit is an unverified lead to disambiguate. When a record exists, its <b>own identifiers</b> — its listed aliases, a held domain — are what enrichment fans out from, so a name-collision guess never inherits a stranger's record. The Photo tab reads an image's EXIF metadata <b>fully locally</b> — nothing is uploaded anywhere, and no face recognition is performed, ever.</p>" +
   "<p><b>Cases, both ways.</b> Open an OSINT case from a dossier — the dossier stands as its subject — and file a dossier, or a single run's findings, into any case, with provenance on the face; case files hold case substance only. <b>Navi is the second door:</b> <span class='mono'>dossier: person &lt;name&gt;</span>, <span class='mono'>sweep the handle &lt;name&gt;</span>, <span class='mono'>look up &lt;email&gt;</span>, <span class='mono'>look up the number &lt;phone&gt;</span> — her runs land in the same history, and while a dossier is open she holds it as context.</p></div>" +
+    "<div class='doc-sec'><h4>The full kit — courts, business, licenses, archives, the spine (v0.5.15e, #290)</h4>" +
+  "<p><b>Courts.</b> Federal dockets and published opinions are read keyless through <b>CourtListener</b> (the RECAP archive) — each hit cited to its record, the caption's other side carried as an associated name, a lead with its source. <b>PACER</b> is credentialed and per-page, so it stands as a <b>named pointer</b> (RECAP, the same record, is checked first); govinfo's API is keyed; the state portals are session-driven forms — all named as pointers, never scraped around. <b>Business.</b> SEC EDGAR — filer match, company facts, recent filings, full-text — plus OpenCorporates registrations (their officers of record ride as associated names), ProPublica's nonprofit 990 filings, and USAspending federal awards; the FEC waits on your API-key choice and USPTO's TESS has no API door that fits, so both stand as pointers, as does Pennsylvania's form-driven entity search. <b>License.</b> What has a keyless machine shape is read directly — amateur callsigns from the FCC's ULS mirror, aircraft N-numbers from the FAA registry; professional licenses are kept <i>by name</i> behind the boards' session forms, so PA PALS, the ULS name search and the airmen inquiry stand as pointers and the run says so. <b>Archive.</b> A URL reads the Wayback Machine's snapshot index; a name reads scholarship — OpenAlex author records, Crossref works. <b>Address — the civil spine.</b> The gazetteer's read of the address (county, state), the county's own property door named, and the voter note for the state: a pointer where the state publishes a status check, an honest absence where the file is restricted by law.</p>" +
+  "<p><b>The Person tab grew anchors.</b> Beside the registry check stands the <b>sanctions check</b>: the OFAC lists (SDN + consolidated) read from the Treasury's own publication — a match is a lead to disambiguate by the record's own anchors, a miss is stated as a miss on the lists as read. Obituaries stand as a pointer to published postings. The Email tab adds OpenPGP keyserver presence; the Username sweep's corpus widened to 44 platforms.</p>" +
+  "<p><b>Composition, in the open.</b> <b>Compose a run</b> shows the shelves a starting key fans out to — each shelf named with its doors and its cost in requests — <i>before</i> anything fires; the confirm is the fire. Hits propose <b>pivots</b>: associated names and un-run shelves, one hop, proposed on the dossier and in Navi's context — the press is the go, and nothing ever auto-runs. Every shelf has its chat route, as every tool in this kit must: <span class='mono'>dossier: courts &lt;name&gt;</span>, <span class='mono'>court records for &lt;name&gt;</span>, <span class='mono'>look up the business &lt;name&gt;</span>, <span class='mono'>license check &lt;key&gt;</span>, <span class='mono'>wayback &lt;url&gt;</span>, <span class='mono'>property records for &lt;address&gt;</span>, <span class='mono'>dossier plan for person &lt;name&gt;</span>, <span class='mono'>run the dossier plan for person &lt;name&gt;</span>.</p></div>" +
     "<div class='doc-sec'><h4>The built dossier, and deleting an element (v0.5.9e, #280)</h4>" +
   "<p><b>The open dossier reads as one document</b> made of its <b>elements</b> — one element per run — grouped by kind (person, username, email, phone, photo), each carrying its provenance on its face: the key it ran on, the door it came through, its sources with their verdicts, and the time it landed. An element that has been filed into cases names them, by name — the typed links, readable. The whole document renders through the product's one markdown renderer, exactly as Case Files and the Vault render: a rendered document, and any HTML a source filed stays inert text.</p>" +
   "<p><b>An element can be deleted — and deletion is global.</b> Every element carries a <b>Delete</b> button; the confirm names the blast radius first (this dossier, the cases it stands in by name, the Vault formations), and a reason — <i>irrelevant / repeat / incorrect</i> — is optional, never required. Confirm, and the element leaves <b>every home at once</b>: the dossier, every case it was filed into, and the Vault's formed documents. The same delete stands at three doors — the dossier, the case (any finding's Delete; an element finding routes to the global delete), and the Vault (a formed case document lists its elements with their deletes) — and in chat: tell Navi <i>“delete the dossier element &lt;key&gt;”</i> and she acts on it, receipted from what the bridge actually did. She never deletes unbidden.</p>" +
@@ -7236,12 +7244,37 @@ function caseFiledReplyHtml(m) {
   var f = m.caseFiledReply;
   if (!f) return "";
   var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Filed to the case</b> <span style='color:var(--dim)'>by your tap · receipted by the bridge</span></div>"
-    + "<div style='font-size:13px;margin-top:2px'>Into <b>" + esc(f.caseName || f.case) + "</b> as a finding</div>"
+    + "<div style='font-size:13px;margin-top:2px'>Into <b>" + esc(f.caseName || f.case) + "</b> as " + casePartArticle(f.part || "finding") + " " + esc(f.part || "finding") + "</div>"
     + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div>";
   (f.grounding || []).forEach(function (g) {
     h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
   });
   return h + "</div>";
+}
+function casePartArticle(part) { return (part === "observable" || part === "entity" || part === "event") ? "an" : "a"; }
+function caseSuggestPart(text) {
+  // v0.5.15e (#291): the page-side mirror of the bridge's
+  // case_suggest_part — the same deterministic read, so the
+  // button's named destination and the bridge's landing can
+  // never disagree. A bare indicator in a short reply reads
+  // as an observable; a reply that reports what a source
+  // says reads as a lead; everything else reads as a
+  // finding. Entity and event are never guessed by
+  // furniture — the operator's words name those.
+  var t = String(text || "");
+  var words = t.split(/\s+/).filter(Boolean);
+  if (words.length <= 6) {
+    if (/(?:\d{1,3}\.){3}\d{1,3}/.test(t)
+        || /[0-9a-fA-F]{32,64}/.test(t)
+        || /CVE-\d{4}-\d{4,7}/.test(t)
+        || /[\w.+-]+@[\w-]+\.[\w.]+/.test(t)) return "observable";
+  }
+  if (/according to/i.test(t)
+      || /(?:reports?|advisory|bulletin|record|sources?|writeup|post)\s+(?:says?|said|reports?|shows?|states?|notes?|found)/i.test(t)
+      || /\]\(https?:\/\//.test(t)
+      || /is reported(?:ly)?/i.test(t)
+      || /claims? that/i.test(t)) return "lead";
+  return "finding";
 }
 function caseFileReplyBtnHtml(m, idx) {
   // The tap itself: on Navi's replies, only while the open
@@ -7250,7 +7283,8 @@ function caseFileReplyBtnHtml(m, idx) {
   if (!m.text || m.caseFiledReply) return "";
   var ac = (typeof activeChat === "function") ? activeChat() : null;
   if (!ac || !ac.case) return "";
-  return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' aria-label='File this reply into the bound case' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case</button></div>";
+  var part = caseSuggestPart(m.text);
+  return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' data-file-part='" + part + "' aria-label='File this reply into the bound case as " + casePartArticle(part) + " " + part + "' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case — as " + casePartArticle(part) + " " + part + "</button></div>";
 }
 function caseStartedHtml(m) {
   // v0.5.14e (#289): the receipt for the "Start a case from
@@ -7264,7 +7298,7 @@ function caseStartedHtml(m) {
   var s = m.caseStarted;
   if (!s) return "";
   var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Case started</b> <span style='color:var(--dim)'>by your tap \u00b7 receipted by the bridge</span></div>"
-    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(s.name || s.slug) + "</b> (" + esc(s.type || "investigation") + ") \u2014 the reply stands in its findings, in her name</div>"
+    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(s.name || s.slug) + "</b> (" + esc(s.type || "investigation") + ") \u2014 " + (!s.part || s.part === "finding" ? "the reply stands in its findings, in her name" : (s.part === "event" ? "the reply stands on its timeline, in her name" : "the reply stands in the case as " + casePartArticle(s.part) + " " + esc(s.part) + ", in her name")) + "</div>"
     + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(s.path || "") + "</div>";
   (s.grounding || []).forEach(function (g) {
     h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " \u2014 the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
@@ -7281,7 +7315,8 @@ function caseStartBtnHtml(m, idx) {
   if (!m.text || m.caseFiledReply || m.caseStarted || m.notice) return "";
   var ac = (typeof activeChat === "function") ? activeChat() : null;
   if (!ac || ac.case) return "";
-  return "<div style='margin-top:6px'><button class='ghost' data-start-case='" + idx + "' aria-label='Start a case from this reply' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case from this</button></div>";
+  var spart = caseSuggestPart(m.text);
+  return "<div style='margin-top:6px'><button class='ghost' data-start-case='" + idx + "' data-start-part='" + spart + "' aria-label='Start a case from this reply, filed as " + casePartArticle(spart) + " " + spart + "' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case from this — as " + casePartArticle(spart) + " " + spart + "</button></div>";
 }
 function caseFilingsHtml(m) {
   // Build 15 (#161): the receipt for Navi's own case filings —
@@ -8941,9 +8976,12 @@ var dzMsg = "", dzMsgOk = false;
 // into it. The confirm names the blast radius before it
 // fires; the reason, if given, rides the custody lines.
 var dzDelArm = "", dzDelReason = "";
-var DZ_KIND_ORDER = ["person", "username", "email", "phone", "photo", "record"];
+var DZ_KIND_ORDER = ["person", "username", "email", "phone", "photo", "courts", "business", "license", "archive", "address", "record"];
 function dzElementLabel(e) { return e.kind === "record" ? "the record" : e.kind + ": " + e.key; }
-var DZ_TABS = [["person", "Person"], ["username", "Username"], ["email", "Email"], ["phone", "Phone"], ["photo", "Photo"]];
+var DZ_TABS = [["person", "Person"], ["username", "Username"], ["email", "Email"], ["phone", "Phone"], ["photo", "Photo"], ["courts", "Courts"], ["business", "Business"], ["license", "License"], ["archive", "Archive"], ["address", "Address"]];
+// v0.5.15e (#290): the query builder's composed plan —
+// shown in the open, fired only on the confirm press.
+var dzPlan = null;
 function refreshDossier(rerender) {
   if (CONFIG.backend !== "live" || dzFetching) return;
   dzFetching = true;
@@ -8965,6 +9003,9 @@ function dossierAct(action, body) {
       else if (action === "file" && j.filed) { dzMsg = "Filed into the case at " + j.filed.path + "."; dzMsgOk = true; }
       else if (action === "delete-element" && j.deleted) { dzMsg = "Deleted " + j.deleted.label + " — from this dossier" + (j.deleted.casesCleaned && j.deleted.casesCleaned.length ? ", from " + j.deleted.casesCleaned.length + " case(s), and from the Vault formations" : "") + ". The cases' custody records carry the line."; dzMsgOk = true; dzDelArm = ""; dzDelReason = ""; }
       else if (action === "merge") { dzMsg = "Merged — one dossier, every key."; dzMsgOk = true; }
+      else if (action === "plan" && j.plan) { dzPlan = j.plan; dzMsg = "The plan is composed — nothing has run. The confirm below is the fire."; dzMsgOk = true; }
+      else if (action === "run-plan" && j.planRan) { dzMsg = "The plan ran: " + j.planRan.join(" · "); dzMsgOk = true; dzPlan = null; }
+      else if (action === "pivot" && j.pivoted) { dzMsg = "The proposed door ran — its section stands on the dossier."; dzMsgOk = true; }
       else { dzMsg = ""; }
       if (view === "Dossier") render();
     })
@@ -8972,7 +9013,7 @@ function dossierAct(action, body) {
 }
 function dossierHtml() {
   var h = "<h3>The Dossier</h3>";
-  h += "<p style='color:var(--dim)'>Apex's people-finding app. Every tab is a key into the <b>same dossier</b> — runs attach to the open dossier, merges are yours to make, and every result is cited to its source. Public sources, passive and keyless; absence is named — <i>no public record found</i> — never dressed up; a hit is a lead, never a conclusion; credential material is never sought (breach <i>presence</i> only). Navi runs the same machinery from chat — say <span class='mono'>dossier: person …</span> — and her runs land in the history like yours.</p>";
+  h += "<p style='color:var(--dim)'>Apex's people-finding app — the full kit (v0.5.15e). Every tab is a key into the <b>same dossier</b> — runs attach to the open dossier, merges are yours to make, and every result is cited to its source. Public sources, passive and keyless; absence is named — <i>no public record found</i> — never dressed up; a hit is a lead, never a conclusion; credential material is never sought (breach <i>presence</i> only); no face recognition, ever. The shelves: the original five keys, Courts (federal dockets + opinions read keyless; PACER and the state portals stand as named pointers), Business (EDGAR, OpenCorporates, 990s, federal awards), License (callsigns and N-numbers read directly; name-keyed boards stand as pointers), Archive (the Wayback index; scholarship), and Address — the civil spine. Navi runs the same machinery from chat — say <span class='mono'>dossier: courts …</span>, <span class='mono'>court records for …</span>, or <span class='mono'>dossier plan for …</span> — and her runs land in the history like yours.</p>";
   if (CONFIG.backend !== "live") return h + "<div class='card'>The Dossier runs through the live bridge — switch the backend to Live in Settings.</div>";
   if (!dzState && !dzFetching) refreshDossier(false);
   if (!casesState && !casesFetching) refreshCases();
@@ -8988,11 +9029,11 @@ function dossierHtml() {
   if (dzTab === "person") {
     h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Full name — e.g. Jane Q Public' aria-label='Person name'><input id='dz-location' type='text' placeholder='Location (optional) — City, ST' aria-label='Location (optional)'></div>"
       + "<div class='row' style='margin-top:8px'><input class='grow' id='dz-aliases' type='text' placeholder='Registry anchors (optional) — aliases, comma-separated' aria-label='Aliases (optional)'><input id='dz-domain' type='text' placeholder='Held domain (optional)' aria-label='Held domain (optional)'></div>"
-      + "<p style='color:var(--dim);font-size:12px'>The registry check is the anchor: it stands at the registries' own doors (NSOPW + the state registry), cited. Anchors you bring back from a record — its listed aliases, a held domain — are what enrichment fans out from; a same-name guess never inherits a stranger's record.</p>"
+      + "<p style='color:var(--dim);font-size:12px'>The registry check is the anchor: it stands at the registries' own doors (NSOPW + the state registry), cited — and beside it, the sanctions check: the OFAC lists (SDN + consolidated) are read from the Treasury's own publication, a match named as a lead, a miss stated as a miss. Anchors you bring back from a record — its listed aliases, a held domain — are what enrichment fans out from; a same-name guess never inherits a stranger's record.</p>"
       + "<button class='act' id='dz-run' aria-label='Run the person lookup'>Look up the person</button>";
   } else if (dzTab === "username") {
     h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Handle — e.g. shadowfox' aria-label='Username handle'></div>"
-      + "<p style='color:var(--dim);font-size:12px'>The handle is swept across public platforms by polite profile checks: hits cited per platform, misses listed as checked-clean, doors that do not answer named as such.</p>"
+      + "<p style='color:var(--dim);font-size:12px'>The handle is swept across the platform corpus (44 platforms) by polite profile checks: hits cited per platform, misses listed as checked-clean, doors that do not answer named as such.</p>"
       + "<button class='act' id='dz-run' aria-label='Run the username sweep'>Sweep the handle</button>";
   } else if (dzTab === "email") {
     h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Email address — e.g. jane@example.com' aria-label='Email address'></div>"
@@ -9007,6 +9048,36 @@ function dossierHtml() {
       + "<input id='dz-photo-file' type='file' accept='image/jpeg,image/png' aria-label='Choose an image to read'>"
       + "<div id='dz-photo-name' style='color:var(--dim);font-size:12px;margin-top:6px'>No file chosen.</div>"
       + "<button class='act' id='dz-run' style='margin-top:8px' aria-label='Read the photo metadata'>Read the metadata</button>";
+  } else if (dzTab === "courts") {
+    h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Party name — e.g. Jane Q Public' aria-label='Court party name'><input id='dz-location' type='text' placeholder='State (optional) — e.g. PA' aria-label='State (optional)'></div>"
+      + "<p style='color:var(--dim);font-size:12px'>Federal dockets and opinions are read keyless through CourtListener (the RECAP archive). PACER is credentialed and per-page — it stands as a named pointer, as do the state portals (session-driven forms). A docket names a party; it does not characterize them.</p>"
+      + "<button class='act' id='dz-run' aria-label='Search the court records'>Search the dockets</button>";
+  } else if (dzTab === "business") {
+    h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Entity name — e.g. Acme Corp' aria-label='Business name'></div>"
+      + "<p style='color:var(--dim);font-size:12px'>SEC EDGAR (filer match, company facts, recent filings, full-text), OpenCorporates registrations and their officers of record, ProPublica's nonprofit (990) filings, and USAspending federal awards. The FEC and USPTO's TESS stand as named pointers; Pennsylvania's entity search is form-driven and stands at the Commonwealth's door.</p>"
+      + "<button class='act' id='dz-run' aria-label='Run the business lookup'>Look up the business</button>";
+  } else if (dzTab === "license") {
+    h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Callsign, N-number, or a name — e.g. W1AW, N12345, Jane Public' aria-label='License key'></div>"
+      + "<p style='color:var(--dim);font-size:12px'>What has a keyless machine shape, this kit reads: amateur callsigns (the FCC ULS mirror) and aircraft N-numbers (the FAA registry). Professional licenses are kept by name behind the boards' own session forms — PA PALS, ULS name search and the FAA airmen inquiry stand as named pointers, and the run says so.</p>"
+      + "<button class='act' id='dz-run' aria-label='Run the license check'>Check the license</button>";
+  } else if (dzTab === "archive") {
+    h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='A URL or domain — or a name, for scholarship' aria-label='Archive key'></div>"
+      + "<p style='color:var(--dim);font-size:12px'>A URL reads the Wayback Machine's snapshot index (count, first, latest — each cited). A name reads the scholarship record: OpenAlex author records and Crossref works. A snapshot is the page as the archive saw it — a record of the page, not of the truth of its claims.</p>"
+      + "<button class='act' id='dz-run' aria-label='Run the archive lookup'>Check the archive</button>";
+  } else if (dzTab === "address") {
+    h += "<div class='row'><input class='grow' id='dz-value' type='text' placeholder='Street address — e.g. 123 Main St, Pennsburg, PA' aria-label='Address'></div>"
+      + "<p style='color:var(--dim);font-size:12px'>The civil spine: the address as the gazetteer states it (county, state), the county's own property door named, and the voter note for the state — a pointer where the state publishes a status check, an honest absence where the file is restricted by law. An address anchors records; it never convicts a place of its occupants.</p>"
+      + "<button class='act' id='dz-run' aria-label='Run the address lookup'>Look up the address</button>";
+  }
+  h += "</div>";
+  // The query builder (v0.5.15e, #290): compose first.
+  h += "<div class='card'><b>Compose a run</b><p style='color:var(--dim);font-size:12px'>The shelves a starting key fans out to — composed in the open, with each shelf's doors and cost, BEFORE anything fires. The confirm is the fire.</p>"
+    + "<div class='row'><select id='dz-plan-key' aria-label='Starting key type'><option value='person'>Person</option><option value='business'>Business</option><option value='address'>Address</option><option value='username'>Username</option></select><input class='grow' id='dz-plan-value' type='text' placeholder='The starting key — a name, an entity, an address, a handle' aria-label='Starting key value'><button class='ghost' id='dz-plan-go' aria-label='Compose the run'>Compose the run</button></div>";
+  if (dzPlan) {
+    h += "<div style='margin-top:8px'><b>" + esc(dzPlan.keyType) + ": " + esc(dzPlan.value) + "</b> <span style='color:var(--dim);font-size:12px'>— " + dzPlan.totalRequests + " request(s) across " + dzPlan.steps.length + " step(s)</span>"
+      + dzPlan.steps.map(function (st, i) { return "<div style='font-size:13px;margin-top:4px'>" + (i + 1) + ". <b>" + esc(st.shelf) + "</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(st.run) + " · ~" + st.requests + " req</span> — " + esc(st.note) + "</div>"; }).join("")
+      + "<p style='color:var(--dim);font-size:12px;margin-top:4px'>After: " + esc(dzPlan.after) + ".</p>"
+      + "<button class='act' id='dz-plan-run' aria-label='Run the composed plan'>Run the plan</button></div>";
   }
   h += "</div>";
   // The open dossier.
@@ -9049,6 +9120,13 @@ function dossierHtml() {
     else h += "<p style='color:var(--dim)'>No runs yet — every key above opens this same dossier.</p>";
     if (open.mergedFrom && open.mergedFrom.length) h += "<p style='color:var(--dim);font-size:12px'>Merged in: " + open.mergedFrom.map(function (m) { return esc(m.title); }).join(", ") + ".</p>";
     h += "<p style='color:var(--dim);font-size:12px'>" + (open.links ? open.links.length : 0) + " typed link(s) on this dossier — keys, sources, merges, case inclusions, stored as data.</p>";
+    // Proposed next doors (v0.5.15e, #290): one hop,
+    // proposed — the press is the go; nothing auto-runs.
+    if (dzState.pivots && dzState.pivots.length) {
+      h += "<div style='margin-top:6px'><span style='color:var(--dim);font-size:12px'>Proposed next doors — one hop, your call:</span><div class='row' style='margin-top:4px'>"
+        + dzState.pivots.map(function (pv) { return "<button class='ghost' data-dzpivot='" + esc(pv.keyType) + "|" + esc(pv.value) + "' aria-label='Run the proposed " + esc(pv.keyType) + " door for " + esc(pv.value) + "'>" + esc(pv.keyType) + ": " + esc(pv.value) + "</button>"; }).join("")
+        + "</div><p style='color:var(--dim);font-size:12px'>" + dzState.pivots.map(function (pv) { return esc(pv.keyType) + " " + esc(pv.value) + " — " + esc(pv.via); }).join(" · ") + "</p></div>";
+    }
     // Case citizenship, both ways.
     h += "<div class='row' style='margin-top:8px'>";
     if (open.caseSlug) h += "<span style='color:var(--dim)'>Stands as the OSINT case <b>" + esc(open.caseSlug) + "</b>.</span>";
@@ -9090,6 +9168,11 @@ function wireDossier() {
   document.querySelectorAll("[data-dzdel]").forEach(function (b) { b.onclick = function () { dzDelArm = b.getAttribute("data-dzdel"); dzDelReason = ""; render(); }; });
   document.querySelectorAll("[data-dzdelno]").forEach(function (b) { b.onclick = function () { dzDelArm = ""; dzDelReason = ""; render(); }; });
   document.querySelectorAll("[data-dzdelok]").forEach(function (b) { b.onclick = function () { var r = document.getElementById("dz-del-reason"); dossierAct("delete-element", { elementId: b.getAttribute("data-dzdelok"), from: "dossier", reason: r ? r.value.trim() : "" }); }; });
+  document.querySelectorAll("[data-dzpivot]").forEach(function (b) { b.onclick = function () { var parts = (b.getAttribute("data-dzpivot") || "").split("|"); if (parts.length === 2) dossierAct("pivot", { keyType: parts[0], value: parts[1] }); }; });
+  var pg = document.getElementById("dz-plan-go");
+  if (pg) pg.onclick = function () { var k = document.getElementById("dz-plan-key"); var v = document.getElementById("dz-plan-value"); dossierAct("plan", { keyType: k ? k.value : "person", value: v ? v.value : "" }); };
+  var pr = document.getElementById("dz-plan-run");
+  if (pr) pr.onclick = function () { if (dzPlan) dossierAct("run-plan", { keyType: dzPlan.keyType, value: dzPlan.value, confirm: true }); };
   var runBtn = document.getElementById("dz-run");
   if (runBtn) runBtn.onclick = function () {
     if (dzTab === "photo") {
@@ -9106,6 +9189,10 @@ function wireDossier() {
     }
     var v = document.getElementById("dz-value");
     var body = { keyType: dzTab, value: v ? v.value : "" };
+    if (dzTab === "courts") {
+      var cloc = document.getElementById("dz-location");
+      body.location = cloc ? cloc.value : "";
+    }
     if (dzTab === "person") {
       var loc = document.getElementById("dz-location");
       var al = document.getElementById("dz-aliases");
@@ -13934,7 +14021,7 @@ function wire() {
       var mm = messages[Number(b.getAttribute("data-file-reply"))];
       if (!mm || !mm.text) return;
       b.disabled = true;
-      casePost("/api/cases/file-reply", { chatId: activeChatId, text: mm.text }, function (j) {
+      casePost("/api/cases/file-reply", { chatId: activeChatId, text: mm.text, part: b.getAttribute("data-file-part") || undefined }, function (j) {
         if (j && j.ok) {
           hydrateChatsFromServer();
         } else {
@@ -13955,7 +14042,7 @@ function wire() {
       var mm = messages[Number(b.getAttribute("data-start-case"))];
       if (!mm || !mm.text) return;
       b.disabled = true;
-      casePost("/api/cases/start-from-reply", { chatId: activeChatId, text: mm.text }, function (j) {
+      casePost("/api/cases/start-from-reply", { chatId: activeChatId, text: mm.text, part: b.getAttribute("data-start-part") || undefined }, function (j) {
         if (j && j.ok) {
           hydrateChatsFromServer();
         } else {
