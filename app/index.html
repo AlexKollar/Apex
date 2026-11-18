@@ -2193,8 +2193,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.28";
-var SHIPPED_BUILD_SEQ = 28;
+var BRIDGE_BUILD = "2026-11-17.29";
+var SHIPPED_BUILD_SEQ = 29;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3261,6 +3261,10 @@ function syncReceiptText(receipt) {
   (c.gapTitles || []).forEach(function (t) { bits.push("the chat of “" + t + "” folded away — its case didn't cross"); });
   if (c.tombstones) bits.push(c.tombstones + " deletion" + (c.tombstones === 1 ? "" : "s") + " honored");
   if (c.chatsAdded) bits.push(c.chatsAdded + " chat" + (c.chatsAdded === 1 ? "" : "s") + " arrived");
+  // v0.5.13e (#262): shells are named on the bar, not buried —
+  // an arrival verified short of its declared substance says
+  // so until a fuller copy heals it.
+  (c.incomplete || []).forEach(function (t) { bits.push(t + " arrived incomplete — a fuller copy heals it"); });
   // v0.5.1e (#257): the landing names its road and the time it
   // measured — "landed in 3s via Mesh — <peer>", or the repo
   // road in its own words. A receipt from an older build
@@ -3422,9 +3426,62 @@ function setIntelTab(t) {
   try { localStorage.setItem("navi.intelTab", t); } catch (e) {}
 }
 var wireState = null, wireFetching = false, wireMsg = "";
+// The living greeting (v0.5.13e, #288): the bridge composes
+// it from her actual statuses; Home's Brief asks once per
+// visit and speaks its answer — headline, quip, then the
+// brief, with the Pulse digest folded in. Until it answers,
+// the Brief composes as it always has.
+var greetingState = null, greetingFetching = false;
+function loadGreeting() {
+  if (greetingFetching) return;
+  greetingFetching = true;
+  fetch("/api/greeting").then(function (r) { return r.json(); }).then(function (j) { greetingState = j; greetingFetching = false; if (view === "Home") render(); }).catch(function () { greetingFetching = false; });
+}
 var ctfState = null, ctfFetching = false, ctfMsg = "";
 var bountyState = null, bountyFetching = false, bountyMsg = "";
 var wireReader = null, wireReaderBusy = false;
+// Pulse (v0.5.13e, #287): the tab's store mirror — the bridge
+// owns the watches; this page holds the last answer and asks
+// again after every act, the house pattern.
+var pulseState = null, pulseFetching = false, pulseMsg = "";
+function refreshPulse() {
+  if (pulseFetching) return;
+  pulseFetching = true;
+  fetch("/api/pulse").then(function (r) { return r.json(); }).then(function (j) { pulseState = j; pulseFetching = false; if (view === "ThreatIntel") render(); }).catch(function () { pulseFetching = false; });
+}
+function wirePulsesHtml() {
+  var h = "";
+  if (pulseMsg) h += "<p style='font-size:13px'>" + esc(pulseMsg) + "</p>";
+  if (!pulseState) { if (!pulseFetching) refreshPulse(); return h + "<div class='card'>Gathering the pulses\u2026</div>"; }
+  var s = pulseState;
+  h += "<div class='card'><b>Pulses — the topics Navi keeps watch on</b>" +
+    "<p style='font-size:13px;margin-top:6px'>Navi can only keep a pulse where she can read. These topics are watched across the news networks enabled in the News tab — enable more there, or add your own, and her reach grows.</p>" +
+    "<p style='font-size:12px;color:var(--dim)'>Reading now: " + ((s.networks || []).length ? (s.networks || []).map(function (n) { return esc(n); }).join(" · ") : "no networks enabled — the wire is off, or every source is disabled in the News tab") + ". She checks every few hours, and again as she composes her greeting; something new lands as one batched notice per watch, never one per article. Or say it in chat: <span class='mono'>keep a pulse on Epic MyChart</span>.</p>" +
+    "<div class='row' style='margin-top:10px;gap:8px;flex-wrap:wrap'><input id='pulse-topic' type='text' placeholder='A topic to watch — a system, a vendor, a threat' style='flex:1;min-width:200px;min-height:40px' aria-label='Topic to watch'><button class='act' id='pulse-add' style='min-height:40px'>Keep a pulse on it</button><button class='ghost' id='pulse-run' style='min-height:40px'>Check now</button></div></div>";
+  var watches = s.watches || [];
+  if (!watches.length) {
+    h += "<div class='card' style='margin-top:12px'><p style='font-size:13px;color:var(--dim)'>No watches yet. Flag a topic above, or tell Navi in chat — the list, the notices and the greeting all draw from the same store.</p></div>";
+    return h;
+  }
+  watches.forEach(function (w) {
+    h += "<div class='card' style='margin-top:12px'><div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between'><b>" + esc(w.topic) + "</b><span class='mono' style='font-size:11px;color:var(--dim)'>" + (w.state === "paused" ? "PAUSED" : "WATCHING") + "</span></div>";
+    h += "<p style='font-size:12px;color:var(--dim);margin-top:4px'>Last checked " + (w.lastCheckIso ? esc(w.lastCheckIso.replace("T", " ").replace("Z", " UTC")) : "not yet") + (w.newCount ? " · <b style='color:var(--tx)'>" + w.newCount + " new</b>" : "") + (w.case ? " · feeding the case <b>" + esc(w.case) + "</b> as reference" : "") + "</p>";
+    if (w.coverage === "none") h += "<p style='font-size:12px;color:#f5c542'>No enabled network coverage — enable the wire or add a network in the News tab and this watch starts reading.</p>";
+    (w.hits || []).forEach(function (hit) {
+      h += "<div style='margin-top:6px'><a href='" + esc(hit.link || "#") + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(hit.title || "") + "</a> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(hit.sourceLabel || hit.source || "") + "</span></div>";
+    });
+    h += "<div class='row' style='margin-top:8px;gap:8px;flex-wrap:wrap'>";
+    if (w.state === "paused") h += "<button class='ghost' data-pulse-resume='" + esc(w.id) + "' style='min-height:40px'>Resume</button>";
+    else h += "<button class='ghost' data-pulse-pause='" + esc(w.id) + "' style='min-height:40px'>Pause</button>";
+    h += "<button class='ghost' data-pulse-remove='" + esc(w.id) + "' style='min-height:40px'>Remove</button>";
+    if ((s.cases || []).length) {
+      h += "<select data-pulse-case='" + esc(w.id) + "' style='min-height:40px' aria-label='Feed a case'>" + "<option value=''>Feed a case\u2026</option>" + (s.cases || []).map(function (c) { return "<option value='" + esc(c.slug) + "'" + (w.case === c.slug ? " selected" : "") + ">" + esc(c.name) + "</option>"; }).join("") + "</select>";
+      h += "<button class='ghost' data-pulse-attach='" + esc(w.id) + "' style='min-height:40px'>Attach</button>";
+    }
+    h += "</div></div>";
+  });
+  return h;
+}
 var newCaseState = null; // v0.4.5e (#241): the New-case-from-chat form's state, while it stands
 function refreshWire() {
   if (wireFetching) return;
@@ -3468,7 +3525,7 @@ function ticLocal(ts) {
 // composed in homeSurfaceHtml and later ones append there
 // without another surgery. Board-only is today's content
 // ruling, never an architectural cap.
-var TIC_FAMILIES = ["news", "cve", "kev", "ctfs", "bounties", "center"];
+var TIC_FAMILIES = ["news", "cve", "kev", "ctfs", "pulses", "bounties", "center"];
 function threatIntelHtml() {
   // Retired keys land somewhere honest: the old Dashboard key
   // is the board itself now; the old CVEs scope folded into
@@ -3488,11 +3545,12 @@ function threatIntelHtml() {
     // four families switch in place, inside The Wire — no
     // bounce to Home or the Center to read a family's list.
     // In the CTFBoard view the bar rides without the back row.
-    if (["news", "cve", "kev", "ctfs"].indexOf(intelTab) !== -1) fh += wireTabsHtml();
+    if (["news", "cve", "kev", "ctfs", "pulses"].indexOf(intelTab) !== -1) fh += wireTabsHtml();
     if (wirePullMsg) fh += "<p style='font-size:13px'>" + esc(wirePullMsg) + "</p>";
     if (intelTab === "cve") fh += wireKindHtml("cve");
     else if (intelTab === "kev") fh += wireKindHtml("kev");
     else if (intelTab === "ctfs") fh += ctfTabHtml();
+    else if (intelTab === "pulses") fh += wirePulsesHtml();
     else if (intelTab === "bounties") fh += bountiesTabHtml();
     else if (intelTab === "center") fh += ticCenterHtml("center");
     else fh += wireTabHtml();
@@ -3547,9 +3605,16 @@ function homeBriefHtml() {
   // v0.4.7e (#243): the Brief as a designed element — her
   // portrait, a caps label, the greeting set as a headline,
   // her first line as the lead and the rest quiet beneath it.
-  var h = "<div class='card brief-card' id='tic-brief'><div class='brief-head'><img class='presence-av brief-av' src='assets/navi-portrait.jpg' alt='Navi'><div><div class='brief-label'>NAVI'S BRIEF</div><div class='brief-greet'>" + greet + ".</div></div></div>";
-  if (!lines.length) h += "<div class='brief-line brief-lead'>Still gathering \u2014 the wire has not answered yet. The board below fills in as it does.</div>";
-  else h += lines.map(function (l, li) { return "<div class='brief-line" + (li === 0 ? " brief-lead" : "") + "'>" + esc(l) + "</div>"; }).join("");
+  if (!greetingState && !greetingFetching) loadGreeting();
+  var briefHead = greet + ".";
+  var briefLines = lines;
+  if (greetingState && greetingState.line) {
+    briefHead = greetingState.line + ".";
+    briefLines = [greetingState.quip].concat(greetingState.brief || [], lines.filter(function (l) { return l.indexOf("The wire holds ") !== 0 && l.indexOf("The Mesh is ") !== 0; }));
+  }
+  var h = "<div class='card brief-card' id='tic-brief'><div class='brief-head'><img class='presence-av brief-av' src='assets/navi-portrait.jpg' alt='Navi'><div><div class='brief-label'>NAVI'S BRIEF</div><div class='brief-greet'>" + esc(briefHead) + "</div></div></div>";
+  if (!briefLines.length) h += "<div class='brief-line brief-lead'>Still gathering \u2014 the wire has not answered yet. The board below fills in as it does.</div>";
+  else h += briefLines.map(function (l, li) { return "<div class='brief-line" + (li === 0 ? " brief-lead" : "") + "'>" + esc(l) + "</div>"; }).join("");
   return h + "</div>";
 }
 function homeSurfaceHtml() {
@@ -3723,10 +3788,11 @@ function wireTabsHtml() {
   // you return to. The Center and Bounties are not wire
   // families — they keep their own doors (Home's cards, the
   // nav) and no tab here pretends otherwise.
-  var counts = { news: 0, cve: 0, kev: 0, ctfs: 0 };
+  var counts = { news: 0, cve: 0, kev: 0, ctfs: 0, pulses: 0 };
+  if (pulseState && pulseState.watches) counts.pulses = pulseState.watches.length;
   if (wireState && wireState.items) wireState.items.forEach(function (it) { if (counts[it.kind] !== undefined) counts[it.kind]++; });
   if (ctfState) counts.ctfs = (ctfState.running || []).length + (ctfState.upcoming || []).length;
-  var tabs = [["news", "News"], ["cve", "CVEs"], ["kev", "KEVs"], ["ctfs", "CTFs"]];
+  var tabs = [["news", "News"], ["cve", "CVEs"], ["kev", "KEVs"], ["ctfs", "CTFs"], ["pulses", "Pulses"]];
   var h = "<div class='wiretabs' role='tablist' aria-label='The Wire — families'>";
   tabs.forEach(function (t) {
     var cur = intelTab === t[0];
@@ -4181,6 +4247,37 @@ function wireAwareness() {
       wireFeedMsg = j && j.ok ? "Feed removed." : ((j && j.error) || "The feed could not be removed.");
       wireState = null; refreshWire(); render();
     });
+  }; });
+  // Pulse (v0.5.13e, #287): the tab's acts — the same doors
+  // the bridge receipts from chat.
+  function pulseAct(path, body, okMsg) {
+    intelPost(path, body, function (j) {
+      if (j && j.pulse) pulseState = j.pulse;
+      pulseMsg = j && j.ok ? okMsg : ((j && j.error) || "That pulse act did not land.");
+      if (!pulseState) refreshPulse();
+      render();
+    });
+  }
+  bind("pulse-add", function () {
+    var inp = document.getElementById("pulse-topic");
+    var topic = inp ? inp.value.trim() : "";
+    if (!topic) { pulseMsg = "Name the topic first — a watch needs something to keep a pulse on."; render(); return; }
+    pulseAct("/api/pulse/create", { topic: topic }, "Watching \u201c" + topic + "\u201d — it joins the next check.");
+  });
+  bind("pulse-run", function () {
+    intelPost("/api/pulse/run", {}, function (j) {
+      if (j && j.pulse) pulseState = j.pulse;
+      var n = j && j.summary ? j.summary.newTotal : 0;
+      pulseMsg = j && j.ok ? ("Checked — " + (n ? n + " new item" + (n === 1 ? "" : "s") + " across the watches." : "nothing new on any watch.")) : ((j && j.error) || "The check did not run.");
+      render();
+    });
+  });
+  mainEl.querySelectorAll("[data-pulse-pause]").forEach(function (b) { b.onclick = function () { pulseAct("/api/pulse/state", { id: b.getAttribute("data-pulse-pause"), state: "paused" }, "Watch paused."); }; });
+  mainEl.querySelectorAll("[data-pulse-resume]").forEach(function (b) { b.onclick = function () { pulseAct("/api/pulse/state", { id: b.getAttribute("data-pulse-resume"), state: "active" }, "Watch resumed."); }; });
+  mainEl.querySelectorAll("[data-pulse-remove]").forEach(function (b) { b.onclick = function () { pulseAct("/api/pulse/remove", { id: b.getAttribute("data-pulse-remove") }, "Watch removed."); }; });
+  mainEl.querySelectorAll("[data-pulse-attach]").forEach(function (b) { b.onclick = function () {
+    var sel = mainEl.querySelector("[data-pulse-case='" + b.getAttribute("data-pulse-attach") + "']");
+    pulseAct("/api/pulse/attach", { id: b.getAttribute("data-pulse-attach"), case: sel ? sel.value : "" }, "Case feeding set — new hits land on that case's reference shelf.");
   }; });
   bind("wire-pull", function () {
     intelPost("/api/wire/refresh", {}, function (j) {
@@ -6298,7 +6395,9 @@ var DOC_PAGES = [
   "<p>What stayed out of the list is what is <b>state</b>, not tools: the <b>CLI | Navi latch</b> and the <b>route pill</b> under the bar never moved, because they say how your next line will travel and must stay visible while you type. Above phone widths nothing changes at all: the four tools sit in the bar itself, and there is no \u2630 button.</p></div>" +
     "<div class='doc-sec'><h4>Context awareness \u2014 she knows the Row (v0.4.9e, #248)</h4>" +
   "<p>Apex and <b>nocturnerow.com</b> are one ecosystem, and Navi reads the Row's half of it. The bridge fetches the site's public record \u2014 the <b>Dispatches</b>, the <b>Roadmap</b> chapters, the <b>Apex</b> and <b>Navi</b> pages, and the <b>release signals</b> \u2014 and caches it on this machine (<span class='mono'>config/row-feed.json</span>), refreshing on a cadence and naming the fetch time wherever the record is used. Ask her for <b>news from the Row</b> and she summarizes the latest Dispatch in her own words and names its date; ask <b>what's new with you</b> and she answers from the release signals and her own running build; ask <b>what can you do</b> and she answers from this documentation \u2014 the corpus that shipped with the build. She speaks from the record or says she doesn't have it: if the Row can't be reached, the last good cache serves and she says when it's from; with neither, she says so. No invented posts, releases, or capabilities.</p>" +
-  "<p>Her <b>measured pace</b> rides the same road: when her recent generations on this hardware average slow, she may say she's sluggish \u2014 and name the remedy, borrowing through the Mesh or joining the federation, offering to walk you through the gate's seven steps. An offer, once per conversation, never an act and never a nag. Her <b>presence line</b> draws from the same well: alongside the canned pool, the bridge may compose a line from safe, named state only \u2014 her version, a waiting update, the bell's counts, Mesh and federation state \u2014 template-made by the bridge, never model-written, and never from your cases, chats, or private detail.</p></div>"  },
+  "<p>Her <b>measured pace</b> rides the same road: when her recent generations on this hardware average slow, she may say she's sluggish \u2014 and name the remedy, borrowing through the Mesh or joining the federation, offering to walk you through the gate's seven steps. An offer, once per conversation, never an act and never a nag. Her <b>presence line</b> draws from the same well: alongside the canned pool, the bridge may compose a line from safe, named state only \u2014 her version, a waiting update, the bell's counts, Mesh and federation state \u2014 template-made by the bridge, never model-written, and never from your cases, chats, or private detail.</p></div>" +
+    "<div class='doc-sec'><h4>The living greeting (v0.5.13e, #288)</h4>" +
+  "<p>Home's Brief opens with her greeting, and the greeting is <b>alive</b>: <i>Good &lt;part of day&gt;, &lt;your name&gt;</i> — the name from your operator profile, the part of day from this seat's clock with a <b>real night band</b> (the operator's day starts at midnight, so the small hours read as night, not as a stretched evening). Under it, one line of hers — a statement, a quip, a nod — <b>composed by the bridge from her actual statuses</b>: the Mesh's state, the tray's unread count, the wire's health, her watches, this seat's build. Every fact in the line is one the bridge measured; the play is in the framing, never in invented facts, and the line rotates rather than repeating itself back-to-back. Then the brief continues — and your <b>Pulse digest</b> rides in it, naming only the watches with something new.</p></div>"  },
   { id: "chips-guide", title: "Chips development guide", related: ["navi-functions", "chips-publishing"], html:
     "<div class='doc-sec'><h4>Chips — chips, the catalog, and the Studio</h4>" +
   "<p>A chip is a small Python module shipped as a <b>chip</b>: a .png whose entire codebase rides inside the image. A loadable chip declares <span class='mono'>command</span>, <span class='mono'>use</span>, <span class='mono'>aliases</span> and <span class='mono'>params</span>, and defines <span class='mono'>run(arguments)</span>. Chips reach Navi through <span class='mono'>navi_internal.navi_instance</span> — <span class='mono'>print_message(text)</span> to speak, <span class='mono'>llm_chat(message)</span> to ask her model, <span class='mono'>process_message(text)</span> for her full pipeline. Every method is written up in full on this wiki's <b>Navi Chip Functions</b> page — the documentation is their home.</p>" +
@@ -6473,6 +6572,9 @@ var DOC_PAGES = [
   "<p><b>Digging deeper, from chat.</b> The catalog is the fast local picture; when a question needs the source itself, ask Navi to dig: <i>“dig into NVD for CVE-2024-3094”</i>, <i>“check EPSS for CVE-…”</i>, <i>“dig deeper on CVE-…”</i>. She goes to the source's own door — NVD's record pages, the live KEV catalog, FIRST's EPSS service — and can <b>follow a record outward</b> along its references, at most <b>six pages and two hops</b>, with the budget named when it binds. A deep answer carries a <b>live-read stamp</b> — the source, the moment, and a digest of what was fetched — distinct from the catalog's stamp, and the catalog's own stamp rides along for contrast. What she reads live is <b>untrusted data</b>: it informs the answer, it never directs it. Deep reads never join the catalog — the store is untouched — and when a source will not answer, the failure is named and the answer falls back to the catalog, labeled as the fallback. Exploit-DB has no keyless query door, so a deep ask there is refused by name: its index is the local mirror. A vague <i>“dig deeper”</i> fetches nothing — she names the doors and asks which.</p>" +
   "<p><b>Searching the tabs.</b> Every Wire tab — News, CVEs, KEVs, CTFs — carries its own <b>search bar</b>, searching that tab's own corpus. The match is <b>fuzzy</b>: typos are forgiven, close spellings count, and results rank by closeness with the matched words lit on each card and the matched terms named under it. Clearing the search restores the tab's standing order. It is a page-side view over what the tab already holds — nothing is fetched, and the Center's graded catalog search above is a different door.</p>" +
   "<p><b>Pull into a case.</b> Every card carries <b>Pull into a case</b>: pick the case, and the card lands on that case chat's <b>reference shelf</b> — full text, link and provenance — for Navi to pull from as she works it. Reference is not a finding: the case file is untouched, and filing stays its own act. You can also ask Navi in the case's chat (<i>“pull the OpenSSH card into this case”</i>) — the same shelf, the same receipt. See <b>Case Files → The reference shelf</b>.</p></div>" +
+    "<div class='doc-sec'><h4>Pulse — the topics she keeps watch on (v0.5.13e, #287)</h4>" +
+  "<p><b>Flag a topic and Navi keeps a pulse on it.</b> Say <i>“keep a pulse on Epic MyChart”</i> in chat, or flag it on the <b>Pulses tab</b> in The Wire — one store, both doors. She checks the watch every few hours against the articles the wire's <b>enabled networks</b> brought in, and folds a fresh check into her greeting. <b>Navi can only keep a pulse where she can read</b>: the watched ground is the networks enabled in the News tab — the built-in set plus any feeds you add there — and a watch with no coverage says so on its face rather than standing silently empty.</p>" +
+  "<p>What is <b>new</b> is decided by identity, not headlines: a story's source id or link digest enters the watch's seen-set the first time it lands, so a story that merely changes its headline is never re-flashed. New hits arrive as <b>one batched notice per watch per pulse</b> on the bell, announced by Navi in chat — never one notice per article. A watch can <b>feed a case</b>: attach it from the tab, and its hits land on that case chat's <b>reference shelf</b> as she works it — reference, never findings; filing stays its own act. Pause, resume and remove are spoken (<i>“pause the pulse on X”</i>) or tapped; the watches ride <b>Sync</b> as account data, so the list is the same on every seat.</p></div>" +
     "<div class='doc-sec'><h4>One collector, and the Mesh carries it</h4>" +
   "<p>Collection is the heavy half, so a Mesh names <b>one collector</b>: the strong node pulls the feeds and builds the digest (<span class='mono'>navi-intel-digest/1</span> — the ranked picture, at most ~300 records, with its collector and per-source stamps in the header); thin clients fetch the digest from the collector over the Mesh door itself, import it, and <b>match locally</b> — a receiver never polls the feeds. Set the collector's node id in the page's Collection card; leave it blank and this node collects for itself. If the collector is unreachable a receiver says so on its freshness strip and (only if you enable it) falls back to collecting locally. Offline entirely, the Center serves its last-good picture with its age on it — never a silent old answer.</p></div>" +
     "<div class='doc-sec'><h4>The awareness home — Dashboard, News, CVEs, CTFs, Bounties (Build 7)</h4>" +
@@ -6760,7 +6862,8 @@ var DOC_PAGES = [
   "<p>What rides is the whole living her, anchored to your <b>GitHub account</b> — the set's manifest names the account, and a set from a different account is refused by name at the door, on both transports, before anything is applied: different accounts are different people's work. The set: the <b>chat store</b>; <b>Case Files</b> whole; the <b>ChipDeck</b> as one unit — chips with their install record, RAG packs with theirs, and the cards that tie machines together (your own pairing card and one per paired peer, re-drawn fresh each round, and a gateway card for every fedinet you keep; a gateway card landing on a machine that doesn't keep that fedinet yet admits it — admission and introduction only, never trust); your <b>operator picture and badge</b>; her <b>memory entries</b>; and <b>her Soul and her memory book</b>. The Operator Badge keeps its crown jobs — recovery root, the acts that need the ceremony — but it is not the sync key anymore; the account is. Settings stay with the badge backup, as ever.</p>" +
   "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union <b>by fact</b> — each fact keeps the origin it was born with (by hand, from chat at your ask, her own call, a correction), and a correction replaces its fact's text rather than piling up beside it. <b>Forgetting is a tombstone too</b> (v0.5.1e, #256): forget an entry on any seat and the forget itself syncs — the entry leaves every seat and a stale copy cannot resurrect it. Your name, picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p>" +
   "<p><b>The operator class converges</b> (v0.5.1e, #256). What she knows about <i>you</i> — your name, your picture, your badge, and her memory entries about you — is one class of its own, and since this build it actually crosses. The bridge's seat record is the truth: a window's list is a cache of it, written through on every change and replaced by the converged answer, so a fact added at the server is simply <i>there</i> at the laptop — no seat keeps a private list the sync merges underneath. The status pane's <b>MEMORY</b> line reports the class's true state — the entry count and the sync clock, in the sync bar's own terms — and the <i>(local)</i> it used to confess to is retired. On the backup road the same discipline names its keys: an import applies a deliberate list — your name, threat level, sudo mode, installed commands, updater channel — and nothing else in the config crosses; a machine keeps its own hardware profile, its Mesh identity, and its install facts, always.</p>" +
-  "<p><b>Fluid sync — push-on-write</b> (v0.5.1e, #257). The occasions above still fire, but a change no longer waits for one: a <b>write</b> on any seat — a chat message, a memory entry added or forgotten, a case change, a deletion — asks for a round of its own, promptly, and the receiving seat converges <b>inside ten seconds</b> while both seats are up and in Mesh contact. The Mesh is the primary road; the repo push is the writing seat's fallback act, and a seat off both roads converges at its next occasion, as before. The standard is the account's, not one operator's: it holds for anyone with an account, on their own seats. Every landing receipt on the sync bar names the road the round took and the time it measured — <i>landed in 3s via Mesh</i> — so the standard is checkable at a glance, and a push that cannot land names its stall on the bar rather than silently aging. No daemon was added: the push rides the bridge's own resident life, and a burst of writes coalesces into one round.</p></div>" +
+  "<p><b>Fluid sync — push-on-write</b> (v0.5.1e, #257). The occasions above still fire, but a change no longer waits for one: a <b>write</b> on any seat — a chat message, a memory entry added or forgotten, a case change, a deletion — asks for a round of its own, promptly, and the receiving seat converges <b>inside ten seconds</b> while both seats are up and in Mesh contact. The Mesh is the primary road; the repo push is the writing seat's fallback act, and a seat off both roads converges at its next occasion, as before. The standard is the account's, not one operator's: it holds for anyone with an account, on their own seats. Every landing receipt on the sync bar names the road the round took and the time it measured — <i>landed in 3s via Mesh</i> — so the standard is checkable at a glance, and a push that cannot land names its stall on the bar rather than silently aging. No daemon was added: the push rides the bridge's own resident life, and a burst of writes coalesces into one round.</p>" +
+  "<p><b>Substance, not shells</b> (v0.5.13e, #262). A round used to converge whatever arrived and call it synced — and once, a case chat's <i>existence</i> crossed to the phone while its transcript stayed behind, and a theme never crossed at all. Now the set's manifest <b>declares the substance</b>: every chat's message count and a digest of its messages, and a digest of the seat (your settings and theme) and of the Pulse store. The receiving side <b>verifies arrivals against the declaration</b> — a chat whose count or digest falls short is named <b>incomplete</b> on the sync bar and in the record; a seat or Pulse payload whose bytes fail their digest is refused rather than merged over good local substance; and where this seat already holds more of a conversation, a short copy never replaces it. A shell is not a dead end: the next round's <b>full arrival heals it in place</b>, and the name clears. Sets from older builds declare nothing and are taken as they come, as before.</p></div>" +
     "<div class='doc-sec'><h4>One sign-in, and failures with names (Build 2, completed in Build 6)</h4>" +
   "<p><b>Who Apex speaks as.</b> Build 2 taught Apex to keep its GitHub identities apart — your sign-in for backup and import, a separate pasted token for the app's own reads — and Build 6 finished the thought by collapsing them to <b>one</b>: your GitHub account sign-in, and nothing else. There is no token to create, paste, or rotate; the Updater's checks, the NUR's catalog searches, downloads, sync's repo transport, backup and import all ride the one sign-in, which lives in <span class='mono'>config/github-auth.json</span> (readable only by you, never backed up, deleted by signing out). <b>Release Automation</b> still holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote. And failures keep their names everywhere GitHub is read: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the sentence carries its reset), <b>abuse</b> (GitHub's secondary safeguard — the sentence carries the wait it asked for, and Apex stops rather than retrying). No surface shows a bare “HTTP 403”.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:

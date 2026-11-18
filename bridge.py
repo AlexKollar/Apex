@@ -403,16 +403,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.12"
+SHIPPED_VERSION = "0.5.13"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.28"
+BRIDGE_BUILD = "2026-11-17.29"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 28
+SHIPPED_BUILD_SEQ = 29
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -24576,6 +24576,95 @@ def _sync_apply_docs(fetched, summary, state):
     state["docSync"] = doc_sync
 
 
+def _sync_chat_substance(chat):
+    # v0.5.13e (#262): a chat's substance, in the two numbers
+    # the sync law verifies by — its message count and a digest
+    # of the messages themselves. The digest is over the
+    # canonical message list only, so envelope drift (titles,
+    # stamps) never reads as lost substance.
+    msgs = (chat or {}).get("messages") if isinstance(chat, dict) else None
+    if not isinstance(msgs, list):
+        msgs = []
+    canon = json.dumps(msgs, sort_keys=True, default=str).encode("utf-8")
+    return len(msgs), hashlib.sha256(canon).hexdigest()
+
+
+def _sync_apply_pulse(fetched, summary):
+    # v0.5.13e (#287): the pulse store converges like every
+    # other citizen — watches by id (the newer updatedAt wins),
+    # seen-sets and greeted sets unioned, hits merged by digest
+    # (the newer read wins), batches by id. A watch deleted
+    # here stays deleted only if the other seat is not holding
+    # a NEWER copy — the same last-writer discipline the seat
+    # merge keeps; there is no pulse tombstone in this build.
+    raw = fetched["files"].get(SYNC_PREFIX + "pulse.json")
+    if raw is None:
+        return
+    try:
+        incoming = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(incoming, dict):
+        return
+    inc = {"watches": [], "batches": [], "lastRun": 0, "greetedBatches": []}
+    for w in (incoming.get("watches") or []):
+        cw = _pulse_clean_watch(w)
+        if cw is not None:
+            inc["watches"].append(cw)
+    for b in (incoming.get("batches") or []):
+        cb = _pulse_clean_batch(b)
+        if cb is not None:
+            inc["batches"].append(cb)
+    inc["greetedBatches"] = [str(x)[:160] for x in (incoming.get("greetedBatches") or [])]
+    changed = 0
+    with _pulse_lock:
+        store = _pulse_load()
+        by_id = {w["id"]: w for w in store["watches"]}
+        for w in inc["watches"]:
+            cur = by_id.get(w["id"])
+            if cur is None:
+                store["watches"].append(w)
+                by_id[w["id"]] = w
+                changed += 1
+                continue
+            base = w if (w.get("updatedAt") or 0) >= (cur.get("updatedAt") or 0) else cur
+            merged = dict(base)
+            seen = list(base.get("seen") or [])
+            for d in (cur.get("seen") or []) + (w.get("seen") or []):
+                if d not in seen:
+                    seen.append(d)
+            merged["seen"] = seen
+            hits = {h["digest"]: h for h in (cur.get("hits") or [])}
+            for h in (w.get("hits") or []):
+                old = hits.get(h["digest"])
+                if old is None or str(h.get("readAt") or "") >= str(old.get("readAt") or ""):
+                    hits[h["digest"]] = h
+            merged["hits"] = sorted(hits.values(),
+                                    key=lambda h: str(h.get("readAt") or ""))[-PULSE_HITS_CAP:]
+            merged["lastCheck"] = max(cur.get("lastCheck") or 0, w.get("lastCheck") or 0)
+            if merged != cur:
+                changed += 1
+            store["watches"] = [merged if x["id"] == w["id"] else x
+                                for x in store["watches"]]
+            by_id[w["id"]] = merged
+        have_batches = {b["id"] for b in store["batches"]}
+        for b in inc["batches"]:
+            if b["id"] not in have_batches:
+                store["batches"].append(b)
+                have_batches.add(b["id"])
+                changed += 1
+        store["batches"] = store["batches"][-PULSE_BATCHES_CAP:]
+        greeted = list(store.get("greetedBatches") or [])
+        for g in inc["greetedBatches"]:
+            if g not in greeted:
+                greeted.append(g)
+        store["greetedBatches"] = greeted[-PULSE_BATCHES_CAP:]
+        store["lastRun"] = max(store.get("lastRun") or 0,
+                                incoming.get("lastRun") or 0)
+        _pulse_save(store)
+    summary["pulseChanged"] = summary.get("pulseChanged", 0) + changed
+
+
 def _sync_apply_seat(fetched, summary):
     raw = fetched["files"].get(SYNC_PREFIX + "seat.json")
     if raw is None:
@@ -24659,16 +24748,43 @@ def sync_collect(cfg=None):
             continue
     files[SYNC_PREFIX + "docs-index.json"] = json.dumps(docs_index, indent=2).encode()
     files[SYNC_PREFIX + "seat.json"] = json.dumps(_seat_state_load(), indent=2).encode()
+    # v0.5.13e (#287): the pulse store rides as account data.
+    try:
+        with open(PULSE_PATH, "rb") as f:
+            files[SYNC_PREFIX + "pulse.json"] = f.read()
+    except Exception:
+        pass
     account = ""
     try:
         account = str((github_auth() or {}).get("login") or "")
     except Exception:
         account = ""
+    # v0.5.13e (#262): the manifest declares SUBSTANCE, not
+    # just counts — per-chat message counts and digests, and a
+    # digest of the seat and pulse payloads — so the receiving
+    # side verifies what arrived against what was sent, names
+    # a shell a shell, and a later full arrival heals it.
+    chat_digests = {}
+    for c in export_chats:
+        _n, _sha = _sync_chat_substance(c)
+        chat_digests[str(c.get("id") or "")] = {"messages": _n, "sha": _sha}
+    pulse_meta = {}
+    if SYNC_PREFIX + "pulse.json" in files:
+        try:
+            _pw = json.loads(files[SYNC_PREFIX + "pulse.json"].decode("utf-8", "replace"))
+            pulse_meta = {"watches": len((_pw or {}).get("watches") or []),
+                          "sha": hashlib.sha256(files[SYNC_PREFIX + "pulse.json"]).hexdigest()}
+        except Exception:
+            pulse_meta = {}
     manifest = {"format": SYNC_FORMAT, "app": "Apex",
                 "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
                 "account": account,
                 "chats": len(export_chats), "cases": len(index),
-                "deckFiles": len(deck_index), "docs": len(docs_index)}
+                "deckFiles": len(deck_index), "docs": len(docs_index),
+                "chatDigests": chat_digests,
+                "chatsSha": hashlib.sha256(files[SYNC_PREFIX + "chats.json"]).hexdigest(),
+                "seatSha": hashlib.sha256(files[SYNC_PREFIX + "seat.json"]).hexdigest(),
+                "pulse": pulse_meta}
     files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
     return files, manifest, index
 
@@ -24988,6 +25104,7 @@ def sync_apply(cfg, fetched):
                "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
                "deckFilesPulled": 0, "cardsImported": 0, "docsPulled": 0,
                "entriesPulled": 0, "seatChanged": False,
+               "pulseChanged": 0, "incomplete": [],
                "eyes": [], "caseEyes": []}
     files = fetched["files"]
     remote_tombs = {}
@@ -25012,6 +25129,40 @@ def sync_apply(cfg, fetched):
                     remote_uploads = parsed["uploads"]
         except Exception:
             remote_chats, remote_uploads = [], None
+    # v0.5.13e (#262): the substance law. The sender's manifest
+    # declares what the set SHOULD hold; arrivals are verified
+    # against it before anything converges. A payload whose
+    # bytes do not match its declared digest arrived as a
+    # shell: it is named incomplete, and for the seat and the
+    # pulse — single documents, merged destructively — the
+    # shell is refused outright rather than merged over good
+    # local substance. Sets from older builds declare nothing
+    # and are taken as they come, as before.
+    remote_manifest = {}
+    if SYNC_PREFIX + "manifest.json" in files:
+        try:
+            _pm = json.loads(files[SYNC_PREFIX + "manifest.json"].decode("utf-8", "replace"))
+            if isinstance(_pm, dict):
+                remote_manifest = _pm
+        except Exception:
+            remote_manifest = {}
+    declared_chats = remote_manifest.get("chatDigests")
+    if not isinstance(declared_chats, dict):
+        declared_chats = {}
+    _seat_shell = False
+    if remote_manifest.get("seatSha") and SYNC_PREFIX + "seat.json" in files:
+        if hashlib.sha256(files[SYNC_PREFIX + "seat.json"]).hexdigest() != remote_manifest["seatSha"]:
+            _seat_shell = True
+            summary["incomplete"].append(
+                {"kind": "seat", "id": "seat",
+                 "name": "Settings & theme (the seat)"})
+    _pulse_shell = False
+    _pulse_decl = remote_manifest.get("pulse") if isinstance(remote_manifest.get("pulse"), dict) else {}
+    if _pulse_decl.get("sha") and SYNC_PREFIX + "pulse.json" in files:
+        if hashlib.sha256(files[SYNC_PREFIX + "pulse.json"]).hexdigest() != _pulse_decl["sha"]:
+            _pulse_shell = True
+            summary["incomplete"].append(
+                {"kind": "pulse", "id": "pulse", "name": "Pulse watches"})
     # The tombstone's other half: a chat ABSENT here but present
     # in the remote set is not an "add" when a tombstone covers
     # it — it is the resurrection the tombstone exists to refuse.
@@ -25057,6 +25208,40 @@ def sync_apply(cfg, fetched):
             merged[kind].pop(key, None)
     state["tombstones"] = merged
     _sync_state_save(state)
+    # v0.5.13e (#262): per-chat verification. A remote chat
+    # whose substance (count + digest) does not match what the
+    # manifest declared for it arrived as a shell. Where this
+    # seat already holds MORE of that conversation, the shell
+    # is refused — convergence never trades substance for a
+    # husk; where it holds nothing, the shell lands (a husk is
+    # better than a hole) and is still named, so the bar and
+    # the record say plainly that it is incomplete until a
+    # fuller arrival heals it.
+    if declared_chats:
+        _local_counts = {}
+        for _c in chats_all():
+            _local_counts[str(_c.get("id") or "")] = len(_c.get("messages") or [])
+        _kept = []
+        for _raw in remote_chats:
+            _rec = _chat_normalize(_raw)
+            if _rec is None:
+                _kept.append(_raw)
+                continue
+            _decl = declared_chats.get(str(_rec["id"]))
+            if not isinstance(_decl, dict):
+                _kept.append(_raw)
+                continue
+            _n, _sha = _sync_chat_substance(_rec)
+            if _n == _decl.get("messages") and _sha == _decl.get("sha"):
+                _kept.append(_raw)
+                continue
+            summary["incomplete"].append(
+                {"kind": "chat", "id": str(_rec["id"]),
+                 "name": "Chat \u201c" + str(_rec.get("title") or _rec["id"]) + "\u201d"})
+            if _local_counts.get(str(_rec["id"]), 0) > _n:
+                continue
+            _kept.append(_raw)
+        remote_chats = _kept
     before_ids = {str(c["id"]) for c in chats_all()}
     conv = chats_converge(remote_chats, remote_uploads)
     summary["chatsAdded"] = conv["added"]
@@ -25071,6 +25256,24 @@ def sync_apply(cfg, fetched):
         for c in chats_all():
             if str(c["id"]) not in before_ids and "-sync-" in str(c["id"]):
                 summary["eyes"].append(str(c.get("title") or c["id"]))
+    # v0.5.13e (#262): the arrival proof, read back off the
+    # local store — after convergence, every declared chat
+    # must stand here with at least the messages it was sent
+    # with. Convergence unions and never deletes, so a short
+    # count means the substance genuinely did not cross.
+    if declared_chats:
+        _after = {str(c.get("id") or ""): len(c.get("messages") or [])
+                  for c in chats_all()}
+        _named = {e["id"] for e in summary["incomplete"] if e["kind"] == "chat"}
+        for _cid, _decl in declared_chats.items():
+            if not isinstance(_decl, dict) or _cid in _named:
+                continue
+            if _after.get(_cid, 0) < int(_decl.get("messages") or 0):
+                _ttl = next((str(c.get("title") or _cid) for c in chats_all()
+                             if str(c.get("id") or "") == _cid), _cid)
+                summary["incomplete"].append(
+                    {"kind": "chat", "id": _cid,
+                     "name": "Chat \u201c" + _ttl + "\u201d"})
     _sync_apply_cases(fetched, merged, summary)
     # v0.4.10e (#252): the pairing check runs once the arriving
     # cases have landed — a chat whose case is not on this desk
@@ -25088,7 +25291,10 @@ def sync_apply(cfg, fetched):
     _sync_apply_deck(cfg, fetched, summary)
     _sync_apply_docs(fetched, summary, state)
     _sync_state_save(state)
-    _sync_apply_seat(fetched, summary)
+    if not _pulse_shell:
+        _sync_apply_pulse(fetched, summary)
+    if not _seat_shell:
+        _sync_apply_seat(fetched, summary)
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
                           + summary["removedNotes"] + summary["chatsAdded"]
                           + summary["chatsReplaced"] + summary["chatsSiblings"]
@@ -25098,7 +25304,28 @@ def sync_apply(cfg, fetched):
                           + summary["deckFilesPulled"] + summary["cardsImported"]
                           + summary["docsPulled"] + summary["entriesPulled"]
                           + summary.get("entriesRemoved", 0)
-                          + (1 if summary["seatChanged"] else 0))
+                          + (1 if summary["seatChanged"] else 0)
+                          + summary.get("pulseChanged", 0))
+    # v0.5.13e (#262): the incomplete record persists in the
+    # sync state — the bar names shells until a later round's
+    # full arrival heals them, which is simply a round where
+    # they are not named again.
+    try:
+        _st2 = _sync_state_load()
+        _prev = [e for e in (_st2.get("incomplete") or [])
+                 if isinstance(e, dict) and e.get("id")]
+        _now_ids = {(e["kind"], e["id"]) for e in summary["incomplete"]}
+        _still = [e for e in _prev
+                  if (e.get("kind"), e.get("id")) in _now_ids]
+        _have = {(e.get("kind"), e.get("id")) for e in _still}
+        for e in summary["incomplete"]:
+            if (e["kind"], e["id"]) not in _have:
+                _still.append(e)
+                _have.add((e["kind"], e["id"]))
+        _st2["incomplete"] = _still
+        _sync_state_save(_st2)
+    except Exception:
+        pass
     return summary
 
 
@@ -25188,6 +25415,8 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "entriesPulled": summary.get("entriesPulled", 0),
         "entriesRemoved": summary.get("entriesRemoved", 0),
         "seatChanged": bool(summary.get("seatChanged")),
+        "incomplete": [str(e.get("name") or e.get("id") or "")
+                       for e in (summary.get("incomplete") or [])],
         "removed": summary["removedChats"] + summary["removedCases"] + summary["removedNotes"],
         "needsEyes": eyes,
         "openIncluded": bool(open_chat_id) and str(open_chat_id) in collected_chats,
@@ -25197,6 +25426,14 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
                              + ("s" if len(eyes) != 1 else "")
                              + " parked both copies and need your eyes: "
                              + "; ".join(eyes[:3]) + ".")
+    elif result["incomplete"]:
+        result["message"] = ("Synced — but " + str(len(result["incomplete"]))
+                             + " item" + ("s" if len(result["incomplete"]) != 1 else "")
+                             + " arrived incomplete: "
+                             + "; ".join(result["incomplete"][:3])
+                             + ". A fuller copy heals "
+                             + ("them" if len(result["incomplete"]) != 1 else "it")
+                             + " on a later round.")
     elif pulled_chats or summary["chatsSiblings"] or summary["changed"]:
         result["message"] = "Synced — the machines converged."
     else:
@@ -25223,8 +25460,10 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "chatsReplaced": summary.get("chatsReplaced", 0),
         "changed": summary.get("changed", 0),
     }
+    receipt["incomplete"] = list(result["incomplete"])
     receipt["material"] = bool(receipt["foldedGhosts"] or receipt["gapTitles"]
-                               or receipt["pairsRepaired"] or receipt["tombstones"])
+                               or receipt["pairsRepaired"] or receipt["tombstones"]
+                               or receipt["incomplete"])
     result["receipt"] = receipt
     return result
 
@@ -25686,6 +25925,9 @@ def sync_state_payload():
         # after it lands.
         "progress": state.get("syncProgress") or {"active": False, "phase": "done"},
         "receipt": state.get("lastReceipt") or None,
+        # v0.5.13e (#262): shells still standing, named — the
+        # record clears as fuller arrivals heal them.
+        "incomplete": state.get("incomplete") or [],
     }
 
 
@@ -30125,6 +30367,821 @@ def badge_sync_dismiss(op_id):
     return {"ok": True, "operationId": op_id, "operation": op_snapshot(op_id)}
 
 
+# --- Pulse (v0.5.13e, #287; rulings Alex 2026-11-17) ------------------
+# Flagged topics Navi keeps watch on. Intent, awareness,
+# augmentation, communication — his four words are the
+# architecture: a watch is flagged in conversation or from the
+# Pulses tab in The Wire (intent); the resident bridge checks
+# it against the News tab's enabled networks on a cadence of a
+# few hours, and folds a fresh check into the greeting
+# (awareness); a watch attached to a case drops its hits on
+# that case chat's reference shelf, never as findings
+# (augmentation); and what is new flashes as ONE batched #242
+# tray record per watch per pulse, announced by Navi in chat
+# (communication).
+#
+# The store is one plain file (config/pulse.json): watches,
+# their seen-sets and hits, and the batch queue the tray
+# producer reads. It is ACCOUNT data — it rides Sync as
+# substance, verified like every other payload under #262's
+# law (see the sync section). "New" means not in the seen-set;
+# the seen-set holds source ids / URL digests, never titles, so
+# a story that merely changes its headline is not re-flashed.
+# A watch with no enabled-network coverage says so on its face
+# — the tab row and the payload carry the note — never a
+# silent empty watch.
+
+PULSE_PATH = os.path.join(ROOT, "config", "pulse.json")
+PULSE_INTERVAL_SECONDS = 3 * 3600
+PULSE_GREETING_FRESH_SECONDS = 900
+PULSE_HITS_CAP = 60
+PULSE_BATCHES_PER_WATCH = 8
+PULSE_BATCHES_CAP = 64
+_pulse_lock = threading.Lock()
+_PULSE_STATE = {"lastRun": 0.0}
+
+
+def _pulse_now_iso(ts=None):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts or time.time()))
+
+
+def _pulse_item_digest(item):
+    # A hit's identity: the source's own key when it carries
+    # one, else a digest of its link (the prep's rule — source
+    # id / URL digest).
+    key = str((item or {}).get("key") or "").strip()
+    if key:
+        return "k:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    link = str((item or {}).get("link") or "").strip()
+    return "u:" + hashlib.sha256(link.encode("utf-8")).hexdigest()[:24]
+
+
+def _pulse_clean_hit(raw):
+    if not isinstance(raw, dict):
+        return None
+    digest = str(raw.get("digest") or "").strip()
+    title = str(raw.get("title") or "").strip()
+    if not digest or not title:
+        return None
+    return {
+        "digest": digest[:80],
+        "title": title[:300],
+        "link": str(raw.get("link") or "")[:1000],
+        "source": str(raw.get("source") or "")[:120],
+        "sourceLabel": str(raw.get("sourceLabel") or "")[:120],
+        "published": raw.get("published") if isinstance(raw.get("published"), (int, float)) else 0,
+        "excerpt": str(raw.get("excerpt") or "")[:600],
+        "readAt": str(raw.get("readAt") or ""),
+        "batch": str(raw.get("batch") or "")[:120],
+    }
+
+
+def _pulse_clean_watch(raw):
+    if not isinstance(raw, dict):
+        return None
+    wid = str(raw.get("id") or "").strip()
+    topic = str(raw.get("topic") or "").strip()
+    if not wid or not topic:
+        return None
+    terms = []
+    for t in (raw.get("terms") or []):
+        t = str(t or "").strip()
+        if t and t.lower() not in [x.lower() for x in terms]:
+            terms.append(t[:120])
+    if not terms:
+        terms = [topic]
+    seen = []
+    for d in (raw.get("seen") or []):
+        d = str(d or "").strip()
+        if d and d not in seen:
+            seen.append(d[:80])
+    hits = []
+    for h in (raw.get("hits") or []):
+        ch = _pulse_clean_hit(h)
+        if ch is not None:
+            hits.append(ch)
+    return {
+        "id": wid[:80],
+        "topic": topic[:200],
+        "terms": terms[:12],
+        "state": "paused" if raw.get("state") == "paused" else "active",
+        "case": str(raw.get("case") or "")[:200],
+        "createdAt": raw.get("createdAt") if isinstance(raw.get("createdAt"), (int, float)) else 0,
+        "updatedAt": raw.get("updatedAt") if isinstance(raw.get("updatedAt"), (int, float)) else 0,
+        "lastCheck": raw.get("lastCheck") if isinstance(raw.get("lastCheck"), (int, float)) else 0,
+        "lastCheckIso": str(raw.get("lastCheckIso") or ""),
+        "coverage": str(raw.get("coverage") or ""),
+        "seen": seen,
+        "hits": hits[-PULSE_HITS_CAP:],
+    }
+
+
+def _pulse_clean_batch(raw):
+    if not isinstance(raw, dict):
+        return None
+    bid = str(raw.get("id") or "").strip()
+    wid = str(raw.get("watchId") or "").strip()
+    if not bid or not wid:
+        return None
+    titles = [str(t or "")[:300] for t in (raw.get("titles") or []) if str(t or "").strip()]
+    count = raw.get("count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        count = len(titles)
+    return {
+        "id": bid[:160],
+        "watchId": wid[:80],
+        "topic": str(raw.get("topic") or "")[:200],
+        "digest": str(raw.get("digest") or "")[:80],
+        "count": count,
+        "titles": titles[:20],
+        "at": raw.get("at") if isinstance(raw.get("at"), (int, float)) else 0,
+        "atIso": str(raw.get("atIso") or ""),
+    }
+
+
+def _pulse_load():
+    try:
+        with open(PULSE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {"watches": [], "batches": [], "lastRun": 0,
+                "greetedBatches": []}
+    watches = []
+    for raw in (data.get("watches") or []):
+        w = _pulse_clean_watch(raw)
+        if w is not None:
+            watches.append(w)
+    batches = []
+    for raw in (data.get("batches") or []):
+        b = _pulse_clean_batch(raw)
+        if b is not None:
+            batches.append(b)
+    last = data.get("lastRun")
+    greeted = [str(b)[:160] for b in (data.get("greetedBatches") or [])
+               if str(b or "").strip()]
+    return {"watches": watches, "batches": batches[-PULSE_BATCHES_CAP:],
+            "lastRun": last if isinstance(last, (int, float)) else 0,
+            "greetedBatches": greeted[-PULSE_BATCHES_CAP:]}
+
+
+def _pulse_save(store):
+    try:
+        os.makedirs(os.path.dirname(PULSE_PATH), exist_ok=True)
+        _atomic_write(PULSE_PATH, _json_bytes(store))
+        return True
+    except Exception:
+        return False
+
+
+def pulse_enabled_networks(cfg=None):
+    # The networks the pulse may read: the News tab's, as they
+    # stand — the wire's built-in networks plus the operator's
+    # own feeds, and only while the wire itself is enabled. An
+    # empty list is the honest no-coverage state the tab names.
+    if cfg is None:
+        cfg = load_config()
+    ws = wire_settings(cfg)
+    if not ws.get("enabled"):
+        return []
+    labels = []
+    if wire_mod is not None:
+        labels.extend(label for _sid, label, _u in wire_mod.NEWS_SOURCES)
+    labels.extend(str(f.get("name") or "") for f in (ws.get("feeds") or []))
+    return [x for x in labels if x]
+
+
+def _pulse_watch_new_id(topic):
+    base = hashlib.sha256(
+        (topic.lower() + "|" + str(time.time())).encode("utf-8")).hexdigest()[:10]
+    return "w-" + base
+
+
+def pulse_create(topic, terms=None, case="", store=None):
+    # Returns (watch, error). One watch per topic (case-folded):
+    # re-flagging a standing topic is named, never duplicated.
+    topic = str(topic or "").strip()
+    if not topic:
+        return None, "Name the topic first — a watch needs something to keep a pulse on."
+    if len(topic) < 2:
+        return None, "That topic is too short to watch — give me a name or a phrase."
+    own = store is None
+    if own:
+        store = _pulse_load()
+    for w in store["watches"]:
+        if w["topic"].lower() == topic.lower():
+            return None, ("Already watching \u201c" + topic + "\u201d — it stands "
+                          "as watch " + w["id"] + ".")
+    clean_terms = []
+    for t in (terms or [topic]):
+        t = str(t or "").strip()
+        if t and t.lower() not in [x.lower() for x in clean_terms]:
+            clean_terms.append(t[:120])
+    now = time.time()
+    watch = {
+        "id": _pulse_watch_new_id(topic),
+        "topic": topic[:200],
+        "terms": clean_terms[:12] or [topic[:120]],
+        "state": "active",
+        "case": str(case or "")[:200],
+        "createdAt": now,
+        "updatedAt": now,
+        "lastCheck": 0,
+        "lastCheckIso": "",
+        "coverage": "",
+        "seen": [],
+        "hits": [],
+    }
+    store["watches"].append(watch)
+    if own:
+        _pulse_save(store)
+    return watch, None
+
+
+def pulse_find(watch_id, store=None):
+    if store is None:
+        store = _pulse_load()
+    for w in store["watches"]:
+        if w["id"] == str(watch_id):
+            return w
+    return None
+
+
+def pulse_set_state(watch_id, state):
+    with _pulse_lock:
+        store = _pulse_load()
+        w = pulse_find(watch_id, store)
+        if w is None:
+            return None, "No watch by that id stands on the list."
+        w["state"] = "paused" if state == "paused" else "active"
+        w["updatedAt"] = time.time()
+        _pulse_save(store)
+        return w, None
+
+
+def pulse_remove(watch_id):
+    with _pulse_lock:
+        store = _pulse_load()
+        w = pulse_find(watch_id, store)
+        if w is None:
+            return None, "No watch by that id stands on the list."
+        store["watches"] = [x for x in store["watches"] if x["id"] != w["id"]]
+        store["batches"] = [b for b in store["batches"] if b["watchId"] != w["id"]]
+        _pulse_save(store)
+        return w, None
+
+
+def pulse_attach(watch_id, case_slug):
+    with _pulse_lock:
+        store = _pulse_load()
+        w = pulse_find(watch_id, store)
+        if w is None:
+            return None, "No watch by that id stands on the list."
+        slug = str(case_slug or "").strip()
+        if slug and _case_manifest(slug) is None:
+            return None, "No such case on this desk — the watch stays unattached."
+        w["case"] = slug
+        w["updatedAt"] = time.time()
+        _pulse_save(store)
+        return w, None
+
+
+def _pulse_match(watch, items):
+    # The match is plain and deterministic: any of the watch's
+    # terms, case-folded, standing in the item's title or
+    # excerpt. News items only — the pulse watches articles
+    # (the CVE/KEV lanes keep their own surfaces).
+    terms = [t.lower() for t in (watch.get("terms") or []) if t]
+    if not terms:
+        return []
+    out = []
+    for it in (items or []):
+        if not isinstance(it, dict) or it.get("kind") != "news":
+            continue
+        hay = (str(it.get("title") or "") + "\n"
+               + str(it.get("excerpt") or "")).lower()
+        if any(t in hay for t in terms):
+            out.append(it)
+    return out
+
+
+def pulse_run(cfg=None, items=None, now=None, reason="cadence"):
+    # One pulse: every active watch is checked against the
+    # wire's standing items (the store the enabled networks
+    # brought in — the pulse reads nothing the News tab did not
+    # enable). New items land as hits, a batch is queued for
+    # the tray, and a case-attached watch's hits drop on its
+    # case's shelf in the same pass. Returns the round's
+    # summary; the tray birth itself is the #242 producer's
+    # work at the next reconcile.
+    if cfg is None:
+        cfg = load_config()
+    if now is None:
+        now = time.time()
+    if items is None:
+        try:
+            items = (WIRE.state() or {}).get("items") or []
+        except Exception:
+            items = []
+    networks = pulse_enabled_networks(cfg)
+    summary = {"checked": 0, "newTotal": 0, "batches": [], "reason": reason,
+               "networks": len(networks)}
+    with _pulse_lock:
+        store = _pulse_load()
+        for watch in store["watches"]:
+            if watch["state"] != "active":
+                continue
+            summary["checked"] += 1
+            watch["lastCheck"] = now
+            watch["lastCheckIso"] = _pulse_now_iso(now)
+            if not networks:
+                watch["coverage"] = "none"
+                continue
+            watch["coverage"] = "ok"
+            seen = set(watch["seen"])
+            fresh = []
+            for it in _pulse_match(watch, items):
+                d = _pulse_item_digest(it)
+                if d in seen:
+                    continue
+                seen.add(d)
+                fresh.append((d, it))
+            if not fresh:
+                continue
+            batch_digest = hashlib.sha256(
+                "|".join(sorted(d for d, _i in fresh)).encode("utf-8")
+            ).hexdigest()[:16]
+            batch_id = "pulse:" + watch["id"] + ":" + batch_digest
+            for d, it in fresh:
+                watch["hits"].append({
+                    "digest": d,
+                    "title": str(it.get("title") or "")[:300],
+                    "link": str(it.get("link") or "")[:1000],
+                    "source": str(it.get("source") or "")[:120],
+                    "sourceLabel": str(it.get("sourceLabel") or "")[:120],
+                    "published": it.get("published") if isinstance(it.get("published"), (int, float)) else 0,
+                    "excerpt": str(it.get("excerpt") or "")[:600],
+                    "readAt": _pulse_now_iso(now),
+                    "batch": batch_id,
+                })
+                watch["seen"].append(d)
+            watch["hits"] = watch["hits"][-PULSE_HITS_CAP:]
+            batch = {"id": batch_id, "watchId": watch["id"],
+                     "topic": watch["topic"], "digest": batch_digest,
+                     "count": len(fresh),
+                     "titles": [str(it.get("title") or "")[:300] for _d, it in fresh],
+                     "at": now, "atIso": _pulse_now_iso(now)}
+            store["batches"].append(batch)
+            mine = [b for b in store["batches"] if b["watchId"] == watch["id"]]
+            if len(mine) > PULSE_BATCHES_PER_WATCH:
+                drop = {b["id"] for b in mine[:-PULSE_BATCHES_PER_WATCH]}
+                store["batches"] = [b for b in store["batches"]
+                                    if b["id"] not in drop]
+            store["batches"] = store["batches"][-PULSE_BATCHES_CAP:]
+            summary["batches"].append(batch)
+            summary["newTotal"] += len(fresh)
+            if watch.get("case"):
+                for _d, it in fresh:
+                    try:
+                        case_shelf_add(watch["case"], {
+                            "tab": "news",
+                            "title": str(it.get("title") or "")[:300],
+                            "link": str(it.get("link") or "")[:1000],
+                            "source": ("Pulse — " + watch["topic"] + " · "
+                                       + str(it.get("sourceLabel") or ""))[:120],
+                            "text": str(it.get("excerpt") or ""),
+                        }, by="navi")
+                    except Exception:
+                        pass
+        store["lastRun"] = now
+        _pulse_save(store)
+        _PULSE_STATE["lastRun"] = now
+    return summary
+
+
+def pulse_maybe_run(cfg=None, now=None, reason="greeting"):
+    # The greeting's fold-in: a pulse check rides the greeting
+    # composition when the last one is older than the freshness
+    # window, so the digest she speaks is never stale.
+    if now is None:
+        now = time.time()
+    store = _pulse_load()
+    last = store.get("lastRun") or _PULSE_STATE.get("lastRun") or 0
+    if now - last < PULSE_GREETING_FRESH_SECONDS:
+        return None
+    return pulse_run(cfg=cfg, now=now, reason=reason)
+
+
+def _pulse_digest_lines(store=None):
+    # The greeting brief's digest: per watch, the hits not yet
+    # spoken for by an earlier greeting — tracked by the
+    # store's greeted-batch set. Only watches WITH something
+    # new appear (the ruling); quiet watches are absent.
+    if store is None:
+        store = _pulse_load()
+    greeted = set(store.get("greetedBatches") or [])
+    lines = []
+    for b in (store.get("batches") or []):
+        if b["id"] in greeted:
+            continue
+        first = b["titles"][0] if b["titles"] else ""
+        line = (str(b["count"]) + " new on " + b["topic"]
+                + (" — " + first if first else ""))
+        lines.append({"watchId": b["watchId"], "topic": b["topic"],
+                      "count": b["count"], "line": line, "batch": b["id"]})
+    return lines
+
+
+def pulse_mark_greeted(batch_ids):
+    with _pulse_lock:
+        store = _pulse_load()
+        greeted = list(store.get("greetedBatches") or [])
+        for bid in (batch_ids or []):
+            if bid not in greeted:
+                greeted.append(bid)
+        store["greetedBatches"] = greeted[-PULSE_BATCHES_CAP:]
+        _pulse_save(store)
+
+
+def pulse_payload(cfg=None):
+    if cfg is None:
+        cfg = load_config()
+    store = _pulse_load()
+    networks = pulse_enabled_networks(cfg)
+    watches = []
+    for w in store["watches"]:
+        batches = [b for b in store["batches"] if b["watchId"] == w["id"]]
+        new_count = sum(b["count"] for b in batches)
+        watches.append({
+            "id": w["id"], "topic": w["topic"], "terms": w["terms"],
+            "state": w["state"], "case": w["case"],
+            "lastCheck": w["lastCheck"], "lastCheckIso": w["lastCheckIso"],
+            "coverage": w["coverage"],
+            "coverageNote": ("No enabled network coverage — enable the wire "
+                             "or add a network in the News tab."
+                             if w["coverage"] == "none" else ""),
+            "newCount": new_count,
+            "hits": list(reversed(w["hits"][-10:])),
+        })
+    cases = []
+    try:
+        for head in (cases_list_payload().get("cases") or []):
+            if isinstance(head, dict) and head.get("slug"):
+                cases.append({"slug": str(head["slug"]),
+                              "name": str(head.get("name") or head["slug"])})
+    except Exception:
+        cases = []
+    return {"ok": True, "watches": watches, "networks": networks,
+            "cases": cases, "lastRun": store.get("lastRun") or 0}
+
+
+def _notif_wanted_pulse(cfg):
+    # Producer (g): the pulse's batches — ONE record per watch
+    # per pulse, keyed by (watch, batch digest), so the same
+    # batch converging from another seat is the same record
+    # here and is never born twice. The record retires when
+    # its batch leaves the pulse store's queue.
+    store = _pulse_load()
+    items = []
+    for b in (store.get("batches") or []):
+        titles = b.get("titles") or []
+        body = (str(b["count"]) + " new on " + b["topic"] + "."
+                if not titles else
+                str(b["count"]) + " new on " + b["topic"] + ": "
+                + "; ".join(titles[:3])
+                + ("…" if len(titles) > 3 else ""))
+        items.append({
+            "id": b["id"],
+            "kind": "pulse",
+            "title": str(b["count"]) + " new on " + b["topic"],
+            "body": body[:600],
+            "target": {"view": "Wire", "tab": "pulses", "watch": b["watchId"]},
+            "count": b["count"],
+        })
+    return items
+
+
+_PULSE_CREATE_RE = re.compile(
+    r"^(?:please\s+)?(?:keep|start|set)\s+(?:a\s+)?pulse\s+on\s+(.+?)\s*$",
+    re.IGNORECASE)
+_PULSE_STATE_RES = (
+    ("paused", re.compile(r"^(?:please\s+)?pause\s+(?:the\s+)?pulse\s+on\s+(.+?)\s*$", re.IGNORECASE)),
+    ("active", re.compile(r"^(?:please\s+)?resume\s+(?:the\s+)?pulse\s+on\s+(.+?)\s*$", re.IGNORECASE)),
+    ("removed", re.compile(r"^(?:please\s+)?(?:remove|drop|stop)\s+(?:the\s+)?pulse\s+on\s+(.+?)\s*$", re.IGNORECASE)),
+)
+
+
+def _pulse_topic_ambiguity(topic):
+    # A topic that reads as several ("X and Y") is named and
+    # asked, not guessed (the brief's ambiguity discipline):
+    # the reply asks; nothing is created.
+    parts = [p.strip() for p in re.split(r"\s+and\s+", topic) if p.strip()]
+    if len(parts) >= 2 and all(len(p) >= 2 for p in parts):
+        return parts
+    return None
+
+
+def pulse_chat_reply(last, cfg=None):
+    # The conversational door (the intent doctrine): flag,
+    # pause, resume and remove, spoken. Deterministic, ahead
+    # of the model — the bridge receipts what it actually did.
+    text = str(last or "").strip()
+    if not text:
+        return None
+    m = _PULSE_CREATE_RE.match(text)
+    if m:
+        topic = m.group(1).strip().strip(" .")
+        if topic.lower().startswith("one watch "):
+            topic = topic[len("one watch "):].strip()
+            parts = None
+        else:
+            parts = _pulse_topic_ambiguity(topic)
+        if parts:
+            return ("That reads as more than one topic — "
+                    + " and ".join("\u201c" + p + "\u201d" for p in parts)
+                    + ". One watch for each, or a single watch on the whole "
+                      "phrase? Say \u201ckeep a pulse on " + topic
+                    + "\u201d again with \u201cone watch\u201d in front and "
+                      "I'll take it whole.")
+        with _pulse_lock:
+            watch, err = pulse_create(topic)
+        if err:
+            return err
+        networks = pulse_enabled_networks(cfg)
+        line = ("Watching \u201c" + watch["topic"] + "\u201d. I'll check "
+                "the enabled networks every few hours and flash you one "
+                "batched notice when something new lands; it also rides "
+                "my greeting.")
+        if not networks:
+            line += (" One honesty note: no news networks are enabled "
+                     "right now, so the watch has no coverage yet — "
+                     "enable the wire or add a network in the News tab "
+                     "and it starts reading.")
+        return line
+    for state, rx in _PULSE_STATE_RES:
+        m = rx.match(text)
+        if not m:
+            continue
+        topic = m.group(1).strip().strip(" .")
+        store = _pulse_load()
+        hit = None
+        for w in store["watches"]:
+            if w["topic"].lower() == topic.lower():
+                hit = w
+                break
+        if hit is None:
+            return ("No pulse stands on \u201c" + topic + "\u201d — the "
+                    "watches are: "
+                    + (", ".join("\u201c" + w["topic"] + "\u201d"
+                                 for w in store["watches"]) or "none yet")
+                    + ".")
+        if state == "removed":
+            pulse_remove(hit["id"])
+            return ("Pulse removed — \u201c" + hit["topic"]
+                    + "\u201d is off the list, its hits and notices with it.")
+        pulse_set_state(hit["id"], state)
+        return (("Pulse paused on \u201c" + hit["topic"] + "\u201d — it "
+                 "stays on the list and stays silent.")
+                if state == "paused" else
+                ("Pulse resumed on \u201c" + hit["topic"] + "\u201d — "
+                 "the next check reads it again."))
+    return None
+
+
+def pulse_start():
+    # The cadence loop, started in __main__ beside the wire's:
+    # a first check shortly after boot, then one every
+    # PULSE_INTERVAL_SECONDS. The greeting's fold-in covers the
+    # gaps; this loop is what flashes while nobody is looking.
+    def loop():
+        time.sleep(120)
+        while True:
+            try:
+                pulse_run(reason="cadence")
+            except Exception:
+                pass
+            time.sleep(PULSE_INTERVAL_SECONDS)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+# --- The living greeting (v0.5.13e, #288; the operator's format) -------
+#   Good <Part of day>, <Name>
+#   <Statement, quip, one liner, funny nod>
+#   <break>
+#   <Continues the brief.>
+# The name is the operator profile's — the seat state's name,
+# the one every seat converged on; change it and the greeting
+# follows. The band is seat-local with a REAL night band: the
+# operator's day starts at midnight, so 00:xx reads as night.
+# The quip is composed DETERMINISTICALLY from her actual
+# statuses — presence, Mesh, tray, watches, wire, the seat's
+# build — templates over facts, no model call: every factual
+# claim in the line traces to a status the bridge measured,
+# and the bench asserts that grounding. Rotation is a
+# persisted counter over the day's candidate set: consecutive
+# compositions advance, and a composition never repeats the
+# standing quip back-to-back.
+
+GREETING_STATE_PATH = os.path.join(ROOT, "config", "greeting-state.json")
+
+
+def greeting_band(now=None):
+    # (band, greeting word) for a seat-local hour.
+    if now is None:
+        now = time.time()
+    hour = time.localtime(now).tm_hour
+    if 5 <= hour < 12:
+        return "morning", "Good morning"
+    if 12 <= hour < 17:
+        return "afternoon", "Good afternoon"
+    if 17 <= hour < 22:
+        return "evening", "Good evening"
+    return "night", "Good night"
+
+
+def _greeting_state_load():
+    try:
+        with open(GREETING_STATE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {"lastQuip": str(data.get("lastQuip") or ""),
+                    "count": data.get("count") if isinstance(data.get("count"), int) else 0,
+                    "day": str(data.get("day") or "")}
+    except Exception:
+        pass
+    return {"lastQuip": "", "count": 0, "day": ""}
+
+
+def _greeting_state_save(state):
+    try:
+        os.makedirs(os.path.dirname(GREETING_STATE_PATH), exist_ok=True)
+        _atomic_write(GREETING_STATE_PATH, _json_bytes(state))
+    except Exception:
+        pass
+
+
+def greeting_facts(cfg=None):
+    # Her actual statuses, measured by the bridge — the only
+    # material the quip may speak from.
+    if cfg is None:
+        cfg = load_config()
+    facts = {"meshOn": False, "meshPeers": 0, "trayUnread": 0,
+             "wireNews": 0, "wireDead": 0, "pulseNew": {},
+             "presence": 0, "build": BRIDGE_BUILD, "version": SHIPPED_VERSION}
+    try:
+        ms = mesh_status_payload(cfg)
+    except Exception:
+        ms = None
+    if isinstance(ms, dict):
+        facts["meshOn"] = bool(ms.get("enabled"))
+        facts["meshPeers"] = len(ms.get("peers") or [])
+    try:
+        facts["trayUnread"] = int(notifications_payload(cfg).get("unread") or 0)
+    except Exception:
+        pass
+    try:
+        st = WIRE.state() or {}
+        items = st.get("items") or []
+        facts["wireNews"] = sum(1 for it in items if it.get("kind") == "news")
+        facts["wireDead"] = sum(1 for s in (st.get("sources") or []) if s.get("error"))
+    except Exception:
+        pass
+    try:
+        store = _pulse_load()
+        for b in (store.get("batches") or []):
+            facts["pulseNew"][b["topic"]] = facts["pulseNew"].get(b["topic"], 0) + b["count"]
+    except Exception:
+        pass
+    try:
+        facts["presence"] = len(presence_extra_lines(cfg) or [])
+    except Exception:
+        pass
+    return facts
+
+
+def _greeting_quip_candidates(facts, band):
+    # Templates over facts, most specific first. A candidate
+    # exists only when its facts stand — that is the grounding
+    # bar, and the bench leans on it.
+    cands = []
+    pulse_new = facts.get("pulseNew") or {}
+    for topic in sorted(pulse_new):
+        n = pulse_new[topic]
+        if n:
+            cands.append("Your pulse on " + topic + " turned up "
+                         + str(n) + " new " + ("item" if n == 1 else "items")
+                         + " — the tray has the batch.")
+    if facts.get("trayUnread"):
+        n = facts["trayUnread"]
+        cands.append(str(n) + (" notice is" if n == 1 else " notices are")
+                     + " waiting in the tray — I have opinions about at "
+                       "least one.")
+    if facts.get("meshOn") and facts.get("meshPeers"):
+        n = facts["meshPeers"]
+        cands.append("The Mesh is awake — " + str(n) + " other "
+                     + ("machine is" if n == 1 else "machines are")
+                     + " on the Row with us.")
+    if facts.get("wireDead"):
+        n = facts["wireDead"]
+        cands.append(str(n) + " of my feeds " + ("is" if n == 1 else "are")
+                     + " not answering — the News tab names "
+                     + ("it" if n == 1 else "them") + ".")
+    if facts.get("wireNews"):
+        cands.append("The wire holds " + str(facts["wireNews"])
+                     + " headlines and counting — a busy day out there.")
+    if not facts.get("meshOn"):
+        cands.append("Just you and me on this machine — the Mesh is dark "
+                     "and the coffee is hypothetical.")
+    cands.append("Build " + str(facts.get("build") or "") + ", all "
+                 "systems answering — where do we start?")
+    if band == "night":
+        cands.append("The night shift is ours — the Row is quiet and "
+                     "the wire never sleeps.")
+    return cands
+
+
+def greeting_compose(cfg=None, now=None, facts=None, name=None,
+                     advance=False, digest=None):
+    # The composition. advance=True is an explicit composition
+    # (the greeting endpoint): the rotation counter moves, so
+    # consecutive compositions differ. advance=False is a peek
+    # (status polls): the standing quip, unchanged.
+    if cfg is None:
+        cfg = load_config()
+    if now is None:
+        now = time.time()
+    band, word = greeting_band(now)
+    if name is None:
+        try:
+            name = str(_seat_state_load().get("operatorName") or "")
+        except Exception:
+            name = ""
+        if not name:
+            name = str(cfg.get("operator_name") or "")
+    name = name.strip() or "Operator"
+    if facts is None:
+        facts = greeting_facts(cfg)
+    state = _greeting_state_load()
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    if state.get("day") != day:
+        state = {"lastQuip": state.get("lastQuip") or "", "count": 0, "day": day}
+    cands = _greeting_quip_candidates(facts, band)
+    count = state.get("count") or 0
+    if advance:
+        count += 1
+    idx = (time.localtime(now).tm_yday + count) % len(cands)
+    quip = cands[idx]
+    if quip == state.get("lastQuip") and len(cands) > 1:
+        quip = cands[(idx + 1) % len(cands)]
+    if advance:
+        state["count"] = count
+        state["lastQuip"] = quip
+        state["day"] = day
+        _greeting_state_save(state)
+    if digest is None:
+        digest = _pulse_digest_lines()
+    brief = []
+    if facts.get("wireNews") or facts.get("wireDead"):
+        brief.append("The wire holds " + str(facts.get("wireNews") or 0)
+                     + " headlines"
+                     + ((", and " + str(facts["wireDead"]) + " of my feeds "
+                         "are not answering — the News tab names them.")
+                        if facts.get("wireDead") else
+                        " — every feed answering."))
+    if facts.get("meshOn"):
+        brief.append("The Mesh is on — " + str(facts.get("meshPeers") or 0)
+                     + " machine" + ("s" if facts.get("meshPeers") != 1 else "")
+                     + " paired with this one.")
+    for d in digest:
+        brief.append("Pulse — " + d["line"] + ".")
+    return {"line": word + ", " + name, "band": band, "name": name,
+            "quip": quip, "brief": brief,
+            "digest": [{"topic": d["topic"], "count": d["count"],
+                        "line": d["line"]} for d in digest],
+            "text": word + ", " + name + "\n" + quip + "\n\n"
+                    + "\n".join(brief)}
+
+
+def greeting_payload(cfg=None):
+    # The greeting endpoint's answer: a fresh pulse check is
+    # folded in first (its freshness window keeps this cheap),
+    # then an advancing composition — and the digest it spoke
+    # is marked greeted, so the next greeting's brief names
+    # only what is newer still.
+    if cfg is None:
+        cfg = load_config()
+    try:
+        pulse_maybe_run(cfg=cfg, reason="greeting")
+    except Exception:
+        pass
+    digest = _pulse_digest_lines()
+    out = greeting_compose(cfg=cfg, advance=True, digest=digest)
+    if digest:
+        pulse_mark_greeted([d["batch"] for d in digest])
+    return out
+
+
 # --- Notifications (v0.4.7e, #242; ruling Alex 2026-11-16) -----------
 # Navi announces notifications in chat herself — the bell/panel is
 # the persistent record, her word is the tap on the shoulder, and
@@ -30459,6 +31516,7 @@ def _notif_announce_line(rec):
         "update": "Good news — ",
         "sync": "Sync — ",
         "fedichat": "FediChat — ",
+        "pulse": "Pulse — ",
     }.get(rec.get("kind"), "A word — ")
     line = framing + str(rec.get("title") or "") + ": " + str(rec.get("body") or "")
     if rec.get("kind") == "fed-knock":
@@ -30493,6 +31551,20 @@ def _notif_announce(rec):
         msgs = chat.get("messages")
         if not isinstance(msgs, list):
             msgs = []
+        # Cross-seat convergence (v0.5.13e, #287): a pulse
+        # record's id is a fact of the batch itself, and chat
+        # rides Sync — the same batch may already stand
+        # announced in this room under the other seat's
+        # store-local record id. Never announce one batch
+        # twice: the batch digest is the identity.
+        if rec.get("kind") == "pulse":
+            _bd = str(rec.get("id") or "").rsplit(":", 1)[-1]
+            if _bd and any(
+                    isinstance(x, dict)
+                    and str(x.get("notice") or "").startswith("pulse:")
+                    and str(x.get("notice") or "").rsplit(":", 1)[-1] == _bd
+                    for x in msgs):
+                return True
         msgs.append({"who": "NAVI", "text": line, "exec": None,
                      "notice": rec["id"], "ts": now_ms})
         chat["messages"] = msgs
@@ -30533,6 +31605,7 @@ def notifications_reconcile(cfg=None):
             ("update", lambda: _notif_wanted_update()),
             ("sync", lambda: _notif_wanted_sync()),
             ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
+            ("pulse", lambda: _notif_wanted_pulse(cfg)),
         )
         for kind, produce in producers:
             try:
@@ -31559,6 +32632,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "item": _item})
         elif self.path == "/api/wire":
             self._send(200, WIRE.state())
+        elif self.path == "/api/pulse":
+            # v0.5.13e (#287): the Pulses tab's read — watches
+            # with their coverage, the enabled networks as they
+            # stand, and the cases a watch can feed.
+            self._send(200, pulse_payload(load_config()))
+        elif self.path == "/api/greeting":
+            # v0.5.13e (#288): an explicit composition — the
+            # rotation advances, a fresh pulse check folds in,
+            # and the digest it speaks is marked greeted.
+            self._send(200, greeting_payload(load_config()))
         elif self.path.split("?")[0] == "/api/shell/session/state":
             # CLI Mode (Build 3): the session's events since the
             # page's last sequence number, plus the full-screen
@@ -33140,6 +34223,26 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_dzreply, cfg)
+                self._send(200, payload)
+                return
+            # Pulse, spoken (v0.5.13e, #287): "keep a pulse on
+            # X" and its pause/resume/remove kin route
+            # deterministically — the watch is bridge state, so
+            # the bridge answers from what it actually did.
+            _preply = None
+            try:
+                _preply = pulse_chat_reply(last or "", cfg)
+            except Exception:
+                _preply = None
+            if _preply:
+                payload = {
+                    "reply": _preply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_preply, cfg)
                 self._send(200, payload)
                 return
             # Deep search + the conversational pull (v0.5.10e,
@@ -34869,6 +35972,49 @@ class Handler(BaseHTTPRequestHandler):
             cfg2["wire"] = block
             save_config(cfg2)
             self._send(200, {"ok": True, "wire": wire_settings(cfg2)})
+        elif self.path == "/api/pulse/create":
+            # v0.5.13e (#287): the tab's deterministic door —
+            # the same pulse_create the chat route receipts.
+            data = self._body()
+            with _pulse_lock:
+                _watch, _err = pulse_create(
+                    str(data.get("topic") or ""),
+                    data.get("terms") if isinstance(data.get("terms"), list) else None,
+                    str(data.get("case") or ""))
+            if _err:
+                self._send(200, {"ok": False, "error": _err})
+            else:
+                self._send(200, {"ok": True, "watch": _watch,
+                                 "pulse": pulse_payload(load_config())})
+        elif self.path == "/api/pulse/state":
+            data = self._body()
+            _watch, _err = pulse_set_state(str(data.get("id") or ""),
+                                           str(data.get("state") or ""))
+            if _err:
+                self._send(200, {"ok": False, "error": _err})
+            else:
+                self._send(200, {"ok": True, "pulse": pulse_payload(load_config())})
+        elif self.path == "/api/pulse/remove":
+            data = self._body()
+            _watch, _err = pulse_remove(str(data.get("id") or ""))
+            if _err:
+                self._send(200, {"ok": False, "error": _err})
+            else:
+                self._send(200, {"ok": True, "pulse": pulse_payload(load_config())})
+        elif self.path == "/api/pulse/attach":
+            data = self._body()
+            _watch, _err = pulse_attach(str(data.get("id") or ""),
+                                        str(data.get("case") or ""))
+            if _err:
+                self._send(200, {"ok": False, "error": _err})
+            else:
+                self._send(200, {"ok": True, "pulse": pulse_payload(load_config())})
+        elif self.path == "/api/pulse/run":
+            # A check on demand — the same pulse_run the
+            # cadence loop and the greeting fold-in call.
+            self._send(200, {"ok": True,
+                             "summary": pulse_run(load_config(), reason="manual"),
+                             "pulse": pulse_payload(load_config())})
         elif self.path == "/api/ctf/refresh":
             self._send(200, CTF.refresh_now())
         elif self.path == "/api/ctf/settings":
@@ -35601,6 +36747,7 @@ if __name__ == "__main__":
         WIRE.start()
         CTF.start()
         BOUNTIES.start()
+        pulse_start()
     except Exception:
         pass
     try:
