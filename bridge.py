@@ -341,6 +341,7 @@ import binascii
 import datetime
 import gzip
 import hashlib
+import hmac
 import http.client
 import importlib.util
 import io
@@ -403,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.13"
+SHIPPED_VERSION = "0.5.14"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-17.29"
+BRIDGE_BUILD = "2026-11-17.30"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 29
+SHIPPED_BUILD_SEQ = 30
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -12999,57 +13000,41 @@ SHELL_TEACHING = (
     "session; they run as they always have. Elevation never "
     "rides the session: sudo inside it prompts in-terminal.")
 
-# v0.4.5e (#241): starting a case from chat — Route A. The
-# operator's intent, expressed in conversation, is the trigger:
-# she acts in the same reply, by closing it with the intake
-# block below. The bridge does the creating and the filing;
-# her prose never does. extract_case_intake (in the case
-# section) is the acting half.
+# v0.4.5e (#241) built Route A here: her [[case-intake]] block
+# was the trigger and the bridge the acting half. v0.5.14e
+# (#289) retired that shape in the field's own words — a plain
+# question in the main chat ("What is going on with Apple?")
+# was eaten by the intake and answered with a "Case not
+# started" refusal, twice. The teaching below is the new law,
+# the mirror of the case room's [Working this case] (#286):
+# she prints the answer, then offers. Starting is the
+# operator's act on the reply's own button; the bridge does
+# the creating and the filing; her prose never does.
 CASE_TEACHING = (
-    "Starting a case: you can start a NEW case yourself, in "
-    "the conversation where the work surfaces. When the "
-    "operator's intent is to start one — he says so in his own "
-    "words, in whatever phrasing ('add this into a new research "
-    "case', 'this needs a case', 'start a case on X') — act on "
-    "it in the SAME reply: put the intake block FIRST, before "
-    "your words, never after them — a long answer can be cut "
-    "off mid-reply, and a block that never closes files "
-    "nothing (the bridge refuses it by name and no case "
-    "exists). Open with the block, exactly this form, then "
-    "answer him in words, in your own voice:\n"
-    "[[case-intake]]\n"
-    "name: <the case's name>\n"
-    "type: <incident|investigation|research|hunt|locate>\n"
-    "client: <the client, when the conversation names one>\n"
-    "scope: <a one-line scope>\n"
-    "summary: <one or two lines — what this case is>\n"
-    "priority: <low|normal|high|critical>\n"
-    "tags: <comma-separated tags>\n"
-    "finding: <a conclusion's title> | <the finding, stated plainly>\n"
-    "entity: <name> | <person|org|account|system|place|other> | <their role in the case>\n"
-    "observable: <value> | <ip|domain|url|hash|file|wallet|other> | <a one-line context>\n"
-    "event: <what happened> | <the detail>\n"
-    "task: <a concrete next step>\n"
-    "[[/case-intake]]\n"
-    "Use only the lines the conversation supports, and swipe "
-    "as much REAL detail from it as it holds — the findings the "
-    "thread backs, the entities and observables actually named, "
-    "the beats of what happened. Never invent a detail to fill "
-    "a line, and leave a field out rather than guess it; the "
-    "name is the one line a case cannot be born without. One "
-    "intake per reply. A case exists only when the bridge "
-    "receipts it: the bridge creates the case, files your "
-    "swiped substance as UNVERIFIED leads, sets the case open, "
-    "and appends its own receipt to your reply — so never "
-    "present a case file as chat text, never say a case was "
-    "opened or anything was filed unless that receipt says so, "
-    "and never mention the block itself. Adding to an EXISTING "
-    "case is not an intake — that is the open case's filing and "
-    "logging, which ride their own markers. Facts drawn from a "
-    "Wire record keep the record's values — its CVE id, CVSS, "
-    "EPSS and dates; a filing that contradicts its cited record "
-    "is flagged on its face by the bridge before it lands.")
-
+    "[Starting a case — she prints, then offers (v0.5.14e, #289)] "
+    "When a conversation turns up something case-worthy — a threat, "
+    "an incident, a thread worth tracking — ANSWER FIRST, in full, "
+    "exactly as you would any other question. Nothing about a reply "
+    "of yours is parsed for case machinery, and no reply starts a "
+    "case, whatever shape it takes. Under every reply you give in a "
+    "chat that is not already a case room stands a \"Start a case "
+    "from this\" button; pressing it is the operator's act, and it "
+    "is the only way a case starts from chat: the bridge composes "
+    "the case from that reply exactly as printed — the reply filed "
+    "whole as a finding in your name — receipts it, ensures the "
+    "case's own chat, and sets the case open. You may suggest "
+    "starting a case when the material earns one, and let the "
+    "suggestion stand: never wait on the press, never let an "
+    "unpressed suggestion hang over the next answer, and never "
+    "narrate a case as started that the bridge has not receipted. "
+    "The New case button beside the composer is the deterministic "
+    "door — it opens a form pre-filled from the conversation for "
+    "the operator to confirm or correct before anything exists. "
+    "Adding to an EXISTING case is not a start — that is the open "
+    "case's own filing, which rides its own door. Facts drawn from "
+    "a Wire record keep the record's values — its CVE id, CVSS, "
+    "EPSS and dates; a filing that contradicts its cited record is "
+    "flagged on its face by the bridge before it lands.")
 
 # ---------------- #240: the intent gate + executor hygiene ----------
 # v0.4.6e (#240): the #232 shape recurred in the field on
@@ -29776,35 +29761,27 @@ def case_file_reply(chat_id, text):
 
 
 # --- Starting a case from chat (v0.4.5e, #241) -------------------
-# Route A: the conversational intake. When the operator's intent
-# is to start a new case, Navi acts in the same reply by closing
-# it with an intake block (CASE_TEACHING rides the prompt):
-#
-#   [[case-intake]]
-#   name: <the case's name>
-#   type: <incident|investigation|research|hunt|locate>
-#   client: ... / scope: ... / summary: ... / priority: ...
-#   tags: ... / sensitive: yes|no / owner: ...
-#   finding: <title> | <the finding, stated plainly>
-#   entity: <name> | <type> | <role in the case>
-#   observable: <value> | <kind> | <context line>
-#   event: <title> | <what happened>
-#   task: <a next step>
-#   [[/case-intake]]
-#
-# The bridge parses defensively, creates the case through the
-# ordinary machinery, files the swiped substance — findings in
-# her name, entities/observables/tasks as UNVERIFIED leads (the
-# #199 doctrine) — ensures the case's chat, sets the case OPEN,
-# and appends its OWN receipt to the reply: a case exists only
-# when the bridge receipts it. Every failure shape is named in
-# the reply and creates NOTHING. No block, no action: a model
-# miss is a field matter, not a bridge defect.
-CASEINTAKE_RE = re.compile(r"\[\[case-intake\]\](.*?)\[\[/case-intake\]\]", re.I | re.S)
-CASEINTAKE_OPEN_RE = re.compile(r"\[\[case-intake\]\]", re.I)
-CASEINTAKE_CAPS = {"finding": 6, "entity": 8, "observable": 8, "event": 6, "task": 6}
-CASEINTAKE_FIELD_KEYS = ("name", "client", "scope", "summary", "type",
-                         "priority", "tags", "sensitive", "owner")
+# Starting a case from a reply — the tap door (v0.5.14e,
+# #289). Route A, the v0.4.5e conversational intake, stood
+# here until this build: a parser (extract_case_intake) read
+# [[case-intake]] blocks out of her replies and acted on them.
+# It retired the way the case-log grammar retired in v0.5.12e
+# (#286) — in the field it ate a plain question whole and
+# answered with a refusal, twice, and no answer. The parser,
+# its caps and its field keys are DELETED, not bypassed: no
+# code path reads case machinery out of a conversational
+# reply anymore. What stands here now is the door the ruling
+# put in its place — case_start_from_reply, the mirror of the
+# case room's tap (case_file_reply): the operator presses
+# "Start a case from this" under a reply in a chat that is
+# not a case room, and the bridge composes the case from that
+# reply exactly as printed, through the same composition the
+# intake used (case_create, the reply filed whole as a
+# finding in her name, the case's chat ensured, the case set
+# open), and receipts it into the chat the reply lives in.
+# The deterministic doors keep their own discipline: the New
+# case form (Route B, below) and /api/cases/create validate
+# and refuse by name, untouched.
 
 
 def _case_set_open(slug):
@@ -29818,232 +29795,110 @@ def _case_set_open(slug):
     save_config(cfg2)
 
 
-def extract_case_intake(reply, cfg, source_text=""):
-    # Returns (reply, intake): intake is None when the reply
-    # holds no intake block at all. Otherwise the block is
-    # stripped from the reply and the intake dict rides the
-    # payload back — {ok: True, slug, name, type, chatId,
-    # findings, entities, observables, events, tasks, dropped}
-    # on a birth, {ok: False, error} on a refusal — with the
-    # bridge's receipt (or the named refusal) appended to the
-    # reply text itself.
-    text = reply or ""
-    blocks = CASEINTAKE_RE.findall(text)
-    clean = CASEINTAKE_RE.sub("", text)
-    tail_lines = 0
-    m_open = CASEINTAKE_OPEN_RE.search(clean)
-    if m_open:
-        # An opening token with no close (the extract_shell_block
-        # discipline: a truncated block is half an intake, and
-        # half an intake is never acted on). The tail is cut; a
-        # complete block ahead of it still stands on its own.
-        tail_lines = len([ln for ln in clean[m_open.start():].split("\n")[1:]
-                          if ln.strip()])
-        clean = clean[:m_open.start()]
-    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-    if not blocks:
-        if m_open:
-            reason = ("the intake block was cut off before it closed, "
-                      "so it could not be read whole.")
-            line = ("— **Case not started:** " + reason + " Nothing was "
-                    "created. The **New case** button beside the composer "
-                    "will pre-fill a form from this conversation instead.")
-            return ((clean + "\n\n" + line) if clean else line), {"ok": False, "error": reason}
-        return text, None
-
-    def _refuse(reason):
-        line = ("— **Case not started:** " + reason + " Nothing was "
-                "created. The **New case** button beside the composer "
-                "will pre-fill a form from this conversation instead.")
-        return ((clean + "\n\n" + line) if clean else line), {"ok": False, "error": reason}
-
-    fields = {}
-    items = {"finding": [], "entity": [], "observable": [], "event": [], "task": []}
-    for block in blocks:
-        for raw_line in block.split("\n"):
-            line = raw_line.strip().lstrip("-").strip()
-            if not line:
-                continue
-            mf = re.match(r"^([a-z]+)\s*:\s*(.*)$", line, re.I)
-            if not mf:
-                continue
-            key, val = mf.group(1).lower(), mf.group(2).strip()
-            if key in CASEINTAKE_FIELD_KEYS:
-                if key not in fields:
-                    fields[key] = val
-            elif key in items:
-                items[key].append(val)
-    name = str(fields.get("name") or "").strip()
-    if not name and not any(items[k] for k in items) and not fields:
-        return _refuse("the intake block could not be read — it held no "
-                       "case fields and no material to file.")
-    if not name:
-        return _refuse("the intake named no case — a case cannot be "
-                       "born without a name.")
-    cfields = {
-        "summary": fields.get("summary") or "",
-        "type": str(fields.get("type") or "").lower(),
-        "priority": str(fields.get("priority") or "").lower(),
-        "tags": fields.get("tags") or "",
-        "sensitive": str(fields.get("sensitive") or "").lower() in ("yes", "true", "1"),
-        "owner": fields.get("owner") or "",
-    }
-    detail, err = case_create(name, fields.get("client") or "",
-                              fields.get("scope") or "", cfields)
-    if err or detail is None:
-        return _refuse(err or "the case could not be created.")
+def case_start_from_reply(chat_id, text):
+    # The "Start a case from this" door (v0.5.14e, #289): the
+    # operator's press on one of Navi's replies in a chat that
+    # is NOT a case room. The case is composed from the reply
+    # exactly as printed — machinery stripped (#266), the reply
+    # filed whole as a finding in her name (state: lead, like
+    # every filing of hers), a timeline beat naming the act,
+    # the case's own chat ensured, the case set OPEN — and the
+    # bridge's receipt is appended INTO the source chat as her
+    # message, carrying the started dict the dashboard's card
+    # renders. Refusals are named and create nothing: no such
+    # chat, a chat that is already a case room (its replies
+    # file instead), an empty reply. Returns (started, error).
+    chat = None
+    for c in chats_all():
+        if str(c.get("id")) == str(chat_id):
+            chat = c
+            break
+    if chat is None:
+        return None, "No such chat."
+    if chat.get("case"):
+        return None, ("This chat is a case room already — its replies "
+                      "file into that case instead.")
+    body = case_strip_machinery(str(text or "")).strip()
+    if not body:
+        return None, ("That reply is empty — there is nothing to "
+                      "start a case from.")
+    # The case's name comes from the reply's first meaningful
+    # line, the tap door's own derivation (case_file_reply).
+    title = ""
+    for ln in body.split("\n"):
+        cand = " ".join(ln.replace("#", " ").replace("*", " ").replace("`", " ").split()).strip(" .:—-")
+        if cand:
+            title = cand[:90]
+            break
+    name = title or "Untitled case"
+    detail, err = case_create(name, "", "", {
+        "summary": body[:600], "type": "investigation", "priority": "",
+        "tags": "", "sensitive": False, "owner": ""})
+    if err:
+        return None, err
     slug = detail["slug"]
-    chat = case_chat_ensure(slug)
-    chat_id = chat["id"] if chat else None
+    gflags = filing_grounding_flags(title, body)
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
-    excerpt = " ".join(str(source_text or "").split())[:90]
-    source = "case intake from chat" + ((" — reply to: “" + excerpt + "”") if excerpt else "")
-    counts = {"finding": 0, "entity": 0, "observable": 0, "event": 0, "task": 0}
-    dropped = tail_lines
-    grounding = []
-    seen = {"entity": set(), "observable": set(), "task": set()}
-    for raw in items["finding"]:
-        if counts["finding"] >= CASEINTAKE_CAPS["finding"]:
-            dropped += 1
-            continue
-        title, sep, body = raw.partition("|")
-        title = " ".join(title.split()).strip()
-        body = body.strip() if sep else ""
-        if not title:
-            dropped += 1
-            continue
-        gflags = filing_grounding_flags(title, body)
-        if gflags:
-            # v0.5.3e (#266): the flag rides the intake payload
-            # to the thread's receipt — never the filed note.
-            grounding.extend(gflags)
-        filed, ferr = case_file_entry(
-            slug, "finding", title,
-            (body + "\n\n" if body else "")
-            + "Swiped by Navi at case intake from the conversation — unverified.",
-            "info", False, author="navi")
-        if ferr:
-            dropped += 1
-        else:
-            counts["finding"] += 1
-    for raw in items["entity"]:
-        if counts["entity"] >= CASEINTAKE_CAPS["entity"]:
-            dropped += 1
-            continue
-        parts = [p.strip() for p in raw.split("|")]
-        ename = parts[0] if parts else ""
-        if not ename or _register_key(ename) in seen["entity"]:
-            dropped += 1
-            continue
-        etype = (parts[1].lower() if len(parts) > 1 else "") or "other"
-        if etype not in CASELOG_ENTITY_TYPES:
-            etype = "other"
-        role = parts[2] if len(parts) > 2 else ""
-        if _register_append(slug, "entities", ename, {
-                "type": etype, "role": role, "aliases": "", "identifiers": "",
-                "state": "lead", "author": "navi", "filed": now,
-                "source": source}, ""):
-            seen["entity"].add(_register_key(ename))
-            counts["entity"] += 1
-        else:
-            dropped += 1
-    for raw in items["observable"]:
-        if counts["observable"] >= CASEINTAKE_CAPS["observable"]:
-            dropped += 1
-            continue
-        parts = [p.strip() for p in raw.split("|")]
-        value = parts[0] if parts else ""
-        if not value or _register_key(value) in seen["observable"]:
-            dropped += 1
-            continue
-        okind = (parts[1].lower() if len(parts) > 1 else "") or "other"
-        if okind not in CASELOG_OBS_KINDS:
-            okind = "other"
-        ctx = parts[2] if len(parts) > 2 else ""
-        if _register_append(slug, "observables", value, {
-                "kind": okind, "state": "lead", "author": "navi",
-                "filed": now, "source": source}, ctx):
-            seen["observable"].add(_register_key(value))
-            counts["observable"] += 1
-        else:
-            dropped += 1
-    for raw in items["event"]:
-        if counts["event"] >= CASEINTAKE_CAPS["event"]:
-            dropped += 1
-            continue
-        title, sep, body = raw.partition("|")
-        title = " ".join(title.split()).strip()
-        body = body.strip() if sep else ""
-        if not title:
-            dropped += 1
-            continue
-        case_file_entry(slug, "timeline", title,
-                        (body + "\n\n" if body else "")
-                        + "Logged by Navi at case intake — unverified.")
-        counts["event"] += 1
-    for raw in items["task"]:
-        if counts["task"] >= CASEINTAKE_CAPS["task"]:
-            dropped += 1
-            continue
-        task_text = " ".join(raw.split()).strip()
-        if not task_text or _register_key(task_text) in seen["task"]:
-            dropped += 1
-            continue
-        if _register_append(slug, "tasks", task_text, {
-                "done": "no", "author": "navi", "filed": now,
-                "source": source}, ""):
-            seen["task"].add(_register_key(task_text))
-            counts["task"] += 1
-        else:
-            dropped += 1
-    bits = []
-    if counts["finding"]:
-        bits.append(str(counts["finding"]) + " finding" + ("s" if counts["finding"] != 1 else ""))
-    if counts["entity"]:
-        bits.append(str(counts["entity"]) + " entit" + ("ies" if counts["entity"] != 1 else "y"))
-    if counts["observable"]:
-        bits.append(str(counts["observable"]) + " observable" + ("s" if counts["observable"] != 1 else ""))
-    if counts["event"]:
-        bits.append(str(counts["event"]) + " timeline beat" + ("s" if counts["event"] != 1 else ""))
-    if counts["task"]:
-        bits.append(str(counts["task"]) + " task" + ("s" if counts["task"] != 1 else ""))
+    fbody = body
+    fbody += ("\n\n— Started from chat by the operator's “Start a case from this” action at " + now + ": the reply above "
+              "stands as written, in Navi's name, sourced from chat " +
+              str(chat.get("id")) + ".")
+    # Severity follows the cited record, as the tap door has
+    # it: one cited CVE with a score lends its band.
+    sev = "info"
+    try:
+        _ids = list(dict.fromkeys(
+            m.upper() for m in intel_mod.CVE_ID_RE.findall(body)))
+        if len(_ids) == 1:
+            _item = INTEL.item(_ids[0])
+            _cvss = (_item or {}).get("cvss")
+            if isinstance(_cvss, (int, float)):
+                sev = ("critical" if _cvss >= 9 else "high" if _cvss >= 7
+                       else "medium" if _cvss >= 4 else "low")
+    except Exception:
+        sev = "info"
+    filed, err = case_file_entry(slug, "finding",
+                                 title or "The reply that started the case",
+                                 fbody, sev, False, author="navi")
+    if err:
+        # The filing failed after the case was born: roll the
+        # birth back rather than leave an unreceipted case
+        # standing on the desk.
+        try:
+            case_delete(slug)
+        except Exception:
+            pass
+        return None, err
     case_file_entry(slug, "timeline", "Case started from chat",
-                    "Navi started this case from the conversation at " + now
-                    + ((" and swiped in: " + ", ".join(bits) + ".") if bits else ".")
-                    + " Everything she swiped in lands unverified (state: lead) "
-                      "until the operator promotes or strikes it on review.")
+                    "Navi's reply in chat " + str(chat.get("id")) + " was "
+                    "made a case by the operator's “Start a case from "
+                    "this” action at " + now + ". The reply stands in "
+                    "the findings whole, in her name, UNVERIFIED (state: "
+                    "lead) until reviewed.")
+    case_chat = case_chat_ensure(slug)
     _case_set_open(slug)
-    ctype = str(detail.get("type") or cfields["type"] or "investigation")
-    cname = str(detail.get("name") or name)
-    rbits = []
-    if counts["finding"]:
-        rbits.append(str(counts["finding"]) + " finding" + ("s" if counts["finding"] != 1 else "") + " filed")
-    if counts["entity"] or counts["observable"]:
-        lead_bits = []
-        if counts["entity"]:
-            lead_bits.append(str(counts["entity"]) + " entit" + ("ies" if counts["entity"] != 1 else "y"))
-        if counts["observable"]:
-            lead_bits.append(str(counts["observable"]) + " observable" + ("s" if counts["observable"] != 1 else ""))
-        rbits.append(" and ".join(lead_bits) + " logged as unverified leads")
-    if counts["event"]:
-        rbits.append(str(counts["event"]) + " timeline beat" + ("s" if counts["event"] != 1 else ""))
-    if counts["task"]:
-        rbits.append(str(counts["task"]) + " task" + ("s" if counts["task"] != 1 else "") + " proposed")
-    line = ("— **Case opened: " + cname + "** (" + ctype + ")"
-            + ((" — " + "; ".join(rbits)) if rbits else "")
-            + ". It is the open case now"
-            + (", and its own chat is ready on the card below." if chat_id else "."))
-    if dropped:
-        line += (" " + str(dropped) + " further item" + ("s" if dropped != 1 else "")
-                 + " did not fit the intake caps or repeated "
-                 + ("themselves" if dropped != 1 else "itself")
-                 + " and were dropped — named here, not silently.")
-    intake = {"ok": True, "slug": slug, "name": cname, "type": ctype,
-              "chatId": chat_id, "findings": counts["finding"],
-              "entities": counts["entity"], "observables": counts["observable"],
-              "events": counts["event"], "tasks": counts["task"],
-              "dropped": dropped, "grounding": grounding}
-    return ((clean + "\n\n" + line) if clean else line), intake
+    started = {"slug": slug, "name": detail.get("name") or name,
+               "type": detail.get("type") or "investigation",
+               "chatId": case_chat["id"] if case_chat else None,
+               "path": filed["path"], "grounding": gflags}
+    now_ms = int(time.time() * 1000)
+    rtext = ("— **Case started: " + started["name"] + "** (" +
+             started["type"] + "). The reply stands in its findings "
+             "whole, in my name, exactly as written (`" + filed["path"] +
+             "`); the case is the open case now, and its own chat is "
+             "ready.")
+    if gflags:
+        rtext += (" One flag rides it: " + "; ".join(
+            "it states " + f["field"] + " " + f["claimed"] + " for " +
+            f["cve"] + ", the Wire record says " + f["record"]
+            for f in gflags) + " — the record's values govern.")
+    msgs = list(chat.get("messages") or [])
+    msgs.append({"who": "NAVI", "text": rtext, "exec": None, "ts": now_ms,
+                 "caseStarted": started})
+    chat["messages"] = msgs
+    chat["updatedAt"] = now_ms
+    chat_write(chat)
+    return started, None
 
 
 def case_register_add_lead(slug, register, heading, fields, body):
@@ -31182,6 +31037,752 @@ def greeting_payload(cfg=None):
     return out
 
 
+
+# --- Web Push: the tray's phone door (v0.5.14e, #272) ----------------
+# The #242 tray rings the operator's phone. Everything here
+# is the node's own work: the VAPID keypair is minted once by
+# this bridge and held in config/push.json (per-node, never
+# synced); payloads are encrypted end-to-end for the
+# subscription (RFC 8291) and signed (RFC 8292) with in-tree
+# cryptography — P-256, ECDSA, ECDH, HKDF, AES-128-GCM,
+# implemented below on the standard library alone and proved
+# against the RFCs' published test vectors in the build's
+# push1 bench (the RFC 8291 section 5 worked example
+# reproduces byte for byte). The only parties a delivery ever
+# touches are the push services the platform itself runs —
+# the transport the Web Push standard is built on; there is
+# no relay, no account, and no third-party service of ours.
+# Parity is the law (Alex, 2026-11-17): whatever earns a
+# tray record earns the phone copy, the payload is the tray
+# record's own summary, the notification's tag is the tray
+# record's id, an ack on any seat clears the phone copy, and
+# the TTL is four hours. Delivery fires only from the seat
+# that created the record; the outcome lands on the record's
+# own push line in the tray, named, never silent.
+
+def _b64u_dec(text):
+    if isinstance(text, str):
+        text = text.encode("ascii")
+    return base64.urlsafe_b64decode(text + b"=" * (-len(text) % 4))
+
+
+# --- P-256 (secp256r1) -------------------------------------------------
+_P256_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+_P256_B = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+_P256_G = (0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296,
+           0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5)
+_P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
+def _ec_on_curve(pt):
+    if pt is None:
+        return False
+    x, y = pt
+    if not (0 <= x < _P256_P and 0 <= y < _P256_P):
+        return False
+    return (y * y - (x * x * x - 3 * x + _P256_B)) % _P256_P == 0
+
+
+def _ec_add(p1, p2):
+    if p1 is None:
+        return p2
+    if p2 is None:
+        return p1
+    x1, y1 = p1
+    x2, y2 = p2
+    if x1 == x2 and (y1 + y2) % _P256_P == 0:
+        return None
+    if p1 == p2:
+        m = (3 * x1 * x1 - 3) * pow(2 * y1, -1, _P256_P) % _P256_P
+    else:
+        m = (y2 - y1) * pow(x2 - x1, -1, _P256_P) % _P256_P
+    x3 = (m * m - x1 - x2) % _P256_P
+    y3 = (m * (x1 - x3) - y1) % _P256_P
+    return (x3, y3)
+
+
+def _ec_mul(k, pt):
+    # Scalar multiplication, double-and-add. k is reduced mod n;
+    # the point at infinity is None.
+    if pt is None or k % _P256_N == 0:
+        return None
+    k %= _P256_N
+    out = None
+    add = pt
+    while k:
+        if k & 1:
+            out = _ec_add(out, add)
+        add = _ec_add(add, add)
+        k >>= 1
+    return out
+
+
+def _ec_pub_bytes(pt):
+    return b"\x04" + pt[0].to_bytes(32, "big") + pt[1].to_bytes(32, "big")
+
+
+def _ec_pub_parse(raw):
+    # RFC 8291 section 7's receiving-end checks: the point must
+    # be a well-formed uncompressed point ON the curve.
+    if len(raw) != 65 or raw[0] != 0x04:
+        return None
+    pt = (int.from_bytes(raw[1:33], "big"), int.from_bytes(raw[33:65], "big"))
+    return pt if _ec_on_curve(pt) else None
+
+
+def _ec_keypair():
+    priv = secrets.randbelow(_P256_N - 1) + 1
+    return priv, _ec_mul(priv, _P256_G)
+
+
+def _ecdsa_sign(priv, digest, k=None):
+    # ES256 over a pre-computed SHA-256 digest; returns r||s.
+    # The k parameter exists ONLY as a bench hook (RFC 6979
+    # vectors name their k); production callers pass nothing.
+    z = int.from_bytes(digest, "big")
+    if k is None:
+        k = secrets.randbelow(_P256_N - 1) + 1
+    r = _ec_mul(k, _P256_G)[0] % _P256_N
+    s = (pow(k, -1, _P256_N) * (z + r * priv)) % _P256_N
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def _ecdsa_verify(pub_pt, digest, sig):
+    if pub_pt is None or len(sig) != 64:
+        return False
+    r = int.from_bytes(sig[:32], "big")
+    s = int.from_bytes(sig[32:], "big")
+    if not (1 <= r < _P256_N and 1 <= s < _P256_N):
+        return False
+    z = int.from_bytes(digest, "big")
+    w = pow(s, -1, _P256_N)
+    pt = _ec_add(_ec_mul((z * w) % _P256_N, _P256_G),
+                 _ec_mul((r * w) % _P256_N, pub_pt))
+    return pt is not None and pt[0] % _P256_N == r
+
+
+def _ecdh(priv, pub_pt):
+    shared = _ec_mul(priv, pub_pt)
+    if shared is None:
+        return None
+    return shared[0].to_bytes(32, "big")
+
+
+# --- HKDF-SHA256 (RFC 5869, over hmac/hashlib) --------------------------
+def _hkdf_extract(salt, ikm):
+    return hmac.new(salt, ikm, hashlib.sha256).digest()
+
+
+def _hkdf_expand(prk, info, length):
+    out = b""
+    t = b""
+    i = 1
+    while len(out) < length:
+        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
+        out += t
+        i += 1
+    return out[:length]
+
+
+# --- AES-128 (FIPS-197), encrypt direction only --------------------------
+_AES_SBOX = bytes([
+    0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+    0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+    0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+    0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+    0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+    0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+    0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+    0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+    0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+    0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+    0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+    0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+    0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+    0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+    0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+    0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16])
+_AES_RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+
+
+def _aes128_round_keys(key):
+    # FIPS-197 key expansion: 44 words -> 11 round keys of 16.
+    w = [list(key[i * 4:(i + 1) * 4]) for i in range(4)]
+    for i in range(4, 44):
+        t = list(w[i - 1])
+        if i % 4 == 0:
+            t = [_AES_SBOX[t[1]] ^ _AES_RCON[i // 4 - 1],
+                 _AES_SBOX[t[2]], _AES_SBOX[t[3]], _AES_SBOX[t[0]]]
+        w.append([w[i - 4][j] ^ t[j] for j in range(4)])
+    return [bytes(sum(w[r * 4:(r + 1) * 4], [])) for r in range(11)]
+
+
+def _aes_xtime(a):
+    return ((a << 1) ^ 0x1b) & 0xff if a & 0x80 else (a << 1) & 0xff
+
+
+def _aes128_encrypt_block(key, block):
+    rks = _aes128_round_keys(key)
+    s = [block[i] ^ rks[0][i] for i in range(16)]
+
+    def shift_rows(x):
+        # state is column-major: index = row + 4*col
+        return [x[0], x[5], x[10], x[15], x[4], x[9], x[14], x[3],
+                x[8], x[13], x[2], x[7], x[12], x[1], x[6], x[11]]
+
+    for rnd in range(1, 10):
+        s = [_AES_SBOX[b] for b in s]
+        s = shift_rows(s)
+        mixed = []
+        for c in range(4):
+            col = s[c * 4:(c + 1) * 4]
+            mixed += [_aes_xtime(col[0]) ^ (_aes_xtime(col[1]) ^ col[1]) ^ col[2] ^ col[3],
+                      col[0] ^ _aes_xtime(col[1]) ^ (_aes_xtime(col[2]) ^ col[2]) ^ col[3],
+                      col[0] ^ col[1] ^ _aes_xtime(col[2]) ^ (_aes_xtime(col[3]) ^ col[3]),
+                      (_aes_xtime(col[0]) ^ col[0]) ^ col[1] ^ col[2] ^ _aes_xtime(col[3])]
+        s = [mixed[i] ^ rks[rnd][i] for i in range(16)]
+    s = [_AES_SBOX[b] for b in s]
+    s = shift_rows(s)
+    return bytes(s[i] ^ rks[10][i] for i in range(16))
+
+
+# --- GHASH + AES-128-GCM (SP 800-38D) ------------------------------------
+def _ghash_mul(x_bytes, h_bytes):
+    # GF(2^128) multiplication, SP 800-38D Algorithm 1 (the
+    # bit-reflected convention: R = 11100001 || 0^120).
+    z = 0
+    v = int.from_bytes(h_bytes, "big")
+    x = int.from_bytes(x_bytes, "big")
+    for i in range(128):
+        if (x >> (127 - i)) & 1:
+            z ^= v
+        if v & 1:
+            v = (v >> 1) ^ 0xE1000000000000000000000000000000
+        else:
+            v >>= 1
+    return z.to_bytes(16, "big")
+
+
+def _ghash(h, data):
+    # data length must already be a multiple of 16.
+    y = b"\x00" * 16
+    for i in range(0, len(data), 16):
+        y = _ghash_mul(bytes(a ^ b for a, b in zip(y, data[i:i + 16])), h)
+    return y
+
+
+def _gcm_crypt(key, j0, data):
+    # CTR mode from counter J0+1 (inc32 on the last 32 bits).
+    out = bytearray()
+    ctr = int.from_bytes(j0, "big")
+    for i in range(0, len(data), 16):
+        ctr = (ctr & ~0xFFFFFFFF) | ((ctr + 1) & 0xFFFFFFFF)
+        ks = _aes128_encrypt_block(key, ctr.to_bytes(16, "big"))
+        chunk = data[i:i + 16]
+        out += bytes(a ^ b for a, b in zip(chunk, ks))
+    return bytes(out)
+
+
+def _gcm_tag(key, h, j0, ct, aad=b""):
+    def pad16(x):
+        return x + b"\x00" * (-len(x) % 16)
+    lens = (len(aad) * 8).to_bytes(8, "big") + (len(ct) * 8).to_bytes(8, "big")
+    s = _ghash(h, pad16(aad) + pad16(ct) + lens)
+    ej0 = _aes128_encrypt_block(key, j0)
+    return bytes(a ^ b for a, b in zip(s, ej0))
+
+
+def _aes128gcm_encrypt(key, nonce12, plaintext):
+    # 96-bit nonce only (RFC 8188's form). Returns ct||tag.
+    h = _aes128_encrypt_block(key, b"\x00" * 16)
+    j0 = nonce12 + b"\x00\x00\x00\x01"
+    ct = _gcm_crypt(key, j0, plaintext)
+    return ct + _gcm_tag(key, h, j0, ct)
+
+
+def _aes128gcm_decrypt(key, nonce12, body):
+    if len(body) < 16:
+        return None
+    ct, tag = body[:-16], body[-16:]
+    h = _aes128_encrypt_block(key, b"\x00" * 16)
+    j0 = nonce12 + b"\x00\x00\x00\x01"
+    if not hmac.compare_digest(_gcm_tag(key, h, j0, ct), tag):
+        return None
+    return _gcm_crypt(key, j0, ct)
+
+
+# --- RFC 8291 + RFC 8188: the aes128gcm content encoding ------------------
+def _webpush_derive(auth_secret, ua_pub_raw, as_pub_raw, ecdh_secret, salt):
+    # RFC 8291 section 3.3-3.4. Returns (cek, nonce, prk_key,
+    # ikm, prk) — the intermediates ride along so the bench can
+    # pin every one against the RFC's worked example.
+    prk_key = _hkdf_extract(auth_secret, ecdh_secret)
+    ikm = _hkdf_expand(prk_key, b"WebPush: info\x00" + ua_pub_raw + as_pub_raw, 32)
+    prk = _hkdf_extract(salt, ikm)
+    cek = _hkdf_expand(prk, b"Content-Encoding: aes128gcm\x00", 16)
+    nonce = _hkdf_expand(prk, b"Content-Encoding: nonce\x00", 12)
+    return cek, nonce, prk_key, ikm, prk
+
+
+def _webpush_keys_sender(auth_secret, ua_pub_raw, as_priv, as_pub_raw, salt):
+    ua_pt = _ec_pub_parse(ua_pub_raw)
+    if ua_pt is None:
+        return None
+    ecdh_secret = _ecdh(as_priv, ua_pt)
+    if ecdh_secret is None:
+        return None
+    return _webpush_derive(auth_secret, ua_pub_raw, as_pub_raw, ecdh_secret, salt)
+
+
+def _webpush_keys_receiver(auth_secret, ua_pub_raw, ua_priv, as_pub_raw, salt):
+    as_pt = _ec_pub_parse(as_pub_raw)
+    if as_pt is None:
+        return None
+    ecdh_secret = _ecdh(ua_priv, as_pt)
+    if ecdh_secret is None:
+        return None
+    return _webpush_derive(auth_secret, ua_pub_raw, as_pub_raw, ecdh_secret, salt)
+
+
+def webpush_encrypt(ua_pub_b64, auth_b64, plaintext, as_priv=None, salt=None):
+    # Encrypt one push payload for a subscription. The sender
+    # (application server) keypair is ephemeral per RFC 8291;
+    # as_priv/salt are parameters ONLY so the bench can replay
+    # the RFC's worked example — production passes neither.
+    ua_pub_raw = _b64u_dec(ua_pub_b64)
+    auth_secret = _b64u_dec(auth_b64)
+    if len(auth_secret) < 16 or _ec_pub_parse(ua_pub_raw) is None:
+        return None
+    if as_priv is None:
+        as_priv, as_pt = _ec_keypair()
+    else:
+        as_pt = _ec_mul(as_priv, _P256_G)
+    as_pub_raw = _ec_pub_bytes(as_pt)
+    if salt is None:
+        salt = secrets.token_bytes(16)
+    keys = _webpush_keys_sender(auth_secret, ua_pub_raw, as_priv, as_pub_raw, salt)
+    if keys is None:
+        return None
+    cek, nonce = keys[0], keys[1]
+    rs = 4096
+    if len(plaintext) + 1 + 16 > rs:
+        return None  # one record only (RFC 8291 section 4)
+    record = plaintext + b"\x02"
+    body_ct = _aes128gcm_encrypt(cek, nonce, record)
+    header = salt + rs.to_bytes(4, "big") + bytes([len(as_pub_raw)]) + as_pub_raw
+    return header + body_ct
+
+
+def webpush_decrypt(ua_priv, auth_b64, body):
+    # The receiving end (the bench plays the user agent, holding
+    # the subscription's private key): parse the RFC 8188
+    # header, derive, decrypt, check the padding delimiter.
+    auth_secret = _b64u_dec(auth_b64)
+    if len(body) < 16 + 4 + 1 + 16:
+        return None
+    salt = body[:16]
+    rs = int.from_bytes(body[16:20], "big")
+    idlen = body[20]
+    as_pub_raw = body[21:21 + idlen]
+    ct = body[21 + idlen:]
+    if len(as_pub_raw) != idlen or rs < 17 or not ct:
+        return None
+    ua_pt = _ec_mul(ua_priv, _P256_G)
+    keys = _webpush_keys_receiver(auth_secret, _ec_pub_bytes(ua_pt), ua_priv, as_pub_raw, salt)
+    if keys is None:
+        return None
+    return _webpush_decrypt_with(keys, ct, rs)
+
+
+def _webpush_decrypt_with(keys, ct, rs):
+    cek, base_nonce = keys[0], keys[1]
+    out = b""
+    seq = 0
+    pos = 0
+    while pos < len(ct):
+        chunk = ct[pos:pos + rs]
+        pos += len(chunk)
+        nonce = bytes(a ^ b for a, b in zip(base_nonce, seq.to_bytes(12, "big")))
+        rec = _aes128gcm_decrypt(cek, nonce, chunk)
+        if rec is None:
+            return None
+        if not rec or rec[-1] not in (1, 2):
+            return None
+        out += rec[:-1].rstrip(b"\x00")
+        seq += 1
+    return out
+
+def _b64u_dec_safe(text):
+    try:
+        return _b64u_dec(text)
+    except Exception:
+        return None
+
+
+# --- The push store -------------------------------------------------
+# config/push.json — THIS NODE's push state: its VAPID keypair
+# and the subscriptions of the operator's own phones. It is
+# per-node by design and never rides Sync (asserted in push1):
+# a second node's subscriptions are its own, and the VAPID
+# private key never leaves the node that minted it. The file
+# is written 0600 — it holds key material.
+PUSH_PATH = os.path.join(ROOT, "config", "push.json")
+PUSH_TTL_SECONDS = 14400  # the ruled four hours
+_push_lock = threading.Lock()
+
+
+def _push_load():
+    try:
+        with open(PUSH_PATH) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _push_save(store):
+    try:
+        os.makedirs(os.path.dirname(PUSH_PATH), exist_ok=True)
+        tmp = PUSH_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(store, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, PUSH_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def _push_mint_vapid(store):
+    # Minted ONCE, at first need, and kept: a node's VAPID
+    # identity is stable across restarts (push1 asserts it),
+    # because every subscription in the wild is bound to it.
+    priv, pt = _ec_keypair()
+    store["vapid"] = {"priv": _b64u(priv.to_bytes(32, "big")),
+                      "pub": _b64u(_ec_pub_bytes(pt))}
+    _push_save(store)
+    return store["vapid"]
+
+
+def push_vapid_public():
+    with _push_lock:
+        store = _push_load()
+        vapid = store.get("vapid")
+        if not (isinstance(vapid, dict) and vapid.get("priv") and vapid.get("pub")):
+            vapid = _push_mint_vapid(store)
+        return vapid["pub"]
+
+
+def _push_vapid(store):
+    vapid = store.get("vapid")
+    if not (isinstance(vapid, dict) and vapid.get("priv") and vapid.get("pub")):
+        vapid = _push_mint_vapid(store)
+    return vapid
+
+
+def _push_vapid_subject(cfg):
+    # RFC 8292's sub: the node's own identity — its public
+    # https name when DHD carries one, else a mailto on the
+    # node's own hostname. Never another party's name.
+    domain = ""
+    try:
+        domain = str(dhd_settings(cfg or load_config()).get("domain") or "")
+    except Exception:
+        domain = ""
+    if domain:
+        return "https://" + domain
+    return "mailto:apex@" + (socket.gethostname() or "localhost")
+
+
+def push_vapid_jwt(endpoint, cfg):
+    # The VAPID authorization for one send (RFC 8292): an
+    # ES256 JWT whose audience is the push service's own
+    # origin, expiring within twelve hours, signed with this
+    # node's VAPID private key. Returns (jwt, public key).
+    vapid = _push_vapid(_push_load())
+    priv_raw = _b64u_dec_safe(vapid["priv"]) or b""
+    priv = int.from_bytes(priv_raw, "big")
+    parts = urllib.parse.urlsplit(endpoint)
+    claims = {"aud": parts.scheme + "://" + parts.netloc,
+              "exp": int(time.time()) + 12 * 3600,
+              "sub": _push_vapid_subject(cfg)}
+
+    def enc(obj):
+        return _b64u(json.dumps(obj, separators=(",", ":")).encode())
+
+    signing = enc({"typ": "JWT", "alg": "ES256"}) + "." + enc(claims)
+    sig = _ecdsa_sign(priv, hashlib.sha256(signing.encode()).digest())
+    return signing + "." + _b64u(sig), vapid["pub"]
+
+
+def _push_send_one(sub, payload_bytes, cfg):
+    # One delivery attempt. Returns (status, error): the push
+    # service's HTTP status, or (None, the failure named).
+    body = webpush_encrypt(sub["keys"]["p256dh"], sub["keys"]["auth"],
+                           payload_bytes)
+    if body is None:
+        return None, "the subscription's keys could not encrypt a payload"
+    jwt, pub = push_vapid_jwt(sub["endpoint"], cfg)
+    headers = {"Authorization": "vapid t=" + jwt + ", k=" + pub,
+               "Content-Encoding": "aes128gcm",
+               "Content-Type": "application/octet-stream",
+               "TTL": str(PUSH_TTL_SECONDS)}
+    req = urllib.request.Request(sub["endpoint"], data=body,
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status, None
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except Exception as e:
+        return None, str(e)[:160]
+
+
+def _push_note_death(sub, status):
+    # A push service answering 404/410 has forgotten the
+    # subscription: it comes off the list, and the death is
+    # recorded where producer (h) of the bell can name it in
+    # the tray — a phone that stops answering is never a
+    # silent failure.
+    with _push_lock:
+        store = _push_load()
+        subs = [s for s in (store.get("subscriptions") or [])
+                if s.get("endpoint") != sub.get("endpoint")]
+        store["subscriptions"] = subs
+        dead = [d for d in (store.get("dead") or [])
+                if d.get("id") != sub.get("id")]
+        dead.append({"id": sub.get("id"), "label": sub.get("label"),
+                     "host": urllib.parse.urlsplit(
+                         str(sub.get("endpoint") or "")).hostname,
+                     "status": status, "at": int(time.time() * 1000)})
+        store["dead"] = dead[-8:]
+        _push_save(store)
+
+
+def push_deliver_record(rec, cfg):
+    # The parity rule (Alex, 2026-11-17): whatever earns a
+    # tray record earns the phone copy, carrying the tray
+    # record's own summary — its title and body, verbatim —
+    # tagged with the record's id so an ack can clear it.
+    # Returns the outcome that lands on the record's push line.
+    store = _push_load()
+    subs = store.get("subscriptions") or []
+    at = int(time.time() * 1000)
+    if not subs:
+        return {"state": "none", "detail": "no phone is subscribed",
+                "at": at}
+    payload = json.dumps(
+        {"title": str(rec.get("title") or ""),
+         "body": str(rec.get("body") or ""),
+         "tag": str(rec.get("id") or ""),
+         "url": "/#notice=" + str(rec.get("id") or "")},
+        separators=(",", ":")).encode()
+    sent = 0
+    failures = []
+    for sub in list(subs):
+        status, err = _push_send_one(sub, payload, cfg)
+        if status in (200, 201, 202):
+            sent += 1
+        elif status in (404, 410):
+            _push_note_death(sub, status)
+        else:
+            host = urllib.parse.urlsplit(
+                str(sub.get("endpoint") or "")).hostname or "the push service"
+            failures.append((str(sub.get("label") or host)) + ": " +
+                            (("HTTP " + str(status)) if status
+                             else (err or "no answer")))
+    if sent:
+        detail = "pushed to %d phone%s" % (sent, "" if sent == 1 else "s")
+        if failures:
+            detail += "; " + "; ".join(failures)
+        return {"state": "sent", "detail": detail, "at": at}
+    return {"state": "failed",
+            "detail": "; ".join(failures) or "no phone answered",
+            "at": at}
+
+
+def push_clear_record(rec_id, cfg):
+    # The ack's other half: a payload carrying only the tag,
+    # which the service worker reads as "close, show nothing".
+    store = _push_load()
+    subs = store.get("subscriptions") or []
+    if not subs:
+        return 0
+    payload = json.dumps({"tag": str(rec_id), "clear": True},
+                         separators=(",", ":")).encode()
+    sent = 0
+    for sub in list(subs):
+        status, _err = _push_send_one(sub, payload, cfg)
+        if status in (200, 201, 202):
+            sent += 1
+        elif status in (404, 410):
+            _push_note_death(sub, status)
+    return sent
+
+
+def push_subscribe(data, cfg=None):
+    # The subscribe door: validates the subscription the page
+    # hands over before anything is stored — the endpoint must
+    # be a push service (https; http only on loopback, where
+    # the bench's stub door lives), the key a real P-256 point,
+    # the auth secret at least 16 bytes. A re-subscribe of the
+    # same endpoint replaces it; one carrying "replaces" (the
+    # service worker's self-heal) inherits the old label and
+    # clears that phone's death note. Returns (view, error).
+    data = data if isinstance(data, dict) else {}
+    sub_in = data.get("subscription")
+    if not isinstance(sub_in, dict):
+        sub_in = data
+    endpoint = str(sub_in.get("endpoint") or "")
+    keys = sub_in.get("keys") if isinstance(sub_in.get("keys"), dict) else {}
+    p256dh = str(keys.get("p256dh") or "")
+    auth = str(keys.get("auth") or "")
+    if not endpoint:
+        return None, "The subscription carried no endpoint."
+    parts = urllib.parse.urlsplit(endpoint)
+    if parts.scheme == "https":
+        pass
+    elif parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1"):
+        pass
+    else:
+        return None, "The subscription's endpoint is not an https push service."
+    if _ec_pub_parse(_b64u_dec_safe(p256dh) or b"") is None:
+        return None, "The subscription's key is not a P-256 point."
+    if len(_b64u_dec_safe(auth) or b"") < 16:
+        return None, "The subscription's auth secret is too short."
+    label = str(data.get("label") or "").strip()[:60]
+    replaces = str(data.get("replaces") or "")
+    with _push_lock:
+        store = _push_load()
+        subs = store.get("subscriptions") or []
+        if not label and replaces:
+            for s in subs:
+                if s.get("endpoint") == replaces:
+                    label = str(s.get("label") or "")
+                    break
+        subs = [s for s in subs
+                if s.get("endpoint") != endpoint
+                and s.get("endpoint") != replaces]
+        rec = {"id": hashlib.sha256(endpoint.encode()).hexdigest()[:12],
+               "endpoint": endpoint,
+               "keys": {"p256dh": p256dh, "auth": auth},
+               "label": label or ("Phone — " + (parts.hostname or "push service")),
+               "created": int(time.time() * 1000)}
+        subs.append(rec)
+        store["subscriptions"] = subs
+        if rec["label"]:
+            store["dead"] = [d for d in (store.get("dead") or [])
+                             if d.get("label") != rec["label"]]
+        _push_save(store)
+    return {"id": rec["id"], "label": rec["label"]}, None
+
+
+def push_unsubscribe(data, cfg=None):
+    data = data if isinstance(data, dict) else {}
+    endpoint = str(data.get("endpoint") or "")
+    with _push_lock:
+        store = _push_load()
+        subs = store.get("subscriptions") or []
+        kept = [s for s in subs if s.get("endpoint") != endpoint]
+        store["subscriptions"] = kept
+        _push_save(store)
+    return {"ok": True, "removed": len(subs) - len(kept)}
+
+
+def push_state_payload(cfg=None):
+    store = _push_load()
+    return {"ok": True,
+            "vapidPublicKey": push_vapid_public(),
+            "subscriptions": [
+                {"id": s.get("id"), "label": s.get("label"),
+                 "created": s.get("created")}
+                for s in (store.get("subscriptions") or [])]}
+
+
+def _notif_wanted_push_dead(cfg):
+    # Producer (h): a subscribed phone the push service has
+    # forgotten. The record stands until that phone subscribes
+    # again (its death note clears at the subscribe door);
+    # its Go target is Settings, where the push doors live.
+    out = []
+    try:
+        store = _push_load()
+    except Exception:
+        return out
+    for d in (store.get("dead") or []):
+        rid = "push-dead:" + str(d.get("id") or "")
+        out.append({
+            "id": rid, "kind": "push-device",
+            "title": "A phone stopped answering",
+            "body": (str(d.get("label") or "A subscribed phone") +
+                     " stopped answering push delivery (the service "
+                     "answered " + str(d.get("status") or "gone") +
+                     "). The tray still holds its records here, but "
+                     "they no longer reach that phone — re-enable "
+                     "phone notifications from that phone to heal "
+                     "the door."),
+            "target": {"view": "Settings"}, "count": None})
+    return out
+
+
+# The service worker, served at /sw.js. Embedded, not a tree
+# file: the package's shape does not change to carry it. It
+# holds no state — the tray on the bridge is the record; the
+# worker only rings, clears, and opens the door.
+PUSH_SERVICE_WORKER_JS = """
+// Apex service worker (v0.5.14e, #272): the push doorbell's
+// other half. Served by the bridge at /sw.js, scoped to the
+// dashboard's own origin.
+self.addEventListener("push", function (event) {
+  var data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+  if (data.clear) {
+    // An ack on any seat clears the phone copy: close every
+    // notification carrying the tray record's tag, show none.
+    event.waitUntil(registration.getNotifications({ tag: data.tag }).then(function (ns) {
+      ns.forEach(function (n) { n.close(); });
+    }));
+    return;
+  }
+  var opts = { body: data.body || "", tag: data.tag || undefined,
+               data: { url: data.url || "/" } };
+  event.waitUntil(registration.showNotification(data.title || "Apex — needs your eyes", opts));
+});
+self.addEventListener("notificationclick", function (event) {
+  event.notification.close();
+  var url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (wins) {
+    for (var i = 0; i < wins.length; i++) {
+      if ("focus" in wins[i]) { wins[i].navigate(url); return wins[i].focus(); }
+    }
+    return clients.openWindow(url);
+  }));
+});
+self.addEventListener("pushsubscriptionchange", function (event) {
+  // The platform rotated the subscription: re-subscribe and
+  // hand the bridge the new endpoint, naming the old one so
+  // the bridge carries the label over — the door heals
+  // itself instead of dying silently.
+  var oldSub = event.oldSubscription;
+  event.waitUntil((async function () {
+    try {
+      var key = oldSub && oldSub.options ? oldSub.options.applicationServerKey : undefined;
+      var sub = await registration.pushManager.subscribe(
+        { userVisibleOnly: true, applicationServerKey: key });
+      await fetch("/api/push/subscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub.toJSON(),
+                               replaces: oldSub ? oldSub.endpoint : "" })
+      });
+    } catch (e) { /* the death, if any, is named in the tray */ }
+  })());
+});
+"""
+
+
+
 # --- Notifications (v0.4.7e, #242; ruling Alex 2026-11-16) -----------
 # Navi announces notifications in chat herself — the bell/panel is
 # the persistent record, her word is the tap on the shoulder, and
@@ -31249,6 +31850,7 @@ def _notif_clean(raw):
     count = raw.get("count")
     if not isinstance(count, int) or isinstance(count, bool):
         count = None
+    push = raw.get("push") if isinstance(raw.get("push"), dict) else None
     return {
         "id": rid,
         "kind": kind,
@@ -31259,6 +31861,7 @@ def _notif_clean(raw):
         "read": raw.get("read") is True,
         "announced": raw.get("announced") is True,
         "count": count,
+        "push": push,
     }
 
 
@@ -31579,6 +32182,7 @@ def _notif_payload_from_records(records):
         "id": r["id"], "kind": r["kind"], "title": r["title"],
         "body": r["body"], "target": r["target"],
         "created": r["created"], "read": r["read"], "count": r["count"],
+        "push": r.get("push"),
     } for r in records]
     # Unread first, then newest first — the bell's order.
     items.sort(key=lambda it: (it["read"], -(it["created"] or 0)))
@@ -31594,8 +32198,24 @@ def notifications_reconcile(cfg=None):
     # return is the payload (see notifications_payload).
     if cfg is None:
         cfg = load_config()
+    born = []
     with _notif_lock:
         records = _notif_load()
+        # v0.5.14e (#272): what the main chat already carries
+        # announced, captured BEFORE this pass announces
+        # anything — a birth whose announcement already stands
+        # here was written by another seat and converged; it is
+        # a convergence, not a birth, and never re-pushes.
+        pre_announced = set()
+        try:
+            for c in chats_all():
+                if str(c.get("id")) == str(MAIN_CHAT_ID):
+                    for m in c.get("messages") or []:
+                        if isinstance(m, dict) and m.get("notice"):
+                            pre_announced.add(str(m["notice"]))
+                    break
+        except Exception:
+            pre_announced = set()
         wanted = {}
         ran_kinds = set()
         producers = (
@@ -31606,6 +32226,7 @@ def notifications_reconcile(cfg=None):
             ("sync", lambda: _notif_wanted_sync()),
             ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
             ("pulse", lambda: _notif_wanted_pulse(cfg)),
+            ("push-dead", lambda: _notif_wanted_push_dead(cfg)),
         )
         for kind, produce in producers:
             try:
@@ -31641,6 +32262,7 @@ def notifications_reconcile(cfg=None):
                 }
                 records.append(rec)
                 by_id[wid] = rec
+                born.append(rec)
                 changed = True
             else:
                 title = str(item.get("title") or "")[:200]
@@ -31681,7 +32303,41 @@ def notifications_reconcile(cfg=None):
         if changed:
             _notif_save(records)
         _NOTIF_STATE["at"] = time.time()
-        return _notif_payload_from_records(records)
+        payload = _notif_payload_from_records(records)
+    # v0.5.14e (#272): the phone door rings for the records
+    # BORN in this pass — out here, never under the bell's lock
+    # (network I/O does not hold it), and only from the seat
+    # that created the record. The outcome lands on the
+    # record's own push line, where the panel shows it; a push
+    # failure is named there, never silent, and never breaks
+    # the reconcile that carries it.
+    for rec in born:
+        rid = str(rec.get("id") or "")
+        converged = rid in pre_announced or (
+            rec.get("kind") == "pulse" and any(
+                a.startswith("pulse:")
+                and a.rsplit(":", 1)[-1] == rid.rsplit(":", 1)[-1]
+                and a != rid for a in pre_announced))
+        if converged:
+            outcome = {"state": "none",
+                       "detail": "born on another seat; not re-pushed",
+                       "at": int(time.time() * 1000)}
+        else:
+            try:
+                outcome = push_deliver_record(rec, cfg)
+            except Exception as e:
+                outcome = {"state": "failed",
+                           "detail": "push machinery error: " + str(e)[:120],
+                           "at": int(time.time() * 1000)}
+        with _notif_lock:
+            current = _notif_load()
+            for live in current:
+                if live["id"] == rid:
+                    live["push"] = outcome
+                    _notif_save(current)
+                    payload = _notif_payload_from_records(current)
+                    break
+    return payload
 
 
 def notifications_payload(cfg=None, force=False):
@@ -31704,6 +32360,7 @@ def notifications_mark_read(ids=None, mark_all=False, cfg=None):
     want = None
     if isinstance(ids, (list, tuple, set)):
         want = {str(i) for i in ids}
+    cleared = []
     with _notif_lock:
         records = _notif_load()
         changed = False
@@ -31712,8 +32369,19 @@ def notifications_mark_read(ids=None, mark_all=False, cfg=None):
                     and not rec["read"]:
                 rec["read"] = True
                 changed = True
+                cleared.append(rec["id"])
         if changed:
             _notif_save(records)
+    # v0.5.14e (#272): an ack on ANY seat clears the phone
+    # copy — for each record that just went read, a clearing
+    # push carrying only its tag tells every subscribed phone
+    # to close the notification. Best-effort by design: the
+    # tray is the record; the phone copy is a doorbell.
+    for rid in cleared:
+        try:
+            push_clear_record(rid, cfg)
+        except Exception:
+            pass
     return notifications_payload(cfg)
 
 
@@ -32282,6 +32950,15 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self._send(404, {"ok": False, "error": "icon not found"})
             return
+        if _path == "/sw.js":
+            # v0.5.14e (#272): the service worker — an embedded
+            # string, not a tree file, so the package's shape
+            # and the install contract do not change to carry
+            # it. Behind the same public gate as every other
+            # dashboard byte; it holds no state of its own.
+            self._send(200, PUSH_SERVICE_WORKER_JS.encode(),
+                       "text/javascript; charset=utf-8")
+            return
         if _path == "/assets/navi-portrait.jpg":
             # Issue #116: Navi's bundled portrait (the lamp-post key
             # art) for the chat presence header and message gutter.
@@ -32676,6 +33353,12 @@ class Handler(BaseHTTPRequestHandler):
             # reconcile, so opening the panel always answers from
             # the world as it stands now.
             self._send(200, notifications_payload(load_config(), force=True))
+        elif self.path == "/api/push/state":
+            # v0.5.14e (#272): the push doors read this — the
+            # node's VAPID public key (minted once, below) and
+            # the phones subscribed to THIS node, labels only:
+            # endpoints and key material never ride a read.
+            self._send(200, push_state_payload(load_config()))
         elif self.path == "/api/cases":
             self._send(200, cases_list_payload(
                 (self.headers.get("X-Apex-Via") or "") == "dhd"))
@@ -33875,6 +34558,22 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             self._send(200, notifications_mark_read(
                 data.get("ids"), data.get("all") is True, cfg))
+        elif self.path == "/api/push/subscribe":
+            # v0.5.14e (#272): a phone subscribes to this
+            # node's tray. The bridge validates the
+            # subscription's keys before anything is stored;
+            # a refusal is named and nothing is held.
+            data = self._body()
+            view, err = push_subscribe(data, cfg)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "subscription": view})
+        elif self.path == "/api/push/unsubscribe":
+            # v0.5.14e (#272): this device stops ringing. The
+            # tray is untouched; only the door comes down.
+            data = self._body()
+            self._send(200, push_unsubscribe(data, cfg))
         elif self.path == "/api/chat/route":
             # v0.4.1e (#228): a route flip, validated against the
             # access the operator actually has (chat_route_set).
@@ -34677,19 +35376,15 @@ class Handler(BaseHTTPRequestHandler):
                 # reply prints whole, exactly as composed.
                 # Filing is the operator's tap on the reply
                 # (case_file_reply), receipted in the room.
-                # v0.4.5e (#241): the case intake — her
-                # [[case-intake]] block comes out of the reply
-                # the same way; the bridge creates the case,
-                # files the swipe as unverified leads, sets it
-                # open, and the receipt (or the named refusal)
-                # is appended to the reply by the bridge itself,
-                # with the intake riding back as payload data
-                # for the dashboard's card.
-                _cintake = None
-                try:
-                    reply, _cintake = extract_case_intake(reply, cfg, last or "")
-                except Exception:
-                    _cintake = None
+                # v0.5.14e (#289): the case intake retired
+                # the way the case-log grammar did in v0.5.12e
+                # — no parser stands between Navi and the
+                # operator here either. A reply in a chat that
+                # is not a case room prints whole, exactly as
+                # composed; starting a case from it is the
+                # operator's tap on the reply ("Start a case
+                # from this" -> case_start_from_reply),
+                # receipted into the chat by the bridge.
                 # CLI Mode (Build 3, #209): her [[shell]] block
                 # comes out of the reply the same way — the lines
                 # are typed into this chat's session badged as
@@ -34743,8 +35438,6 @@ class Handler(BaseHTTPRequestHandler):
                     payload["refPulls"] = _refpulls
                 if _cfilings:
                     payload["caseFilings"] = _cfilings
-                if _cintake:
-                    payload["caseIntake"] = _cintake
                 if _shell_drove:
                     payload["shellDrove"] = _shell_drove
                 if _msaves:
@@ -35763,6 +36456,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "filed": filing})
+        elif self.path == "/api/cases/start-from-reply":
+            # v0.5.14e (#289): the "Start a case from this"
+            # door — the operator's press on one of Navi's
+            # replies in a chat that is not a case room. The
+            # bridge composes the case from the reply exactly
+            # as printed and receipts it into that chat; a
+            # refusal is named and creates nothing.
+            data = self._body()
+            started, err = case_start_from_reply(data.get("chatId"), data.get("text"))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "started": started})
         elif self.path == "/api/cases/evidence":
             data = self._body()
             try:

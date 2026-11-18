@@ -2193,8 +2193,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-17.29";
-var SHIPPED_BUILD_SEQ = 29;
+var BRIDGE_BUILD = "2026-11-17.30";
+var SHIPPED_BUILD_SEQ = 30;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -6531,9 +6531,9 @@ var DOC_PAGES = [
   "<p><b>Evidence has a chain of custody now.</b> When a file is filed as evidence, the bridge computes its <b>SHA-256 at filing time</b> and writes its register entry in the same act — description, when/from/how it was acquired, and a custody note. Files filed before the register existed are backfilled on first sight, and the entry says so honestly: the hash is the file's hash as found, its acquisition unrecorded.</p>" +
   "<p><b>Navi's case-room answers are conversation.</b> In a case's own chat she answers in full, in whatever form serves the question — nothing in a reply is parsed as a filing, cut out of the text, or refused: there is no log block, and no filing format hides in her words. Filing from the room is your act, on the <b>File into this case</b> button under every reply (see <i>Filing that lands</i> and <i>She prints, then asks</i> below). The registers still grow through the deterministic doors: the intake's swipe when a case is born from chat, and this page's own add forms. What lands through those doors in her name lands <b>unverified</b> (state: <i>lead</i>), badged as hers with its provenance. Findings carry the same state: yours default to confirmed, hers to lead. <b>One tap promotes or strikes</b> an unverified entry in the case view; a strike removes the entry and <i>notes the strike in the timeline</i> — an audit trail, not a memory hole. Her own case brief labels the states back to her: she may reason from leads, never cite them as established. A detail belonging to a <i>different</i> case is never written across — she raises it in conversation instead. (Through v0.5.11e this paragraph described a structured log block the bridge parsed out of her replies; that path was retired in v0.5.12e, #286.)</p>" +
   "<p><b>Awareness flows in.</b> A Wire story or a KEV CVE matching one of the case's observables or entities is surfaced two ways: in the case chat, the matched records ride her context <b>named as matches, not findings</b>; in the case view, a <b>Wire matches</b> card badges them the same way. A match is a lead to check — the product never promotes it to a finding on its own.</p></div>" +
-    "<div class='doc-sec'><h4>Starting a case from chat (v0.4.5e, #241)</h4>" +
-  "<p>A case no longer has to start in Case Files. <b>Route A — just ask her.</b> In any chat, say it the way you'd say it to a partner — <i>“add this into a new research case, as much detail as possible”</i>, <i>“this needs a case”</i> — and Navi acts on the intent in the same reply: the bridge creates the case, swipes the conversation's substance into it (her findings in her name; the entities, observables and tasks as <b>unverified leads</b>, exactly as her case logging lands), and sets it open. The proof is the bridge's, not her prose: her reply carries the bridge's own receipt naming what was actually filed, and under it a card with an <b>Open the case chat</b> button that walks you into the case's own room, chip and all. If the intake can't be read, the reply says so in the open and <b>no case is claimed</b> — a case-shaped essay is not a case, and the product no longer lets one pass for the other.</p>" +
-  "<p><b>Route B — the form.</b> The composer's <b>New case</b> button is the deterministic companion: Navi first swipes the conversation into a draft of the case's form — name, client, scope, summary, type, priority, tags, and the entities and observables she lifted, as a checklist — and you confirm or correct every field before anything exists. Submit creates the case, files the checked entries as unverified leads, sets it open, and lands you in its chat. If her model isn't connected the form simply opens blank, with the reason stated on it. Either way the landing is the same: a real case in Case Files, its own chat ensured, set open, its substance filed as leads awaiting your review — and because cases ride Sync, it is on your other screens too.</p></div>" +
+    "<div class='doc-sec'><h4>Starting a case from chat (v0.4.5e, #241 \u2014 reworked v0.5.14e, #289)</h4>" +
+  "<p>A case no longer has to start in Case Files \u2014 and it no longer starts by her hand. <b>She prints, then offers.</b> In any chat that is not a case room, Navi answers first, in full: nothing about her reply is parsed for case machinery, and no reply starts a case, whatever shape it takes. Under every reply stands a <b>Start a case from this</b> button. Pressing it is your act, and it is the only way a case starts from chat: the bridge composes the case from that reply <b>exactly as printed</b> \u2014 the reply filed whole as a finding in her name (state: lead, like every filing of hers), a timeline beat naming the act \u2014 ensures the case's own chat, sets it open, and appends its own receipt to the thread, with an <b>Open the case chat</b> button on it. She may suggest starting a case when the material earns one, and let the suggestion stand: the offer never blocks the conversation, and an older reply's button still starts a case from that reply whenever you press it. The proof is the bridge's, not her prose: a case exists only when the bridge receipts it, and a case-shaped essay is not a case.</p>" +
+  "<p><b>The form.</b> The composer's <b>New case</b> button is the deterministic companion: Navi first swipes the conversation into a draft of the case's form \u2014 name, client, scope, summary, type, priority, tags, and the entities and observables she lifted, as a checklist \u2014 and you confirm or correct every field before anything exists. Submit creates the case, files the checked entries as unverified leads, sets it open, and lands you in its chat. If her model isn't connected the form simply opens blank, with the reason stated on it. Either way the landing is the same: a real case in Case Files, its own chat ensured, set open, its substance filed as leads awaiting your review \u2014 and because cases ride Sync, it is on your other screens too.</p></div>" +
     "<div class='doc-sec'><h4>Filing that lands (v0.5.2e, #261)</h4>" +
   "<p><b>The tap.</b> In a case's own chat, every Navi reply carries a <b>File into this case</b> button. Tap it and the bridge files that exact reply as a finding on the bound case — the reply as written, in her name, with its provenance (the source chat, the action, the timestamp) written into the note — and appends its own receipt message to the chat, naming the finding's path, from what the bridge actually did. No model in the loop: the tap either files, or names why it cannot.</p>" +
   "<p><b>The tap is the only filing door from chat.</b> There is no second, hidden path: her answers are never parsed for filings, so a filing-shaped answer — a summary in finding grammar, a long answer cut off mid-thought — simply stands as the answer it is, whole, with nothing filed and nothing refused. When a reply deserves the file she can say so, and the button stands under it until you press it or the conversation moves on; an older reply's button still files <i>that</i> reply, not the latest one. A filing that cannot land — the case is gone, the note cannot be written — is named in the room by the bridge, once, on the tap that asked for it. Silence about a failed filing is still the defect this closes — you always know whether a filing took.</p>" +
@@ -6594,7 +6594,11 @@ var DOC_PAGES = [
   "<p>Build 4 narrows Home to the <b>board itself</b>: the situation strip and the four glance cards \u2014 Top News, Newest CVEs, Next CTFs, Bounties \u2014 and nothing else. The tab set retired, and <b>feed health moved to the top of the News view</b>, in the same collapsible field with the same persisted choice. Every family is now its own view, reached by the Open button on its glance card or through the menu; each carries a way back to the board, and the News view carries the doors to the CVE and KEV families, so nothing the tabs pointed at is stranded. Home is built as a host surface \u2014 the board is its first resident, not its last word. The menu rail also lights <b>exactly one entry</b> now: the board lights Home, a family lights The Wire.</p></div>" +
     "<div class='doc-sec'><h4>Notifications \u2014 Needs your eyes (v0.4.7e, #242)</h4>" +
   "<p>The <b>bell</b> stands at the head of the rail beside <b>Home</b> \u2014 an icon pair, their names carried by their tooltips \u2014 in the top bar on a phone \u2014 and carries a badge with the unread count. Tapping it opens the <b>Needs your eyes</b> panel: every item with its title, its story, and when it landed, each with a <b>Go</b> button that takes you to the surface it belongs to \u2014 a federation knock to Federation, a DHD summons to DHD, a case item to that case in Case Files, an account item to Settings \u2014 and marks the item read on the way. <b>Mark all read</b> clears the whole list's unread state in one tap. The same card stands <b>first on Home</b> whenever anything is unread, carrying the first four; a quiet list shows nothing at all.</p>" +
-  "<p><b>What notifies</b> is what needs the operator: federation knocks waiting on your admission, devices asking to pair at the door, case entries that landed as unverified leads, an Edge update staged and waiting on the Updater. <b>What never does</b>: routine traffic \u2014 feed pulls, ordinary replies, a sync that simply worked. One sync exception, ruled with the sync bar (v0.4.10e, #254): a sync that <b>materially</b> changed things — ghost threads folded into the main chat, a case/chat pairing repaired, another machine's deletion honored here — is an act, and it notifies like one. Navi also <b>announces a notification in chat herself</b> when it lands, in her own words; the bell is the record, the announcement is the tap on the shoulder. Read state lives in the <b>bridge</b>, not in any browser window, so every seat agrees on what has been seen.</p></div>" 
+  "<p><b>What notifies</b> is what needs the operator: federation knocks waiting on your admission, devices asking to pair at the door, case entries that landed as unverified leads, an Edge update staged and waiting on the Updater. <b>What never does</b>: routine traffic \u2014 feed pulls, ordinary replies, a sync that simply worked. One sync exception, ruled with the sync bar (v0.4.10e, #254): a sync that <b>materially</b> changed things — ghost threads folded into the main chat, a case/chat pairing repaired, another machine's deletion honored here — is an act, and it notifies like one. Navi also <b>announces a notification in chat herself</b> when it lands, in her own words; the bell is the record, the announcement is the tap on the shoulder. Read state lives in the <b>bridge</b>, not in any browser window, so every seat agrees on what has been seen.</p></div>" +
+    "<div class='doc-sec'><h4>The tray rings your phone (v0.5.14e, #272)</h4>" +
+  "<p>Whatever earns a tray record also rings your phone \u2014 <b>parity, with no exceptions by kind</b>: the lock-screen notification carries the tray record's own title and summary, it is tagged with the tray record's id, and reading the record on any seat sends a clearing push that closes the phone copy. A notification lives four hours at most. Tapping it opens this dashboard at the tray, on that item.</p>" +
+  "<p><b>Your own node sends it.</b> The bridge holds a push keypair it minted itself \u2014 per node, kept in its own config, never synced \u2014 signs each delivery with it, and encrypts every payload end-to-end for your phone's subscription. The only other parties are the push services the platform itself runs, which are the transport the Web Push standard is built on; there is no relay and no account. The delivery's outcome stands on the tray record itself \u2014 sent, or failed with the reason named. A phone the push service has forgotten (it answers 404 or 410) comes off the list and is <b>named in the tray</b> until it subscribes again; a record born on another seat and converged here never re-rings.</p>" +
+  "<p><b>The door, honestly.</b> The bell panel and Settings both carry the phone door, and it names its own state: live, blocked (with the fix), unsupported \u2014 or, on an iPhone, <b>install-first</b>: iOS gives push only to web apps added to the Home Screen and opened from their icon, so the door shows those steps as a card rather than a button that cannot work. Several phones can ring; each subscribes to the node it talks to.</p></div>" 
  },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
@@ -7247,6 +7251,37 @@ function caseFileReplyBtnHtml(m, idx) {
   var ac = (typeof activeChat === "function") ? activeChat() : null;
   if (!ac || !ac.case) return "";
   return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' aria-label='File this reply into the bound case' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case</button></div>";
+}
+function caseStartedHtml(m) {
+  // v0.5.14e (#289): the receipt for the "Start a case from
+  // this" door — a case the operator started from one of her
+  // replies by pressing its button. The bridge appended this
+  // message itself, from what it actually did; the card
+  // carries the case's name and the finding's path, any
+  // grounding flag, and the door into the case's own chat —
+  // the standing intake-receipt button wiring
+  // (data-caseintake-open) walks it, unchanged.
+  var s = m.caseStarted;
+  if (!s) return "";
+  var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Case started</b> <span style='color:var(--dim)'>by your tap \u00b7 receipted by the bridge</span></div>"
+    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(s.name || s.slug) + "</b> (" + esc(s.type || "investigation") + ") \u2014 the reply stands in its findings, in her name</div>"
+    + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(s.path || "") + "</div>";
+  (s.grounding || []).forEach(function (g) {
+    h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " \u2014 the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
+  });
+  if (s.chatId) h += "<div style='margin-top:8px'><button class='act' data-caseintake-open='" + esc(String(s.chatId)) + "' data-caseintake-slug='" + esc(s.slug || "") + "' aria-label='Open the case chat for " + esc(s.name || "the new case") + "' style='min-height:44px;padding:6px 14px'>Open the case chat \u2014 " + esc(s.name || "the case") + "</button></div>";
+  return h + "</div>";
+}
+function caseStartBtnHtml(m, idx) {
+  // v0.5.14e (#289): the standing offer — on Navi's
+  // replies in a chat that is NOT a case room (the mirror of
+  // the filing tap, which stands in case rooms). Never on the
+  // bridge's own receipt messages, and never on her tray
+  // announcements: a notification is not case material.
+  if (!m.text || m.caseFiledReply || m.caseStarted || m.notice) return "";
+  var ac = (typeof activeChat === "function") ? activeChat() : null;
+  if (!ac || ac.case) return "";
+  return "<div style='margin-top:6px'><button class='ghost' data-start-case='" + idx + "' aria-label='Start a case from this reply' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case from this</button></div>";
 }
 function caseFilingsHtml(m) {
   // Build 15 (#161): the receipt for Navi's own case filings —
@@ -11417,9 +11452,14 @@ function renderNotifPanel() {
   var body = document.getElementById("notifBody");
   if (!body) return;
   var items = notifState.items || [];
-  if (!items.length) { body.innerHTML = "<div class='notif-empty'>Nothing needs your eyes.</div>"; return; }
-  body.innerHTML = items.map(function (it) {
-    return "<div class='notif-row" + (it.read ? " read" : "") + "'><div class='notif-main'><div class='notif-item-title'>" + esc(it.title || "") + (it.count > 1 ? " <span class='mono' style='font-size:11px;color:var(--dim)'>\u00d7" + esc(it.count) + "</span>" : "") + "</div>" + (it.body ? "<div class='notif-item-body'>" + esc(it.body) + "</div>" : "") + (it.created ? "<div class='notif-when mono'>" + esc(notifWhen(it.created)) + "</div>" : "") + "</div><button type='button' class='ghost' data-notif-go='" + esc(it.id) + "' style='min-height:44px'>Go</button></div>";
+  // v0.5.14e (#272): the phone door stands at the panel's
+  // head, and every row carries its own phone delivery line
+  // — the outcome the bridge recorded when the record was
+  // born, named, never silent.
+  var head = pushDoorHtml();
+  if (!items.length) { body.innerHTML = head + "<div class='notif-empty'>Nothing needs your eyes.</div>"; return; }
+  body.innerHTML = head + items.map(function (it) {
+    return "<div class='notif-row" + (it.read ? " read" : "") + "' data-notif-row='" + esc(it.id) + "'" + (pushFocusId && it.id === pushFocusId ? " style='outline:2px solid var(--ac);outline-offset:-2px'" : "") + "><div class='notif-main'><div class='notif-item-title'>" + esc(it.title || "") + (it.count > 1 ? " <span class='mono' style='font-size:11px;color:var(--dim)'>\u00d7" + esc(it.count) + "</span>" : "") + "</div>" + (it.body ? "<div class='notif-item-body'>" + esc(it.body) + "</div>" : "") + (it.created ? "<div class='notif-when mono'>" + esc(notifWhen(it.created)) + "</div>" : "") + (it.push ? "<div class='notif-when mono'>Phone: " + esc(it.push.detail || it.push.state || "") + "</div>" : "") + "</div><button type='button' class='ghost' data-notif-go='" + esc(it.id) + "' style='min-height:44px'>Go</button></div>";
   }).join("");
   wireNotifications();
 }
@@ -11429,6 +11469,7 @@ function openNotifPanel() {
   document.getElementById("notifShade").style.display = "block";
   document.getElementById("notifPanel").style.display = "block";
   renderNotifPanel();
+  pushRefresh();
   if (CONFIG.backend === "live") notifFetch();
 }
 function closeNotifPanel() {
@@ -11438,6 +11479,152 @@ function closeNotifPanel() {
   if (shade) shade.style.display = "none";
   if (panel) panel.style.display = "none";
 }
+// --- Phone notifications: the tray's doorbell (v0.5.14e, #272) ------
+// Parity is the law: whatever earns a tray record rings the
+// subscribed phones with the tray record's own summary, sent
+// by the operator's own node — the bridge holds the keys,
+// signs and encrypts every delivery itself, and the only
+// other parties are the platform's own push services. The
+// door below names its own state on a four-rung ladder and
+// never renders a button that cannot work.
+var pushState = { vapidPublicKey: "", subscriptions: [], here: false, hereEndpoint: "", busy: false, note: "" };
+var pushFocusId = "";
+function pushEnv() {
+  var supported = ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window);
+  var installed = false;
+  try { installed = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true; } catch (e) {}
+  return { supported: supported, installed: installed,
+           permission: ("Notification" in window) ? Notification.permission : "unsupported",
+           ios: /iphone|ipad|ipod/i.test(navigator.userAgent || "") };
+}
+function pushLadderState(env) {
+  // The four rungs, by name: a device that cannot be rung
+  // says so; an iPhone in a browser tab gets the install
+  // card, never a dead button; a blocked permission names
+  // itself and its fix; anything else is live.
+  if (!env || !env.supported) return "unsupported";
+  if (env.ios && !env.installed) return "install-first";
+  if (env.permission === "denied") return "denied";
+  return "live";
+}
+function pushDoorHtml() {
+  var env = pushEnv();
+  var state = pushLadderState(env);
+  var h = "<div class='push-door' data-push-state='" + state + "' style='border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px'><div style='font-weight:700;font-size:13px'>Phone notifications</div>";
+  if (pushState.note) h += "<div style='font-size:12px;color:var(--dim);margin-top:2px'>" + esc(pushState.note) + "</div>";
+  if (state === "unsupported") {
+    h += "<p style='font-size:12px;color:var(--dim);margin:6px 0 0'>This browser has no Push API, so it cannot be rung. The tray still holds everything \u2014 it just cannot reach this device. (On iPhone, push exists only for Apex added to the Home Screen and opened from its icon.)</p>";
+  } else if (state === "install-first") {
+    h += "<p style='font-size:12px;color:var(--dim);margin:6px 0 0'>On this phone, push only exists for the <b>installed</b> app \u2014 a browser tab cannot subscribe, and no setting changes that. Tap <b>Share</b>, then <b>Add to Home Screen</b>, open Apex from the new icon, and this door lights up here.</p>";
+  } else if (state === "denied") {
+    h += "<p style='font-size:12px;color:var(--dim);margin:6px 0 0'>Notifications are <b>blocked</b> for Apex in this browser's site settings, so this device cannot be rung. Allow notifications there and reopen this panel \u2014 the door lights up on its own. Nothing nags you meanwhile.</p>";
+  } else if (pushState.here) {
+    h += "<p style='font-size:12px;color:var(--dim);margin:6px 0 0'>This device rings when a tray item lands \u2014 the tray's own summary, on the lock screen, sent by your own node. Tapping it opens the tray at that item; reading the item on any seat clears the phone copy.</p>"
+      + "<div style='margin-top:8px'><button type='button' class='ghost' data-push-disable='1' style='min-height:44px'>Stop ringing this device</button></div>";
+  } else {
+    h += "<p style='font-size:12px;color:var(--dim);margin:6px 0 0'>Ring this device when a tray item lands \u2014 the tray's own summary, on the lock screen, sent by your own node (no relay, no account). Tapping it opens the tray at that item.</p>"
+      + "<div style='margin-top:8px'><button type='button' class='act' data-push-enable='1' style='min-height:44px'" + (pushState.busy ? " disabled" : "") + ">Ring this device</button></div>";
+  }
+  if (pushState.subscriptions && pushState.subscriptions.length) {
+    h += "<div style='font-size:12px;color:var(--dim);margin-top:8px'>Ringing: " + pushState.subscriptions.map(function (s) { return esc(s.label || "a phone"); }).join(" \u00b7 ") + "</div>";
+  }
+  return h + "</div>";
+}
+function pushRenderDoors() {
+  if (notifPanelOpen) renderNotifPanel();
+  if (view === "Settings") render();
+}
+function pushRefresh() {
+  fetch("/api/push/state").then(function (r) { return r.json(); }).then(function (j) {
+    pushState.vapidPublicKey = (j && j.vapidPublicKey) || "";
+    pushState.subscriptions = (j && j.subscriptions) || [];
+    if (!("serviceWorker" in navigator)) { pushRenderDoors(); return; }
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) { pushState.here = false; pushRenderDoors(); return; }
+      reg.pushManager.getSubscription().then(function (sub) {
+        pushState.here = !!sub;
+        pushState.hereEndpoint = sub ? sub.endpoint : "";
+        pushRenderDoors();
+      }).catch(function () { pushRenderDoors(); });
+    }).catch(function () { pushRenderDoors(); });
+  }).catch(function () {});
+}
+function pushUrlB64ToUint8(b64) {
+  var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  var raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  var out = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function pushDeviceLabel() {
+  var ua = navigator.userAgent || "";
+  if (/iphone/i.test(ua)) return "iPhone";
+  if (/ipad/i.test(ua)) return "iPad";
+  if (/android/i.test(ua)) return "Android phone";
+  return "This browser";
+}
+function pushEnable() {
+  if (!("serviceWorker" in navigator)) return;
+  pushState.busy = true; pushState.note = ""; pushRenderDoors();
+  navigator.serviceWorker.register("/sw.js").then(function (reg) {
+    return Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") {
+        pushState.busy = false;
+        pushState.note = "Permission was not granted \u2014 the door stays dark until it is.";
+        pushRenderDoors();
+        return null;
+      }
+      return fetch("/api/push/state").then(function (r) { return r.json(); }).then(function (j) {
+        pushState.vapidPublicKey = (j && j.vapidPublicKey) || pushState.vapidPublicKey;
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: pushUrlB64ToUint8(pushState.vapidPublicKey) });
+      });
+    });
+  }).then(function (sub) {
+    if (!sub) return;
+    return fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON(), label: pushDeviceLabel() }) }).then(function (r) { return r.json(); }).then(function (j) {
+      pushState.busy = false;
+      pushState.note = (j && j.ok) ? "This device will ring for tray items now." : ("The bridge refused the subscription \u2014 " + ((j && j.error) || "unnamed refusal."));
+      pushRefresh();
+    });
+  }).catch(function (e) {
+    pushState.busy = false;
+    pushState.note = "Subscribing failed on this device \u2014 " + String((e && e.message) || e);
+    pushRenderDoors();
+  });
+}
+function pushDisable() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.getRegistration().then(function (reg) {
+    if (!reg) return null;
+    return reg.pushManager.getSubscription();
+  }).then(function (sub) {
+    if (!sub) { pushRefresh(); return; }
+    var endpoint = sub.endpoint;
+    return fetch("/api/push/unsubscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: endpoint }) }).then(function () {
+      return sub.unsubscribe();
+    }).then(function () {
+      pushState.here = false;
+      pushState.note = "This device no longer rings. The tray is untouched.";
+      pushRefresh();
+    });
+  }).catch(function (e) {
+    pushState.note = "Unsubscribing failed on this device \u2014 " + String((e && e.message) || e);
+    pushRenderDoors();
+  });
+}
+document.addEventListener("click", function (e) {
+  var b = (e.target && e.target.closest) ? e.target.closest("[data-push-enable],[data-push-disable]") : null;
+  if (!b) return;
+  if (b.getAttribute("data-push-enable")) pushEnable();
+  else pushDisable();
+});
+window.addEventListener("load", function () {
+  if ("serviceWorker" in navigator) { try { navigator.serviceWorker.register("/sw.js").catch(function () {}); } catch (e) {} }
+  var m = /#notice=([A-Za-z0-9:._\-]+)/.exec(location.hash || "");
+  if (m) { pushFocusId = m[1]; setTimeout(function () { openNotifPanel(); }, 500); }
+  pushRefresh();
+});
+
 function notifGo(item) {
   if (!item) return;
   // Going is seeing: the item is marked read on the way out, and
@@ -13059,6 +13246,8 @@ function render() {
       if (m.who === "NAVI") h += caseIntakeHtml(m);
       if (m.who === "NAVI") h += caseFiledReplyHtml(m);
       if (m.who === "NAVI") h += caseFileReplyBtnHtml(m, idx);
+      if (m.who === "NAVI") h += caseStartedHtml(m);
+      if (m.who === "NAVI") h += caseStartBtnHtml(m, idx);
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
@@ -13426,6 +13615,7 @@ function render() {
       if (hardwareMsg) h += "<p style='font-size:12px'>" + esc(hardwareMsg) + "</p>";
       h += "</div>";
     })();
+    if (settingsTab === "operator") h += "<div class='card'><h3>Phone notifications \u2014 this device</h3>" + pushDoorHtml() + "<p style='color:var(--dim);font-size:12px;margin:2px 0 0'>The same door stands at the head of the bell panel. A subscription belongs to the node you are connected to: each of your machines keeps its own list, and its own key.</p></div>";
     if (settingsTab === "operator") {
       var opBadgePayload = CONFIG.operatorBadge ? badgeParse(CONFIG.operatorBadge) : null;
       h += "<div class='card'><h3>Your picture &amp; badge</h3>"
@@ -13750,6 +13940,27 @@ function wire() {
         } else {
           b.disabled = false;
           messages.push({ who: "NAVI", ts: Date.now(), text: "That filing did not land — " + ((j && j.error) || "the bridge could not file it.") + " Nothing was written to the case.", exec: null });
+          persist(); render();
+        }
+      });
+    }; });
+    // Start a case from this (v0.5.14e, #289): the
+    // deterministic door on Navi's replies in a chat that is
+    // not a case room. The bridge composes the case from the
+    // exact reply and appends its own receipt message to the
+    // stored chat — on success the room rehydrates and the
+    // receipt is simply there; on failure the refusal is
+    // named in the room, never swallowed.
+    mainEl.querySelectorAll("[data-start-case]").forEach(function (b) { b.onclick = function () {
+      var mm = messages[Number(b.getAttribute("data-start-case"))];
+      if (!mm || !mm.text) return;
+      b.disabled = true;
+      casePost("/api/cases/start-from-reply", { chatId: activeChatId, text: mm.text }, function (j) {
+        if (j && j.ok) {
+          hydrateChatsFromServer();
+        } else {
+          b.disabled = false;
+          messages.push({ who: "NAVI", ts: Date.now(), text: "That case did not start \u2014 " + ((j && j.error) || "the bridge could not start it.") + " Nothing was created.", exec: null });
           persist(); render();
         }
       });
