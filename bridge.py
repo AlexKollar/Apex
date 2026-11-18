@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.5.15"
+SHIPPED_VERSION = "0.6.0"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-18.31"
+BRIDGE_BUILD = "2026-11-18.32"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 31
+SHIPPED_BUILD_SEQ = 32
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -23092,7 +23092,7 @@ def _sync_state_load():
         mtime = None
     if _sync_state_cache["state"] is not None and _sync_state_cache["mtime"] == mtime:
         return _sync_state_cache["state"]
-    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}},
+    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}, "daybook": {}},
              "lastSyncAt": None, "lastSyncEpoch": 0, "lastResult": "",
              "lastTrigger": "", "lastState": ""}
     try:
@@ -23102,7 +23102,7 @@ def _sync_state_load():
             state.update({k: raw[k] for k in state if k in raw})
             tombs = raw.get("tombstones")
             if isinstance(tombs, dict):
-                for kind in ("chats", "cases", "vault", "dossier"):
+                for kind in ("chats", "cases", "vault", "dossier", "daybook"):
                     if isinstance(tombs.get(kind), dict):
                         state["tombstones"][kind] = {
                             str(k): float(v) for k, v in tombs[kind].items()
@@ -23133,7 +23133,7 @@ def _sync_state_save(state):
 def _sync_tombstones_pruned(tombs, now=None):
     now = now if now is not None else time.time()
     out = {}
-    for kind in ("chats", "cases", "vault", "entries", "dossier"):
+    for kind in ("chats", "cases", "vault", "entries", "dossier", "daybook"):
         rows = tombs.get(kind) if isinstance(tombs, dict) else None
         out[kind] = {}
         if isinstance(rows, dict):
@@ -23147,7 +23147,7 @@ def sync_record_tombstone(kind, key, at=None):
     # The deletion funnels' one call. Best-effort by design: a
     # tombstone that fails to record must never fail the delete
     # the operator asked for — the delete itself already happened.
-    if kind not in ("chats", "cases", "vault", "entries", "dossier") or not key:
+    if kind not in ("chats", "cases", "vault", "entries", "dossier", "daybook") or not key:
         return
     try:
         state = _sync_state_load()
@@ -24749,6 +24749,14 @@ def sync_collect(cfg=None):
             files[SYNC_PREFIX + "pulse.json"] = f.read()
     except Exception:
         pass
+    # v0.6.0e (#294): the day book rides as account data too —
+    # one store, every seat, converged by identity with its
+    # deletions tombstoned (see _sync_apply_daybook).
+    try:
+        with open(DAYBOOK_PATH, "rb") as f:
+            files[SYNC_PREFIX + "daybook.json"] = f.read()
+    except Exception:
+        pass
     account = ""
     try:
         account = str((github_auth() or {}).get("login") or "")
@@ -24771,6 +24779,14 @@ def sync_collect(cfg=None):
                           "sha": hashlib.sha256(files[SYNC_PREFIX + "pulse.json"]).hexdigest()}
         except Exception:
             pulse_meta = {}
+    daybook_meta = {}
+    if SYNC_PREFIX + "daybook.json" in files:
+        try:
+            _dw = json.loads(files[SYNC_PREFIX + "daybook.json"].decode("utf-8", "replace"))
+            daybook_meta = {"entries": len((_dw or {}).get("entries") or []),
+                            "sha": hashlib.sha256(files[SYNC_PREFIX + "daybook.json"]).hexdigest()}
+        except Exception:
+            daybook_meta = {}
     manifest = {"format": SYNC_FORMAT, "app": "Apex",
                 "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
                 "account": account,
@@ -24779,7 +24795,8 @@ def sync_collect(cfg=None):
                 "chatDigests": chat_digests,
                 "chatsSha": hashlib.sha256(files[SYNC_PREFIX + "chats.json"]).hexdigest(),
                 "seatSha": hashlib.sha256(files[SYNC_PREFIX + "seat.json"]).hexdigest(),
-                "pulse": pulse_meta}
+                "pulse": pulse_meta,
+                "daybook": daybook_meta}
     files[SYNC_PREFIX + "manifest.json"] = json.dumps(manifest, indent=2).encode()
     return files, manifest, index
 
@@ -25099,7 +25116,7 @@ def sync_apply(cfg, fetched):
                "casesAdded": 0, "casesUpdated": 0, "caseFilesPulled": 0,
                "deckFilesPulled": 0, "cardsImported": 0, "docsPulled": 0,
                "entriesPulled": 0, "seatChanged": False,
-               "pulseChanged": 0, "incomplete": [],
+               "pulseChanged": 0, "daybookChanged": 0, "incomplete": [],
                "eyes": [], "caseEyes": []}
     files = fetched["files"]
     remote_tombs = {}
@@ -25158,6 +25175,13 @@ def sync_apply(cfg, fetched):
             _pulse_shell = True
             summary["incomplete"].append(
                 {"kind": "pulse", "id": "pulse", "name": "Pulse watches"})
+    _daybook_shell = False
+    _daybook_decl = remote_manifest.get("daybook") if isinstance(remote_manifest.get("daybook"), dict) else {}
+    if _daybook_decl.get("sha") and SYNC_PREFIX + "daybook.json" in files:
+        if hashlib.sha256(files[SYNC_PREFIX + "daybook.json"]).hexdigest() != _daybook_decl["sha"]:
+            _daybook_shell = True
+            summary["incomplete"].append(
+                {"kind": "daybook", "id": "daybook", "name": "Her working day"})
     # The tombstone's other half: a chat ABSENT here but present
     # in the remote set is not an "add" when a tombstone covers
     # it — it is the resurrection the tombstone exists to refuse.
@@ -25288,6 +25312,8 @@ def sync_apply(cfg, fetched):
     _sync_state_save(state)
     if not _pulse_shell:
         _sync_apply_pulse(fetched, summary)
+    if not _daybook_shell:
+        _sync_apply_daybook(fetched, summary, merged)
     if not _seat_shell:
         _sync_apply_seat(fetched, summary)
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
@@ -25300,7 +25326,8 @@ def sync_apply(cfg, fetched):
                           + summary["docsPulled"] + summary["entriesPulled"]
                           + summary.get("entriesRemoved", 0)
                           + (1 if summary["seatChanged"] else 0)
-                          + summary.get("pulseChanged", 0))
+                          + summary.get("pulseChanged", 0)
+                          + summary.get("daybookChanged", 0))
     # v0.5.13e (#262): the incomplete record persists in the
     # sync state — the bar names shells until a later round's
     # full arrival heals them, which is simply a round where
@@ -27088,10 +27115,17 @@ def dossier_run_person(name, location="", anchors=None):
     _ofac_lines, _ofac_sources, _ofac_note = _dz_ofac_paragraph(name)
     sources.extend(_ofac_sources)
     lines[3:3] = [""] + _ofac_lines
+    # v0.6.0e (#290 live-fire): the federal doors — BOP wired,
+    # Interpol + DOJ attempted — spliced in directly after
+    # the sanctions paragraph they stand beside.
+    _fed_lines, _fed_sources, _fed_note = _dz_federal_paragraph(name)
+    sources.extend(_fed_sources)
+    _fed_at = 3 + 1 + len(_ofac_lines)
+    lines[_fed_at:_fed_at] = [""] + _fed_lines
     summary = ("person " + name + ": registry pointers standing "
                "(NSOPW" + (", " + state if state else "")
                + "); no public record found through the kit's "
-               "keyless doors" + _ofac_note)
+               "keyless doors" + _ofac_note + _fed_note)
     # Enrichment fans out from the record's own anchors —
     # the identifiers the OPERATOR brings back from a
     # registry record (or any cited source), never from a
@@ -27450,6 +27484,283 @@ def _dz_state_of(text):
     return ""
 
 
+
+# -- The live-fire shelves (v0.6.0e, #290 work-up) ----------------
+# The full kit's prep named four shelves the fifteenth build
+# did not ship. The live-fire round (bench/livefire1.py is
+# its record) settled each on evidence, not intention:
+#   * BOP's inmate locator answers keyless JSON — WIRED.
+#   * Interpol's public Red Notices API and the Justice
+#     Department's press-release API are documented public
+#     keyless doors that answered this round from the build
+#     network with an edge denial (Akamai 403, any headers) —
+#     wired as ATTEMPTED doors in the EDGAR-full-text pattern:
+#     the runner reads the documented shape when the door
+#     answers, and an edge denial degrades BY NAME in the
+#     result, with the check standing at the source's own
+#     search. On a residential egress these doors commonly
+#     answer; the record here names the wall it met.
+#   * USCG vessel documentation is a session-driven form at
+#     both PSIX and the NVDC (NOAA's copy redirects into a
+#     session app) — a named POINTER on the License shelf,
+#     in the by-name branch below.
+
+BOP_LOCATOR_URL = "https://www.bop.gov/inmateloc/"
+INTERPOL_SEARCH_URL = "https://www.interpol.int/en/How-we-work/Notices/Red-Notices/View-Red-Notices"
+DOJ_PRESS_URL = "https://www.justice.gov/news"
+
+
+def _dz_name_parts(name):
+    parts = [p for p in re.split(r"\s+", str(name or "").strip()) if p]
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return "", parts[0]
+    return parts[0], parts[-1]
+
+
+def _dz_bop(name):
+    # (rows, url, state): the Bureau of Prisons' own locator,
+    # keyless JSON. rows carry the record as the Bureau
+    # states it — facility or release, register number.
+    first, last = _dz_name_parts(name)
+    url = ("https://www.bop.gov/PublicInfo/execute/inmateloc"
+           "?todo=query&output=json&inmateNum="
+           "&nameFirst=" + urllib.parse.quote(first)
+           + "&nameMiddle=&nameLast=" + urllib.parse.quote(last)
+           + "&race=&sex=&age=")
+    status, body, _e = dossier_fetch(url)
+    if status != 200 or not body:
+        return None, url, "unanswered"
+    try:
+        data = json.loads(body)
+        rows = data.get("InmateLocator") or []
+    except Exception:
+        return None, url, "unanswered"
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "name": ((str(r.get("nameFirst") or "") + " "
+                      + str(r.get("nameLast") or "")).strip()
+                     or str(name or "")),
+            "number": str(r.get("inmateNum") or ""),
+            "facility": str(r.get("faclName") or ""),
+            "released": str(r.get("actRelDate") or ""),
+            "projected": str(r.get("projRelDate") or ""),
+        })
+    return out, url, "ok"
+
+
+def _dz_interpol(name):
+    # (rows, url, state): Interpol's documented public API
+    # for Red Notices. An edge denial is its own state — the
+    # door exists, is keyless by design, and refused THIS
+    # network's knock; the runner says exactly that.
+    first, last = _dz_name_parts(name)
+    url = ("https://ws-public.interpol.int/notices/v1/red"
+           "?name=" + urllib.parse.quote(last.upper())
+           + "&forename=" + urllib.parse.quote(first.upper())
+           + "&resultPerPage=20&page=1")
+    status, body, _e = dossier_fetch(url)
+    if status in (401, 403):
+        return None, url, "denied"
+    if status != 200 or not body:
+        return None, url, "unanswered"
+    try:
+        data = json.loads(body)
+        rows = ((data.get("_embedded") or {}).get("notices")) or []
+    except Exception:
+        return None, url, "unanswered"
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        href = str(((r.get("_links") or {}).get("self") or {}).get("href") or "")
+        out.append({
+            "name": ((str(r.get("forename") or "") + " "
+                      + str(r.get("name") or "")).strip()
+                     or str(name or "")),
+            "dob": str(r.get("date_of_birth") or ""),
+            "nationalities": ", ".join(
+                str(n) for n in (r.get("nationalities") or [])),
+            "url": href,
+        })
+    return out, url, "ok"
+
+
+def _dz_doj(name):
+    # (rows, url, state): the Justice Department's press
+    # releases, full-text over the Department's own archive —
+    # releases NAMING this name, cited to the release. An
+    # edge denial degrades by name, like Interpol's.
+    url = ("https://www.justice.gov/api/v1/press_releases.json"
+           "?search_api_fulltext=" + urllib.parse.quote(str(name or ""))
+           + "&pagesize=10")
+    status, body, _e = dossier_fetch(url)
+    if status in (401, 403):
+        return None, url, "denied"
+    if status != 200 or not body:
+        return None, url, "unanswered"
+    try:
+        data = json.loads(body)
+        rows = data.get("results") or []
+    except Exception:
+        return None, url, "unanswered"
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        link = str(r.get("url") or r.get("path") or "")
+        if link and not link.startswith("http"):
+            link = "https://www.justice.gov" + (
+                link if link.startswith("/") else "/" + link)
+        date = r.get("date") or r.get("changed") or ""
+        if isinstance(date, (int, float)):
+            date = time.strftime("%Y-%m-%d", time.gmtime(date))
+        out.append({"title": str(r.get("title") or "Untitled release"),
+                    "date": str(date)[:20], "url": link})
+    return out, url, "ok"
+
+
+def _dz_federal_paragraph(name):
+    """(lines, sources, summary suffix) for the Person tab —
+    the federal doors standing beside the registry and
+    sanctions anchors: BOP custody (wired), Interpol Red
+    Notices and DOJ press releases (attempted doors, named
+    on denial). Every state is one of the three honest
+    ones: record read, no record found, door unanswered —
+    and a hit is a lead, disambiguated by the record's own
+    anchors, never a conclusion."""
+    lines = ["**Federal custody, notices & the Department's "
+             "own word.**"]
+    sources = []
+    notes = []
+    rows, url, state = _dz_bop(name)
+    src = {"name": "Bureau of Prisons — inmate locator",
+           "url": BOP_LOCATOR_URL, "verdict": ""}
+    if state != "ok":
+        src["verdict"] = ("unanswered — the locator did not "
+                          "answer; the check stands at the "
+                          "Bureau's own search")
+        lines.append("Federal custody (BOP): the inmate "
+                     "locator did not answer — no statement "
+                     "is made either way.")
+        notes.append("BOP unanswered")
+    elif rows:
+        src["verdict"] = ("record read: " + str(len(rows))
+                          + " federal inmate record(s) under "
+                            "this name")
+        lines.append("Federal custody (BOP): " + str(len(rows))
+                     + " federal inmate record(s) stand under "
+                       "this name — unverified leads, each the "
+                       "Bureau's own record:")
+        for r in rows[:5]:
+            tail = ""
+            if r["released"]:
+                tail = " — released " + r["released"]
+            elif r["facility"]:
+                tail = " — held at " + r["facility"]
+                if r["projected"]:
+                    tail += ", projected release " + r["projected"]
+            lines.append("- " + r["name"]
+                         + (", register " + r["number"]
+                            if r["number"] else "")
+                         + tail + ".")
+        notes.append("BOP " + str(len(rows)) + " record(s)")
+    else:
+        src["verdict"] = ("record read: no federal inmate "
+                          "record under this name")
+        lines.append("Federal custody (BOP): no public record "
+                     "found — no federal inmate record stands "
+                     "under this name.")
+        notes.append("BOP none")
+    sources.append(src)
+    rows, url, state = _dz_interpol(name)
+    src = {"name": "Interpol — Red Notices (public API)",
+           "url": INTERPOL_SEARCH_URL, "verdict": ""}
+    if state == "denied":
+        src["verdict"] = ("pointer — the public API answered "
+                          "with an edge denial from this "
+                          "network; the check stands at "
+                          "Interpol's own search")
+        lines.append("Interpol Red Notices: the public API "
+                     "answered this network with an edge "
+                     "denial, so no notice statement is made — "
+                     "the check stands at "
+                     + _dz_cite("Interpol's Red Notices search",
+                                INTERPOL_SEARCH_URL) + ".")
+        notes.append("Interpol denied-at-edge")
+    elif state != "ok":
+        src["verdict"] = "unanswered"
+        lines.append("Interpol Red Notices: the public API "
+                     "did not answer — no statement is made.")
+        notes.append("Interpol unanswered")
+    elif rows:
+        src["verdict"] = ("record read: " + str(len(rows))
+                          + " Red Notice(s) under this name")
+        lines.append("Interpol Red Notices: " + str(len(rows))
+                     + " notice(s) stand under this name — "
+                       "unverified leads, wanted by the "
+                       "requesting country named on the notice:")
+        for r in rows[:5]:
+            lines.append("- " + _dz_cite(r["name"], r["url"] or INTERPOL_SEARCH_URL)
+                         + ((", born " + r["dob"]) if r["dob"] else "")
+                         + ((", nationalities: " + r["nationalities"])
+                            if r["nationalities"] else "") + ".")
+        notes.append("Interpol " + str(len(rows)) + " notice(s)")
+    else:
+        src["verdict"] = ("record read: no Red Notice under "
+                          "this name")
+        lines.append("Interpol Red Notices: no public record "
+                     "found — no Red Notice in the public set "
+                     "stands under this name.")
+        notes.append("Interpol none")
+    sources.append(src)
+    rows, url, state = _dz_doj(name)
+    src = {"name": "Dept. of Justice — press releases",
+           "url": DOJ_PRESS_URL, "verdict": ""}
+    if state == "denied":
+        src["verdict"] = ("pointer — the Department's API "
+                          "answered with an edge denial from "
+                          "this network; the releases stand at "
+                          "justice.gov's own news search")
+        lines.append("Justice Department releases: the "
+                     "Department's API answered this network "
+                     "with an edge denial, so no release "
+                     "statement is made — the releases stand at "
+                     + _dz_cite("justice.gov news", DOJ_PRESS_URL)
+                     + ".")
+        notes.append("DOJ denied-at-edge")
+    elif state != "ok":
+        src["verdict"] = "unanswered"
+        lines.append("Justice Department releases: the "
+                     "Department's API did not answer — no "
+                     "statement is made.")
+        notes.append("DOJ unanswered")
+    elif rows:
+        src["verdict"] = ("record read: " + str(len(rows))
+                          + " release(s) naming this name")
+        lines.append("Justice Department releases naming this "
+                     "name — the Department's own announcements, "
+                     "cited as leads:")
+        for r in rows[:5]:
+            lines.append("- " + _dz_cite(r["title"], r["url"] or DOJ_PRESS_URL)
+                         + ((" (" + r["date"] + ")") if r["date"] else "")
+                         + ".")
+        notes.append("DOJ " + str(len(rows)) + " release(s)")
+    else:
+        src["verdict"] = ("record read: no release in the "
+                          "archive names this name")
+        lines.append("Justice Department releases: no public "
+                     "record found — the Department's archive "
+                     "holds no release naming this name.")
+        notes.append("DOJ none")
+    sources.append(src)
+    return lines, sources, " · federal: " + " · ".join(notes)
+
+
 # -- OFAC: the sanctions anchor (Person tab) ----------------------
 # The SDN and consolidated lists are the Treasury's own
 # publication — public downloads, keyless. A person run reads
@@ -27457,8 +27768,12 @@ def _dz_state_of(text):
 # change on Treasury's schedule, not on ours), never a search
 # form and never a reseller's mirror.
 OFAC_SDN_URL = "https://www.treasury.gov/ofac/downloads/sdn.csv"
+# v0.6.0e live-fire drift fix: the consolidated list's CSV
+# is gone (404) — the list now publishes as XML behind the
+# same Treasury door (a redirect to the Sanctions List
+# Service's signed file), read as XML in _dz_ofac_rows.
 OFAC_CONS_URL = ("https://www.treasury.gov/ofac/downloads/"
-                 "consolidated/consolidated.csv")
+                 "consolidated/consolidated.xml")
 OFAC_SEARCH_URL = "https://sanctionssearch.ofac.treas.gov/"
 OFAC_CACHE_TTL = 6 * 3600
 _OFAC_CACHE = {"at": 0.0, "rows": None}
@@ -27480,6 +27795,38 @@ def _dz_ofac_rows():
         if status != 200 or not body:
             continue
         answered = True
+        if body.lstrip()[:5].lower().startswith("<?xml"):
+            # The consolidated list as it now publishes: the
+            # OFAC XML schema — lastName/firstName per entry,
+            # its type and first program.
+            try:
+                import xml.etree.ElementTree as _ET
+                root = _ET.fromstring(body)
+                for ent in root.iter():
+                    if not ent.tag.endswith("}sdnEntry") \
+                            and ent.tag != "sdnEntry":
+                        continue
+                    last = first = typ = prog = ""
+                    for child in ent:
+                        tag = child.tag.rsplit("}", 1)[-1]
+                        if tag == "lastName":
+                            last = (child.text or "").strip()
+                        elif tag == "firstName":
+                            first = (child.text or "").strip()
+                        elif tag == "sdnType":
+                            typ = (child.text or "").strip()
+                        elif tag == "programList":
+                            for p in child:
+                                if p.tag.rsplit("}", 1)[-1] == "program":
+                                    prog = (p.text or "").strip()
+                                    break
+                    nm = last + (", " + first if first else "")
+                    if nm.strip(" ,"):
+                        rows.append({"name": nm, "type": typ,
+                                     "program": prog, "list": lst})
+            except Exception:
+                pass
+            continue
         # The lists are real CSV — names carry commas inside
         # quotes ("LAST, FIRST"), so the rows are read with a
         # CSV reader, never a naive split.
@@ -27570,20 +27917,27 @@ def _dz_ofac_paragraph(name):
 # -- Courts ---------------------------------------------------------
 
 def _dz_courtlistener(q, rtype):
+    # (rows, url, state). v0.6.0e live-fire: the search API
+    # now answers 401 to anonymous reads — the door requires
+    # a free CourtListener account token. That state is named
+    # "auth" and stands in the run as a pointer with the wall
+    # recorded (the govinfo pattern), never as "unanswered".
     url = ("https://www.courtlistener.com/api/rest/v4/search/?q="
            + urllib.parse.quote(q) + "&type=" + rtype
            + "&order_by=score%20desc")
     try:
         status, body, _e = dossier_fetch(url)
     except Exception:
-        return None, url
+        return None, url, "unanswered"
+    if status in (401, 403):
+        return None, url, "auth"
     if status != 200 or not body:
-        return None, url
+        return None, url, "unanswered"
     try:
         data = json.loads(body)
     except Exception:
-        return None, url
-    return data.get("results") or [], url
+        return None, url, "unanswered"
+    return data.get("results") or [], url, "ok"
 
 
 def _dz_caption_counterparty(case_name, sought):
@@ -27612,10 +27966,25 @@ def dossier_run_courts(name, extra=None):
     name = " ".join(str(name or "").split()).strip()
     location = str(extra.get("location") or "").strip()
     sources, lines, assoc = [], ["## Courts — " + name, ""], []
-    dockets, durl = _dz_courtlistener(name, "r")
-    opinions, ourl = _dz_courtlistener(name, "o")
+    dockets, durl, dstate = _dz_courtlistener(name, "r")
+    opinions, ourl, ostate = _dz_courtlistener(name, "o")
     nhit = 0
-    if dockets is None:
+    if dockets is None and dstate == "auth":
+        sources.append({"name": "CourtListener — RECAP dockets",
+                        "url": durl,
+                        "verdict": "pointer — CourtListener's "
+                                   "search API now requires a "
+                                   "free account token; the "
+                                   "dockets stand at its own "
+                                   "search (v0.6.0e live-fire)"})
+        lines.append("**Federal dockets (RECAP).** "
+                     "CourtListener's search API now requires "
+                     "a free account token, so this kit reads "
+                     "no dockets today — the archive stands at "
+                     + _dz_cite("CourtListener's own search",
+                                "https://www.courtlistener.com/")
+                     + ", named rather than silently empty.")
+    elif dockets is None:
         sources.append({"name": "CourtListener — RECAP dockets",
                         "url": durl,
                         "verdict": "unanswered — the door did "
@@ -27658,7 +28027,16 @@ def dossier_run_courts(name, extra=None):
         lines.append("**Federal dockets (RECAP).** No public "
                      "record found — no federal docket in the "
                      "RECAP archive names this party.")
-    if opinions is None:
+    if opinions is None and ostate == "auth":
+        sources.append({"name": "CourtListener — opinions",
+                        "url": ourl,
+                        "verdict": "pointer — the same account "
+                                   "wall as the dockets"})
+        lines.append("**Opinions.** The same account wall "
+                     "stands at the opinions door — published "
+                     "opinions stand at CourtListener's own "
+                     "search, named rather than skipped.")
+    elif opinions is None:
         sources.append({"name": "CourtListener — opinions",
                         "url": ourl,
                         "verdict": "unanswered"})
@@ -27715,11 +28093,17 @@ def dossier_run_courts(name, extra=None):
               "names a party, it does not characterize them, "
               "and a same-name docket is a stranger's until "
               "the record's own anchors say otherwise."]
-    summary = ("courts " + name + ": " + str(nhit)
-               + " docket hit(s), "
-               + str(len(opinions) if opinions else 0)
-               + " opinion(s) via CourtListener; PACER + state "
-               "doors stand as pointers")
+    if dstate == "auth" or ostate == "auth":
+        summary = ("courts " + name + ": CourtListener stands "
+                   "as a pointer — its search API now requires "
+                   "a free account token; PACER + state doors "
+                   "stand as pointers")
+    else:
+        summary = ("courts " + name + ": " + str(nhit)
+                   + " docket hit(s), "
+                   + str(len(opinions) if opinions else 0)
+                   + " opinion(s) via CourtListener; PACER + state "
+                   "doors stand as pointers")
     return {"summary": summary, "markdown": "\n".join(lines),
             "sources": sources, "associations": assoc}
 
@@ -28192,6 +28576,13 @@ def dossier_run_license(value, extra=None):
     sources.append({"name": "FAA — airmen inquiry",
                     "url": "https://amsrvs.registry.faa.gov/airmeninquiry/",
                     "verdict": "pointer — a session-driven form"})
+    sources.append({"name": "USCG — vessel documentation (PSIX / NVDC)",
+                    "url": "https://cgmix.uscg.mil/PSIX/PSIXSearch.aspx",
+                    "verdict": "pointer — session-driven forms at "
+                               "both the Coast Guard's PSIX and the "
+                               "National Vessel Documentation Center; "
+                               "no keyless machine door (v0.6.0e "
+                               "live-fire round)"})
     lines += ["No keyless machine door reads professional or "
               "federal license records by NAME — the kit will "
               "not pretend otherwise. The checks stand at the "
@@ -28206,6 +28597,12 @@ def dossier_run_license(value, extra=None):
                               "https://amsrvs.registry.faa.gov/airmeninquiry/")
               + " — N-numbers this kit reads directly (ask "
               "with the N-number).",
+              "- " + _dz_cite("USCG vessel documentation (PSIX)",
+                              "https://cgmix.uscg.mil/PSIX/PSIXSearch.aspx")
+              + " — vessel records by name stand at the Coast "
+              "Guard's own search; PSIX and the National Vessel "
+              "Documentation Center are both session-driven "
+              "forms, so the check stands there, named.",
               "Absence, stated plainly: no statement is made "
               "about this name's licenses — the doors above are "
               "where the record lives."]
@@ -32842,6 +33239,13 @@ def greeting_compose(cfg=None, now=None, facts=None, name=None,
                      + " paired with this one.")
     for d in digest:
         brief.append("Pulse — " + d["line"] + ".")
+    # v0.6.0e (#296): the day section — the working day rides
+    # the brief she already speaks, lines only when the book
+    # holds something (an empty book changes nothing).
+    try:
+        brief.extend(_daybook_greeting_lines(cfg))
+    except Exception:
+        pass
     return {"line": word + ", " + name, "band": band, "name": name,
             "quip": quip, "brief": brief,
             "digest": [{"topic": d["topic"], "count": d["count"],
@@ -32868,6 +33272,1502 @@ def greeting_payload(cfg=None):
         pulse_mark_greeted([d["batch"] for d in digest])
     return out
 
+
+
+
+# --- Her working day (v0.6.0e, #294/#295/#296) -------------------
+# The Assistant Update's foundation: ONE bridge-held store for
+# the operator's day — captures, reminders, standing orders and
+# the day briefs themselves, as entries in a single file
+# (config/daybook.json) behind one lock, one load that cleans,
+# one save. The bridge is the truth; every page is a view.
+#
+# #294 — the foundation store, Capture & Recall built on it.
+# The conversational capture machinery is older than this
+# store (build .81, #72): the trigger route and the
+# [[remember: …]] marker pass decide saves in the bridge, and
+# the seat memory (#256) carries them into her context. This
+# store is where those decisions are RECORDED — with their
+# provenance (which seat, which thread, whose call) — and it
+# is a Sync citizen from birth: it rides the account set as
+# substance (#262's law), converges by identity with the
+# #251–#253 discipline (newest write wins per entry, a
+# deletion tombstones by identity and is honored over any
+# copy no newer than the deletion), and its saves note a
+# push-on-write round like every other funnel's. The store is
+# secret-free by construction: the one screen
+# (memory_looks_secret, the #72 screen) stands at this store's
+# door too, and a credential-shaped capture is refused BY
+# NAME — the class of thing it looked like is the refusal.
+#
+# #295 — reminders & standing orders. A reminder is an entry
+# with a time; the scheduler lives HERE, in the resident
+# bridge (a tick thread beside Pulse's), its due-state
+# persisted in the store across restarts — never in a page's
+# timer. Delivery rides the #242 spine: a fired reminder is a
+# tray record born through the same reconcile that announces
+# it in chat and pushes it to the phone (#272 parity — the
+# payload is the record's own summary). Acknowledgment is a
+# store write, so it is a SYNCED FACT: acked once, converged
+# everywhere, never ringing twice from two seats. A standing
+# order is an entry with a trigger and a pre-approved action
+# from a BOUNDED vocabulary — remind, report, file,
+# watch-check. Sending, spending and elevating are never in
+# the vocabulary, at any setting: an order that names one is
+# refused by name at the door, and an order that would need
+# one asks instead of acting. Every execution lands in the
+# order's own execution list — the audit trail a practitioner
+# can review after the fact — whether it woke him or not.
+#
+# #296 — the day brief. The living greeting (#288) grows a
+# day section: what is ON, what CHANGED, what NEEDS him, in
+# that order, assembled deterministically from what she
+# already legitimately sees — this store, Pulse, the case
+# list, the tray. NO calendar connector: the brief is built
+# from her own records, not a calendar she does not have. A
+# source that does not answer is badged as a GAP on the
+# brief's face, never silently thinner. The brief is a
+# record: it lands in the store, so "what did Tuesday's
+# brief say" is a recall question, not a shrug.
+
+DAYBOOK_PATH = os.path.join(ROOT, "config", "daybook.json")
+DAYBOOK_KINDS = ("capture", "reminder", "order", "brief")
+DAYBOOK_ORDER_VERBS = ("remind", "report", "file", "watch-check")
+DAYBOOK_ENTRY_CAP = 400
+DAYBOOK_EXEC_CAP = 12
+DAYBOOK_TICK_SECONDS = 30
+_daybook_lock = threading.Lock()
+
+
+def _daybook_now_iso(ts=None):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                         time.gmtime(ts or time.time()))
+
+
+def _daybook_day(ts=None):
+    return time.strftime("%Y-%m-%d", time.localtime(ts or time.time()))
+
+
+def _daybook_new_id(kind, seed):
+    base = hashlib.sha256(
+        (kind + "|" + str(seed) + "|" + str(time.time())
+         + "|" + os.urandom(6).hex()).encode("utf-8")).hexdigest()[:10]
+    return {"capture": "cap-", "reminder": "rem-",
+            "order": "ord-", "brief": "brief-"}.get(kind, "day-") + base
+
+
+def _daybook_num(v, default=0):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+
+
+def _daybook_clean_entry(raw):
+    # One entry, cleaned — the load's discipline, as everywhere
+    # in this bridge: a malformed row is dropped, never
+    # repaired into a half-truth the day would then vouch for.
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("kind") or "").strip()
+    eid = str(raw.get("id") or "").strip()
+    if kind not in DAYBOOK_KINDS or not eid:
+        return None
+    out = {
+        "id": eid[:80],
+        "kind": kind,
+        "text": str(raw.get("text") or "")[:1000],
+        "createdAt": _daybook_num(raw.get("createdAt")),
+        "updatedAt": _daybook_num(raw.get("updatedAt")),
+        "origin": dict(raw.get("origin")) if isinstance(raw.get("origin"), dict) else {},
+        "state": str(raw.get("state") or "")[:40],
+    }
+    if kind == "capture":
+        out["key"] = str(raw.get("key") or "")[:120] or None
+        out["supersedes"] = str(raw.get("supersedes") or "")[:80]
+        out["proposed"] = raw.get("proposed") is True
+    elif kind == "reminder":
+        out["dueAt"] = _daybook_num(raw.get("dueAt"))
+        out["firedAt"] = _daybook_num(raw.get("firedAt"))
+        out["ackedAt"] = _daybook_num(raw.get("ackedAt"))
+        out["orderId"] = str(raw.get("orderId") or "")[:80]
+    elif kind == "order":
+        out["verb"] = str(raw.get("verb") or "")[:20]
+        trig = raw.get("trigger") if isinstance(raw.get("trigger"), dict) else {}
+        out["trigger"] = {
+            "kind": str(trig.get("kind") or "brief")[:12],
+            "at": _daybook_num(trig.get("at")),
+            "every": _daybook_num(trig.get("every")),
+        }
+        out["params"] = dict(raw.get("params")) if isinstance(raw.get("params"), dict) else {}
+        out["wake"] = raw.get("wake") is True
+        out["lastRunAt"] = _daybook_num(raw.get("lastRunAt"))
+        execs = []
+        for e in (raw.get("executions") or []):
+            if isinstance(e, dict):
+                execs.append({
+                    "at": _daybook_num(e.get("at")),
+                    "via": str(e.get("via") or "")[:40],
+                    "outcome": str(e.get("outcome") or "")[:600],
+                    "wake": e.get("wake") is True,
+                    "acked": e.get("acked") is True,
+                })
+        out["executions"] = execs[-DAYBOOK_EXEC_CAP:]
+    elif kind == "brief":
+        out["day"] = str(raw.get("day") or "")[:10]
+        out["via"] = str(raw.get("via") or "")[:20]
+        out["lines"] = [str(x)[:400] for x in (raw.get("lines") or [])
+                        if str(x or "").strip()][:24]
+        out["gaps"] = [str(x)[:200] for x in (raw.get("gaps") or [])
+                       if str(x or "").strip()][:8]
+    return out
+
+
+def _daybook_load():
+    try:
+        with open(DAYBOOK_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {"entries": [], "lastBriefDay": "", "lastBriefAt": 0}
+    entries = []
+    seen = set()
+    for raw in (data.get("entries") or []):
+        e = _daybook_clean_entry(raw)
+        if e is not None and e["id"] not in seen:
+            seen.add(e["id"])
+            entries.append(e)
+    return {"entries": entries[-DAYBOOK_ENTRY_CAP:],
+            "lastBriefDay": str(data.get("lastBriefDay") or "")[:10],
+            "lastBriefAt": _daybook_num(data.get("lastBriefAt"))}
+
+
+def _daybook_save(store):
+    try:
+        os.makedirs(os.path.dirname(DAYBOOK_PATH), exist_ok=True)
+        _atomic_write(DAYBOOK_PATH, _json_bytes(store))
+    except Exception:
+        return False
+    sync_note_write("daybook")
+    return True
+
+
+def _daybook_get(store, entry_id):
+    for e in store["entries"]:
+        if e["id"] == entry_id:
+            return e
+    return None
+
+
+def _daybook_secret_name(text):
+    # The refusal names the class of thing the screen saw —
+    # a refusal that will not say what it refused is a wall,
+    # not a discipline. Returns "" when the screen is quiet.
+    t = str(text or "")
+    if not memory_looks_secret(t):
+        return ""
+    if MEMORY_LONG_DIGITS_RE.search(t):
+        return "a card number"
+    low = t.lower()
+    if "password" in low or "passcode" in low or "passwd" in low:
+        return "a password"
+    if "api" in low and "key" in low:
+        return "an API key"
+    if "ssn" in low or "social security" in low:
+        return "a government ID number"
+    if "credit card" in low or "card number" in low or "cvv" in low:
+        return "card details"
+    if "credential" in low:
+        return "credentials"
+    if "token" in low:
+        return "a token"
+    return "a secret"
+
+
+def daybook_record_capture(text, origin="trigger", key=None,
+                           proposed=False, chat_id="", cfg=None):
+    # The foundation record of a capture. Both conversational
+    # doors call this at the moment the bridge receipts the
+    # save (the trigger route, the marker pass), and the Day
+    # surface's own capture box calls it directly. Returns
+    # (entry, error): on a secret-shaped text the error NAMES
+    # the class and nothing is written — secret-free by
+    # construction, at this door as at every other.
+    fact = normalize_memory_fact(text)
+    if not fact:
+        return None, "Nothing to capture — the line was empty."
+    bad = _daybook_secret_name(fact)
+    if bad:
+        return None, ("Refused: that looks like " + bad
+                      + ", and secrets never enter the day book — "
+                        "not even when you ask directly.")
+    if key is None:
+        key = memory_fact_key(fact)
+    now = time.time()
+    with _daybook_lock:
+        store = _daybook_load()
+        for e in store["entries"]:
+            if (e["kind"] == "capture" and e["state"] == "standing"
+                    and not e.get("proposed")
+                    and e["text"].lower() == fact.lower()):
+                return e, None  # already standing — named, not duplicated
+        entry = {
+            "id": _daybook_new_id("capture", fact),
+            "kind": "capture",
+            "text": fact,
+            "createdAt": now, "updatedAt": now,
+            "origin": {"via": str(origin or "trigger")[:20],
+                       "seat": socket.gethostname()[:80],
+                       "thread": str(chat_id or "")[:80]},
+            "state": "standing",
+            "key": key,
+            "supersedes": "",
+            "proposed": bool(proposed),
+        }
+        if key:
+            # Corrections supersede: a standing capture under
+            # the same key is the older statement of the same
+            # fact — it steps aside, named, never duplicated.
+            for e in store["entries"]:
+                if (e["kind"] == "capture" and e["state"] == "standing"
+                        and e.get("key") == key
+                        and e["text"].lower() != fact.lower()):
+                    e["state"] = "superseded"
+                    e["updatedAt"] = now
+                    entry["supersedes"] = e["id"]
+        store["entries"].append(entry)
+        _daybook_save(store)
+        return entry, None
+
+
+def daybook_delete_entry(entry_id, cfg=None):
+    # Deletion tombstones by identity (the #253 law): the
+    # entry goes, the tombstone travels, and no copy no newer
+    # than the deletion can resurrect it.
+    with _daybook_lock:
+        store = _daybook_load()
+        e = _daybook_get(store, entry_id)
+        if e is None:
+            return None, "No such entry stands in the day book."
+        store["entries"] = [x for x in store["entries"]
+                            if x["id"] != entry_id]
+        _daybook_save(store)
+    sync_record_tombstone("daybook", entry_id)
+    return e, None
+
+
+def daybook_add_reminder(text, due_at, chat_id="", order_id="",
+                         cfg=None):
+    text = " ".join(str(text or "").split()).strip()
+    if not text:
+        return None, "Name what the reminder is for first."
+    bad = _daybook_secret_name(text)
+    if bad:
+        return None, ("Refused: that looks like " + bad
+                      + ", and secrets never enter the day book.")
+    now = time.time()
+    entry = {
+        "id": _daybook_new_id("reminder", text),
+        "kind": "reminder", "text": text[:300],
+        "createdAt": now, "updatedAt": now,
+        "origin": {"via": "order" if order_id else "chat",
+                   "seat": socket.gethostname()[:80],
+                   "thread": str(chat_id or "")[:80]},
+        "state": "standing",
+        "dueAt": float(due_at), "firedAt": 0, "ackedAt": 0,
+        "orderId": str(order_id or "")[:80],
+    }
+    with _daybook_lock:
+        store = _daybook_load()
+        store["entries"].append(entry)
+        _daybook_save(store)
+    return entry, None
+
+
+def daybook_ack(entry_id=None, cfg=None):
+    # Acknowledge the named entry — or, unnamed, the oldest
+    # thing standing fired and unacknowledged (a reminder
+    # first, then a waking order execution). The ack is a
+    # store write: a synced fact, converged everywhere.
+    now = time.time()
+    with _daybook_lock:
+        store = _daybook_load()
+        target = None
+        if entry_id:
+            target = _daybook_get(store, entry_id)
+        if target is None:
+            fired = [e for e in store["entries"]
+                     if e["kind"] == "reminder" and e["state"] == "fired"]
+            fired.sort(key=lambda e: e["firedAt"] or e["createdAt"])
+            target = fired[0] if fired else None
+        if target is not None and target["kind"] == "reminder":
+            if target["state"] != "fired":
+                return None, "That reminder is not standing fired."
+            target["state"] = "acked"
+            target["ackedAt"] = now
+            target["updatedAt"] = now
+            _daybook_save(store)
+            # #272 parity, kept on this door too: the ack
+            # marks the tray record read through the bell's
+            # own write, so the clearing push closes the
+            # phone copy — the reconcile that follows retires
+            # the record itself.
+            try:
+                notifications_mark_read(
+                    ["reminder:" + target["id"]], cfg=cfg)
+            except Exception:
+                pass
+            return target, None
+        for e in store["entries"]:
+            if e["kind"] != "order":
+                continue
+            for x in (e.get("executions") or []):
+                if x.get("wake") and not x.get("acked"):
+                    x["acked"] = True
+                    e["updatedAt"] = now
+                    _daybook_save(store)
+                    try:
+                        notifications_mark_read(
+                            ["order:" + e["id"] + ":"
+                             + str(int(x.get("at") or 0))], cfg=cfg)
+                    except Exception:
+                        pass
+                    return e, None
+        return None, "Nothing is standing fired to acknowledge."
+
+
+_DAYBOOK_REFUSED_VERBS = {
+    "send": "sending", "email": "sending", "mail": "sending",
+    "message": "sending", "text": "sending", "post": "sending",
+    "reply": "sending", "buy": "spending", "pay": "spending",
+    "purchase": "spending", "spend": "spending",
+    "elevate": "elevating", "sudo": "elevating",
+    "delete": "deleting", "remove": "deleting",
+    "run": "running commands", "execute": "executing commands",
+    "call": "calling", "order": "ordering goods",
+}
+
+
+def _daybook_clock(text):
+    # "8", "8:30", "20:15", with an optional am/pm — one
+    # bounded clock shape, read deterministically.
+    m = re.match(r"\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$",
+                 str(text or ""), re.I)
+    if not m:
+        return None
+    hh = int(m.group(1))
+    mm = int(m.group(2) or 0)
+    ap = (m.group(3) or "").lower()
+    if ap == "pm" and hh < 12:
+        hh += 12
+    elif ap == "am" and hh == 12:
+        hh = 0
+    if hh > 23 or mm > 59:
+        return None
+    return hh, mm
+
+
+def _daybook_at_today(hh, mm, now=None):
+    now = now or time.time()
+    lt = time.localtime(now)
+    at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+    if at <= now:
+        at += 86400
+    return at
+
+
+def _day_parse_when(text, now=None):
+    # A bounded set of time expressions, read deterministically
+    # or not at all — an unreadable time is named and asked,
+    # never guessed. Returns (epoch, rest) or (None, text).
+    now = now or time.time()
+    t = str(text or "")
+    m = re.search(r"\bin\s+(\d+)\s*(minutes?|mins?|hours?|hrs?|days?)\b",
+                  t, re.I)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2).lower()
+        secs = n * (60 if unit.startswith("min") else
+                    3600 if unit.startswith("h") else 86400)
+        return now + secs, (t[:m.start()] + t[m.end():]).strip()
+    m = re.search(r"\bon\s+(\d{4})-(\d{2})-(\d{2})"
+                  r"(?:\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?\b",
+                  t, re.I)
+    if m:
+        hh, mm = 9, 0
+        if m.group(4):
+            c = _daybook_clock(m.group(4))
+            if c:
+                hh, mm = c
+        at = time.mktime((int(m.group(1)), int(m.group(2)),
+                          int(m.group(3)), hh, mm, 0, 0, 0, -1))
+        return at, (t[:m.start()] + t[m.end():]).strip()
+    m = re.search(r"\btomorrow\b(?:\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?",
+                  t, re.I)
+    if m:
+        hh, mm = 9, 0
+        if m.group(1):
+            c = _daybook_clock(m.group(1))
+            if c:
+                hh, mm = c
+        lt = time.localtime(now + 86400)
+        at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                          hh, mm, 0, 0, 0, -1))
+        return at, (t[:m.start()] + t[m.end():]).strip()
+    m = re.search(r"\btonight\b", t, re.I)
+    if m:
+        return (_daybook_at_today(21, 0, now),
+                (t[:m.start()] + t[m.end():]).strip())
+    m = re.search(r"\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", t, re.I)
+    if m:
+        c = _daybook_clock(m.group(1))
+        if c:
+            return (_daybook_at_today(c[0], c[1], now),
+                    (t[:m.start()] + t[m.end():]).strip())
+    return None, t
+
+
+def daybook_parse_order(body, now=None):
+    # Parse the action clause of a standing order. Returns
+    # (fields, error): the verb must stand in the bounded
+    # vocabulary — a verb outside it is refused BY NAME, with
+    # the vocabulary named back, at the door (never at
+    # execution time, never silently reinterpreted).
+    now = now or time.time()
+    text = " ".join(str(body or "").split()).strip()
+    if not text:
+        return None, "The order was empty — name its action first."
+    low = text.lower()
+    # The operator's natural sentence often leads with the
+    # trigger ("every day at 08:00, report the wire count"):
+    # the lead clause is read first and supplies the trigger
+    # when the action clause carries none of its own.
+    lead = ""
+    _lm = re.match(
+        r"(every\s+day\s+at\s+\d{1,2}:\d{2}|daily\s+at\s+"
+        r"\d{1,2}:\d{2}|every\s+\d+\s*(?:hours?|hrs?|minutes?|"
+        r"mins?|days?)|when\s+the\s+brief\s+is\s+composed|"
+        r"at\s+the\s+brief|in\s+the\s+brief|at\s+\d{1,2}:\d{2})"
+        r"\s*,\s*", text, re.I)
+    if _lm:
+        lead = _lm.group(1)
+        text = text[_lm.end():].strip()
+        low = text.lower()
+    if re.search(r"\bevery\s+(monday|tuesday|wednesday|thursday|"
+                 r"friday|saturday|sunday|week)\b", text, re.I):
+        return None, ("Weekly orders are not in this cut — name "
+                      "it daily, on an interval, at a time, or at "
+                      "the brief, and it stands.")
+    verb = ""
+    rest = text
+    m = re.match(r"(watch[-\s]check|remind|report|file)\b", low)
+    if m:
+        verb = "watch-check" if m.group(1).startswith("watch") else m.group(1)
+        rest = text[m.end():].strip()
+    else:
+        first = low.split(None, 1)[0].strip(".,:") if low.split() else ""
+        if first in _DAYBOOK_REFUSED_VERBS:
+            return None, ("Refused by name: a standing order cannot "
+                          "be a " + _DAYBOOK_REFUSED_VERBS[first]
+                          + " order. " + _DAYBOOK_REFUSED_VERBS[first].capitalize()
+                          + " is not in the vocabulary — a standing "
+                            "order may only remind, report, file, or "
+                            "watch-check. I can remind you to do it "
+                            "yourself, or report on it; the act itself "
+                            "stays yours.")
+        return None, ("I can't take that as a standing order — its "
+                      "action must open with one of the four verbs: "
+                      "remind, report, file, watch-check. Say it as "
+                      "\u201cstanding order: report the cases in the "
+                      "brief\u201d and it stands.")
+    trigger = {"kind": "", "at": 0, "every": 0}
+    params = {}
+    wake = bool(re.search(r"\b(wake me|tell me|alert me)\b", low))
+    m = re.search(r"\bevery\s+(\d+)\s*(hours?|hrs?|minutes?|mins?|days?)\b",
+                  rest, re.I)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2).lower()
+        trigger = {"kind": "interval", "at": 0,
+                   "every": n * (60 if unit.startswith("min") else
+                                 3600 if unit.startswith("h") else 86400)}
+        rest = (rest[:m.start()] + rest[m.end():]).strip()
+    _dm = re.search(r"\b(?:every\s+day|daily)\s+at\s+"
+                    r"(\d{1,2}:\d{2})\b", rest, re.I)
+    if _dm and not trigger["kind"]:
+        _at, _r = _day_parse_when("at " + _dm.group(1), now)
+        if _at:
+            trigger = {"kind": "daily", "at": _at, "every": 86400}
+            rest = (rest[:_dm.start()] + rest[_dm.end():]).strip()
+    elif not trigger["kind"] and re.search(r"\bdaily\b", rest, re.I):
+        trigger = {"kind": "interval", "at": 0, "every": 86400}
+        rest = re.sub(r"\bdaily\b", "", rest, flags=re.I).strip()
+    if not trigger["kind"] and re.search(r"\b(in the|at the) (day )?brief\b",
+                                         rest, re.I):
+        trigger = {"kind": "brief", "at": 0, "every": 0}
+        rest = re.sub(r"\b(in the|at the) (day )?brief\b", "",
+                      rest, flags=re.I).strip()
+    if not trigger["kind"]:
+        at, rest2 = _day_parse_when(rest, now)
+        if at:
+            trigger = {"kind": "at", "at": at, "every": 0}
+            rest = rest2
+    if not trigger["kind"] and lead:
+        _ll = lead.lower()
+        if "brief" in _ll:
+            trigger = {"kind": "brief", "at": 0, "every": 0}
+        elif re.search(r"every\s+day|daily", _ll):
+            _at, _r = _day_parse_when(lead, now)
+            if _at:
+                trigger = {"kind": "daily", "at": _at, "every": 86400}
+        elif _ll.startswith("every"):
+            _em = re.search(r"(\d+)\s*(hours?|hrs?|minutes?|mins?|days?)", _ll)
+            if _em:
+                _n = int(_em.group(1))
+                _u = _em.group(2)
+                trigger = {"kind": "interval", "at": 0,
+                           "every": _n * (60 if _u.startswith("min")
+                                          else 3600 if _u.startswith("h")
+                                          else 86400)}
+        else:
+            _at, _r = _day_parse_when(lead, now)
+            if _at:
+                trigger = {"kind": "at", "at": _at, "every": 0}
+    if verb == "remind":
+        if not trigger["kind"]:
+            return None, ("A remind order needs its time — \u201cat "
+                          "18:00\u201d, \u201cevery 4 hours\u201d, "
+                          "\u201ctomorrow at 9\u201d. Name it and the "
+                          "order stands.")
+        params["text"] = re.sub(r"^(me|him|the operator)\b", "",
+                                rest, flags=re.I).strip(" .") or text
+    elif verb == "report":
+        if not trigger["kind"]:
+            trigger = {"kind": "brief", "at": 0, "every": 0}
+        if re.search(r"\bcase", rest, re.I):
+            params["subject"] = "cases"
+        elif re.search(r"\bwire\b", rest, re.I):
+            params["subject"] = "wire"
+        elif re.search(r"\bpulse|watch", rest, re.I):
+            params["subject"] = "pulse"
+        else:
+            params["subject"] = "day"
+    elif verb == "file":
+        m = re.search(r"\binto\s+(?:the\s+)?(?:case\s+)?"
+                      r"([a-z0-9][a-z0-9\-]*)\b", rest, re.I)
+        if not m:
+            return None, ("A file order names its case — \u201cfile "
+                          "<the note> into <case>\u201d. A named case "
+                          "that does not exist is named at execution, "
+                          "never rerouted.")
+        params["case"] = m.group(1)
+        note = (rest[:m.start()] + rest[m.end():]).strip(" .")
+        note = re.sub(r"^(this|the note|a note)\b", "", note,
+                      flags=re.I).strip(" .")
+        params["note"] = note or text
+        if not trigger["kind"]:
+            trigger = {"kind": "brief", "at": 0, "every": 0}
+    elif verb == "watch-check":
+        topic = re.sub(r"^(on|for)\b", "", rest, flags=re.I).strip(" .")
+        params["topic"] = topic
+        if not topic:
+            return None, ("A watch-check order names its watch — "
+                          "\u201cwatch-check on <topic>\u201d.")
+        if not trigger["kind"]:
+            trigger = {"kind": "interval", "at": 0, "every": 3 * 3600}
+    return {"verb": verb, "trigger": trigger, "params": params,
+            "wake": wake, "text": text}, None
+
+
+def daybook_add_order(body, chat_id="", cfg=None):
+    fields, err = daybook_parse_order(body)
+    if err:
+        return None, err
+    bad = _daybook_secret_name(fields["text"])
+    if bad:
+        return None, ("Refused: that order carries " + bad
+                      + ", and secrets never enter the day book.")
+    now = time.time()
+    entry = {
+        "id": _daybook_new_id("order", fields["text"]),
+        "kind": "order", "text": fields["text"][:600],
+        "createdAt": now, "updatedAt": now,
+        "origin": {"via": "chat", "seat": socket.gethostname()[:80],
+                   "thread": str(chat_id or "")[:80]},
+        "state": "standing",
+        "verb": fields["verb"], "trigger": fields["trigger"],
+        "params": fields["params"], "wake": fields["wake"],
+        "lastRunAt": 0, "executions": [],
+    }
+    with _daybook_lock:
+        store = _daybook_load()
+        store["entries"].append(entry)
+        _daybook_save(store)
+    return entry, None
+
+
+def _daybook_report(subject, cfg):
+    # The report verb's whole reach: deterministic summaries
+    # of her own records. No model call, nothing leaves the
+    # machine, and a source that does not answer says so.
+    if subject == "wire":
+        try:
+            st = WIRE.state() or {}
+            items = st.get("items") or []
+            news = sum(1 for it in items if it.get("kind") == "news")
+            dead = sum(1 for s in (st.get("sources") or [])
+                       if s.get("error"))
+            return (str(len(items)) + " item(s) on the wire, "
+                    + str(news) + " of them news, " + str(dead)
+                    + " source(s) not answering")
+        except Exception:
+            return "the wire did not answer for this report"
+    if subject == "cases":
+        try:
+            heads = cases_list_payload().get("cases") or []
+        except Exception:
+            return "the case list did not answer for this report"
+        if not heads:
+            return "no cases stand open"
+        parts = []
+        for h in heads[:6]:
+            parts.append(str(h.get("name") or h.get("slug") or "")
+                         + " (" + str(h.get("tasksOpen") or 0)
+                         + " task(s) open, "
+                         + str(h.get("unverified") or 0)
+                         + " unverified)")
+        return (str(len(heads)) + " case(s) stand: "
+                + "; ".join(parts))
+    if subject == "pulse":
+        try:
+            store = _pulse_load()
+        except Exception:
+            return "Pulse did not answer for this report"
+        if not store["watches"]:
+            return "no watches stand"
+        return ("watches standing: " + ", ".join(
+            "\u201c" + w["topic"] + "\u201d (" + w["state"] + ")"
+            for w in store["watches"][:6]))
+    try:
+        store = _daybook_load()
+    except Exception:
+        return "the day book did not answer for this report"
+    rems = [e for e in store["entries"]
+            if e["kind"] == "reminder" and e["state"] in ("standing", "fired")]
+    caps = [e for e in store["entries"]
+            if e["kind"] == "capture" and e["state"] == "standing"]
+    return (str(len(rems)) + " reminder(s) standing, "
+            + str(len(caps)) + " capture(s) on the book")
+
+
+def daybook_execute_order(entry, cfg=None, via="schedule", now=None):
+    # One execution, performed deterministically and recorded
+    # on the order itself — the receipt is the record, and it
+    # stands whether the outcome pleased or not. Returns the
+    # outcome line. The caller holds _daybook_lock with the
+    # store loaded and saves after.
+    now = now or time.time()
+    verb = entry.get("verb") or ""
+    params = entry.get("params") or {}
+    outcome = ""
+    if verb == "remind":
+        text = str(params.get("text") or entry["text"])
+        sub = {
+            "id": _daybook_new_id("reminder", text),
+            "kind": "reminder", "text": text[:300],
+            "createdAt": now, "updatedAt": now,
+            "origin": {"via": "order", "seat": socket.gethostname()[:80],
+                       "thread": ""},
+            "state": "standing", "dueAt": now, "firedAt": 0,
+            "ackedAt": 0, "orderId": entry["id"],
+        }
+        outcome = "reminder set for now: \u201c" + text[:160] + "\u201d"
+        entry["_spawn"] = sub
+    elif verb == "report":
+        outcome = _daybook_report(str(params.get("subject") or "day"), cfg)
+    elif verb == "file":
+        slug = str(params.get("case") or "")
+        note = str(params.get("note") or entry["text"])
+        try:
+            landed, ferr = case_land_part(
+                slug, "finding", "Standing order — " + entry["text"][:80],
+                note, author="navi", source="standing-order")
+        except Exception as e:
+            landed, ferr = None, str(e)[:160]
+        if landed:
+            outcome = ("filed into " + slug + " at "
+                       + str(landed.get("path") or ""))
+        else:
+            # A named case that does not exist is named, never
+            # rerouted — the #291 discipline, kept.
+            outcome = ("NOT filed — " + (ferr or "the case did not answer")
+                       + " (nothing was rerouted)")
+    elif verb == "watch-check":
+        topic = str(params.get("topic") or "")
+        try:
+            pulse_run(cfg=cfg, reason="order")
+        except Exception:
+            pass
+        try:
+            store = _pulse_load()
+            hit = None
+            for w in store["watches"]:
+                if w["topic"].lower() == topic.lower():
+                    hit = w
+                    break
+            if hit is None:
+                outcome = ("no watch stands on \u201c" + topic
+                           + "\u201d — the check ran, the watch did not")
+            else:
+                outcome = ("checked \u201c" + topic + "\u201d — last "
+                           "check " + (hit.get("lastCheckIso") or "never")
+                           + ", coverage " + (hit.get("coverage") or "—"))
+        except Exception:
+            outcome = "Pulse did not answer for this check"
+    else:
+        outcome = "unknown verb — the order did not act"
+    entry.setdefault("executions", []).append({
+        "at": now, "via": str(via or "schedule")[:40],
+        "outcome": outcome[:600],
+        "wake": bool(entry.get("wake")), "acked": False,
+    })
+    entry["executions"] = entry["executions"][-DAYBOOK_EXEC_CAP:]
+    entry["lastRunAt"] = now
+    entry["updatedAt"] = now
+    return outcome
+
+
+def daybook_tick(cfg=None, now=None):
+    # The scheduler's one pass: fire what is due, run what is
+    # owed, open the day's brief at the day's start. Called by
+    # the resident loop; the benches call it directly with a
+    # fixed clock. Returns what happened, as data.
+    if cfg is None:
+        cfg = load_config()
+    now = now or time.time()
+    fired, ran = [], []
+    with _daybook_lock:
+        store = _daybook_load()
+        changed = False
+        for e in store["entries"]:
+            if (e["kind"] == "reminder" and e["state"] == "standing"
+                    and (e.get("dueAt") or 0) <= now):
+                e["state"] = "fired"
+                e["firedAt"] = now
+                e["updatedAt"] = now
+                fired.append(e["id"])
+                changed = True
+        spawns = []
+        for e in store["entries"]:
+            if e["kind"] != "order" or e["state"] != "standing":
+                continue
+            trig = e.get("trigger") or {}
+            due = False
+            if trig.get("kind") == "at" and (trig.get("at") or 0) <= now:
+                due = True
+            elif trig.get("kind") == "daily" and (trig.get("at") or 0) <= now:
+                due = True
+            elif trig.get("kind") == "interval" and trig.get("every"):
+                last = e.get("lastRunAt") or e.get("createdAt") or 0
+                due = (now - last) >= trig["every"]
+            if not due:
+                continue
+            daybook_execute_order(e, cfg, via="schedule", now=now)
+            sub = e.pop("_spawn", None)
+            if sub is not None:
+                spawns.append(sub)
+            ran.append(e["id"])
+            changed = True
+            if trig.get("kind") == "at":
+                e["state"] = "done"
+            elif trig.get("kind") == "daily":
+                _nxt = trig.get("at") or now
+                while _nxt <= now:
+                    _nxt += 86400
+                trig["at"] = _nxt
+        # Spawned reminders ride the same store, appended
+        # after the pass that made them (never mid-iteration).
+        store["entries"].extend(spawns)
+        today = _daybook_day(now)
+        brief_made = False
+        if store.get("lastBriefDay") != today:
+            # Only the day is stamped here — the brief's own
+            # composition stamps lastBriefAt AFTER reading it,
+            # so "captures since the last brief" measures from
+            # the brief before this one.
+            store["lastBriefDay"] = today
+            changed = True
+            brief_made = True
+        if changed:
+            _daybook_save(store)
+    if brief_made:
+        try:
+            daybook_brief_compose(cfg=cfg, via="day-start", now=now)
+        except Exception:
+            pass
+    if fired or ran:
+        # Delivery rides the #242 spine: one reconcile births
+        # the tray records, announces them in chat, and pushes
+        # them to the phone — the same pass every other
+        # producer's births ride.
+        try:
+            notifications_reconcile(cfg)
+        except Exception:
+            pass
+    return {"fired": fired, "ordersRun": ran, "brief": brief_made}
+
+
+def daybook_start():
+    # The resident scheduler, started in __main__ beside
+    # Pulse's loop: a first pass shortly after boot (a reminder
+    # that fell due while the bridge was down fires on the
+    # way back up — due-state is the store's, not a timer's),
+    # then a pass every DAYBOOK_TICK_SECONDS.
+    def loop():
+        time.sleep(45)
+        while True:
+            try:
+                daybook_tick()
+            except Exception:
+                pass
+            time.sleep(DAYBOOK_TICK_SECONDS)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def _notif_wanted_day(cfg):
+    # Tray producers (g) and (h) — #295's delivery on the #242
+    # spine. A fired, unacknowledged reminder is wanted until
+    # its ack lands in the store (a synced fact — the record
+    # retires on every seat when the ack converges). A waking
+    # order execution is wanted until it is acknowledged the
+    # same way. Births announce in chat and push to the phone
+    # by the spine's own rules — parity is inherited, not
+    # re-implemented.
+    items = []
+    try:
+        store = _daybook_load()
+    except Exception:
+        return items
+    for e in store["entries"]:
+        if e["kind"] == "reminder" and e["state"] == "fired":
+            items.append({
+                "id": "reminder:" + e["id"],
+                "kind": "reminder",
+                "title": "Reminder",
+                "body": e["text"],
+                "target": {"view": "Home"},
+                "count": 1,
+            })
+        elif e["kind"] == "order":
+            for x in (e.get("executions") or []):
+                if x.get("wake") and not x.get("acked"):
+                    items.append({
+                        "id": ("order:" + e["id"] + ":"
+                               + str(int(x.get("at") or 0))),
+                        "kind": "order",
+                        "title": "A standing order ran",
+                        "body": (e["text"][:200] + " — "
+                                 + str(x.get("outcome") or ""))[:600],
+                        "target": {"view": "Home"},
+                        "count": 1,
+                    })
+    return items
+
+
+def daybook_brief_compose(cfg=None, via="on-demand", now=None):
+    # #296: the brief, assembled deterministically from what
+    # she already legitimately sees. Sections in the ruled
+    # order — what is on, what changed, what needs him — and
+    # every source wrapped on its own: a source that does not
+    # answer is a GAP on the brief's face, never a silent
+    # thinning. The brief lands in the store as a record
+    # (today's earlier brief is superseded, not stacked).
+    if cfg is None:
+        cfg = load_config()
+    now = now or time.time()
+    day = _daybook_day(now)
+    # Brief-trigger standing orders execute as the brief is
+    # composed — "surface it in the brief" is an instruction
+    # with a time, and this is the time. Their outcomes stand
+    # on their own records; the sections below then read a
+    # store that already carries them.
+    try:
+        with _daybook_lock:
+            _store = _daybook_load()
+            _spawns = []
+            _ran = False
+            for e in _store["entries"]:
+                if (e["kind"] == "order" and e["state"] == "standing"
+                        and (e.get("trigger") or {}).get("kind") == "brief"):
+                    daybook_execute_order(e, cfg, via="brief", now=now)
+                    sub = e.pop("_spawn", None)
+                    if sub is not None:
+                        # Composing twice must not stack twins:
+                        # a reminder this order already has
+                        # standing (or fired and unacknowledged)
+                        # is the same reminder, not a new one.
+                        _twin = any(
+                            x["kind"] == "reminder"
+                            and x.get("orderId") == e["id"]
+                            and x["text"] == sub["text"]
+                            and x["state"] in ("standing", "fired")
+                            for x in _store["entries"] + _spawns)
+                        if _twin:
+                            if e.get("executions"):
+                                e["executions"][-1]["outcome"] = (
+                                    e["executions"][-1]["outcome"]
+                                    + " (already standing — not "
+                                      "duplicated)")[:600]
+                        else:
+                            _spawns.append(sub)
+                    _ran = True
+            if _ran:
+                _store["entries"].extend(_spawns)
+                _daybook_save(_store)
+    except Exception:
+        pass
+    lines, gaps = [], []
+    on, changed, needs = [], [], []
+    try:
+        store = _daybook_load()
+        rems = [e for e in store["entries"] if e["kind"] == "reminder"]
+        standing = [e for e in rems if e["state"] == "standing"]
+        standing.sort(key=lambda e: e.get("dueAt") or 0)
+        fired = [e for e in rems if e["state"] == "fired"]
+        if standing:
+            nxt = standing[0]
+            on.append(str(len(standing)) + " reminder(s) standing — "
+                      "next: \u201c" + nxt["text"][:120] + "\u201d at "
+                      + time.strftime("%H:%M", time.localtime(
+                          nxt.get("dueAt") or now)) + ".")
+        orders = [e for e in store["entries"]
+                  if e["kind"] == "order" and e["state"] == "standing"]
+        if orders:
+            on.append(str(len(orders)) + " standing order(s) on the "
+                      "book: " + ", ".join(
+                          "\u201c" + o["text"][:60] + "\u201d"
+                          for o in orders[:3]) + ".")
+        last_brief_at = store.get("lastBriefAt") or 0
+        fresh_caps = [e for e in store["entries"]
+                      if e["kind"] == "capture"
+                      and e["state"] == "standing"
+                      and (e.get("createdAt") or 0) > last_brief_at]
+        if fresh_caps:
+            changed.append(str(len(fresh_caps)) + " capture(s) since "
+                           "the last brief — the newest: \u201c"
+                           + fresh_caps[-1]["text"][:120] + "\u201d.")
+        proposed = [e for e in store["entries"]
+                    if e["kind"] == "capture" and e.get("proposed")
+                    and e["state"] == "standing"]
+        if proposed:
+            needs.append(str(len(proposed)) + " capture proposal(s) "
+                         "waiting for your word.")
+        for e in fired:
+            needs.append("A reminder is waiting: \u201c"
+                         + e["text"][:160] + "\u201d.")
+    except Exception:
+        gaps.append("the day book did not answer for this brief")
+    try:
+        for d in _pulse_digest_lines():
+            changed.append("Pulse — " + d["line"] + ".")
+    except Exception:
+        gaps.append("Pulse did not answer for this brief")
+    try:
+        heads = cases_list_payload().get("cases") or []
+        unv = sum(int(h.get("unverified") or 0) for h in heads
+                  if isinstance(h, dict))
+        if unv:
+            needs.append(str(unv) + " unverified case entr"
+                         + ("y is" if unv == 1 else "ies are")
+                         + " waiting for your review.")
+        elif heads:
+            on.append(str(len(heads)) + " case(s) stand, none waiting "
+                      "on review.")
+    except Exception:
+        gaps.append("the case list did not answer for this brief")
+    try:
+        unread = int(notifications_payload(cfg).get("unread") or 0)
+        if unread:
+            needs.append(str(unread) + " notice(s) stand unread in "
+                         "the tray.")
+    except Exception:
+        gaps.append("the tray did not answer for this brief")
+    for label, rows in (("On", on), ("Changed", changed),
+                        ("Needs you", needs)):
+        if rows:
+            lines.append(label + ": " + " ".join(rows))
+    if gaps:
+        lines.append("Gaps: " + "; ".join(gaps) + " — the brief names "
+                     "what it could not read rather than thinning "
+                     "silently.")
+    if not lines:
+        lines.append("A quiet day on the book — nothing standing, "
+                     "nothing waiting.")
+    entry = {
+        "id": _daybook_new_id("brief", day + via),
+        "kind": "brief", "text": "\n".join(lines),
+        "createdAt": now, "updatedAt": now,
+        "origin": {"via": str(via or "on-demand")[:20],
+                   "seat": socket.gethostname()[:80], "thread": ""},
+        "state": "standing", "day": day, "via": str(via or "on-demand"),
+        "lines": lines, "gaps": gaps,
+    }
+    with _daybook_lock:
+        store = _daybook_load()
+        for e in store["entries"]:
+            if (e["kind"] == "brief" and e.get("day") == day
+                    and e["state"] == "standing"):
+                e["state"] = "superseded"
+                e["updatedAt"] = now
+        store["entries"].append(entry)
+        store["lastBriefDay"] = day
+        store["lastBriefAt"] = now
+        _daybook_save(store)
+    return {"day": day, "via": entry["via"], "lines": lines,
+            "gaps": gaps, "text": entry["text"], "id": entry["id"]}
+
+
+def _daybook_greeting_lines(cfg=None):
+    # The greeting's day section (#296): the day rides the
+    # brief she already speaks — at most two lines, and only
+    # when the book actually holds something. An empty book
+    # adds nothing (the greeting's shape is untouched).
+    try:
+        store = _daybook_load()
+    except Exception:
+        return []
+    out = []
+    now = time.time()
+    fired = [e for e in store["entries"]
+             if e["kind"] == "reminder" and e["state"] == "fired"]
+    if fired:
+        out.append("A reminder is waiting on you: \u201c"
+                   + fired[0]["text"][:140] + "\u201d.")
+    else:
+        standing = [e for e in store["entries"]
+                    if e["kind"] == "reminder"
+                    and e["state"] == "standing"
+                    and _daybook_day(e.get("dueAt") or 0) == _daybook_day(now)]
+        if standing:
+            standing.sort(key=lambda e: e.get("dueAt") or 0)
+            out.append("One reminder stands today — \u201c"
+                       + standing[0]["text"][:120] + "\u201d at "
+                       + time.strftime("%H:%M", time.localtime(
+                           standing[0].get("dueAt") or now)) + ".")
+    proposed = [e for e in store["entries"]
+                if e["kind"] == "capture" and e.get("proposed")
+                and e["state"] == "standing"]
+    if proposed:
+        out.append(str(len(proposed)) + " capture proposal(s) are "
+                   "waiting for your word in the day book.")
+    return out[:2]
+
+
+def daybook_payload(cfg=None):
+    # The Day surface's read: the book as it stands — captures
+    # (standing, newest first), proposals apart, reminders,
+    # orders with their executions, and the latest brief.
+    if cfg is None:
+        cfg = load_config()
+    store = _daybook_load()
+    caps = [e for e in store["entries"]
+            if e["kind"] == "capture" and e["state"] == "standing"
+            and not e.get("proposed")]
+    props = [e for e in store["entries"]
+             if e["kind"] == "capture" and e["state"] == "standing"
+             and e.get("proposed")]
+    rems = [e for e in store["entries"] if e["kind"] == "reminder"
+            and e["state"] in ("standing", "fired")]
+    orders = [e for e in store["entries"] if e["kind"] == "order"
+              and e["state"] == "standing"]
+    briefs = [e for e in store["entries"] if e["kind"] == "brief"
+              and e["state"] == "standing"]
+    caps.sort(key=lambda e: -(e.get("createdAt") or 0))
+    props.sort(key=lambda e: -(e.get("createdAt") or 0))
+    rems.sort(key=lambda e: (0 if e["state"] == "fired" else 1,
+                             e.get("dueAt") or 0))
+    briefs.sort(key=lambda e: -(e.get("createdAt") or 0))
+    return {"ok": True,
+            "captures": caps[:30], "proposals": props[:10],
+            "reminders": rems[:30], "orders": orders[:20],
+            "brief": briefs[0] if briefs else None,
+            "lastBriefDay": store.get("lastBriefDay") or ""}
+
+
+def daybook_act(data, cfg=None):
+    # The Day surface's deterministic door — the same
+    # machinery the chat routes receipt, never a second
+    # implementation of it.
+    if cfg is None:
+        cfg = load_config()
+    data = data or {}
+    action = str(data.get("action") or "state")
+    if action == "capture":
+        entry, err = daybook_record_capture(
+            str(data.get("text") or ""), origin="page",
+            chat_id=str(data.get("chatId") or ""), cfg=cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "ack":
+        entry, err = daybook_ack(str(data.get("id") or "") or None, cfg)
+        if err:
+            return {"ok": False, "error": err}
+        try:
+            notifications_reconcile(cfg)
+        except Exception:
+            pass
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "delete":
+        entry, err = daybook_delete_entry(str(data.get("id") or ""), cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "revoke":
+        # The Home card's word for the same act the chat door
+        # calls a revocation: the entry goes, tombstoned.
+        entry, err = daybook_delete_entry(str(data.get("id") or ""), cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "remind":
+        due, rest = _day_parse_when(str(data.get("when") or ""))
+        if not due:
+            return {"ok": False, "error": "Name the time in a shape I "
+                    "can read — \u201cin 30 minutes\u201d, \u201cat "
+                    "18:30\u201d, \u201ctomorrow at 9\u201d."}
+        entry, err = daybook_add_reminder(
+            str(data.get("text") or ""), due, cfg=cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "order":
+        entry, err = daybook_add_order(str(data.get("text") or ""),
+                                       cfg=cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "brief":
+        out = daybook_brief_compose(cfg=cfg, via="on-demand")
+        return {"ok": True, "brief": out, "day": daybook_payload(cfg)}
+    if action == "proposal":
+        eid = str(data.get("id") or "")
+        with _daybook_lock:
+            store = _daybook_load()
+            e = _daybook_get(store, eid)
+            if e is None or e["kind"] != "capture":
+                return {"ok": False, "error": "No such proposal stands."}
+            if data.get("accept"):
+                e["proposed"] = False
+                e["updatedAt"] = time.time()
+                _daybook_save(store)
+                return {"ok": True, "entry": e,
+                        "day": daybook_payload(cfg)}
+        entry, err = daybook_delete_entry(eid, cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    return {"ok": True, "day": daybook_payload(cfg)}
+
+
+_DAY_REMIND_RE = re.compile(
+    r"^\s*remind\s+me\s+(?:to\s+)?(.+?)\s*$", re.I | re.S)
+_DAY_ORDER_RES = (
+    re.compile(r"^\s*(?:set\s+a\s+)?standing\s+order\s*[:\-]\s*"
+               r"(.+?)\s*$", re.I | re.S),
+    re.compile(r"^\s*(?:set\s+a\s+)?standing\s+order\s+"
+               r"((?:remind|report|file|watch[-\s]check)\b.+?)\s*$",
+               re.I | re.S),
+)
+_DAY_ACK_RE = re.compile(
+    r"^\s*(got\s+it|ack|acknowledge|acknowledged|"
+    r"that'?s\s+handled|handled|done)\s*[.!]?\s*$", re.I)
+_DAY_BRIEF_RE = re.compile(
+    r"^\s*(brief\s+me|day\s+brief|give\s+me\s+(the|my)\s+brief|"
+    r"the\s+day\s+brief)\b", re.I)
+_DAY_RECALL_RE = re.compile(
+    r"^\s*(?:recall|what\s+do\s+you\s+remember\s+about|"
+    r"what\s+did\s+you\s+capture\s+about)\s+(.+?)\s*[.?\s]*$", re.I)
+_DAY_UNDO_RE = re.compile(
+    r"^\s*(undo\s+(that|it|the\s+capture|that\s+capture)|"
+    r"forget\s+that\s+capture)\s*[.!]?\s*$", re.I)
+_DAY_ORDERS_LIST_RE = re.compile(
+    r"^\s*(list|show)?\s*(my\s+|the\s+)?standing\s+orders\s*[.!?]?\s*$",
+    re.I)
+_DAY_REVOKE_RE = re.compile(
+    r"^\s*(revoke|cancel|drop)\s+(the\s+)?standing\s+order\s+"
+    r"(?:on|about|to|for)?\s*(.+?)\s*$", re.I)
+
+
+def _daybook_when_words(epoch, now=None):
+    now = now or time.time()
+    lt = time.localtime(epoch)
+    if _daybook_day(epoch) == _daybook_day(now):
+        return "today at " + time.strftime("%H:%M", lt)
+    if _daybook_day(epoch) == _daybook_day(now + 86400):
+        return "tomorrow at " + time.strftime("%H:%M", lt)
+    return time.strftime("%Y-%m-%d %H:%M", lt)
+
+
+def day_chat_reply(last, cfg=None, chat_id=""):
+    # The working day's conversational door (the intent
+    # doctrine): deterministic, ahead of the model, receipted
+    # from what the bridge actually did. Every pattern is
+    # bounded — a line that is merely TALK about reminders or
+    # orders falls through to her, untouched.
+    if cfg is None:
+        cfg = load_config()
+    text = str(last or "").strip()
+    if not text:
+        return None
+    if _DAY_ORDERS_LIST_RE.match(text):
+        store = _daybook_load()
+        orders = [e for e in store["entries"]
+                  if e["kind"] == "order" and e["state"] == "standing"]
+        if not orders:
+            return ("No standing orders on the book. Set one: "
+                    "\u201cstanding order: report the cases in the "
+                    "brief\u201d — the vocabulary is remind, report, "
+                    "file, watch-check.")
+        return ("Standing orders: " + "; ".join(
+            "\u201c" + o["text"] + "\u201d (" + o["verb"] + ", "
+            + o["trigger"]["kind"] + ")" for o in orders) + ".")
+    m = None
+    for rx in _DAY_ORDER_RES:
+        m = rx.match(text)
+        if m:
+            break
+    if m:
+        entry, err = daybook_add_order(m.group(1), chat_id=chat_id,
+                                       cfg=cfg)
+        if err:
+            return err
+        trig = entry["trigger"]
+        if trig["kind"] == "at":
+            when = "at " + _daybook_when_words(trig["at"])
+        elif trig["kind"] == "interval" and trig["every"] >= 3600:
+            when = ("every " + str(int(trig["every"] // 3600))
+                    + " hour(s)")
+        elif trig["kind"] == "interval":
+            when = ("every " + str(int(trig["every"] // 60))
+                    + " minute(s)")
+        elif trig["kind"] == "brief":
+            when = "in the day brief"
+        elif trig["kind"] == "daily":
+            when = ("every day at "
+                    + time.strftime("%H:%M",
+                                    time.localtime(trig.get("at") or 0)))
+        else:
+            when = "on its trigger"
+        return ("Standing order on the book: \u201c" + entry["text"]
+                + "\u201d — it will " + entry["verb"] + " " + when
+                + ", and every run lands on its record whether it "
+                  "wakes you or not. Revoke it any time: "
+                  "\u201crevoke the standing order on "
+                + entry["text"][:40] + "\u201d.")
+    m = _DAY_REVOKE_RE.match(text)
+    if m:
+        want = m.group(3).lower()
+        store = _daybook_load()
+        hit = None
+        for e in store["entries"]:
+            if (e["kind"] == "order" and e["state"] == "standing"
+                    and (want in e["text"].lower()
+                         or want in e["id"].lower())):
+                hit = e
+                break
+        if hit is None:
+            return ("No standing order matches \u201c" + m.group(3)
+                    + "\u201d — the book holds: "
+                    + (", ".join("\u201c" + o["text"][:50] + "\u201d"
+                                 for o in store["entries"]
+                                 if o["kind"] == "order"
+                                 and o["state"] == "standing")
+                       or "none") + ".")
+        entry, err = daybook_delete_entry(hit["id"], cfg)
+        if err:
+            return err
+        return ("Revoked — \u201c" + hit["text"]
+                + "\u201d is off the book, tombstoned on every "
+                  "seat.")
+    _rm = re.match(
+        r"^\s*remember\s+(?!when\b|me\b|us\b|the\s+time\b)"
+        r"(?:that\s+)?(.+?)\s*$", text, re.I | re.S)
+    if _rm and not text.rstrip().endswith("?"):
+        entry, err = daybook_record_capture(
+            _rm.group(1), origin="trigger", chat_id=chat_id, cfg=cfg)
+        if err:
+            return err
+        if entry is None:
+            return ("Already on the book — \u201c"
+                    + " ".join(_rm.group(1).split())[:160]
+                    + "\u201d stands as captured.")
+        return ("Kept — \u201c" + entry["text"][:160]
+                + "\u201d is in the day book, with its provenance "
+                  "on it. \u201cUndo that\u201d takes it back.")
+    m = _DAY_REMIND_RE.match(text)
+    if m:
+        due, rest = _day_parse_when(m.group(1))
+        if not due:
+            return ("I can't read a time in that — say it as "
+                    "\u201cremind me in 30 minutes to …\u201d, "
+                    "\u201cremind me at 18:30 to …\u201d, or "
+                    "\u201cremind me tomorrow at 9 to …\u201d and it "
+                    "stands. Nothing was set.")
+        what = re.sub(r"^(to\s+)", "", rest.strip(), flags=re.I)
+        what = " ".join(what.split()).strip(" .")
+        if not what:
+            return "Remind you of what? Name it and it stands."
+        entry, err = daybook_add_reminder(what, due,
+                                          chat_id=chat_id, cfg=cfg)
+        if err:
+            return err
+        return ("Reminder standing: \u201c" + entry["text"]
+                + "\u201d — " + _daybook_when_words(due)
+                + ". It fires on whichever seat you're at, once, "
+                  "and your \u201cgot it\u201d anywhere settles it "
+                  "everywhere.")
+    if _DAY_ACK_RE.match(text):
+        entry, err = daybook_ack(None, cfg)
+        if entry is not None:
+            try:
+                notifications_reconcile(cfg)
+            except Exception:
+                pass
+            if entry["kind"] == "reminder":
+                return ("Settled — \u201c" + entry["text"]
+                        + "\u201d is acknowledged, here and on every "
+                          "seat.")
+            return ("Settled — the standing order's run is "
+                    "acknowledged: \u201c" + entry["text"][:120]
+                    + "\u201d.")
+        return None  # nothing fired — the line is talk, hers to answer
+    if _DAY_BRIEF_RE.match(text):
+        out = daybook_brief_compose(cfg=cfg, via="on-demand")
+        return ("The day brief — " + out["day"] + ":\n"
+                + "\n".join(out["lines"]))
+    m = _DAY_RECALL_RE.match(text)
+    if m:
+        want = m.group(1).lower()
+        store = _daybook_load()
+        hits = [e for e in store["entries"]
+                if e["kind"] == "capture"
+                and want in e["text"].lower()]
+        if not hits:
+            return ("Nothing in the day book answers to \u201c"
+                    + m.group(1) + "\u201d — the book holds "
+                    + str(sum(1 for e in store["entries"]
+                              if e["kind"] == "capture"))
+                    + " capture(s).")
+        hits.sort(key=lambda e: -(e.get("createdAt") or 0))
+        rows = []
+        for e in hits[:5]:
+            rows.append("\u201c" + e["text"] + "\u201d — captured "
+                        + _daybook_day(e.get("createdAt") or 0)
+                        + ", " + str((e.get("origin") or {}).get("via")
+                                     or "chat")
+                        + (" (superseded)" if e["state"] == "superseded"
+                           else ""))
+        return "From the day book: " + "; ".join(rows) + "."
+    if _DAY_UNDO_RE.match(text):
+        store = _daybook_load()
+        caps = [e for e in store["entries"]
+                if e["kind"] == "capture" and e["state"] == "standing"]
+        if not caps:
+            return "No capture stands to undo — the book is clean."
+        caps.sort(key=lambda e: -(e.get("createdAt") or 0))
+        entry, err = daybook_delete_entry(caps[0]["id"], cfg)
+        if err:
+            return err
+        return ("Undone — \u201c" + caps[0]["text"]
+                + "\u201d is out of the day book, on every seat.")
+    return None
+
+
+def _sync_apply_daybook(fetched, summary, tombs=None):
+    # The day book converges like every other citizen — by
+    # identity, newest write wins per entry — with the one
+    # harder law the store was founded under: a deletion
+    # tombstones by identity, and a tombstoned entry is
+    # honored over any copy no newer than the deletion (the
+    # #253 discipline: a delete the operator watched happen
+    # does not quietly undo itself from another seat's copy).
+    raw = fetched["files"].get(SYNC_PREFIX + "daybook.json")
+    if raw is None:
+        return
+    try:
+        incoming = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(incoming, dict):
+        return
+    inc_entries = []
+    for raw_e in (incoming.get("entries") or []):
+        e = _daybook_clean_entry(raw_e)
+        if e is not None:
+            inc_entries.append(e)
+    day_tombs = {}
+    if isinstance(tombs, dict):
+        day_tombs = {str(k): float(v) for k, v in
+                     (tombs.get("daybook") or {}).items()
+                     if isinstance(v, (int, float))}
+    changed = 0
+    with _daybook_lock:
+        store = _daybook_load()
+        by_id = {e["id"]: e for e in store["entries"]}
+        # Tombstones land first, over local copies no newer
+        # than the deletion itself.
+        kept = []
+        for e in store["entries"]:
+            at = day_tombs.get(e["id"])
+            if at is not None and (e.get("updatedAt") or 0) <= at:
+                changed += 1
+                continue
+            kept.append(e)
+        store["entries"] = kept
+        by_id = {e["id"]: e for e in store["entries"]}
+        for e in inc_entries:
+            at = day_tombs.get(e["id"])
+            if at is not None and (e.get("updatedAt") or 0) <= at:
+                continue  # the deletion is newer — it does not land
+            cur = by_id.get(e["id"])
+            if cur is None:
+                store["entries"].append(e)
+                by_id[e["id"]] = e
+                changed += 1
+            elif (e.get("updatedAt") or 0) > (cur.get("updatedAt") or 0):
+                store["entries"] = [e if x["id"] == e["id"] else x
+                                    for x in store["entries"]]
+                by_id[e["id"]] = e
+                changed += 1
+        # One brief per day survives a merge: today's briefs
+        # from two seats are two statements of one day — the
+        # newer composition stands, the older steps aside.
+        brief_days = {}
+        for e in store["entries"]:
+            if e["kind"] == "brief" and e["state"] == "standing":
+                cur = brief_days.get(e.get("day") or "")
+                if cur is None or (e.get("createdAt") or 0) > (cur.get("createdAt") or 0):
+                    brief_days[e.get("day") or ""] = e
+        for e in store["entries"]:
+            if (e["kind"] == "brief" and e["state"] == "standing"
+                    and brief_days.get(e.get("day") or "") is not e):
+                e["state"] = "superseded"
+                changed += 1
+        inc_at = _daybook_num(incoming.get("lastBriefAt"))
+        if inc_at > (store.get("lastBriefAt") or 0):
+            store["lastBriefAt"] = inc_at
+            store["lastBriefDay"] = str(incoming.get("lastBriefDay") or "")[:10]
+        store["entries"] = store["entries"][-DAYBOOK_ENTRY_CAP:]
+        _daybook_save(store)
+        # A tombstone a surviving NEWER entry outlived is
+        # spent: the copy won, the tombstone is dropped (the
+        # standing law), so it stops travelling.
+        if isinstance(tombs, dict) and isinstance(tombs.get("daybook"), dict):
+            live = {e["id"]: (e.get("updatedAt") or 0)
+                    for e in store["entries"]}
+            for key in list(tombs["daybook"].keys()):
+                if key in live and live[key] > tombs["daybook"][key]:
+                    del tombs["daybook"][key]
+    summary["daybookChanged"] = summary.get("daybookChanged", 0) + changed
 
 
 # --- Web Push: the tray's phone door (v0.5.14e, #272) ----------------
@@ -34058,6 +35958,8 @@ def notifications_reconcile(cfg=None):
             ("sync", lambda: _notif_wanted_sync()),
             ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
             ("pulse", lambda: _notif_wanted_pulse(cfg)),
+            ("reminder", lambda: _notif_wanted_day(cfg)),
+            ("order", lambda: _notif_wanted_day(cfg)),
             ("push-dead", lambda: _notif_wanted_push_dead(cfg)),
         )
         for kind, produce in producers:
@@ -35146,6 +37048,10 @@ class Handler(BaseHTTPRequestHandler):
             # with their coverage, the enabled networks as they
             # stand, and the cases a watch can feed.
             self._send(200, pulse_payload(load_config()))
+        elif self.path == "/api/day":
+            # v0.6.0e (#294/#295/#296): the Day surface's read —
+            # the book as it stands.
+            self._send(200, daybook_payload(load_config()))
         elif self.path == "/api/greeting":
             # v0.5.13e (#288): an explicit composition — the
             # rotation advances, a fresh pulse check folds in,
@@ -36686,6 +38592,20 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     _reply = "Written down. The receipt below is exactly what I saved — word for word — and Undo takes it back out if I got it wrong."
                     payload = {"reply": _reply, "exec": None, "mode": "model", "llamafile": _mlive, "memorySaves": [{"text": _mfact, "origin": "trigger", "key": memory_fact_key(_mfact), "proposed": False}]}
+                    # v0.6.0e (#294): the save is recorded in
+                    # the foundation store at the moment the
+                    # bridge receipts it — provenance, super-
+                    # session and the tombstone-grade record
+                    # live there; the seat memory keeps its own
+                    # path, untouched.
+                    try:
+                        daybook_record_capture(
+                            _mfact, origin="trigger",
+                            key=memory_fact_key(_mfact),
+                            chat_id=str(data.get("chatId") or ""),
+                            cfg=cfg)
+                    except Exception:
+                        pass
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_reply, cfg)
                 self._send(200, payload)
@@ -36830,6 +38750,28 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_preply, cfg)
+                self._send(200, payload)
+                return
+            # Her working day, spoken (v0.6.0e, #294/#295/
+            # #296): "remind me …", "standing order: …",
+            # "brief me", "recall …" route deterministically —
+            # the day is bridge state, so the bridge answers
+            # from what it actually did.
+            _dyreply = None
+            try:
+                _dyreply = day_chat_reply(last or "", cfg,
+                                          chat_id=str(data.get("chatId") or ""))
+            except Exception:
+                _dyreply = None
+            if _dyreply:
+                payload = {
+                    "reply": _dyreply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_dyreply, cfg)
                 self._send(200, payload)
                 return
             # Deep search + the conversational pull (v0.5.10e,
@@ -37253,6 +39195,22 @@ class Handler(BaseHTTPRequestHandler):
                 # saves ride the payload back as data for the
                 # dashboard to file and receipt.
                 reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
+                # v0.6.0e (#294): her autonomous saves are
+                # recorded in the foundation store as they are
+                # receipted — the same record the trigger door
+                # makes, with her call named as the origin.
+                if _msaves:
+                    try:
+                        for _sv in _msaves:
+                            daybook_record_capture(
+                                str(_sv.get("text") or ""),
+                                origin="autonomous",
+                                key=_sv.get("key"),
+                                proposed=bool(_sv.get("proposed")),
+                                chat_id=str(data.get("chatId") or ""),
+                                cfg=cfg)
+                    except Exception:
+                        pass
                 # Her own case filings (Build 15, #161): the
                 # [[finding: …]] markers come out of the reply the
                 # same way, are filed into the open case in her
@@ -38611,6 +40569,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True,
                              "summary": pulse_run(load_config(), reason="manual"),
                              "pulse": pulse_payload(load_config())})
+        elif self.path == "/api/day":
+            # v0.6.0e: the Day surface's deterministic door —
+            # capture / ack / delete / remind / order / brief /
+            # proposal, the same machinery chat receipts.
+            data = self._body()
+            self._send(200, daybook_act(data, load_config()))
         elif self.path == "/api/ctf/refresh":
             self._send(200, CTF.refresh_now())
         elif self.path == "/api/ctf/settings":
@@ -39344,6 +41308,7 @@ if __name__ == "__main__":
         CTF.start()
         BOUNTIES.start()
         pulse_start()
+        daybook_start()
     except Exception:
         pass
     try:

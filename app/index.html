@@ -184,6 +184,12 @@
   nav button .ic { display:inline-flex; flex:0 0 auto; }
   nav button .ic svg { display:block; }
   #app.closed nav button { justify-content:center; }
+/* v0.6.0e (#292): in the EXPANDED menu the Chat entry reads
+   as a peer of the centered Home tile — its icon and label
+   centered as one unit, the way the collapsed rail already
+   centers it. Section rows (headers and chevroned doors)
+   keep their left-aligned grammar untouched. */
+#nav-Chat { justify-content:center; }
   #app.closed nav button .lbl { display:none; }
   /* Minimized to the rail, hovering (or tabbing to) an icon names
      the view in a tooltip beside it; the expanded menu shows its
@@ -2193,8 +2199,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-18.31";
-var SHIPPED_BUILD_SEQ = 31;
+var BRIDGE_BUILD = "2026-11-18.32";
+var SHIPPED_BUILD_SEQ = 32;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2706,7 +2712,7 @@ function docsPageTitle(id) { var hit = DOC_PAGES.filter(function (x) { return x.
 // topic, so the list never greets the operator fully shut.
 var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
-  { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "voice"] },
+  { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "working-day", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
   { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "fedichat", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
@@ -3630,9 +3636,76 @@ function homeSurfaceHtml() {
   // when nothing is, so a quiet Home is unchanged.
   h += homeEyesHtml();
   h += homeBriefHtml();
+  h += homeDayHtml();
   h += homeBoardHtml();
   return h;
 }
+
+// --- Her working day (v0.6.0e, #294/#295/#296) -------------------
+// Home's third resident: the day book the bridge holds — the
+// brief as a stored record, the standing reminders (fired
+// ones first, each with its Acknowledge), the standing
+// orders with their last run, and a plain capture line. The
+// page is a view; every act goes through the bridge's
+// deterministic door and the answer it returns IS the state.
+var dayState = null, dayFetching = false, dayMsg = "";
+function loadDay() {
+  if (dayFetching) return;
+  dayFetching = true;
+  fetch("/api/day").then(function (r) { return r.json(); }).then(function (j) { dayState = (j && j.day) || j; dayFetching = false; if (view === "Home") render(); }).catch(function () { dayFetching = false; });
+}
+function dayWhen(ts) { if (!ts) return ""; try { return new Date(ts * 1000).toLocaleString(); } catch (e) { return ""; } }
+function dayAct(body) {
+  fetch("/api/day", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.day) dayState = j.day;
+    dayMsg = (j && (j.reply || j.error)) || "";
+    render();
+  }).catch(function () { dayMsg = "The bridge did not answer — nothing was recorded."; render(); });
+}
+function homeDayHtml() {
+  if (!dayState && !dayFetching) loadDay();
+  var h = "<div class='card' id='tic-day'><div class='brief-label'>HER WORKING DAY</div>";
+  if (dayMsg) h += "<div class='brief-line' style='margin-top:6px'>" + esc(dayMsg) + "</div>";
+  if (!dayState) return h + "<div class='brief-line brief-lead' style='margin-top:6px'>Gathering her day\u2026</div></div>";
+  var d = dayState;
+  var brief = d.brief;
+  if (brief && brief.lines && brief.lines.length) {
+    h += "<div style='margin-top:8px'><b>Today's brief</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(brief.day || "") + "</span></div>";
+    brief.lines.forEach(function (line) { h += "<div class='brief-line'>" + esc(line) + "</div>"; });
+  } else {
+    h += "<div class='brief-line' style='margin-top:6px'>No brief composed yet today.</div>";
+  }
+  h += "<div class='row' style='margin-top:8px'><button type='button' class='ghost' data-day-brief='1' style='min-height:44px'>Compose the brief</button></div>";
+  var fired = (d.reminders || []).filter(function (r) { return r.state === "fired"; });
+  var standing = (d.reminders || []).filter(function (r) { return r.state === "standing"; });
+  if (fired.length || standing.length) {
+    h += "<div style='margin-top:10px'><b>Reminders</b></div>";
+    fired.forEach(function (r) {
+      h += "<div class='eyes-row'><div class='eyes-main'><b>" + esc(r.text || "") + "</b><div class='eyes-body'>Due " + esc(dayWhen(r.dueAt)) + " \u2014 it fired and waits for your word.</div></div><button type='button' class='ghost' data-day-ack='" + esc(r.id) + "' style='min-height:44px'>Acknowledge</button></div>";
+    });
+    standing.forEach(function (r) {
+      h += "<div class='brief-line'>" + esc(r.text || "") + " <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(dayWhen(r.dueAt)) + "</span></div>";
+    });
+  }
+  if ((d.orders || []).length) {
+    h += "<div style='margin-top:10px'><b>Standing orders</b></div>";
+    d.orders.forEach(function (o) {
+      var last = (o.executions && o.executions.length) ? o.executions[o.executions.length - 1] : null;
+      h += "<div class='eyes-row'><div class='eyes-main'><b>" + esc(o.text || "") + "</b><div class='eyes-body'>" + esc(o.verb || "") + " \u00b7 " + esc(o.trigger ? (o.trigger.kind === "daily" ? "daily " + dayWhen(o.trigger.at) : o.trigger.kind) : "") + (last ? " \u00b7 last: " + esc(last.outcome || "") : "") + "</div></div><button type='button' class='ghost' data-day-revoke='" + esc(o.id) + "' style='min-height:44px'>Revoke</button></div>";
+    });
+  }
+  h += "<div class='row' style='margin-top:10px'><input id='day-cap-text' type='text' placeholder='Note something for her day\u2026' style='flex:1;min-height:44px'><button type='button' class='act' data-day-capture='1' style='min-height:44px'>Keep it</button></div>";
+  h += "<div class='eyes-body' style='margin-top:6px'>Kept in her day book \u2014 the same book every seat reads. Ask her in chat to recall it, or to remind you.</div>";
+  return h + "</div>";
+}
+function wireDay() {
+  document.querySelectorAll("[data-day-ack]").forEach(function (b) { b.onclick = function () { dayAct({ action: "ack", id: b.getAttribute("data-day-ack") }); }; });
+  document.querySelectorAll("[data-day-revoke]").forEach(function (b) { b.onclick = function () { dayAct({ action: "revoke", id: b.getAttribute("data-day-revoke") }); }; });
+  document.querySelectorAll("[data-day-brief]").forEach(function (b) { b.onclick = function () { dayAct({ action: "brief" }); }; });
+  document.querySelectorAll("[data-day-capture]").forEach(function (b) { b.onclick = function () { var inp = document.getElementById("day-cap-text"); var t = inp ? inp.value : ""; if (t && t.trim()) dayAct({ action: "capture", text: t }); }; });
+}
+
+
 function homeBoardHtml() {
   // The board (#213): the Situation strip and the four glance
   // cards — the fusion of Build 3, kept whole. The glance
@@ -6604,6 +6677,19 @@ var DOC_PAGES = [
   "<p><b>Your own node sends it.</b> The bridge holds a push keypair it minted itself \u2014 per node, kept in its own config, never synced \u2014 signs each delivery with it, and encrypts every payload end-to-end for your phone's subscription. The only other parties are the push services the platform itself runs, which are the transport the Web Push standard is built on; there is no relay and no account. The delivery's outcome stands on the tray record itself \u2014 sent, or failed with the reason named. A phone the push service has forgotten (it answers 404 or 410) comes off the list and is <b>named in the tray</b> until it subscribes again; a record born on another seat and converged here never re-rings.</p>" +
   "<p><b>The door, honestly.</b> The bell panel and Settings both carry the phone door, and it names its own state: live, blocked (with the fix), unsupported \u2014 or, on an iPhone, <b>install-first</b>: iOS gives push only to web apps added to the Home Screen and opened from their icon, so the door shows those steps as a card rather than a button that cannot work. Several phones can ring; each subscribes to the node it talks to.</p></div>" 
  },
+  { id: "working-day", title: "Her working day — captures, reminders, standing orders & the brief", related: ["chat-cli", "voice"], html:
+    "<p style='color:var(--dim)'>One book, held by the bridge, that every seat reads: what she keeps, what she owes you, and the brief she opens the day with.</p>" +
+    "<div class='doc-sec'><h4>The day book (v0.6.0e, #294)</h4>" +
+    "<p>Captures, reminders, standing orders and the day's brief live in <b>one store the bridge holds</b> (<span class='mono'>config/daybook.json</span>), so every seat — this dashboard, your phone, the server — reads the same day. The book rides your account sync like your chats and cases do: entries converge by identity, the newest word wins, and a deletion is a tombstone no stale copy can talk its way past.</p>" +
+    "<p><b>Secret-free by construction.</b> Anything shaped like a credential — a password, an API key or token, a card number, a Social Security number — is refused at the door <b>by name</b>, in chat and on the page alike. The book holds facts about your day, never keys to anything.</p></div>" +
+    "<div class='doc-sec'><h4>Capture &amp; recall</h4>" +
+    "<p>Ask her to keep something — <i>remember that the lab renews in March</i> — and the save lands in the day book with its <b>provenance</b>: who decided it (your trigger, or her own call, named as such) and when. She can also save on her own judgment in a conversation; those saves are receipted the same way and named as hers. A correction <b>supersedes</b> the fact it corrects — the old wording is kept, marked superseded, never silently rewritten. <i>Undo that</i> takes the last capture back, and <i>recall the lab</i> reads the book back to you. Home's <b>Her working day</b> card has a plain capture line too — same book, same rules.</p></div>" +
+    "<div class='doc-sec'><h4>Reminders (v0.6.0e, #295)</h4>" +
+    "<p><i>Remind me to call the dentist tomorrow at 9</i> — the reminder is bridge state, kept by a scheduler that lives in the bridge itself, so it survives restarts and fires whether or not any window is open. When it fires it lands on the <b>bell</b> and, with push on, on your <b>phone's lock screen</b> — the same words in both places. It then <b>stands fired</b> until you acknowledge it; the acknowledgement is itself synced, so clearing it on your phone clears it everywhere. If the bridge was down when a reminder came due, it fires on the next start — late, and named late.</p></div>" +
+    "<div class='doc-sec'><h4>Standing orders</h4>" +
+    "<p>A standing order is a small, durable instruction she executes on a trigger: <span class='mono'>standing order: every day at 08:00, report the wire count</span>. The vocabulary is deliberately bounded — an order can <b>remind</b>, <b>report</b> (her greeting's own sources), <b>file</b> into a case, or <b>check a Pulse watch</b>. It can never send, spend, elevate or run anything, and an order that asks for those is refused <b>by name</b> when you give it. Every execution is recorded on the order itself — when, what it did, how it ended — and read back from Home's card, where an order can be revoked. A file order names its case; if the case is not there, the execution says so and files nowhere.</p></div>" +
+    "<div class='doc-sec'><h4>The day brief (v0.6.0e, #296)</h4>" +
+    "<p>Her greeting grows a day section: <b>what is on</b> (today's standing reminders and orders), <b>what changed</b> (what the book gained, what fired, what a watch flashed), and <b>what needs you</b> (anything fired and unacknowledged, anything that ran and failed). The brief is a <b>stored record</b> — composed at the day's first light and again whenever you ask (<i>brief me</i>, or the button on Home's card) — and a source that cannot be reached is <b>badged as a gap</b> in the brief, never smoothed over. There is no calendar connection in this cut: the day she briefs is the day the book knows.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -13978,6 +14064,7 @@ function sendChat(text) {
 }
 function wire() {
   wireNotifications();
+  wireDay();
   mainEl.querySelectorAll("[data-docpage]").forEach(function (b) { b.onclick = function () { docsPage = b.getAttribute("data-docpage") || "getting-started"; try { localStorage.setItem("navi.docs.page", docsPage); } catch (e) {} if (view !== "Docs") view = "Docs"; render(); }; });
   wireDocTopics(mainEl);
   var docsPicker = document.getElementById("docs-picker");
