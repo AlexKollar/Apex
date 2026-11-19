@@ -2,6 +2,13 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.6.5
+
+Release tag: v0.6.5e — chapter 0.6's sixth build, the fun one. LCARS stops being only a palette and becomes a layout: Appearance gains a Layout axis, every theme works in both geometries, and flipping between them translates — nothing is lost in either direction.
+
+- **LCARS Mode (#325).** Settings → Appearance gains a **Layout** choice beside the theme picker: **Standard** (the shipped geometry, still the default) or **LCARS Mode** — elbow-swept cards, the rail as numbered pill stacks, sweep-tab headings, pill-ended controls, condensed uppercase labels on the furniture, in the modern 2.0 proportions. The mode owns geometry, not colors: its accent slots read the **active theme**, so all twelve palettes — the LCARS palette included, the flagship pairing — work inside LCARS Mode, and Standard keeps wearing all twelve as before. The layout is stored in your config exactly like the theme and rides the settings backup beside it. The phone's dedicated interface gets the same geometry in this build — slimmer elbows, full-size touch targets, no sideways scrolling.
+- **The translation contract (#325).** Flipping layout, in either direction, from anywhere, is a **re-render, never a navigation or a reset**: same surface, same chat thread and scroll, same open case or document and its edit state, same switch positions, same half-filled forms, same rail groups open or closed. The picker lives in Appearance under **both** layouts, in its accustomed place — no mode hides its own exit. Chosen layout, stored config, and what a reload (or a bridge restart) shows are one truth, and the Federation page's Mesh and Fleet switches keep their gate under the new geometry: flip, stored state, and post-reload view agree, with refusals spoken on the card.
+
 ## 0.6.4
 
 Release tag: v0.6.4e — chapter 0.6's fifth build. Sync learns whose data it is carrying: the account gate comes first — then the Vault becomes one file per case, departed fedinets stop coming back, the Mesh switch moves onto the Federation page, and the console learns to dress as LCARS.

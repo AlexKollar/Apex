@@ -97,6 +97,61 @@
   body[data-theme="lcars"] ::-webkit-scrollbar { width:8px; height:8px; }
   body[data-theme="lcars"] ::-webkit-scrollbar-thumb { background:var(--lc-peri); border-radius:999px; }
   body[data-theme="lcars"] ::-webkit-scrollbar-track { background:#000000; }
+  /* LCARS Mode (v0.6.5e, #325): the Layout axis. Where the LCARS
+     theme above is a palette, this block is GEOMETRY — keyed on
+     <body data-layout="lcars">, independent of data-theme, so
+     every one of the twelve palettes wears it. The accent slots
+     are read from the ACTIVE theme (--am, --cy, --blue, --green,
+     --red); under the LCARS palette itself the classic --lc-*
+     family takes those slots. Furniture only — headings, labels,
+     the rail, buttons, cards: authored content (chat text, case
+     text, document text) is never transformed. The mode owns no
+     colors of its own beyond the grammar (black text on a solid
+     accent, as the theme's skin already established). */
+  body[data-layout="lcars"] { --lay-1:var(--am); --lay-2:var(--cy); --lay-3:var(--blue); --lay-4:var(--green); --lay-5:var(--red); }
+  body[data-layout="lcars"][data-theme="lcars"] { --lay-1:var(--lc-orange); --lay-2:var(--lc-blue); --lay-3:var(--lc-peri); --lay-4:var(--lc-teal); --lay-5:var(--lc-brick); }
+  body[data-layout="lcars"] { font-family:"Arial Narrow","Liberation Sans Narrow","Roboto Condensed","Helvetica Neue Condensed","Helvetica Neue",Arial,sans-serif; }
+  body[data-layout="lcars"] h1, body[data-layout="lcars"] h2, body[data-layout="lcars"] h3, body[data-layout="lcars"] h4 { text-transform:uppercase; letter-spacing:.13em; font-weight:600; }
+  body[data-layout="lcars"] label { text-transform:uppercase; letter-spacing:.08em; }
+  body[data-layout="lcars"] nav { border-right:6px solid var(--lay-1); counter-reset:laygrp; }
+  body[data-layout="lcars"] aside { border-left:6px solid var(--lay-3); }
+  body[data-layout="lcars"] .nav-group-head { background:var(--lay-3); color:#000000; border-radius:999px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; counter-increment:laygrp; }
+  body[data-layout="lcars"] .nav-group-head::before { content:counter(laygrp, decimal-leading-zero); font-weight:700; margin-right:7px; opacity:.7; }
+  body[data-layout="lcars"] .nav-group-head .nav-chev { color:#000000; }
+  body[data-layout="lcars"] #nav-group-network { background:var(--lay-2); }
+  body[data-layout="lcars"] #nav-group-navi { background:var(--lay-1); }
+  body[data-layout="lcars"] #nav-group-apps { background:var(--lay-3); }
+  body[data-layout="lcars"] #nav-group-utilities { background:var(--lay-4); }
+  body[data-layout="lcars"] #nav-group-systems { background:var(--lay-2); }
+  body[data-layout="lcars"] #nav-menu button { border-radius:999px; text-transform:uppercase; letter-spacing:.07em; }
+  body[data-layout="lcars"] #nav-menu .nav-child { border:1.5px solid var(--line); }
+  body[data-layout="lcars"] #nav-menu .nav-child.on { background:var(--lay-1); color:#000000; border-color:transparent; }
+  body[data-layout="lcars"] .nav-break { border-top:3px solid var(--lay-5); }
+  body[data-layout="lcars"] #view-root > h3 { background:color-mix(in srgb, var(--lay-1) 24%, transparent); border-left:14px solid var(--lay-1); border-radius:999px; padding:5px 14px; }
+  body[data-layout="lcars"] .card, body[data-layout="lcars"] .foldcard { border-left:10px solid var(--lay-1); border-radius:26px 8px 8px 26px; }
+  body[data-layout="lcars"] .card > h3, body[data-layout="lcars"] .foldcard > h3 { border-bottom:3px solid var(--lay-1); padding-bottom:5px; }
+  body[data-layout="lcars"] .card > b { text-transform:uppercase; letter-spacing:.1em; }
+  body[data-layout="lcars"] .msg { border-radius:18px 6px 6px 18px; border-left:6px solid var(--lay-2); }
+  body[data-layout="lcars"] button { border-radius:999px; text-transform:uppercase; letter-spacing:.09em; font-weight:600; }
+  body[data-layout="lcars"] button.act { background:var(--lay-1); color:#000000; border-color:transparent; }
+  body[data-layout="lcars"] button.ghost { border:1.5px solid var(--lay-3); }
+  body[data-layout="lcars"] input, body[data-layout="lcars"] select, body[data-layout="lcars"] textarea { border-radius:999px; border:1.5px solid var(--lay-3); }
+  body[data-layout="lcars"] textarea { border-radius:14px; }
+  body[data-layout="lcars"] .switch { border:1.5px solid var(--lay-3); }
+  body[data-layout="lcars"] .switch[aria-checked="true"] { background:var(--lay-1); border-color:var(--lay-1); }
+  body[data-layout="lcars"] .switch[aria-checked="true"] .knob { background:#000000; }
+  body[data-layout="lcars"] ::-webkit-scrollbar { width:8px; height:8px; }
+  body[data-layout="lcars"] ::-webkit-scrollbar-thumb { background:var(--lay-3); border-radius:999px; }
+  /* LCARS Mode on the dedicated mobile interface (<=800px): the
+     same geometry at phone width — slimmer elbow, full-size
+     touch targets on the rail and the fields, and the view
+     never scrolls sideways. */
+  @media (max-width:800px) {
+    body[data-layout="lcars"] .card, body[data-layout="lcars"] .foldcard { border-left-width:8px; border-radius:20px 6px 6px 20px; }
+    body[data-layout="lcars"] #nav-menu button, body[data-layout="lcars"] .nav-group-head { min-height:44px; }
+    body[data-layout="lcars"] input, body[data-layout="lcars"] select { min-height:44px; }
+    body[data-layout="lcars"] #view-root { overflow-x:hidden; }
+  }
   /* Nordic icon color-coding: each menu icon carries its own color
      from the Aurora/Frost family — the same color in the expanded
      menu and the collapsed rail, since the icon span never changes.
@@ -1527,7 +1582,7 @@ var NAVI_SETTINGS = {"rev":2,"backend":"live","version":"0.3.0","versionStatus":
 // Live below, so it can never strand the app in a dead mode. The
 // in-page mock code remains only as the bridge-unreachable fallback
 // paths' simulator inside this file; it is never a selectable mode.
-var CONFIG = { backend: "live", version: "0.3.0", versionStatus: "edge", updaterChannel: "edge", threat: "Guarded", sudo: false, operatorName: "", theme: "nocturne", motion: "full", uiScale: 1, installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
+var CONFIG = { backend: "live", version: "0.3.0", versionStatus: "edge", updaterChannel: "edge", threat: "Guarded", sudo: false, operatorName: "", theme: "nocturne", layout: "standard", motion: "full", uiScale: 1, installed: ["nmap", "grep"], soul: "", memory: "", memoryMode: "autonomous" };
 Object.assign(CONFIG, NAVI_SETTINGS);
 try {
   var savedCfg = localStorage.getItem("navi.config");
@@ -1577,6 +1632,49 @@ function applyTheme() { document.body.dataset.theme = CONFIG.theme || "nocturne"
 // same shape as the theme beside it. "full" is the default —
 // the attribute always names the effective choice.
 function applyMotion() { document.body.dataset.motion = CONFIG.motion === "potato" ? "potato" : "full"; }
+// LCARS Mode (v0.6.5e, #325): the Layout axis, beside the theme.
+// The layout is a root-level rendering fact — a body attribute
+// the stylesheet's layout block keys on — stored in the config
+// exactly like the theme and riding the same backup. "standard"
+// is the default and the shipped geometry; "lcars" re-geometries
+// the same DOM. The attribute always names the effective choice.
+function applyLayout() { document.body.dataset.layout = CONFIG.layout === "lcars" ? "lcars" : "standard"; }
+// The translation contract (#325): flipping layout, in either
+// direction, from anywhere, is a re-render — never a navigation
+// or a reset. State that lives in a store (the open case, the
+// Vault draft, the rail's group state, every switch) rides the
+// render as it always has. What lives only in the DOM — a
+// half-filled form's fields, the thread's and the view's scroll
+// — is snapshotted here and put back after the render, so the
+// operator's place survives the flip exactly.
+function setLayout(next) {
+  var target = next === "lcars" ? "lcars" : "standard";
+  if ((CONFIG.layout || "standard") === target) { applyLayout(); return; }
+  var fields = {}, scrolls = {};
+  try {
+    document.querySelectorAll("#view-root input, #view-root textarea, #view-root select").forEach(function (el) {
+      if (el.id) fields[el.id] = { v: el.value, c: el.checked };
+    });
+    var msgsEl0 = document.getElementById("msgs");
+    if (msgsEl0) scrolls.msgs = msgsEl0.scrollTop;
+    if (typeof mainEl !== "undefined" && mainEl) scrolls.main = mainEl.scrollTop;
+    scrolls.win = window.scrollY || 0;
+  } catch (e) {}
+  CONFIG.layout = target;
+  saveCfg(); applyLayout(); render();
+  try {
+    Object.keys(fields).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (typeof fields[id].v === "string" && el.value !== fields[id].v) el.value = fields[id].v;
+      if (typeof fields[id].c === "boolean" && el.checked !== fields[id].c) el.checked = fields[id].c;
+    });
+    var msgsEl1 = document.getElementById("msgs");
+    if (msgsEl1 && scrolls.msgs != null) msgsEl1.scrollTop = scrolls.msgs;
+    if (typeof mainEl !== "undefined" && mainEl && scrolls.main != null) mainEl.scrollTop = scrolls.main;
+    if (scrolls.win) window.scrollTo(0, scrolls.win);
+  } catch (e) {}
+}
 // UI scale (Build 6, #111): ONE control for interface size —
 // the root zoom. Zoom is the honest single mechanism: it
 // scales text and layout in proportion, exactly like an OS
@@ -2267,8 +2365,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.36";
-var SHIPPED_BUILD_SEQ = 36;
+var BRIDGE_BUILD = "2026-11-19.37";
+var SHIPPED_BUILD_SEQ = 37;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2543,7 +2641,7 @@ function openGithubPageWindow(page) {
 function openGithubIssueWindow(number, url) {
   docsTauriInvoke("open_github_window", { page: "issue:" + number }).catch(function () { openExternal(url); });
 }
-function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1, operatorPicture: CONFIG.operatorPicture || "", operatorBadge: CONFIG.operatorBadge || "" }; }
+function ghDashboardSlice() { return { operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", layout: CONFIG.layout || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1, operatorPicture: CONFIG.operatorPicture || "", operatorBadge: CONFIG.operatorBadge || "" }; }
 function ghPost(path, body, done) {
   fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
     .then(function (r) { return r.json(); })
@@ -2673,7 +2771,7 @@ function ghBackupNow() {
   if (CONFIG.backend !== "live") {
     if (!githubState.signedIn) { ghSetMsg("Backups need a GitHub sign-in first — Navi herself doesn't, but writing to GitHub does.", true); render(); return; }
     if (!githubState.backupItems.length) { ghSetMsg("Nothing is ticked — a backup with no essentials in it would restore an empty Navi.", true); render(); return; }
-    var snap = { takenAt: new Date().toISOString(), items: githubState.backupItems.slice(), soul: CONFIG.soul || "", memory: CONFIG.memory || "", operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1 };
+    var snap = { takenAt: new Date().toISOString(), items: githubState.backupItems.slice(), soul: CONFIG.soul || "", memory: CONFIG.memory || "", operatorName: CONFIG.operatorName || "", theme: CONFIG.theme || "", layout: CONFIG.layout || "", motion: CONFIG.motion || "", uiScale: Number(CONFIG.uiScale) || 1 };
     try { localStorage.setItem("navi.github.snapshot", JSON.stringify(snap)); } catch (e) {}
     githubState.hasBackup = true; githubState.lastBackupAt = snap.takenAt;
     githubState.lastBackupFileCount = ghMockBackupFileCount(snap.items);
@@ -2697,7 +2795,7 @@ function ghImportPreview() {
     snap.items.forEach(function (id) {
       if (id === "soul") changes.push({ item: id, label: labelOf[id], detail: (CONFIG.soul || "") === snap.soul ? "Already matches the backup — nothing to change." : "Would replace the current Soul (" + (CONFIG.soul || "").length + " characters) with the backup's (" + snap.soul.length + " characters).", willChange: (CONFIG.soul || "") !== snap.soul });
       else if (id === "memory") changes.push({ item: id, label: labelOf[id], detail: (CONFIG.memory || "") === snap.memory ? "Already matches the backup — nothing to change." : "Would replace the current Memory (" + (CONFIG.memory || "").length + " characters) with the backup's (" + snap.memory.length + " characters).", willChange: (CONFIG.memory || "") !== snap.memory });
-      else if (id === "settings") { var d = []; if ((CONFIG.operatorName || "") !== snap.operatorName) d.push("operator name → " + (snap.operatorName || "Operator")); if ((CONFIG.theme || "") !== snap.theme) d.push("theme"); if ((CONFIG.motion || "") !== (snap.motion || "")) d.push("motion"); if ((Number(CONFIG.uiScale) || 1) !== (Number(snap.uiScale) || 1)) d.push("UI scale"); changes.push({ item: id, label: labelOf[id], detail: d.length ? "Would restore: " + d.join(" · ") + "." : "Already matches the backup — nothing to change.", willChange: !!d.length }); }
+      else if (id === "settings") { var d = []; if ((CONFIG.operatorName || "") !== snap.operatorName) d.push("operator name → " + (snap.operatorName || "Operator")); if ((CONFIG.theme || "") !== snap.theme) d.push("theme"); if ((CONFIG.layout || "") !== (snap.layout || "")) d.push("layout"); if ((CONFIG.motion || "") !== (snap.motion || "")) d.push("motion"); if ((Number(CONFIG.uiScale) || 1) !== (Number(snap.uiScale) || 1)) d.push("UI scale"); changes.push({ item: id, label: labelOf[id], detail: d.length ? "Would restore: " + d.join(" · ") + "." : "Already matches the backup — nothing to change.", willChange: !!d.length }); }
       else changes.push({ item: id, label: labelOf[id], detail: "Simulated in mock mode — the live bridge and the bench in the Apex space restore this essential in full.", willChange: false });
     });
     githubPreview = { ok: true, changes: changes, backedUpAt: snap.takenAt }; ghSetMsg("", false); render(); return;
@@ -2713,8 +2811,8 @@ function ghImportApply() {
     if (!snap) { ghSetMsg("No backup is on record yet.", true); render(); return; }
     if (snap.items.indexOf("soul") !== -1) CONFIG.soul = snap.soul;
     if (snap.items.indexOf("memory") !== -1) CONFIG.memory = snap.memory;
-    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; if (snap.motion === "potato" || snap.motion === "full") CONFIG.motion = snap.motion; if ([1, 1.1, 1.25, 1.5].indexOf(Number(snap.uiScale)) !== -1) CONFIG.uiScale = Number(snap.uiScale); }
-    saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
+    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; if (snap.layout === "lcars" || snap.layout === "standard") CONFIG.layout = snap.layout; if (snap.motion === "potato" || snap.motion === "full") CONFIG.motion = snap.motion; if ([1, 1.1, 1.25, 1.5].indexOf(Number(snap.uiScale)) !== -1) CONFIG.uiScale = Number(snap.uiScale); }
+    saveCfg(); applyTheme(); applyMotion(); applyLayout(); applyUiScale(); refreshSeedGreeting();
     githubState.lastImportAt = new Date().toISOString();
     githubState.lastImportResult = "Imported the (simulated) backup from " + String(snap.takenAt).slice(0, 10) + " — documents and dashboard settings restored.";
     mockGithubSave();
@@ -2728,11 +2826,12 @@ function ghImportApply() {
       if (j.dashboard) {
         if (typeof j.dashboard.operatorName === "string") CONFIG.operatorName = j.dashboard.operatorName;
         if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(j.dashboard.theme) !== -1) CONFIG.theme = j.dashboard.theme;
+        if (j.dashboard.layout === "lcars" || j.dashboard.layout === "standard") CONFIG.layout = j.dashboard.layout;
         if (j.dashboard.motion === "potato" || j.dashboard.motion === "full") CONFIG.motion = j.dashboard.motion;
         if ([1, 1.1, 1.25, 1.5].indexOf(Number(j.dashboard.uiScale)) !== -1) CONFIG.uiScale = Number(j.dashboard.uiScale);
         if (typeof j.dashboard.operatorPicture === "string" && /^data:image\//.test(j.dashboard.operatorPicture) && j.dashboard.operatorPicture.length <= 420000) CONFIG.operatorPicture = j.dashboard.operatorPicture;
         if (typeof j.dashboard.operatorBadge === "string" && /^data:image\//.test(j.dashboard.operatorBadge) && j.dashboard.operatorBadge.length <= 420000) CONFIG.operatorBadge = j.dashboard.operatorBadge;
-        saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
+        saveCfg(); applyTheme(); applyMotion(); applyLayout(); applyUiScale(); refreshSeedGreeting();
       }
       // Her persona may have been restored under us — re-read it.
       fetch("/api/persona").then(function (r) { return r.json(); }).then(function (p) { if (p.soul) CONFIG.soul = p.soul; if (p.memory) CONFIG.memory = p.memory; }).catch(function () {});
@@ -3198,11 +3297,12 @@ function adoptDashboardSlice(d) {
   if (!d) return;
   if (typeof d.operatorName === "string") CONFIG.operatorName = d.operatorName;
   if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(d.theme) !== -1) CONFIG.theme = d.theme;
+  if (d.layout === "lcars" || d.layout === "standard") CONFIG.layout = d.layout;
   if (d.motion === "potato" || d.motion === "full") CONFIG.motion = d.motion;
   if ([1, 1.1, 1.25, 1.5].indexOf(Number(d.uiScale)) !== -1) CONFIG.uiScale = Number(d.uiScale);
   if (typeof d.operatorPicture === "string" && /^data:image\//.test(d.operatorPicture) && d.operatorPicture.length <= 420000) CONFIG.operatorPicture = d.operatorPicture;
   if (typeof d.operatorBadge === "string" && /^data:image\//.test(d.operatorBadge) && d.operatorBadge.length <= 420000) CONFIG.operatorBadge = d.operatorBadge;
-  saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
+  saveCfg(); applyTheme(); applyMotion(); applyLayout(); applyUiScale(); refreshSeedGreeting();
 }
 // The badge slot intake (Build 13, issues #150 + #136): ONE
 // implementation shared by both Settings rooms — the Operator
@@ -7042,7 +7142,7 @@ var DOC_PAGES = [
   "<p>The status column is a tabbed pane: <b>Status</b> first — her presence, the update line, the servers, and the rest of the column as it has always been — and <b>Chats</b> second, the chat manager: the known chats (switch, new, delete) and the uploaded files. On a phone the whole pane is the dock, and it opens on Status. On a desktop the column starts hidden — its width belongs to the content until you open it: the pane button at the top right of her presence bar — the bar above every view — is its door, and on a phone the top bar's panel button is the other; hidden is the default at every launch, never a remembered choice. What she remembers from chat lives under <b>Settings → Operator</b> (your file) and <b>Settings → Persona</b> (her file and the leash). <b>RAG</b> holds her knowledge packs (the section above). The <b>Vault</b> holds the shared desk of notes — hers and yours. The <b>Updater</b> — folded into <b>Settings → System</b>, with the current version's notes as that menu's final block — watches the release channel. <b>Settings</b> is organized into topic tabs, and every setting lives under exactly one:</p><ul>" +
   "<li><b>Operator</b> — what she calls you, your picture and your Operator Badge, and your file: the memories you handed her about you. Your picture rides beside your messages; upload one in the tab (it is trimmed to a square here, kept with your profile, and carried in the settings backup) or let the picture generated from your name stand in. The <b>Operator Badge</b> is your self-portrait in the cartridge format — a card with your chosen face and your name (and this node's name) carried inside the picture. It is not a credential: nothing reads a badge to prove identity, and a badge whose payload is damaged simply reads as no badge.</li>" +
   "<li><b>Persona</b> — the Soul and Memory editors, her file of what she keeps from chat, the save-mode leash, and anything waiting on your word.</li>" +
-  "<li><b>Appearance</b> — the theme picker, Potato mode for low-power machines, and the UI scale.</li>" +
+  "<li><b>Appearance</b> — the layout picker and the theme picker (two independent axes), Potato mode for low-power machines, and the UI scale.</li>" +
   "<li><b>Voice</b> — her voice settings.</li>" +
   "<li><b>GitHub &amp; Backup</b> — sign-in and the backup/import block.</li>" +
   "<li><b>System</b> — the hardware profile (the detected profile, its override, and re-detect), plus installed commands.</li></ul>" +
@@ -7060,6 +7160,7 @@ var DOC_PAGES = [
   "<li><b>Blood Moon</b> is crimson over black with gold thread for highlights.</li>" +
   "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li>" +
   "<li><b>LCARS</b> (v0.6.4e, #324) is the starship console — the one theme that changes the shapes as well as the colors: a black field, pill-ended bars and buttons with black text on the color, elbow-curved cards, uppercase condensed labels, in the classic accent family (orange, peach, lilac, periwinkle, brick) with the modern 2.0 cooler blues and teals woven through. It is a skin over the same screens — the rail's groups still collapse to their header pills, every switch still answers to the same state — and the lettering is your system's own condensed face; nothing is fetched.</li></ul>" +
+  "<p><b>Layout.</b> Beside the theme picker, Appearance holds a second, independent choice (v0.6.5e, #325): the <b>layout</b>. <b>Standard</b> is the shipped geometry. <b>LCARS Mode</b> re-geometries the same screens — elbow-swept cards, the rail as numbered pill stacks, sweep-tab headings, pill-ended controls, condensed uppercase labels on the furniture — while the <i>colors</i> still come from whichever theme is picked: all twelve palettes work in both layouts, and the LCARS palette inside LCARS Mode is the flagship pairing. The two choices are separate facts in your config; flip either and the other holds. <b>Flipping layouts translates, it never resets:</b> the flip is a re-render of the surface you are standing on — same screen, same place in the thread, same open case or document and its edits, same half-typed line, same switches, same rail groups open or closed — in either direction, on the desktop and on the phone's interface alike. And the picker itself lives in Appearance under <i>both</i> layouts, in its accustomed place, so the way back is always where you left it. The choice persists in your config like the theme and rides the settings backup beside it.</p>" +
   "<p>Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
   "<p><b>Motion.</b> The whole app moves in one language — menus unfold, panes swap, and views arrive on the same curves. On a low-power machine, Appearance's <b>Potato mode</b> turns the decorative motion off across Apex: state changes become instant, and the glass theme's backdrop blur is suspended as well, since on weak graphics the blur costs more than the motion does. Your operating system's reduced-motion setting always wins over the switch, either way.</p>" +
   "<p><b>Interface size.</b> Appearance's <b>UI scale</b> — 100%, 110%, 125%, 150% — scales the whole interface, words and layout together, like a display scale: one knob, deliberately, because a separate text size would multiply against it and squeeze the fixed rows at the big end. It applies the moment you pick it and persists beside the theme.</p>" +
@@ -7956,6 +8057,7 @@ function attachAutocomplete(input, opts) {
 /* -------------------------------- render -------------------------------- */
 applyTheme();
 applyMotion();
+applyLayout();
 applyUiScale();
 var appEl = document.getElementById("app"), navEl = document.getElementById("nav"), mainEl = document.getElementById("view-root"), statusEl = document.getElementById("status");
 var toggleBtn = document.createElement("button");
@@ -14001,6 +14103,7 @@ function render() {
       [["operator", "Operator"], ["persona", "Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
         return "<button type='button' role='tab' aria-selected='" + (settingsTab === t[0]) + "' class='" + (settingsTab === t[0] ? "act" : "ghost") + "' data-settab='" + t[0] + "'>" + t[1] + "</button>";
       }).join("") + "</div>";
+    if (settingsTab === "appearance") h += "<div class='card'><label>Layout<br><select id='lay' aria-label='Interface layout'><option value='standard'" + (CONFIG.layout !== "lcars" ? " selected" : "") + ">Standard — the shipped console geometry</option><option value='lcars'" + (CONFIG.layout === "lcars" ? " selected" : "") + ">LCARS Mode — the starship layout: elbow cards, pill-stack rail, sweep headers</option></select></label><p style='color:var(--dim)'>Two layouts, independent of the theme below: every palette works in both. Flipping is a re-render, never a reset — the surface you are on, your place in it, an open case, a half-typed line and every switch all survive the flip, in either direction. The picker lives here in Appearance under both layouts, so the way back is always in its accustomed place. The choice persists in your config like the theme, and rides the settings backup beside it.</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option><option value='lcars'" + (CONFIG.theme === "lcars" ? " selected" : "") + ">LCARS — the starship console: black field, pill bars and elbow cards, the classic accent family with the 2.0 cooler blues</option></select></label><p style='color:var(--dim)'>Twelve palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface motion</h3><div style='display:flex;align-items:center;gap:8px'><button class='switch' id='motion-potato' role='switch' aria-checked='" + (CONFIG.motion === "potato" ? "true" : "false") + "' aria-label='Potato mode'><span class='knob'></span></button><span><b>Potato mode</b></span></div><p style='color:var(--dim)'>For low-power machines — turns off decorative animation across Apex. Menus, panes and views change instantly instead of traveling, and the Dark Liquid Glass theme's backdrop blur is suspended too (its colors stay). Off by default: the full motion language. The choice persists in your config like the theme, and rides the settings backup beside it." + ((window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ? " Your system asks for reduced motion — Apex honors that over this switch, either way." : "") + "</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface size</h3><p style='color:var(--dim)'>One scale for the whole interface — words and layout together, the way an operating system's display scale works, so nothing outgrows its row or its rail. (A separate text-size knob would multiply against this one and squeeze fixed rows at the big end; there is deliberately just the one.) Applies the moment you pick it, persists in your config beside the theme, and rides the settings backup with it.</p><div class='row' role='group' aria-label='UI scale'>" + [[1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]].map(function (o) { return "<button class='" + (Number(CONFIG.uiScale) === o[0] ? "act" : "ghost") + "' data-uiscale='" + o[0] + "' aria-pressed='" + (Number(CONFIG.uiScale) === o[0] ? "true" : "false") + "'>" + o[1] + "</button>"; }).join("") + "</div></div>";
@@ -15600,6 +15703,8 @@ function wire() {
     if (visSel) { visSel.onchange = paintPubWarn; paintPubWarn(); }
     var th = document.getElementById("th");
     if (th) th.onchange = function () { CONFIG.theme = th.value; saveCfg(); applyTheme(); render(); };
+    var lay = document.getElementById("lay");
+    if (lay) lay.onchange = function () { setLayout(lay.value); };
     var mp = document.getElementById("motion-potato");
     if (mp) mp.onclick = function () { CONFIG.motion = CONFIG.motion === "potato" ? "full" : "potato"; saveCfg(); applyMotion(); render(); };
     mainEl.querySelectorAll("[data-uiscale]").forEach(function (b) { b.onclick = function () { CONFIG.uiScale = Number(b.getAttribute("data-uiscale")) || 1; saveCfg(); applyUiScale(); render(); }; });

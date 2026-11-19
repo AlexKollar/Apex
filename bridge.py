@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.4"
+SHIPPED_VERSION = "0.6.5"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.36"
+BRIDGE_BUILD = "2026-11-19.37"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 36
+SHIPPED_BUILD_SEQ = 37
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -17495,8 +17495,8 @@ def save_download_payload(data):
 #                       fresh install profiles its own machine; an
 #                       imported profile must never override that)
 #   voice.json          her voice choice and voice settings
-#   dashboard.json      the two settings that live in the dashboard
-#                       (operator name, theme) — written when the
+#   dashboard.json      the settings that live in the dashboard
+#                       (operator name, theme, layout) — written when the
 #                       dashboard starts the backup; a scheduled
 #                       backup leaves the repo's last copy in place
 #   chips/              installed.json + the chip .png files
@@ -18167,6 +18167,7 @@ def github_collect_backup(cfg, dashboard=None):
                 "operatorPicture": _dashboard_image_field((dashboard or {}).get("operatorPicture")),
                 "operatorBadge": _dashboard_image_field((dashboard or {}).get("operatorBadge")),
                 "theme": str(dashboard.get("theme") or ""),
+                "layout": str(dashboard.get("layout") or ""),
                 "motion": str(dashboard.get("motion") or ""),
                 "uiScale": (dashboard.get("uiScale")
                             if dashboard.get("uiScale") in (1, 1.1, 1.25, 1.5) else ""),
@@ -18443,6 +18444,8 @@ def github_import_changes(cfg, fetched, dashboard=None):
                 diffs.append("operator name → " + (str(dash.get("operatorName") or "") or "Operator"))
             if str(dash.get("theme") or "") != str(dashboard.get("theme") or ""):
                 diffs.append("theme → " + str(dash.get("theme") or ""))
+            if str(dash.get("layout") or "") != str(dashboard.get("layout") or ""):
+                diffs.append("layout → " + str(dash.get("layout") or ""))
             if str(dash.get("motion") or "") != str(dashboard.get("motion") or ""):
                 diffs.append("motion → " + str(dash.get("motion") or ""))
             if dash.get("uiScale") != dashboard.get("uiScale"):
@@ -18743,6 +18746,8 @@ def github_apply_import(cfg, fetched):
                 dashboard_out = {
                     "operatorName": str(parsed.get("operatorName") or ""),
                     "theme": str(parsed.get("theme") or ""),
+                    "layout": (str(parsed.get("layout") or "")
+                               if str(parsed.get("layout") or "") in ("standard", "lcars") else ""),
                     "motion": (str(parsed.get("motion") or "")
                                if str(parsed.get("motion") or "") in ("full", "potato") else ""),
                     "uiScale": (parsed.get("uiScale")
