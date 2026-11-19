@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.5"
+SHIPPED_VERSION = "0.6.6"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.37"
+BRIDGE_BUILD = "2026-11-19.38"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 37
+SHIPPED_BUILD_SEQ = 38
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -13981,16 +13981,19 @@ CASE_TEACHING = (
     "the operator to confirm or correct before anything exists. "
     "Adding to an EXISTING case is not a start — that is the open "
     "case's own filing, which rides its own door. Filings carry a "
-    "DESTINATION (v0.5.15e, #291): a case has parts — finding, "
-    "lead, observable, entity, event — and the button under a "
+    "DESTINATION (v0.5.15e, #291; completed v0.6.6e, #326/#327): a case has "
+    "nine parts — finding, lead, observable, entity, event, "
+    "task, timeline, evidence, report — and the button under a "
     "reply names the part it will file to (\"File into this case "
-    "— as a lead\"). When you suggest filing, suggest the part "
+    "— as a lead\"), sensed from the reply's shape: a next-step "
+    "list reads as tasks (with its count), a dated narrative as "
+    "the timeline, a short typed subject as an entity. When you suggest filing, suggest the part "
     "the content plainly is — a sourced claim is a lead, your "
     "settled conclusion a finding, a named person or system an "
     "entity, a bare indicator an observable, a thing that "
     "happened an event — and let the suggestion stand exactly as "
     "the filing suggestion stands. The operator's words naming "
-    "a part govern over any suggestion, yours included. Facts drawn from "
+    "a part govern over any suggestion, yours included. A case can also be BORN from a Wire story (v0.6.6e, #330): the story's \"Start a case\" button, or the operator's words (\"start an investigation on that story\"), pull it together — article shelved, a cited lead per CVE it names, related coverage shelved, the case set open — and the case chat opens on a briefing the bridge composes from the case's live state, with your recommended next tasks staged as proposals awaiting the operator's approval. Facts drawn from "
     "a Wire record keep the record's values — its CVE id, CVSS, "
     "EPSS and dates; a filing that contradicts its cited record is "
     "flagged on its face by the bridge before it lands.")
@@ -22045,7 +22048,13 @@ def vault_list_payload():
             if o["path"] != n["path"]
             and any(t.lower() == n["title"].lower() for t in o["outgoing"])
         ]
-    return {"notes": notes, "folders": sorted(folders)}
+    # v0.6.6e (#328): the Cases section stands at the BOTTOM
+    # of the Vault — after every other folder, never sorted
+    # into the middle of the operator's own shelves. The
+    # payload carries the order; the view honors it.
+    ordered = sorted(f for f in folders if f != "Cases" and not f.startswith("Cases/"))
+    ordered += sorted(f for f in folders if f == "Cases" or f.startswith("Cases/"))
+    return {"notes": notes, "folders": ordered}
 
 
 def vault_search(query, limit=2):
@@ -28296,6 +28305,22 @@ def _case_findings(slug):
             except Exception:
                 continue
             meta, body = _fm_parse(text)
+            # v0.6.6e (#329): the read every surface shares —
+            # the file's own "# title" line is structure, not
+            # body, and comes off; the body's own opening line
+            # is the author's text and stands (#291 verbatim).
+            # The renderings that print the heading separately
+            # (the formed document, the report export) dedupe
+            # the opener at their own hand. The stored file is
+            # never touched by a read.
+            _ttl = str(meta.get("title") or name[:-3])
+            _blines = body.split("\n")
+            for _i, _ln in enumerate(_blines):
+                if not _ln.strip():
+                    continue
+                if _ln.lstrip().startswith("#") and _opener_norm(_ln) == _opener_norm(_ttl):
+                    body = "\n".join(_blines[_i + 1:]).lstrip("\n")
+                break
             sev = str(meta.get("severity") or "info").lower()
             if sev not in CASE_SEVERITIES:
                 sev = "info"
@@ -28386,12 +28411,14 @@ def _case_evidence(slug):
     out = []
     edir = os.path.join(d, "evidence") if d else ""
     reg = {e["key"]: e for e in _case_register(slug, "evidence")}
+    seen = set()
     if edir and os.path.isdir(edir):
         for name in sorted(os.listdir(edir)):
             full = os.path.join(edir, name)
             if os.path.isfile(full):
                 e = reg.get(_register_key(name))
                 f = e["fields"] if e else {}
+                seen.add(_register_key(name))
                 out.append({
                     "name": name, "size": os.path.getsize(full),
                     "sha256": str(f.get("sha256") or ""),
@@ -28400,6 +28427,24 @@ def _case_evidence(slug):
                     "custody": str(f.get("custody") or ""),
                     "registered": e is not None,
                 })
+    # v0.6.6e (#326): text exhibits — register entries with no
+    # file behind them, filed from chat as evidence. They
+    # stand in the evidence list as exhibits: the text itself
+    # is the item, its custody fields on its face.
+    for e in _case_register(slug, "evidence"):
+        if e["key"] in seen:
+            continue
+        f = e["fields"]
+        if "text exhibit" not in str(f.get("custody") or "").lower():
+            continue
+        out.append({
+            "name": e["heading"], "size": int(f.get("size") or 0),
+            "sha256": str(f.get("sha256") or ""),
+            "description": e["body"],
+            "acquired": str(f.get("acquired") or ""),
+            "custody": str(f.get("custody") or ""),
+            "registered": True, "exhibit": True,
+        })
     return out
 
 
@@ -28631,6 +28676,435 @@ def wire_pull_chat_reply(last, chat_id, cfg):
             "ask me to pull it in a reply and I'll read it in full.")
 
 
+# --- Case birth from the Wire, and the live briefing -------------
+# v0.6.6e (#330, as amended): one act — a button on a Wire
+# card, or the words in chat — pulls a story together into a
+# case: the article read WHOLE onto the case's reference
+# shelf, one cited lead per CVE the article names (resolved
+# through the intel catalog; an id the catalog cannot answer
+# is a named gap, never a silent skip), related coverage from
+# the Wire's other stories shelved beside it, the case set
+# open — and the case chat opens on HER BRIEFING, composed
+# from the case's live state, with her recommended next tasks
+# staged as PROPOSALS on the Tasks register: badged as hers,
+# awaiting the operator's word. Approve opens the task;
+# dismiss strikes it, the strike on the record. Nothing here
+# files a finding: leads are leads, proposals are proposals,
+# and the operator's own filings (#326) stay operator acts.
+
+BIRTH_CVE_CAP = 12
+BIRTH_RELATED_CAP = 5
+
+
+def case_stage_task(slug, heading, source):
+    """Stage one of Navi's recommended tasks as a proposal.
+    Returns the standing entry, or None when it could not be
+    staged. A heading already on the register — proposed,
+    open or done — is never duplicated."""
+    heading = " ".join(str(heading or "").split()).strip()
+    if not heading:
+        return None
+    key = _register_key(heading)
+    for e in _case_register(slug, "tasks"):
+        if e["key"] == key:
+            return e
+    now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    fields = {"done": "no", "state": "proposed", "author": "navi",
+              "filed": now, "source": str(source or "recommended by Navi")}
+    if not _register_append(slug, "tasks", heading, fields, ""):
+        return None
+    return {"heading": heading, "key": key, "fields": fields, "body": ""}
+
+
+def _birth_cve_ids(text):
+    ids = []
+    if intel_mod:
+        for m in intel_mod.CVE_ID_RE.findall(str(text or "")):
+            u = m.upper()
+            if u not in ids:
+                ids.append(u)
+    return ids
+
+
+def _birth_cve_leads(slug, text, source_line):
+    """One cited lead per CVE id the text names, resolved
+    through the intel catalog. Returns (leads, gaps, overflow):
+    leads carry the catalog's own line and description; an id
+    the catalog cannot answer lands in gaps — named, never
+    silently skipped; ids past the cap land in overflow, also
+    named."""
+    ids = _birth_cve_ids(text)
+    capped, overflow = ids[:BIRTH_CVE_CAP], ids[BIRTH_CVE_CAP:]
+    leads, gaps = [], []
+    for cid in capped:
+        full = None
+        try:
+            full = INTEL.item(cid)
+        except Exception:
+            full = None
+        if not full:
+            gaps.append(cid)
+            continue
+        try:
+            line = INTEL._lite_line(full)
+        except Exception:
+            line = cid + ((" — " + str(full.get("title"))) if full.get("title") else "")
+        body = line
+        desc = str(full.get("description") or "").strip()
+        if desc:
+            body += "\n\n" + desc[:600]
+        body += "\n\n— " + source_line
+        title = cid + ((" — " + str(full.get("title"))) if full.get("title") else "")
+        filed, err = case_land_part(
+            slug, "lead", title[:160], body, author="navi",
+            source="pulled together at the case's birth from the Wire")
+        if err:
+            gaps.append(cid)
+        else:
+            leads.append({"id": cid, "line": line})
+    return leads, gaps, overflow
+
+
+def case_recommended_tasks(slug, leads=None, gaps=None, related=None):
+    """Her recommended next tasks for a case, derived from
+    what the case actually holds — one per lead (verify it
+    against the estate), one per gap (run the id down),
+    one for the related coverage (read it for overlap), one
+    off the first finding when findings exist. Capped, and
+    never duplicating a heading already standing."""
+    out = []
+    for ld in (leads or []):
+        out.append("Verify " + ld["id"] + " against the estate — "
+                   "confirm whether anything we run is exposed")
+    for g in (gaps or []):
+        out.append("Run down " + g + " — the catalog could not "
+                   "answer it; pull its record from the source")
+    if related:
+        out.append("Read the related coverage on the shelf for "
+                   "overlap with this case's leads")
+    detail = case_detail_payload(slug)
+    if detail and detail.get("findings"):
+        f0 = detail["findings"][0]
+        out.append("Work the first finding: " + str(f0.get("title") or "")[:90])
+    if not out:
+        out.append("Read the birth article end to end and name "
+                   "the first thread to pull")
+    return out[:5]
+
+
+def case_briefing_text(slug):
+    """The briefing, composed fresh from the case's live
+    state every time it is drawn: what the case was born
+    from, what stands on its shelf, its leads and findings,
+    its people and machines, its open work — and the tasks
+    standing as her proposals. Nothing cached, nothing
+    remembered: the case as it stands NOW."""
+    detail = case_detail_payload(slug)
+    if detail is None:
+        return None
+    name = str(detail.get("name") or slug)
+    lines = ["**Briefing — " + name + "**", ""]
+    chat = _case_chat_rec_raw(slug)
+    birth = str((chat or {}).get("birthArticle") or "")
+    shelf = case_shelf(slug)
+    if birth:
+        lines.append("Born from the Wire: **" + birth + "**.")
+    elif shelf:
+        lines.append("Born from the Wire — its first reference "
+                     "stands on the shelf.")
+    if detail.get("opened"):
+        lines.append("Opened " + str(detail["opened"])
+                     + " · status " + str(detail.get("status") or "open")
+                     + " · type " + str(detail.get("type") or "investigation") + ".")
+    lines.append("")
+    if shelf:
+        lines.append("**On the shelf (" + str(len(shelf)) + "):**")
+        for ref in shelf[:8]:
+            lines.append("- " + str(ref.get("id") or "") + " — “"
+                         + str(ref.get("title") or "")[:100] + "” ("
+                         + str(ref.get("source") or "the Wire") + ")")
+        lines.append("")
+    leads = [f for f in detail.get("findings") or []
+             if str(f.get("part") or "") == "lead"
+             or str(f.get("state") or "") == "lead"]
+    finds = [f for f in detail.get("findings") or [] if f not in leads]
+    if leads:
+        lines.append("**Leads standing (" + str(len(leads)) + ") — unverified:**")
+        for f in leads[:8]:
+            lines.append("- " + str(f.get("title") or "")[:130])
+        lines.append("")
+    if finds:
+        lines.append("**Findings (" + str(len(finds)) + "):**")
+        for f in finds[:6]:
+            lines.append("- " + str(f.get("title") or "")[:130])
+        lines.append("")
+    for reg, label in (("entities", "Entities"), ("observables", "Observables")):
+        ents = detail.get(reg) or []
+        if ents:
+            lines.append("**" + label + " (" + str(len(ents)) + "):** "
+                         + "; ".join(str(e.get("heading") or "")[:60]
+                                     for e in ents[:6]))
+    tasks = detail.get("tasks") or []
+    proposed = [t for t in tasks
+                if str((t.get("fields") or {}).get("state") or "") == "proposed"]
+    open_tasks = [t for t in tasks
+                  if str((t.get("fields") or {}).get("state") or "") != "proposed"
+                  and str((t.get("fields") or {}).get("done") or "") != "yes"]
+    if open_tasks:
+        lines.append("")
+        lines.append("**Open tasks (" + str(len(open_tasks)) + "):**")
+        for t in open_tasks[:6]:
+            lines.append("- " + str(t.get("heading") or "")[:110])
+    if proposed:
+        lines.append("")
+        lines.append("**My recommended next tasks — staged as proposals, "
+                     "awaiting your word:**")
+        for t in proposed[:6]:
+            lines.append("- " + str(t.get("heading") or "")[:110])
+        lines.append("")
+        lines.append("Approve one and it stands as an open task; dismiss "
+                     "one and the strike stands on the record. Both live "
+                     "on the case's Tasks register.")
+    return "\n".join(lines).strip()
+
+
+def _chat_append_navi(chat_id, text, extra=None):
+    """Append one of her messages to a stored chat — the
+    bridge receipt idiom: the room shows it because the
+    bridge put it there."""
+    for rec in chats_all():
+        if str(rec.get("id")) == str(chat_id):
+            rec = dict(rec)
+            msgs = list(rec.get("messages") or [])
+            msg = {"who": "NAVI", "text": text, "exec": None}
+            if extra:
+                msg.update(extra)
+            msgs.append(msg)
+            rec["messages"] = msgs
+            rec["updatedAt"] = int(time.time() * 1000)
+            chat_write(rec)
+            return True
+    return False
+
+
+def case_birth_from_wire(link):
+    """#330's one act. Returns (result, error): the case
+    created from a Wire story, its article shelved whole, a
+    cited lead per CVE named, related coverage shelved, the
+    case set open, and her briefing — with its staged
+    proposals — standing as the case chat's opening word."""
+    link = str(link or "").strip()
+    item = None
+    try:
+        item = WIRE.item_for_link(link)
+    except Exception:
+        item = None
+    if not item:
+        return None, ("That link is not a story the wire is carrying — "
+                      "a case is born from a Wire story, by its link.")
+    title = str(item.get("title") or "").strip() or "Wire story"
+    source_label = str(item.get("sourceLabel") or item.get("source") or "the Wire")
+    got = None
+    try:
+        got = WIRE.read_article(link)
+    except Exception:
+        got = None
+    article_text = ""
+    if got and got.get("ok"):
+        article_text = "\n\n".join(got.get("paragraphs") or [])
+    excerpt = str(item.get("excerpt") or "")
+    detail, err = case_create(
+        title[:120], "", "Born from the Wire story: " + title,
+        {"type": "investigation",
+         "summary": "Opened from the Wire story “" + title + "” ("
+                    + source_label + ")."})
+    if err:
+        return None, err
+    slug = detail["slug"]
+    chat = case_chat_ensure(slug)
+    chat_id = (chat or {}).get("id")
+    # The birth article's identity rides the chat record, so
+    # every later briefing can name what the case was born
+    # from without a shelf-shape guess.
+    rec = _case_chat_rec_raw(slug)
+    if rec is not None:
+        rec = dict(rec)
+        rec["birthArticle"] = title
+        chat_write(rec)
+    card = {"tab": str(item.get("kind") or "news"), "title": title,
+            "link": link, "source": source_label,
+            "text": article_text or excerpt}
+    ref, note, serr = case_shelf_add(slug, card, by="navi")
+    gaps = []
+    if not article_text:
+        gaps.append("The article's full text could not be read — "
+                    "its excerpt stands on the shelf in its place.")
+    leads, cve_gaps, overflow = _birth_cve_leads(
+        slug, (article_text or excerpt) + "\n" + title,
+        "Named in “" + title + "” (" + source_label + "), read at "
+        "the case's birth from the Wire.")
+    gaps += ["The intel catalog has no record for " + g + " — named "
+             "here as a gap, not skipped." for g in cve_gaps]
+    if overflow:
+        gaps.append(str(len(overflow)) + " further CVE id"
+                    + ("s" if len(overflow) != 1 else "")
+                    + " named in the article stand past the birth "
+                    "cap of " + str(BIRTH_CVE_CAP) + ": "
+                    + ", ".join(overflow) + ".")
+    # Related coverage: the Wire's other STORIES scored
+    # against this one's title and text — the standing
+    # candidates read, one hop, capped. Two filters keep the
+    # shelf honest: only cards that are Wire stories count
+    # (the catalog's CVE cards are the leads' ground, not
+    # coverage), and a story must share at least one title
+    # word with the birth story (the scorer's title weight) —
+    # body-word echoes alone do not shelve a story at a birth.
+    related = []
+    try:
+        cands = _wire_card_candidates(title + " " + (article_text or excerpt)[:1200])
+        story_links = {str(it.get("link") or "")
+                       for it in (WIRE.state().get("items") or [])}
+    except Exception:
+        cands, story_links = [], set()
+    for _score, cand in cands:
+        if len(related) >= BIRTH_RELATED_CAP:
+            break
+        if str(cand.get("link") or "") == link:
+            continue
+        if str(cand.get("link") or "") not in story_links:
+            continue
+        if _score < 3:
+            continue
+        r2, n2, e2 = case_shelf_add(slug, cand, by="navi")
+        if not e2 and n2 == "added":
+            related.append({"title": str(cand.get("title") or ""),
+                            "link": str(cand.get("link") or "")})
+    _case_set_open(slug)
+    case_file_entry(
+        slug, "timeline", "Case born from the Wire",
+        "Born from “" + title + "” (" + source_label + "): the "
+        "article stands on the reference shelf, " + str(len(leads))
+        + " cited lead" + ("s" if len(leads) != 1 else "")
+        + " filed from the CVEs it names, " + str(len(related))
+        + " related stor" + ("ies" if len(related) != 1 else "y")
+        + " shelved beside it.")
+    staged = []
+    for h in case_recommended_tasks(slug, leads=leads, gaps=cve_gaps,
+                                    related=related):
+        if case_stage_task(slug, h, "recommended at the case's birth"):
+            staged.append(h)
+    briefing = case_briefing_text(slug)
+    if briefing and chat_id is not None:
+        if gaps:
+            briefing += ("\n\n**Gaps named at birth:**\n"
+                         + "\n".join("- " + g for g in gaps))
+        _chat_append_navi(chat_id, briefing)
+    sync_note_write("case")
+    return {"slug": slug, "name": detail.get("name") or title,
+            "chatId": chat_id, "leads": [ld["id"] for ld in leads],
+            "gaps": gaps, "related": related, "staged": staged,
+            "shelfRef": (ref or {}).get("id")}, None
+
+
+_CASE_BIRTH_TRIGGER = re.compile(
+    r"(?i)\b(?:start|open|begin|spin up)\s+(?:a\s+|an\s+|the\s+)?"
+    r"(?:new\s+)?(?:investigation|case)\b")
+
+
+def _case_birth_resolve_link(text, chat_id):
+    """The article a birth instruction means: a link in the
+    words themselves, else the newest Wire link standing in
+    this chat's own history, else a quoted title fragment
+    matched against the Wire's items."""
+    for m in re.findall(r"https?://[^\s\"'<>\)]+", str(text or "")):
+        try:
+            if WIRE.item_for_link(m):
+                return m
+        except Exception:
+            pass
+    if chat_id is not None:
+        for rec in chats_all():
+            if str(rec.get("id")) == str(chat_id):
+                for msg in reversed(rec.get("messages") or []):
+                    for m in re.findall(r"https?://[^\s\"'<>\)]+",
+                                         str((msg or {}).get("text") or "")):
+                        try:
+                            if WIRE.item_for_link(m):
+                                return m
+                        except Exception:
+                            pass
+                break
+    frag = ""
+    m = re.search(r"[\"“]([^\"”]{8,})[\"”]", str(text or ""))
+    if m:
+        frag = m.group(1).strip().lower()
+    if frag:
+        try:
+            for it in (WIRE.state().get("items") or []):
+                if frag in str(it.get("title") or "").lower():
+                    return str(it.get("link") or "")
+        except Exception:
+            pass
+    return ""
+
+
+def case_birth_chat_reply(chat_id, text):
+    """The words door for #330: 'start an investigation on
+    <that story>' in any chat that is not already a case room.
+    Returns her reply text, or None when the words are not a
+    birth instruction."""
+    raw = str(text or "").strip()
+    if not raw or not _CASE_BIRTH_TRIGGER.search(raw):
+        return None
+    if chat_id is not None:
+        for rec in chats_all():
+            if str(rec.get("id")) == str(chat_id) and rec.get("case"):
+                return None
+    link = _case_birth_resolve_link(raw, chat_id)
+    if not link:
+        return ("I can start that case — name the Wire story: paste "
+                "its link, quote its title, or speak from a chat "
+                "where its card stands. A case is born from a "
+                "story I can point at, not from a description.")
+    result, err = case_birth_from_wire(link)
+    if err:
+        return "The case was not started: " + err
+    out = ("Case started: **" + str(result["name"]) + "** — born from "
+           "that Wire story. The article stands on its reference "
+           "shelf, " + str(len(result["leads"])) + " cited lead"
+           + ("s" if len(result["leads"]) != 1 else "")
+           + " filed from the CVEs it names, "
+           + str(len(result["related"])) + " related stor"
+           + ("ies" if len(result["related"]) != 1 else "y")
+           + " shelved, and my briefing — with "
+           + str(len(result["staged"])) + " recommended task"
+           + ("s" if len(result["staged"]) != 1 else "")
+           + " staged as proposals — opens its case chat.")
+    if result["gaps"]:
+        out += " Gaps named at its birth: " + " ".join(result["gaps"])
+    return out
+
+
+def case_brief_chat_reply(chat_id, text):
+    """'Brief me' inside a case chat draws a FRESH briefing
+    from the case's live state and posts it in the room.
+    Returns the briefing text, or None when the words are not
+    a briefing ask or this is not a case room."""
+    raw = str(text or "").strip()
+    if not raw or chat_id is None:
+        return None
+    if not re.match(r"(?i)^(please\s+)?brief\s+me\b", raw):
+        return None
+    slug = ""
+    for rec in chats_all():
+        if str(rec.get("id")) == str(chat_id) and rec.get("case"):
+            slug = str(rec["case"])
+            break
+    if not slug:
+        return None
+    return case_briefing_text(slug)
+
+
 # --- The Dossier (v0.5.6e, #260) --------------------------------
 # Apex | Apps -> The Dossier: the people-finding app. One
 # dossier, many doors — Person / Username / Email / Phone /
@@ -28768,6 +29242,10 @@ def dossier_form_document(d):
             body = ""
     if not body:
         body = str(d.get("markdown") or "")
+    # v0.6.6e (#329): a dossier document whose body opens with
+    # the dossier's own title line opens after it — the title
+    # stands at the document's head, once.
+    body = case_dedupe_opener(str(d.get("title") or ""), body.strip())
     lines += [body.strip() if body.strip() else "No material gathered yet.", ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -32235,7 +32713,16 @@ CASE_REGISTERS = {
                  "fields": ["sha256", "size", "acquired", "custody",
                             "author", "filed"]},
     "tasks": {"file": "tasks.md", "title": "Tasks",
-              "fields": ["done", "author", "filed", "source"]},
+              "fields": ["done", "state", "author", "filed", "source"]},
+    # v0.6.6e (#326): the report register — report material
+    # filed from chat, in order, each entry dated on its face.
+    # It is NOT report.md: that file is the generated export
+    # (case_report overwrites it), so filed material gets its
+    # own register in the house idiom and formation draws the
+    # Report section from both — the entries first, the export
+    # after. (Judgment call, named in the build report.)
+    "report": {"file": "report-entries.md", "title": "Report entries",
+               "fields": ["author", "filed", "source"]},
 }
 
 
@@ -32310,10 +32797,56 @@ def _register_write(slug, name, entries):
         return False
 
 
+def _opener_norm(s):
+    # A line and a heading, compared as the reader sees them:
+    # markdown furniture off, whitespace collapsed, a trailing
+    # separator (colon, dash) forgiven, case folded. A trailing
+    # PERIOD is not forgiven: a line that ends with one is a
+    # sentence — the reply's own first line, not a restated
+    # heading — and the #291 verbatim law keeps it whole.
+    s = " ".join(str(s or "").replace("#", " ").replace("*", " ")
+                 .replace("`", " ").split())
+    return s.strip(" :—-").lower()
+
+
+def case_dedupe_opener(heading, body):
+    """v0.6.6e (#329): a filed body whose first line repeats
+    its heading — the triple-print the field caught (entry
+    heading, rendered title, the body's own opening line) —
+    opens AFTER that line. Exact match or the
+    heading-plus-punctuation variant; anything else is the
+    author's text and stands untouched, including a heading
+    that recurs later in the body. Filing-side and
+    render-side only: the answer as printed in chat is never
+    altered (print-first law)."""
+    text = str(body or "")
+    head = _opener_norm(heading)
+    if not text.strip() or not head:
+        return text
+    lines = text.split("\n")
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            continue
+        if _opener_norm(ln) == head:
+            return "\n".join(lines[i + 1:]).lstrip("\n")
+        # The colon variant: the line opens with the heading
+        # and a colon, then the substance — the body opens
+        # after the duplicated segment, substance kept whole.
+        if ":" in ln:
+            left, right = ln.split(":", 1)
+            if _opener_norm(left) == head and right.strip():
+                rest = [right.strip()] + lines[i + 1:]
+                return "\n".join(rest).lstrip("\n")
+        return text
+    return text
+
+
 def _register_append(slug, name, heading, fields, body):
     entries = _case_register(slug, name)
     entries.append({"heading": heading, "key": _register_key(heading),
-                    "fields": dict(fields), "body": str(body or "").strip()})
+                    "fields": dict(fields),
+                    "body": case_dedupe_opener(
+                        heading, str(body or "").strip())})
     return _register_write(slug, name, entries)
 
 
@@ -32526,6 +33059,17 @@ def case_detail_payload(slug):
     detail["entities"] = _case_register(slug, "entities")
     detail["observables"] = _case_register(slug, "observables")
     detail["tasks"] = _case_register(slug, "tasks")
+    # v0.6.6e (#329): register and timeline bodies open
+    # after a line that repeats their heading, exactly as
+    # the formed document renders them. (Finding bodies
+    # stand as stored — the note is the reply's own text;
+    # the formed document and the report export dedupe
+    # their rendering. Evidence exhibits stand as written.)
+    for _e in detail["timeline"]:
+        _e["body"] = case_dedupe_opener(_e["title"], _e["body"])
+    for _reg in ("entities", "observables", "tasks"):
+        for _e in detail[_reg]:
+            _e["body"] = case_dedupe_opener(_e["heading"], _e["body"])
     detail["unverified"] = _case_unverified_count(slug)
     detail["wireMatches"] = _case_wire_matches(slug)
     detail["rooms"] = _case_rooms(slug)
@@ -32644,7 +33188,7 @@ def case_update(slug, fields):
     return case_detail_payload(slug), None
 
 
-def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator", state=None, meta_pairs=None):
+def case_file_entry(slug, kind, title, body, severity="info", internal=False, author="operator", state=None, meta_pairs=None, when=None):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
@@ -32652,13 +33196,21 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
     body = str(body or "")
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
     if kind == "timeline":
+        # v0.6.6e (#329): a timeline entry's heading renders
+        # on its own line ("## date — title"), so a body that
+        # opens by restating it opens after that line.
+        body = case_dedupe_opener(title, body)
+        # v0.6.6e (#326): a timeline filing may carry its own
+        # date — the date the reply names for the event — in
+        # place of the filing moment.
+        stamp = str(when or "").strip() or now
         tpath = os.path.join(d, "timeline.md")
         try:
             with open(tpath, encoding="utf-8") as f:
                 text = f.read()
         except Exception:
             text = "# Timeline\n"
-        entry = "## " + now + " — " + title + "\n\n" + body.strip() + "\n\n"
+        entry = "## " + stamp + " — " + title + "\n\n" + body.strip() + "\n\n"
         idx = text.find("\n## ")
         if idx == -1:
             text = text.rstrip("\n") + "\n\n" + entry
@@ -32669,10 +33221,19 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
         sync_note_write("case")
         return {"path": "cases/" + slug + "/timeline.md"}, None
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    # v0.6.6e (#329): the writer's own "# title" line is the
+    # duplicate this build removes at filing — when the body
+    # already opens with the heading, the writer does not add
+    # its line above it, and the filed text itself stands
+    # byte-verbatim (#291's law: the note holds the reply's
+    # exact text; renderings dedupe the opener, storage never
+    # eats it).
+    _opens_with_title = case_dedupe_opener(title, body) != body
     if kind == "evidence-note":
         sub = "evidence"
         fname = stamp + "-" + _case_slug(title) + ".md"
-        content = "# " + title + "\n\n" + body.strip() + "\n"
+        content = (body.strip() + "\n") if _opens_with_title else \
+            "# " + title + "\n\n" + body.strip() + "\n"
     else:
         sub = "findings"
         sev = str(severity or "info").lower()
@@ -32698,7 +33259,9 @@ def case_file_entry(slug, kind, title, body, severity="info", internal=False, au
         # ("elements") — so a later delete can find its homes.
         for k, v in (meta_pairs or []):
             pairs.append((str(k), str(v)))
-        content = _fm_render(pairs, "# " + title + "\n\n" + body.strip() + "\n")
+        content = _fm_render(pairs, (body.strip() + "\n")
+                             if _opens_with_title else
+                             "# " + title + "\n\n" + body.strip() + "\n")
     target_dir = os.path.join(d, sub)
     os.makedirs(target_dir, exist_ok=True)
     full = os.path.join(target_dir, fname)
@@ -32784,7 +33347,11 @@ def case_report(slug):
         if f["severity"] != cur_sev:
             cur_sev = f["severity"]
             lines += ["### " + cur_sev.capitalize(), ""]
-        lines += ["#### " + f["title"], "", f["body"] or "_(no detail recorded)_", ""]
+        # v0.6.6e (#329): the export prints the heading
+        # itself — a body opening with that line opens after
+        # it here, as in the formed document.
+        lines += ["#### " + f["title"], "",
+                  case_dedupe_opener(f["title"], f["body"]) or "_(no detail recorded)_", ""]
     lines += ["## Timeline", ""]
     for e in detail["timeline"]:
         lines += ["### " + e["date"] + " — " + e["title"], "", e["body"] or "", ""]
@@ -33374,6 +33941,27 @@ def case_review(slug, register, key, action):
             hit["fields"]["done"] = "yes"
         elif action == "reopen":
             hit["fields"]["done"] = "no"
+        # v0.6.6e (#330): a proposed task is settled, not just
+        # done — Approve opens it as a standing task (the
+        # proposal mark comes off), Dismiss strikes it from
+        # the register with the strike standing on the
+        # timeline, the review model's own idiom for removals.
+        elif action == "approve":
+            if str(hit["fields"].get("state") or "").lower() != "proposed":
+                return None, "That task is not standing as a proposal."
+            hit["fields"]["state"] = ""
+        elif action == "dismiss":
+            entries = [e for e in entries if e["key"] != key]
+            _register_write(slug, "tasks", entries)
+            case_file_entry(slug, "timeline",
+                            "Task dismissed — " + hit["heading"],
+                            "The operator dismissed Navi's proposed "
+                            "task “" + hit["heading"] + "” (proposed "
+                            + str(hit["fields"].get("filed") or "earlier")
+                            + ") at " + now
+                            + ". The strike is recorded here; the task itself is removed.")
+            sync_note_write("case")
+            return case_detail_payload(slug), None
         else:
             return None, "Unknown review action."
         _register_write(slug, "tasks", entries)
@@ -33637,11 +34225,15 @@ def _case_shelf(slug):
 
 
 def case_formed_rel(slug):
-    # The case's one file on its type shelf. Name collisions
-    # (two cases, one type, one name) resolve deterministically:
-    # the first slug in sorted order keeps the plain name; a
-    # later one carries its slug as a suffix, so every case
-    # keeps exactly one file and no file is ever shared.
+    # The case's one file on its type shelf. v0.6.6e (#328):
+    # the shelves live under the Vault's Cases section —
+    # Cases/<Type>/<Name>.md — so the disk matches the desk:
+    # what the Vault view shows is where the file stands.
+    # Name collisions (two cases, one type, one name) resolve
+    # deterministically: the first slug in sorted order keeps
+    # the plain name; a later one carries its slug as a
+    # suffix, so every case keeps exactly one file and no
+    # file is ever shared.
     shelf = _case_shelf(slug)
     if shelf is None:
         return "cases/" + slug + ".md"
@@ -33651,8 +34243,8 @@ def case_formed_rel(slug):
             break
         oshelf = _case_shelf(other)
         if oshelf is not None and oshelf == (folder, safe):
-            return folder + "/" + safe + " (" + slug + ").md"
-    return folder + "/" + safe + ".md"
+            return "Cases/" + folder + "/" + safe + " (" + slug + ").md"
+    return "Cases/" + folder + "/" + safe + ".md"
 
 
 def _case_formed_prune():
@@ -33660,12 +34252,19 @@ def _case_formed_prune():
     # legacy cases/<slug>.md shape, and shelf files orphaned
     # by a rename, a retype, or a deletion. A file is removed
     # only when NO case's current rel names it — the prune can
-    # never eat a living case's document.
+    # never eat a living case's document. v0.6.6e (#328): the
+    # pre-section shelf folders (Vault root, <Type>/) are
+    # prune spots too — a formed file left there by an older
+    # build is the same document's old address; the sweep
+    # moves it by the standing rule (the new rel is written
+    # by formation, the old one tombstoned here), so the
+    # migration is content-exact and sync carries the move.
     try:
         keep = {case_formed_rel(s) for s in _case_all_slugs()}
         spots = [os.path.join(VAULT_DIR, "cases")]
         for folder in set(CASE_TYPE_FOLDERS.values()):
             spots.append(os.path.join(VAULT_DIR, folder))
+            spots.append(os.path.join(VAULT_DIR, "Cases", folder))
         for spot in spots:
             if not os.path.isdir(spot):
                 continue
@@ -33745,7 +34344,11 @@ def case_form_document(slug):
                 + " · " + ("LEAD — UNVERIFIED" if f["state"] == "lead" else "CONFIRMED")
                 + ((" · " + f["filed"]) if f["filed"] else "")
                 + " · findings/" + name)
-        body = case_strip_machinery(f["body"])
+        # v0.6.6e (#329): the formed document prints the
+        # entry's heading itself — a body opening with that
+        # same line opens after it here.
+        body = case_dedupe_opener(
+            f["title"], case_strip_machinery(f["body"]))
         return ["### " + f["title"], "", "*" + prov + "*", "",
                 body if body else "_(no detail recorded)_", ""]
     lead_names = [n for n in findings
@@ -33780,7 +34383,11 @@ def case_form_document(slug):
                 prov_bits.append(str(fl["kind"]))
             if reg == "tasks":
                 prov_bits.append("done" if str(fl.get("done") or "").lower() in ("yes", "true", "1") else "open")
-            if fl.get("state"):
+                # v0.6.6e (#330): her recommended tasks stand
+                # as proposals until the operator settles them.
+                if str(fl.get("state") or "").lower() == "proposed":
+                    prov_bits.append("PROPOSED BY NAVI — awaiting approval")
+            if fl.get("state") and reg != "tasks":
                 prov_bits.append("LEAD — UNVERIFIED" if fl["state"] == "lead" else "CONFIRMED")
             if fl.get("author"):
                 prov_bits.append("by " + str(fl["author"]))
@@ -33791,7 +34398,8 @@ def case_form_document(slug):
             lines += ["### " + e["heading"], ""]
             if prov_bits:
                 lines += ["*" + " · ".join(prov_bits) + "*", ""]
-            body = case_strip_machinery(e["body"])
+            body = case_dedupe_opener(
+                e["heading"], case_strip_machinery(e["body"]))
             if body:
                 lines += [body, ""]
     lines += ["## Evidence", ""]
@@ -33801,12 +34409,15 @@ def case_form_document(slug):
     for ev in evidence:
         lines += ["### " + ev["name"] + " (" + str(ev["size"]) + " bytes)", ""]
         ext = os.path.splitext(ev["name"])[1].lower()
-        if ext in CASE_IMAGE_MIMES:
+        if ext in CASE_IMAGE_MIMES and not ev.get("exhibit"):
             # v0.6.4e (#320): the formed file sits on its type
             # shelf now, one level down from the Vault root —
             # the evidence reference climbs out and into the
             # working folder, where the bytes live.
-            lines += ["![" + ev["name"] + "](../cases/" + slug + "/evidence/" + ev["name"] + ")", ""]
+            # v0.6.6e (#328): the formed file stands two
+            # levels down now (Cases/<Type>/), so the embed
+            # climbs two levels to the working folder.
+            lines += ["![" + ev["name"] + "](../../cases/" + slug + "/evidence/" + ev["name"] + ")", ""]
         if ev["sha256"]:
             lines += ["- **SHA-256:** `" + ev["sha256"] + "`"]
         if ev["acquired"]:
@@ -33822,10 +34433,31 @@ def case_form_document(slug):
         lines += ["No entries yet.", ""]
     for e in timeline:
         lines += ["### " + e["date"] + " — " + e["title"], "",
-                  case_strip_machinery(e["body"]) or "", ""]
+                  case_dedupe_opener(
+                      e["title"], case_strip_machinery(e["body"])) or "", ""]
     # v0.6.4e (#320): the case's report, when one has been
     # drawn, stands as the document's closing section — the
     # report's own title line yields to the section's.
+    # v0.6.6e (#326): material filed INTO the report (the
+    # report register) stands first, in filed order, each
+    # entry dated on its face; a drawn export follows it.
+    report_lines = []
+    for e in _case_register(slug, "report"):
+        fl = e["fields"]
+        prov = []
+        if fl.get("author"):
+            prov.append("by " + str(fl["author"]))
+        if fl.get("filed"):
+            prov.append(str(fl["filed"]))
+        if fl.get("source"):
+            prov.append(str(fl["source"]))
+        report_lines += ["### " + e["heading"], ""]
+        if prov:
+            report_lines += ["*" + " · ".join(prov) + "*", ""]
+        rbody = case_dedupe_opener(
+            e["heading"], case_strip_machinery(e["body"]))
+        if rbody:
+            report_lines += [rbody, ""]
     if d:
         rpath = os.path.join(d, "report.md")
         if os.path.isfile(rpath):
@@ -33838,7 +34470,9 @@ def case_form_document(slug):
                 rlines = rtext.split("\n")
                 if rlines and rlines[0].startswith("# "):
                     rlines = rlines[1:]
-                lines += ["## Report", ""] + [ln for ln in rlines] + [""]
+                report_lines += [ln for ln in rlines] + [""]
+    if report_lines:
+        lines += ["## Report", ""] + report_lines
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -33964,11 +34598,21 @@ def _case_reply_filing(slug, case_name, chat_id, body_text, part,
                    + " in the case “" + case_name + "”.")
     else:
         custody = ("\n\n— Filed from the case chat by " + act
-                   + " at " + now + ", as an " + part + ": the "
+                   + " at " + now + ", as " + _case_part_article(part)
+                   + " " + part + ": the "
                    "reply above stands as written, in Navi's "
                    "name, sourced from chat " + str(chat_id)
                    + " in the case “" + case_name + "”.")
-    fbody = body_text + custody
+    # v0.6.6e (#326): two parts take the reply bare. A task
+    # filing splits the reply itself — a custody paragraph
+    # would ride the split as prose — so its provenance rides
+    # the register's source field instead. An evidence filing
+    # is a custody exhibit: the text stands exactly as
+    # written, and the register's fields carry the custody.
+    if part in ("task", "evidence"):
+        fbody = body_text
+    else:
+        fbody = body_text + custody
     # Severity follows the cited record, as the Wire's own
     # file door does: one cited CVE with a score lends its
     # band.
@@ -33986,11 +34630,16 @@ def _case_reply_filing(slug, case_name, chat_id, body_text, part,
         sev = "info"
     filed, err = case_land_part(
         slug, part, title, fbody, author="navi", sev=sev,
-        source="filed from the case chat by " + act)
+        source="filed from the case chat by " + act,
+        chat_id=chat_id)
     if err:
         return None, err
-    return {"path": filed["path"], "part": part, "title": title,
-            "grounding": gflags}, None
+    out = {"path": filed["path"], "part": part, "title": title,
+           "grounding": gflags}
+    for k in ("count", "sourceNote", "sha256", "date"):
+        if filed.get(k) not in (None, ""):
+            out[k] = filed[k]
+    return out, None
 
 
 def case_file_reply(chat_id, text, part=None):
@@ -34043,18 +34692,37 @@ def case_file_reply(chat_id, text, part=None):
     filing = {"case": slug, "caseName": case_name,
               "path": filed["path"], "part": part,
               "grounding": filed["grounding"]}
+    for k in ("count", "sourceNote", "sha256", "date"):
+        if filed.get(k) not in (None, ""):
+            filing[k] = filed[k]
     # The receipt lands IN the chat, appended by the bridge —
     # the room shows the filing because the bridge did it, not
     # because anyone narrated it. v0.5.15e (#291): the receipt
-    # names the part it landed in.
+    # names the part it landed in. v0.6.6e (#326): the receipt
+    # names the #320 section it lands in — for tasks, the
+    # section and the count ("Filed into <case> — Tasks, 5
+    # entries"); prose around a split list rides the receipt
+    # as the filing's source note, never dropped, never a task.
     now_ms = int(time.time() * 1000)
-    stands = {"finding": "findings", "lead": "findings, as a lead",
-              "observable": "observables", "entity": "entities",
-              "event": "timeline"}[part]
-    rtext = ("Filed that reply into the case **" + case_name
-             + "** as " + _case_part_article(part) + " " + part + " — `" + filed["path"]
-             + "`. It stands in the case's " + stands
-             + ", in my name, exactly as written.")
+    stands = {"finding": "Findings", "lead": "Findings, as a lead",
+              "observable": "Observables", "entity": "Entities",
+              "event": "Timeline", "timeline": "Timeline",
+              "task": "Tasks", "evidence": "Evidence",
+              "report": "Report"}[part]
+    if part == "task":
+        n = int(filed.get("count") or 1)
+        rtext = ("Filed that reply into the case **" + case_name
+                 + "** — Tasks, " + str(n) + " entr"
+                 + ("y" if n == 1 else "ies") + " (`" + filed["path"]
+                 + "`), in my name, exactly as written.")
+        if filed.get("sourceNote"):
+            rtext += (" The words around the list stand as the "
+                      "filing's source note: “" + filed["sourceNote"] + "”")
+    else:
+        rtext = ("Filed that reply into the case **" + case_name
+                 + "** as " + _case_part_article(part) + " " + part + " — `" + filed["path"]
+                 + "`. It stands in the case's " + stands
+                 + " section, in my name, exactly as written.")
     if filed["grounding"]:
         rtext += (" One flag rides it: " + "; ".join(
             "it states " + f["field"] + " " + f["claimed"] + " for " + f["cve"]
@@ -34079,6 +34747,17 @@ def case_file_reply(chat_id, text, part=None):
 #   observable -> the observables register
 #   entity     -> the entities register
 #   event      -> the timeline
+# v0.6.6e (#326) extends the door to every part of the case
+# manager — File as {Type}, uniformly:
+#   task       -> the tasks register (a list-shaped reply
+#                 splits into one task per item)
+#   timeline   -> the timeline (title from the first line,
+#                 the reply's named date kept when it has one)
+#   evidence   -> the evidence custody register, the reply as
+#                 a text exhibit (hash + size on its face)
+#   report     -> the report register (report-entries.md),
+#                 drawn into the formed document's Report
+#                 section in filed order
 # The part is STRUCTURE, never content (#266): it rides the
 # finding's frontmatter and the register entry's fields, and
 # every receipt names the landing, so a wrong part is visible
@@ -34088,22 +34767,216 @@ def case_file_reply(chat_id, text, part=None):
 # is not one of the case's parts is refused BY NAME — named
 # and asked, never silently rerouted to findings.
 
-CASE_FILE_PARTS = ("finding", "lead", "observable", "entity", "event")
+CASE_FILE_PARTS = ("finding", "lead", "observable", "entity", "event",
+                   "task", "timeline", "evidence", "report")
 # Words that name a real place in a case but not a filing
 # part for a reply — refused by name, so the operator hears
 # the shape of the refusal instead of a silent reroute.
-CASE_FILE_NONPARTS = ("evidence", "task", "tasks", "timeline",
-                      "note", "notes", "report", "register")
+# v0.6.6e (#326): evidence, task, timeline and report left
+# this list — they are filing parts now, with doors of their
+# own (below). What remains is what a case genuinely does not
+# have.
+CASE_FILE_NONPARTS = ("note", "notes", "register")
 
 
 def _case_part_article(part):
-    return "an" if part in ("observable", "entity", "event") else "a"
+    return "an" if part in ("observable", "entity", "event", "evidence") else "a"
 
 
 def case_part_refusal(part):
     return ("This case has no '" + str(part) + "' part to file "
             "into — its parts are finding, lead, observable, "
-            "entity and event. Nothing was filed.")
+            "entity, event, task, timeline, evidence and "
+            "report. Nothing was filed.")
+
+
+# --- The sensed destination (v0.6.6e, #327) ------------------
+# The suggester grows from three reads to the full shape
+# grammar, still deterministic bridge machinery — no model in
+# the loop — and still small enough for the page to mirror
+# exactly. She senses; the label shows her call; the
+# operator's named part overrides absolutely (case_named_part
+# governs every door, as it always has). When no shape reads
+# with confidence the suggestion is the plain default —
+# finding — and the detail helper says so (sensed=False), so
+# nothing dresses a default up as a sense.
+
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5,
+           "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
+           "nov": 11, "dec": 12}
+_DATE_RE = re.compile(
+    r"\b(\d{4})-(\d{2})-(\d{2})\b"
+    r"|\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b"
+    r"|\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{4})\b",
+    re.I)
+_TASK_VERBS = frozenset(
+    "pull check review patch update verify confirm contact interview "
+    "search scan collect file send draft write run test audit trace map "
+    "monitor follow ask get fetch dump extract examine inspect document "
+    "schedule deploy fix build create add remove escalate notify preserve "
+    "acquire hunt triage correlate enumerate identify isolate contain "
+    "flag export import compare watch read open close rotate revoke "
+    "reset enable disable block quarantine snapshot capture record log "
+    "ping call book sweep parse enrich pivot brief stage".split())
+_ENTITY_TYPES = (r"person|organi[sz]ation|org|company|vendor|account|"
+                 r"system|place|service|tool|actor|group|host|server|"
+                 r"domain|wallet|exchange")
+
+
+def _named_date(text):
+    # The first explicit calendar date a text names, normalized
+    # to YYYY-MM-DD — or None. ISO first, then the month-name
+    # forms. A date that does not exist (2026-13-40) is not a
+    # date.
+    m = _DATE_RE.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        if m.group(1):
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        elif m.group(4):
+            mo = _MONTHS[m.group(4).lower()[:3]]
+            d, y = int(m.group(5)), int(m.group(6))
+        else:
+            d = int(m.group(7))
+            mo = _MONTHS[m.group(8).lower()[:3]]
+            y = int(m.group(9))
+        dt = datetime.date(y, mo, d)
+        return dt.isoformat()
+    except Exception:
+        return None
+
+
+def _list_items(text):
+    # Split a reply into (items, prose): lines carrying a list
+    # marker ( -, *, •, 1. / 1) ) are items, marker stripped;
+    # every other non-empty line is prose. Shared by the
+    # suggester and the task landing, so the label's count and
+    # the filing's split can never disagree.
+    items, prose = [], []
+    for ln in str(text or "").split("\n"):
+        s = ln.strip()
+        if not s:
+            continue
+        m = re.match(r"^(?:[-*•]|\d{1,3}[.)])\s+(.*)$", s)
+        if m and m.group(1).strip():
+            items.append(m.group(1).strip())
+        else:
+            prose.append(s)
+    return items, prose
+
+
+def _indicator_token(tok):
+    w = str(tok or "").strip("`*,.:;()[]<>\"'—-")
+    return bool(
+        re.match(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$", w)
+        or re.match(r"^[a-fA-F0-9]{32,64}$", w)
+        or re.match(r"^CVE-\d{4}-\d{4,}$", w, re.I)
+        or re.match(r"^[\w.\-]+@[\w.\-]+\.\w+$", w)
+        or re.match(r"^https?://\S+$", w)
+        or re.match(r"^[\w\-]+(\.[\w\-]+){2,}(/\S*)?$", w))
+
+
+def _indicator_line(line):
+    # A line that IS indicator data: its first token is an
+    # indicator, or most of its tokens are. ("Block 203.0.113.7
+    # at the edge" is an instruction ABOUT an indicator, not
+    # indicator data — its first token is a verb.)
+    toks = str(line or "").split()
+    if not toks:
+        return False
+    if _indicator_token(toks[0]):
+        return True
+    hits = sum(1 for t in toks if _indicator_token(t))
+    return hits * 5 >= len(toks) * 3
+
+
+def _imperative_item(item):
+    toks = str(item or "").strip().strip("`*_").split()
+    if not toks:
+        return False
+    first = toks[0].strip("`*,.:;()[]<>\"'—-").lower()
+    if first == "to" and len(toks) > 1:
+        first = toks[1].strip("`*,.:;()[]<>\"'—-").lower()
+    return first in _TASK_VERBS
+
+
+def case_task_split(text):
+    """A reply, split for the Tasks register: (items, prose).
+    A list-shaped reply contributes one item per list line;
+    anything else is a single item — its first meaningful
+    line — with the remainder as prose. The prose is never a
+    task and never dropped: it rides the filing's receipt as
+    the source note."""
+    items, prose = _list_items(text)
+    if items:
+        return items, prose
+    lines = [ln.strip() for ln in str(text or "").split("\n") if ln.strip()]
+    if not lines:
+        return [], []
+    head = " ".join(lines[0].replace("#", " ").split()).strip(" .:—-")
+    return [head] if head else [], lines[1:]
+
+
+def case_suggest_detail(text):
+    """The bridge's read of a reply's destination: (part,
+    sensed). Deterministic heuristics over the reply's shape,
+    in order — a chronological narrative (three or more
+    date-carrying lines) is a timeline; a list of indicator
+    data is observables; an imperative next-step list is
+    tasks; a short reply whose subject is typed on its face
+    ("X — a vendor", "X is an account") is an entity; a reply
+    opening on a date is an event; a reply carrying its
+    sourcing on its face is a lead. Anything else is the
+    plain default, finding, with sensed=False."""
+    t = str(text or "").strip()
+    if not t:
+        return "finding", False
+    lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
+    dated = [ln for ln in lines if _DATE_RE.search(ln)]
+    if len(dated) >= 3:
+        return "timeline", True
+    # A reply carrying its sourcing on its face is REPORTING:
+    # its lists are content, not instructions or raw data, so
+    # the list reads below do not fire on it — it reads as a
+    # lead at the grammar's own lead step. (The fleet record
+    # is the standing shape: a plan section and sourced
+    # contributions — filing it as tasks would strand the
+    # contributions as a source note.)
+    low = t.lower()
+    sourced = bool(
+        re.search(r"\baccording to\b", low)
+        or re.search(r"\b(reports?|advisory|bulletin|record|"
+                     r"sources?|writeup|post)\s+(says?|said|"
+                     r"reports?|shows?|states?|notes?|found)\b", low)
+        or re.search(r"\]\((https?://|www\.)", t)
+        or re.search(r"\bis reported(ly)?\b", low)
+        or re.search(r"\bclaims?\s+that\b", low))
+    items, prose = _list_items(t)
+    if len(items) >= 2 and not sourced:
+        if sum(1 for it in items if _indicator_line(it)) * 2 >= len(items):
+            return "observable", True
+        leadin = any(re.search(r"\bnext steps?\b|\btasks?\b|\bto[- ]do\b",
+                               ln, re.I) for ln in prose)
+        if leadin or sum(1 for it in items if _imperative_item(it)) * 2 >= len(items):
+            return "task", True
+    words = t.split()
+    if len(words) <= 6:
+        for w in words:
+            if _indicator_token(w):
+                return "observable", True
+    if len(words) <= 30 and len(lines) <= 2:
+        if (re.search(r"\bis\s+an?\s+(" + _ENTITY_TYPES + r")\b", t, re.I)
+                or re.search(r"\s[—–-]\s+an?\s+(" + _ENTITY_TYPES + r")\b", t, re.I)
+                or re.search(r"\s[—–-]\s+(" + _ENTITY_TYPES + r")\s*$", t, re.I)):
+            return "entity", True
+    if lines and (_DATE_RE.match(lines[0])
+                  or re.match(r"(?i)on\s+(the\s+)?\d", lines[0])
+                  or _named_date(lines[0]) and lines[0].lower().startswith("on ")):
+        return "event", True
+    if sourced:
+        return "lead", True
+    return "finding", False
 
 
 def case_suggest_part(text):
@@ -34111,38 +34984,11 @@ def case_suggest_part(text):
     deterministic, and small enough for the page to mirror
     exactly (the button's label is computed from the same
     rules; the press carries the part it names, so label,
-    press and receipt cannot disagree). A reply that is
-    essentially one bare indicator is an observable. A reply
-    carrying its sourcing on its face — "according to", a
-    named record that "reports / says / shows", a cited
-    link, a claim attributed to a source — is a lead: a claim
-    resting on a source, not her settled conclusion.
-    Anything else is a finding, the standing default. Entity
-    and event are never guessed by the furniture: they are
-    the operator's to name, and hers to suggest in prose."""
-    t = str(text or "").strip()
-    if not t:
-        return "finding"
-    words = t.split()
-    if len(words) <= 6:
-        for w in words:
-            w2 = w.strip("`*,.:;()[]<>\"'—-")
-            if (re.match(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$", w2)
-                    or re.match(r"^[a-fA-F0-9]{32,64}$", w2)
-                    or re.match(r"^CVE-\d{4}-\d{4,}$", w2, re.I)
-                    or re.match(r"^[\w.\-]+@[\w.\-]+\.\w+$", w2)):
-                return "observable"
-    low = t.lower()
-    if (re.search(r"\baccording to\b", low)
-            or re.search(r"\b(reports?|advisory|bulletin|record|"
-                         r"sources?|writeup|post)\s+(says?|said|"
-                         r"reports?|shows?|states?|notes?|found)\b",
-                         low)
-            or re.search(r"\]\((https?://|www\.)", t)
-            or re.search(r"\bis reported(ly)?\b", low)
-            or re.search(r"\bclaims?\s+that\b", low)):
-        return "lead"
-    return "finding"
+    press and receipt cannot disagree). v0.6.6e (#327): the
+    read is case_suggest_detail's — she senses the shape; the
+    operator's words naming a part govern over the sense on
+    every door."""
+    return case_suggest_detail(text)[0]
 
 
 def _case_part_title(body_text):
@@ -34159,7 +35005,7 @@ def _case_part_title(body_text):
 
 
 def case_land_part(slug, part, title, body, author="navi",
-                   sev="info", meta_pairs=None, source=""):
+                   sev="info", meta_pairs=None, source="", chat_id=None):
     """Land one composed item in the named part of a case.
     Returns ({"path", "part"}, error). The landing is the
     case's standing machinery per part — findings through
@@ -34167,7 +35013,10 @@ def case_land_part(slug, part, title, body, author="navi",
     a lead declared in its state), registers through the
     append the review model reads, events through the
     timeline. A part the case does not have is refused by
-    name before anything is written."""
+    name before anything is written. v0.6.6e (#326): task,
+    timeline, evidence and report land through their own
+    branches below; a task landing also returns its count
+    and the prose that rode as the source note."""
     part = str(part or "finding").strip().lower()
     if part not in CASE_FILE_PARTS:
         return None, case_part_refusal(part)
@@ -34176,6 +35025,63 @@ def case_land_part(slug, part, title, body, author="navi",
         return None, "No such case."
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime())
     title = " ".join(str(title or "").split()).strip() or "Filed from chat"
+    if part == "task":
+        items, prose = case_task_split(body)
+        if not items:
+            return None, "That reply names no task — nothing was filed."
+        fields = {"done": "no", "author": author, "filed": now,
+                  "source": source or "filed from chat"}
+        for it in items:
+            if not _register_append(slug, "tasks", it, fields, ""):
+                return None, "The task could not be written."
+        sync_note_write("case")
+        return {"path": "cases/" + slug + "/tasks.md", "part": part,
+                "count": len(items),
+                "sourceNote": " ".join(prose)}, None
+    if part == "timeline":
+        lines = [ln.strip() for ln in str(body or "").split("\n") if ln.strip()]
+        head = _case_part_title(body)
+        rest = "\n".join(lines[1:]) if len(lines) > 1 else ""
+        named = _named_date(body)
+        filed, err = case_file_entry(
+            slug, "timeline", head or title, rest,
+            when=(named or now))
+        if err:
+            return None, err
+        return {"path": filed["path"], "part": part,
+                "date": named or now}, None
+    if part == "evidence":
+        raw = str(body or "")
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        custody = ("Text exhibit — the reply as written, filed from "
+                   "the case chat"
+                   + ((" (chat " + str(chat_id) + ")") if chat_id else "")
+                   + "; SHA-256 computed by the bridge at filing time.")
+        fields = {"sha256": digest,
+                  "size": str(len(raw.encode("utf-8"))),
+                  "acquired": now + " — filed from the case chat as a text exhibit",
+                  "custody": custody,
+                  "author": author, "filed": now}
+        # The exhibit stands exactly as written — the hash on
+        # its face is taken over these very bytes — so this
+        # append bypasses the register's opener dedupe (#329
+        # does not reach evidence; custody is not content).
+        entries = _case_register(slug, "evidence")
+        entries.append({"heading": title, "key": _register_key(title),
+                        "fields": fields, "body": raw.strip()})
+        if not _register_write(slug, "evidence", entries):
+            return None, "The exhibit could not be written."
+        sync_note_write("case")
+        return {"path": "cases/" + slug + "/evidence.md", "part": part,
+                "sha256": digest}, None
+    if part == "report":
+        fields = {"author": author, "filed": now,
+                  "source": source or "filed from chat"}
+        if not _register_append(slug, "report", title, fields, body):
+            return None, "The report entry could not be written."
+        sync_note_write("case")
+        return {"path": "cases/" + slug + "/report-entries.md",
+                "part": part}, None
     if part in ("finding", "lead"):
         pairs = list(meta_pairs or [])
         pairs.append(("part", part))
@@ -34222,9 +35128,9 @@ def case_named_part(text):
     is not a filing part (for the by-name refusal). Both
     empty when the words name no destination."""
     low = " " + str(text or "").lower() + " "
-    m = re.search(r"\b(?:as|into|in|to)\s+(?:a\s+|an\s+|the\s+)?"
+    m = re.search(r"\b(?:as|into|in|to|on)\s+(?:a\s+|an\s+|the\s+)?"
                   r"(findings?|leads?|observables?|entities|entity|"
-                  r"events?)\b", low)
+                  r"events?|tasks?|timeline|evidence|report)\b", low)
     if m:
         w = m.group(1)
         part = {"finding": "finding", "findings": "finding",
@@ -34232,11 +35138,13 @@ def case_named_part(text):
                 "observable": "observable",
                 "observables": "observable",
                 "entity": "entity", "entities": "entity",
-                "event": "event", "events": "event"}[w]
+                "event": "event", "events": "event",
+                "task": "task", "tasks": "task",
+                "timeline": "timeline", "evidence": "evidence",
+                "report": "report"}[w]
         return part, ""
-    m = re.search(r"\b(?:as|into|in|to)\s+(?:a\s+|an\s+|the\s+)?"
-                  r"(evidence|tasks?|timeline|notes?|report|"
-                  r"register)\b", low)
+    m = re.search(r"\b(?:as|into|in|to|on)\s+(?:a\s+|an\s+|the\s+)?"
+                  r"(notes?|register)\b", low)
     if m:
         return "", m.group(1)
     return "", ""
@@ -41584,6 +42492,34 @@ class Handler(BaseHTTPRequestHandler):
                     payload["spoken"] = speak_reply(_preply, cfg)
                 self._send(200, payload)
                 return
+            # The case suite, spoken (v0.6.6e, #330): inside a
+            # case room, "brief me" means the CASE — a fresh
+            # briefing from its live state — and anywhere else,
+            # "start an investigation on <that story>" is a
+            # case birth from the Wire. Both are bridge state,
+            # so the bridge answers from what it actually did.
+            # These stand BEFORE the day route: the day's own
+            # "brief me" keeps every non-case room.
+            _csreply = None
+            try:
+                _csreply = case_brief_chat_reply(
+                    str(data.get("chatId") or ""), last or "")
+                if _csreply is None:
+                    _csreply = case_birth_chat_reply(
+                        str(data.get("chatId") or ""), last or "")
+            except Exception:
+                _csreply = None
+            if _csreply:
+                payload = {
+                    "reply": _csreply,
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_csreply, cfg)
+                self._send(200, payload)
+                return
             # Her working day, spoken (v0.6.0e, #294/#295/
             # #296): "remind me …", "standing order: …",
             # "brief me", "recall …" route deterministically —
@@ -41948,7 +42884,7 @@ class Handler(BaseHTTPRequestHandler):
                     _system_prompt += (
                         "\n\n[Working this case]\n"
                         "This conversation is the case room for the case above. Your answers here are conversation, not filings: nothing you write is filed into the case automatically, whatever shape it takes — there is no block, no format, and no filing hidden in a reply. Answer fully and plainly, in whatever form serves the question.\n"
-                        "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it whose label names the part it will file to — \"File into this case — as a finding\", \"— as a lead\", \"— as an observable\", \"— as an entity\", \"— as an event\" (v0.5.15e, #291) — and pressing it files that reply exactly as printed, to that part, in your name, receipted in the room with the landing named. You may suggest filing — \"that one is worth filing — as a lead\" — suggesting the part the content plainly is (a sourced claim is a lead, not a finding; a named person or system an entity; a bare indicator an observable; a thing that happened an event), and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. The operator's words naming a part govern over the button's suggestion. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
+                        "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it whose label names the part it will file to — the case has nine parts (v0.6.6e, #326): finding, lead, observable, entity, event, task, timeline, evidence, report — and the label is sensed from the reply's shape (v0.6.6e, #327): \"File into this case — as a finding\", \"— as tasks (3)\" for a next-step list, \"— as a timeline entry\" for a dated narrative, \"— as evidence\", \"— as report material\". Pressing it files that reply exactly as printed, to that part, in your name, receipted in the room with the landing named. You may suggest filing — \"that one is worth filing — as a lead\" — suggesting the part the content plainly is (a sourced claim is a lead, not a finding; a named person or system an entity; a bare indicator an observable; a thing that happened an event; a list of next steps tasks; a dated narrative the timeline; material for the write-up the report), and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. The operator's words naming a part govern over the button's suggestion — absolutely, on every door. When the operator says \"brief me\" in this room, the bridge posts a fresh briefing drawn from the case's live state — that is bridge work, not yours to compose. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
                         "Treat unverified material in the case brief above as leads: reason from them, never cite them as established. A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; a reply the operator files that contradicts the record is flagged on its filing's receipt."
                     )
                 except Exception:
@@ -43328,6 +44264,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "deleted": gone})
+        elif self.path == "/api/wire/start-case":
+            # v0.6.6e (#330): the Wire card's Start a case
+            # button — the same one act as the words door,
+            # through case_birth_from_wire. The response
+            # carries the birth's own accounting: leads filed,
+            # gaps named, related shelved, tasks staged.
+            data = self._body()
+            result, err = case_birth_from_wire(str(data.get("link") or ""))
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "birth": result})
         elif self.path == "/api/wire/refresh":
             self._send(200, WIRE.refresh_now())
         elif self.path == "/api/wire/settings":

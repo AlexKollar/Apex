@@ -2365,8 +2365,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.37";
-var SHIPPED_BUILD_SEQ = 37;
+var BRIDGE_BUILD = "2026-11-19.38";
+var SHIPPED_BUILD_SEQ = 38;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -4058,8 +4058,29 @@ function wireItemCardHtml(it, tab, idx, hit) {
   h += "<div class='mono' style='font-size:11px;color:var(--dim)'>" + esc(it.sourceLabel || "") + (it.published ? " \u00b7 " + esc(ticLocal(it.published)) : "") + "</div>";
   if (hit) h += "<div class='mono' style='font-size:11px;color:var(--am)'>Matched: " + hit.map(function (t) { return t[0] === t[1] ? esc(t[0]) : esc(t[0]) + " \u2192 " + esc(t[1]); }).join(" \u00b7 ") + "</div>";
   if (it.excerpt) h += "<p style='font-size:13px;margin-top:6px'>" + esc(it.excerpt) + "</p>";
-  if (tab) h += "<div class='row' style='margin-top:8px'><button class='ghost' data-wire-pull='" + tab + ":" + idx + "' aria-label='Pull this card into a case as reference' style='min-height:36px;padding:4px 12px;font-size:12px'>Pull into a case</button></div>";
+  if (tab) h += "<div class='row' style='margin-top:8px'><button class='ghost' data-wire-pull='" + tab + ":" + idx + "' aria-label='Pull this card into a case as reference' style='min-height:36px;padding:4px 12px;font-size:12px'>Pull into a case</button>"
+    + "<button class='ghost' data-wire-start-case='" + esc(encodeURIComponent(it.link || "")) + "' aria-label='Start a case from this story' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case</button></div>";
   return h + "</div>";
+}
+function wireStartCase(link) {
+  // v0.6.6e (#330): one act — the case is born from this
+  // story: article shelved whole, a cited lead per CVE it
+  // names, related coverage shelved, her briefing opening
+  // the case chat with her recommended tasks staged as
+  // proposals. The message names the bridge's accounting.
+  if (!link) return;
+  wirePullMsg = "Starting the case\u2026";
+  render();
+  fetch("/api/wire/start-case", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: link }) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok && j.birth) {
+      var b = j.birth;
+      wirePullMsg = "Case started \u2014 \u201c" + (b.name || b.slug) + "\u201d: " + (b.leads || []).length + " cited lead" + ((b.leads || []).length === 1 ? "" : "s") + " filed, " + (b.related || []).length + " related stor" + ((b.related || []).length === 1 ? "y" : "ies") + " shelved, " + (b.staged || []).length + " task" + ((b.staged || []).length === 1 ? "" : "s") + " staged as proposals. Her briefing opens its case chat." + ((b.gaps && b.gaps.length) ? " Gaps: " + b.gaps.join(" ") : "");
+      hydrateChatsFromServer();
+    } else {
+      wirePullMsg = "The case was not started \u2014 " + ((j && j.error) || "the bridge could not birth it.");
+    }
+    render();
+  }).catch(function () { wirePullMsg = "The case was not started \u2014 the bridge did not answer."; render(); });
 }
 var wireFeedMsg = "";
 function wireFeedsCardHtml(s) {
@@ -4522,6 +4543,7 @@ function wireAwareness() {
     render();
   }; });
   mainEl.querySelectorAll("[data-wire-pull-case]").forEach(function (b) { b.onclick = function () { wireDoPull(b.getAttribute("data-wire-pull-case")); }; });
+  mainEl.querySelectorAll("[data-wire-start-case]").forEach(function (b) { b.onclick = function () { try { wireStartCase(decodeURIComponent(b.getAttribute("data-wire-start-case") || "")); } catch (e) { wireStartCase(b.getAttribute("data-wire-start-case") || ""); } }; });
   var bind = function (id, fn) { var el = document.getElementById(id); if (el) el.onclick = fn; };
   bind("wire-pull-cancel", function () { wirePullPick = null; render(); });
   var pullShade = document.getElementById("wire-pull-shade");
@@ -4969,7 +4991,17 @@ function caseFilesHtml() {
     (d.tasks || []).forEach(function (e) {
       var f = e.fields || {};
       var done = String(f.done || "").toLowerCase() === "yes";
-      h += "<div class='row' style='margin-top:6px'><span class='grow' style='font-size:13px;" + (done ? "color:var(--dim);text-decoration:line-through" : "") + "'>" + esc(e.heading) + (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>PROPOSED BY NAVI</span>" : "") + "</span><button class='ghost' data-cf-review='tasks' data-cf-key='" + esc(e.key) + "' data-cf-action='" + (done ? "reopen" : "done") + "' style='min-height:44px'>" + (done ? "Reopen" : "Done") + "</button></div>";
+      // v0.6.6e (#330): a task standing as her PROPOSAL is
+      // settled, not checked off — Approve opens it as a
+      // standing task, Dismiss strikes it (the strike stands
+      // on the case's timeline). The badge names the state
+      // the register carries, never a guess from authorship.
+      var proposed = String(f.state || "").toLowerCase() === "proposed";
+      h += "<div class='row' style='margin-top:6px'><span class='grow' style='font-size:13px;" + (done ? "color:var(--dim);text-decoration:line-through" : "") + "'>" + esc(e.heading) + (proposed ? " <span class='mono' style='font-size:11px;color:#34d399'>PROPOSED BY NAVI — AWAITING APPROVAL</span>" : (f.author === "navi" ? " <span class='mono' style='font-size:11px;color:#34d399'>PROPOSED BY NAVI</span>" : "")) + "</span>"
+        + (proposed
+          ? "<button class='act' data-cf-review='tasks' data-cf-key='" + esc(e.key) + "' data-cf-action='approve' style='min-height:44px'>Approve</button><button class='ghost' data-cf-review='tasks' data-cf-key='" + esc(e.key) + "' data-cf-action='dismiss' style='min-height:44px;color:#f87171'>Dismiss</button>"
+          : "<button class='ghost' data-cf-review='tasks' data-cf-key='" + esc(e.key) + "' data-cf-action='" + (done ? "reopen" : "done") + "' style='min-height:44px'>" + (done ? "Reopen" : "Done") + "</button>")
+        + "</div>";
     });
     h += "</div>";
     // Evidence
@@ -6176,7 +6208,13 @@ function vaultCompute(notes, folders) {
     n.backlinks = notes.filter(function (o) { return o.path !== n.path && o.outgoing.some(function (t) { return t.toLowerCase() === n.title.toLowerCase(); }); }).map(function (o) { return o.path; });
   });
   notes.sort(function (a, b) { return a.path < b.path ? -1 : 1; });
-  return { notes: notes, folders: Object.keys(fset).sort() };
+  // v0.6.6e (#328): the Cases section stands at the BOTTOM
+  // of the Vault — the same order the bridge's payload
+  // carries, mirrored here for the offline store.
+  var fl = Object.keys(fset).sort();
+  var rest = fl.filter(function (f) { return f !== "Cases" && f.indexOf("Cases/") !== 0; });
+  var cases = fl.filter(function (f) { return f === "Cases" || f.indexOf("Cases/") === 0; });
+  return { notes: notes, folders: rest.concat(cases) };
 }
 // Attribute encoding for vault paths (build .73): encodeURIComponent
 // leaves apostrophes bare, and every vault attribute is single-quoted
@@ -6294,7 +6332,13 @@ function vaultFolderHtml(folder, depth) {
   }
   if (!folder || !vaultCollapsed[folder]) {
     own.forEach(function (n) { h += vaultNoteHtml(n, depth + (folder ? 1 : 0)); });
-    kids.forEach(function (k) { h += vaultFolderHtml(k, depth + 1); });
+    kids.forEach(function (k) {
+      // v0.6.6e (#328): the Cases section is set apart at
+      // the bottom of the tree by its own divider — the
+      // formed case files stand below it, grouped by type.
+      if (!folder && k === "Cases") h += "<div class='mono' style='font-size:10px;color:var(--dim);letter-spacing:.12em;border-top:1px solid var(--line);margin:14px 0 4px;padding-top:8px'>CASES \u2014 THE FORMED CASE FILES</div>";
+      h += vaultFolderHtml(k, depth + 1);
+    });
   }
   return h;
 }
@@ -6834,7 +6878,7 @@ var DOC_PAGES = [
   "<p>The <b>open case is visible</b>: the status column carries it (CASE, in the stats), and in the case's own chat a chip above the thread names it — tap it to jump to the case. Closing the case (making another one open, or none) clears both.</p></div>" +
     "<div class='doc-sec'><h4>Case awareness — the file grows up (v0.3.0e — Build 2, #199)</h4>" +
   "<p>The manifest carries the fields an investigation actually triages by: a one-line <b>summary</b> (it makes the case list scannable, and it is the first thing Navi reads), a <b>type</b> (incident / investigation / research / hunt / locate), a <b>priority</b>, freeform <b>tags</b>, an <b>owner</b>, <b>related</b> case slugs, and — when a case closes — a <b>closed</b> date with a one-line <b>outcome</b>. Older cases read with safe defaults; nothing already filed changes meaning. A case can be marked <b>sensitive</b>: through the DHD door its list entry shows as present-and-sensitive with its counts, but its name, summary, client and scope stay home, and Sync's case index badges it as sensitive.</p>" +
-  "<p>Four <b>registers</b> ride in the case folder as plain markdown, in the timeline's own idiom: <span class='mono'>entities.md</span> (the cast — people, orgs, accounts, systems, places, each with its role), <span class='mono'>observables.md</span> (the IOC register — IPs, domains, URLs, hashes, files, wallets), <span class='mono'>evidence.md</span> (the custody register, below), and <span class='mono'>tasks.md</span> (next steps — Navi proposes, you check off). Being plain files in the folder, they ride Sync, backups and DHD exactly as the rest of the case does. The observables register is also the <b>Wire's case-terms source</b>: matching reads the values an investigator actually wrote down — observables, entity names, tags — not words scraped from the manifest.</p>" +
+  "<p>Five <b>registers</b> ride in the case folder as plain markdown, in the timeline's own idiom: <span class='mono'>entities.md</span> (the cast — people, orgs, accounts, systems, places, each with its role), <span class='mono'>observables.md</span> (the IOC register — IPs, domains, URLs, hashes, files, wallets), <span class='mono'>evidence.md</span> (the custody register, below), <span class='mono'>tasks.md</span> (next steps — Navi proposes, you check off), and <span class='mono'>report-entries.md</span> (report material filed from chat, v0.6.6e #326 — the drawn <span class='mono'>report.md</span> stays a generated export, so filed material lives in its own register). Being plain files in the folder, they ride Sync, backups and DHD exactly as the rest of the case does. The observables register is also the <b>Wire's case-terms source</b>: matching reads the values an investigator actually wrote down — observables, entity names, tags — not words scraped from the manifest.</p>" +
   "<p><b>Evidence has a chain of custody now.</b> When a file is filed as evidence, the bridge computes its <b>SHA-256 at filing time</b> and writes its register entry in the same act — description, when/from/how it was acquired, and a custody note. Files filed before the register existed are backfilled on first sight, and the entry says so honestly: the hash is the file's hash as found, its acquisition unrecorded.</p>" +
   "<p><b>Navi's case-room answers are conversation.</b> In a case's own chat she answers in full, in whatever form serves the question — nothing in a reply is parsed as a filing, cut out of the text, or refused: there is no log block, and no filing format hides in her words. Filing from the room is your act, on the <b>File into this case</b> button under every reply (see <i>Filing that lands</i> and <i>She prints, then asks</i> below). The registers still grow through the deterministic doors: the intake's swipe when a case is born from chat, and this page's own add forms. What lands through those doors in her name lands <b>unverified</b> (state: <i>lead</i>), badged as hers with its provenance. Findings carry the same state: yours default to confirmed, hers to lead. <b>One tap promotes or strikes</b> an unverified entry in the case view; a strike removes the entry and <i>notes the strike in the timeline</i> — an audit trail, not a memory hole. Her own case brief labels the states back to her: she may reason from leads, never cite them as established. A detail belonging to a <i>different</i> case is never written across — she raises it in conversation instead. (Through v0.5.11e this paragraph described a structured log block the bridge parsed out of her replies; that path was retired in v0.5.12e, #286.)</p>" +
   "<p><b>Awareness flows in.</b> A Wire story or a KEV CVE matching one of the case's observables or entities is surfaced two ways: in the case chat, the matched records ride her context <b>named as matches, not findings</b>; in the case view, a <b>Wire matches</b> card badges them the same way. A match is a lead to check — the product never promotes it to a finding on its own.</p></div>" +
@@ -6849,12 +6893,17 @@ var DOC_PAGES = [
   "<p>The conversational log block is <b>retired</b>. It failed in the field the way invisible machinery fails: an answer that merely <i>looked</i> like a filing — entity, observable, event, lead, finding, stated in prose — was read as one; the closing marker never arrived; and the refusal machinery fired on an answer to a plain question, twice, while nothing filed. The ruling that replaces it is the operator's: <b>Navi prints the output regardless, and asks if she should file it — without being hung up if more questions come up first.</b></p>" +
   "<p>So: her case-room answers print <b>whole</b>, always, exactly as composed — nothing parses them, gates them, or hangs a refusal on them. Filing is a standing proposal under each reply — the <b>File into this case</b> button — which the bridge answers deterministically when pressed: it files <i>that reply's</i> printed text as a finding in her name, receipted in the room, even if the conversation has moved on several turns since. Each proposal stands on its own reply until pressed or ignored; there is no pending state and there are no red cards on answers. Refusal discipline — a filing named and refused when it cannot land — lives where it belongs now: on the deterministic doors, for malformed <i>explicit</i> filings, said once.</p></div>" +
     "<div class='doc-sec'><h4>Filing has destinations (v0.5.15e, #291)</h4>" +
-  "<p>A case is not one bucket. It has <b>parts</b> — the findings, the observables register, the entities register, the timeline — and a filing lands in one of them. Through v0.5.14e every chat filing door filed to findings whatever it was handed, so an indicator stated in a reply became a finding to be read back out of the register it belonged in. Now <b>every filing door carries its destination</b>: <b>finding</b> (the default), <b>lead</b>, <b>observable</b>, <b>entity</b>, <b>event</b>. A lead is a finding-shaped note that stands in the findings <i>as a lead</i>, unverified on its face; an observable or an entity lands in its register; an event lands on the timeline.</p>" +
-  "<p><b>The suggestion names its destination.</b> Print-first stands (#286, #289): the answer prints whole, and only then is filing offered — and the offer itself carries the part. The button under a reply reads <b>File into this case — as a lead</b> (or finding, or observable), read deterministically from the reply itself: a bare indicator in a short reply suggests <i>observable</i>; a reply reporting what a source says suggests <i>lead</i>; the rest suggest <i>finding</i>. Furniture never guesses <i>entity</i> or <i>event</i> — those are named by words. She may make the same suggestion in her own words (<i>that one is worth filing — as a lead</i>), and the receipt names the landing either way, so a wrong part shows at filing time, not at read-back.</p>" +
-  "<p><b>Your words govern.</b> Say <i>file that as a lead</i>, <i>add this to the case as an observable</i>, <i>log it as an event</i> — in the case's room the words file the reply they point at, at the part you named, over any suggestion the furniture made; anywhere else they file the exchange into the open case at that part. A named place that is <b>not</b> a filing part — evidence, tasks, the timeline asked for as a container — is refused <b>by name</b>, out loud, and nothing is filed: the refusal names the parts the case does have. Nothing is ever silently rerouted to findings. The case file itself keeps the purity rule: the part is structure in the entry's frontmatter or its register, never machinery text in the body.</p></div>" +
+  "<p>A case is not one bucket. It has <b>parts</b> — the findings, the observables register, the entities register, the timeline — and a filing lands in one of them. Through v0.5.14e every chat filing door filed to findings whatever it was handed, so an indicator stated in a reply became a finding to be read back out of the register it belonged in. Now <b>every filing door carries its destination</b>: <b>finding</b> (the default), <b>lead</b>, <b>observable</b>, <b>entity</b>, <b>event</b>. A lead is a finding-shaped note that stands in the findings <i>as a lead</i>, unverified on its face; an observable or an entity lands in its register; an event lands on the timeline. Since v0.6.6e (#326) the set is complete — <b>task</b>, <b>timeline</b>, <b>evidence</b> and <b>report</b> are filing parts too (see <i>The case suite</i> below): a task filing splits a list reply into one Tasks entry per item; a timeline filing dates its entry by the date the reply names, or the filing moment; an evidence filing takes the reply as a text exhibit, exactly as written, under a bridge-computed SHA-256; a report filing appends the reply to the case's report material.</p>" +
+  "<p><b>The suggestion names its destination — and senses it.</b> Print-first stands (#286, #289): the answer prints whole, and only then is filing offered — and the offer itself carries the part. The button under a reply reads <b>File into this case — as a lead</b> (or finding, or observable), read deterministically from the reply itself: a bare indicator in a short reply suggests <i>observable</i>; a reply reporting what a source says suggests <i>lead</i>; the rest suggest <i>finding</i>. Since v0.6.6e (#327) the read covers the reply's whole shape: a chronological narrative (three or more dated lines) suggests the <i>timeline</i>; a list of indicator data suggests <i>observables</i>; an imperative next-step list suggests <i>tasks</i> — the button names the count, <i>as tasks (5)</i>; a short reply whose subject is typed on its face (<i>X — a vendor</i>) suggests <i>entity</i>; a reply opening on a date suggests <i>event</i>. Anything the read cannot place is a <i>finding</i>, plainly the default — never dressed as a confident guess. She may make the same suggestion in her own words (<i>that one is worth filing — as a lead</i>), and the receipt names the landing either way, so a wrong part shows at filing time, not at read-back.</p>" +
+  "<p><b>Your words govern.</b> Say <i>file that as a lead</i>, <i>add this to the case as an observable</i>, <i>log it as an event</i>, <i>file that as tasks</i>, <i>put it on the timeline</i>, <i>file it as evidence</i>, <i>add it to the report</i> — in the case's room the words file the reply they point at, at the part you named, over any suggestion the furniture made; anywhere else they file the exchange into the open case at that part. Your named part is absolute: it governs even when it contradicts the shape of the material. A named place that is <b>not</b> a filing part — a <i>note</i>, a <i>register</i> — is refused <b>by name</b>, out loud, and nothing is filed: the refusal names the nine parts the case does have. Nothing is ever silently rerouted to findings. The case file itself keeps the purity rule: the part is structure in the entry's frontmatter or its register, never machinery text in the body.</p></div>" +
+    "<div class='doc-sec'><h4>The case suite (v0.6.6e, #326–#330)</h4>" +
+  "<p><b>Every part takes a filing.</b> A <b>task</b> filing splits the reply: one Tasks entry per list item, marker stripped; a reply with no list is a single task — its first line — and the prose around a list is never dropped and never a task: it rides the receipt as the filing's source note. A <b>timeline</b> filing enters under the date the reply names for the event when it names one, and under the filing moment when it does not. An <b>evidence</b> filing is a custody act: the reply stands as a text exhibit, exactly as written, its register entry carrying the SHA-256 the bridge computed at filing time, its size, and the chat it came from. A <b>report</b> filing appends to the case's report material — entries in filed order, dated on their face — and the formed document's Report section draws them ahead of any drawn export.</p>" +
+  "<p><b>Headings print once (#329).</b> A filed reply whose first line repeats its heading no longer prints three times — heading, rendered title, the body's own opening line. The filed note keeps the reply's exact words (no writer title line is added above a body that already opens with its heading), and the surfaces that print the heading themselves — the formed document, the report export — open the body after the repeated line, for filings from before this build exactly as for new ones, across every part and in dossier documents: exact match, or the heading with a colon. A heading that recurs later in a body is the author's text and stands; the answer as printed in chat is never altered.</p>" +
+  "<p><b>The Vault's Cases section (#328).</b> The formed case files stand in a <b>Cases</b> section at the <b>bottom</b> of the Vault — below every other folder, set apart by its own divider, grouped by type shelf: <span class='mono'>Cases/Investigation/&lt;Case Name&gt;.md</span>. The disk matches the desk. Existing formed files moved there in the formation sweep, content-exact, the move tombstoned so Sync carries it and the old address never resurrects.</p>" +
+  "<p><b>A case can be born from the Wire (#330).</b> A story's <b>Start a case</b> button — or your words, <i>start an investigation on that story</i> — pulls it together in one act: the case is created from the story, the article is read <b>whole</b> onto the case's reference shelf, one <b>cited lead</b> is filed per CVE the article names (resolved through the intel catalog; an id the catalog cannot answer is named as a <b>gap</b>, never silently skipped), related coverage from the Wire's other stories is shelved beside it, and the case is set open. The case chat opens on <b>her briefing</b> — composed by the bridge from the case's live state: what it was born from, what stands on the shelf, its leads, its gaps — and her <b>recommended next tasks</b> stand on the Tasks register as <b>proposals</b>, badged PROPOSED BY NAVI: <b>Approve</b> opens one as a standing task, <b>Dismiss</b> strikes it with the strike on the record. Say <i>brief me</i> in the case's room at any time and a fresh briefing is drawn from the state as it stands then.</p></div>" +
     "<div class='doc-sec'><h4>The case reads as a document — and holds only the case (v0.5.3e, #265, #266)</h4>" +
   "<p><b>Reading.</b> Case content renders as the markdown it is — findings, register entries and timeline entries read as formatted documents, not raw text: headings, emphasis, lists, code and tables all render, in Case Files and in the Vault alike, through the one renderer the whole product shares. The renderer escapes first and builds only its own known constructs, so filed content — including content filed from untrusted sources — can never carry markup of its own into the page: no raw HTML passes through, and no script ever runs. An image reference <b>presents as an image</b> when the bridge serves the bytes — a case's own evidence, a data image, a file elsewhere in the Vault — and an external image URL is shown as a link, never auto-fetched: reading a case must not leak the operator to a third-party host.</p>" +
-  "<p><b>One case, one file — in the Vault.</b> Beside the case's folder, the Vault holds the case's <b>formed document</b>: <span class='mono'>cases/&lt;name&gt;.md</span>, the whole case as one readable file — the manifest's facts, then the findings in the order they were filed, the registers, the evidence (images shown as images) and the timeline, every entry under its provenance. It is a formation of the folder, kept current by the bridge whenever the case is opened and swept at startup; the folder remains the working record the case machinery files into.</p>" +
+  "<p><b>One case, one file — in the Vault.</b> Beside the case's folder, the Vault holds the case's <b>formed document</b>: <span class='mono'>Cases/&lt;Type&gt;/&lt;name&gt;.md</span>, in the Cases section at the bottom of the Vault (v0.6.6e, #328), the whole case as one readable file — the manifest's facts, then the findings in the order they were filed, the registers, the evidence (images shown as images) and the timeline, every entry under its provenance. It is a formation of the folder, kept current by the bridge whenever the case is opened and swept at startup; the folder remains the working record the case machinery files into.</p>" +
   "<p><b>The purity rule.</b> A case file holds <b>case substance only</b>. Error messages, warnings, refusal notices and grounding flags are conversation machinery — they are said in the case's chat, by name, at the moment they happen, and they are <b>never written into a case file</b>, on any filing path. What does stay is the successful log: the custody lines that state where an entry came from and when it was filed — that is chain of custody, and it belongs to the case. Files written by earlier builds are cleaned to the same rule: the machinery text comes out, the substance and the custody lines stay, nothing else is touched.</p></div>" +
     "<div class='doc-sec'><h4>Deleting a case (Build 15)</h4>" +
   "<p>Deleting is complete, and it is confirmed in words first. <b>Delete this case…</b> at the foot of the case page arms a confirmation that names exactly what will go: the case and <b>every file it owns in the Vault</b> — its findings, evidence, timeline, manifest and exported report — and <b>its tied chat</b>, the whole conversation. Confirm, and all of it goes; there is no undo. One honest limit, stated on the confirmation itself: <b>backups already taken keep the copies inside them</b> — deleting a case does not reach into backup history. If the deleted case was the open one, the open-case pointer clears with it.</p>" +
@@ -7585,37 +7634,132 @@ function caseFiledReplyHtml(m) {
   var f = m.caseFiledReply;
   if (!f) return "";
   var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Filed to the case</b> <span style='color:var(--dim)'>by your tap · receipted by the bridge</span></div>"
-    + "<div style='font-size:13px;margin-top:2px'>Into <b>" + esc(f.caseName || f.case) + "</b> as " + casePartArticle(f.part || "finding") + " " + esc(f.part || "finding") + "</div>"
+    + "<div style='font-size:13px;margin-top:2px'>Into <b>" + esc(f.caseName || f.case) + "</b> " + (f.part === "task" ? "as tasks (" + (f.count || 1) + ")" : "as " + casePartArticle(f.part || "finding") + " " + esc(f.part || "finding")) + "</div>"
     + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(f.path) + "</div>";
   (f.grounding || []).forEach(function (g) {
     h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " — the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
   });
   return h + "</div>";
 }
-function casePartArticle(part) { return (part === "observable" || part === "entity" || part === "event") ? "an" : "a"; }
-function caseSuggestPart(text) {
-  // v0.5.15e (#291): the page-side mirror of the bridge's
-  // case_suggest_part — the same deterministic read, so the
-  // button's named destination and the bridge's landing can
-  // never disagree. A bare indicator in a short reply reads
-  // as an observable; a reply that reports what a source
-  // says reads as a lead; everything else reads as a
-  // finding. Entity and event are never guessed by
-  // furniture — the operator's words name those.
-  var t = String(text || "");
+function casePartArticle(part) { return (part === "observable" || part === "entity" || part === "event" || part === "evidence") ? "an" : "a"; }
+// v0.6.6e (#327): the page-side mirror of the bridge's
+// case_suggest_detail and its helpers — the same
+// deterministic read, helper for helper, so the button's
+// named destination and the bridge's landing can never
+// disagree. She senses the shape: a chronological narrative
+// is a timeline, a list of indicator data is observables, an
+// imperative next-step list is tasks, a short typed subject
+// is an entity, a reply opening on a date is an event, a
+// reply carrying its sourcing is a lead — and anything else
+// is the honest plain default, a finding. The operator's
+// words naming a part govern over the sense on every door.
+var CASE_DATE_SRC = "(?:\\d{4}-\\d{2}-\\d{2}\\b|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4}\\b|\\d{1,2}\\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{4}\\b)";
+var CASE_DATE_RE = new RegExp("\\b" + CASE_DATE_SRC, "i");
+var CASE_DATE_START_RE = new RegExp("^" + CASE_DATE_SRC, "i");
+var CASE_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+var CASE_TASK_VERBS = {};
+("pull check review patch update verify confirm contact interview search scan collect file send draft write run test audit trace map monitor follow ask get fetch dump extract examine inspect document schedule deploy fix build create add remove escalate notify preserve acquire hunt triage correlate enumerate identify isolate contain flag export import compare watch read open close rotate revoke reset enable disable block quarantine snapshot capture record log ping call book sweep parse enrich pivot brief stage").split(" ").forEach(function (v) { CASE_TASK_VERBS[v] = 1; });
+var CASE_ENTITY_TYPES = "(?:person|organi[sz]ation|org|company|vendor|account|system|place|service|tool|actor|group|host|server|domain|wallet|exchange)";
+function caseStripTok(w) { return String(w || "").replace(/^[`*,.:;()\[\]<>"'\u2014-]+/, "").replace(/[`*,.:;()\[\]<>"'\u2014-]+$/, ""); }
+function caseNamedDate(text) {
+  var m = new RegExp("\\b(\\d{4})-(\\d{2})-(\\d{2})\\b|\\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})\\b|\\b(\\d{1,2})\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+(\\d{4})\\b", "i").exec(String(text || ""));
+  if (!m) return null;
+  var y, mo, d;
+  if (m[1]) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else if (m[4]) { mo = CASE_MONTHS[m[4].toLowerCase().slice(0, 3)]; d = +m[5]; y = +m[6]; }
+  else { d = +m[7]; mo = CASE_MONTHS[m[8].toLowerCase().slice(0, 3)]; y = +m[9]; }
+  var dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
+  return y + "-" + p2(mo) + "-" + p2(d);
+}
+function caseListItems(text) {
+  var items = [], prose = [];
+  String(text || "").split("\n").forEach(function (ln) {
+    var s = ln.trim();
+    if (!s) return;
+    var m = /^(?:[-*\u2022]|\d{1,3}[.)])\s+(.*)$/.exec(s);
+    if (m && m[1].trim()) items.push(m[1].trim()); else prose.push(s);
+  });
+  return { items: items, prose: prose };
+}
+function caseIndicatorToken(tok) {
+  var w = caseStripTok(tok);
+  return /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(w)
+    || /^[a-fA-F0-9]{32,64}$/.test(w)
+    || /^CVE-\d{4}-\d{4,}$/i.test(w)
+    || /^[\w.\-]+@[\w.\-]+\.\w+$/.test(w)
+    || /^https?:\/\/\S+$/.test(w)
+    || /^[\w\-]+(\.[\w\-]+){2,}(\/\S*)?$/.test(w);
+}
+function caseIndicatorLine(line) {
+  var toks = String(line || "").split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  if (caseIndicatorToken(toks[0])) return true;
+  var hits = 0;
+  toks.forEach(function (tk) { if (caseIndicatorToken(tk)) hits++; });
+  return hits * 5 >= toks.length * 3;
+}
+function caseImperativeItem(item) {
+  var toks = String(item || "").trim().replace(/^[`*_]+/, "").replace(/[`*_]+$/, "").split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  var first = caseStripTok(toks[0]).toLowerCase();
+  if (first === "to" && toks.length > 1) first = caseStripTok(toks[1]).toLowerCase();
+  return !!CASE_TASK_VERBS[first];
+}
+function caseTaskSplit(text) {
+  var sp = caseListItems(text);
+  if (sp.items.length) return sp;
+  var lines = String(text || "").split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+  if (!lines.length) return { items: [], prose: [] };
+  var head = lines[0].replace(/#/g, " ").split(/\s+/).filter(Boolean).join(" ").replace(/^[ .:—-]+/, "").replace(/[ .:—-]+$/, "");
+  return { items: head ? [head] : [], prose: lines.slice(1) };
+}
+function caseSuggestDetail(text) {
+  var t = String(text || "").trim();
+  if (!t) return { part: "finding", sensed: false };
+  var lines = t.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+  var dated = lines.filter(function (ln) { return CASE_DATE_RE.test(ln); });
+  if (dated.length >= 3) return { part: "timeline", sensed: true };
+  var low0 = t.toLowerCase();
+  var sourced = /\baccording to\b/.test(low0)
+    || /\b(reports?|advisory|bulletin|record|sources?|writeup|post)\s+(says?|said|reports?|shows?|states?|notes?|found)\b/.test(low0)
+    || /\]\((https?:\/\/|www\.)/.test(t)
+    || /\bis reported(ly)?\b/.test(low0)
+    || /\bclaims?\s+that\b/.test(low0);
+  var sp = caseListItems(t);
+  if (sp.items.length >= 2 && !sourced) {
+    var ind = 0, imp = 0;
+    sp.items.forEach(function (it) { if (caseIndicatorLine(it)) ind++; if (caseImperativeItem(it)) imp++; });
+    if (ind * 2 >= sp.items.length) return { part: "observable", sensed: true };
+    var leadin = sp.prose.some(function (ln) { return /\bnext steps?\b|\btasks?\b|\bto[- ]do\b/i.test(ln); });
+    if (leadin || imp * 2 >= sp.items.length) return { part: "task", sensed: true };
+  }
   var words = t.split(/\s+/).filter(Boolean);
   if (words.length <= 6) {
-    if (/(?:\d{1,3}\.){3}\d{1,3}/.test(t)
-        || /[0-9a-fA-F]{32,64}/.test(t)
-        || /CVE-\d{4}-\d{4,7}/.test(t)
-        || /[\w.+-]+@[\w-]+\.[\w.]+/.test(t)) return "observable";
+    for (var i = 0; i < words.length; i++) if (caseIndicatorToken(words[i])) return { part: "observable", sensed: true };
   }
-  if (/according to/i.test(t)
-      || /(?:reports?|advisory|bulletin|record|sources?|writeup|post)\s+(?:says?|said|reports?|shows?|states?|notes?|found)/i.test(t)
-      || /\]\(https?:\/\//.test(t)
-      || /is reported(?:ly)?/i.test(t)
-      || /claims? that/i.test(t)) return "lead";
-  return "finding";
+  if (words.length <= 30 && lines.length <= 2) {
+    if (new RegExp("\\bis\\s+an?\\s+" + CASE_ENTITY_TYPES + "\\b", "i").test(t)
+        || new RegExp("\\s[\u2014\u2013-]\\s+an?\\s+" + CASE_ENTITY_TYPES + "\\b", "i").test(t)
+        || new RegExp("\\s[\u2014\u2013-]\\s+" + CASE_ENTITY_TYPES + "\\s*$", "i").test(t)) return { part: "entity", sensed: true };
+  }
+  if (lines.length && (CASE_DATE_START_RE.test(lines[0])
+      || /^on\s+(the\s+)?\d/i.test(lines[0])
+      || (caseNamedDate(lines[0]) && lines[0].toLowerCase().indexOf("on ") === 0))) return { part: "event", sensed: true };
+  if (sourced) return { part: "lead", sensed: true };
+  return { part: "finding", sensed: false };
+}
+function caseSuggestPart(text) { return caseSuggestDetail(text).part; }
+function casePartDestLabel(part, text) {
+  // The destination as the button names it (#326/#327): a
+  // task filing names its count from the same split the
+  // bridge lands; the other new parts name their section.
+  if (part === "task") { var n = caseTaskSplit(text).items.length; return n > 1 ? "as tasks (" + n + ")" : "as a task"; }
+  if (part === "timeline") return "as a timeline entry";
+  if (part === "evidence") return "as evidence";
+  if (part === "report") return "as report material";
+  return "as " + casePartArticle(part) + " " + part;
 }
 function caseFileReplyBtnHtml(m, idx) {
   // The tap itself: on Navi's replies, only while the open
@@ -7625,7 +7769,8 @@ function caseFileReplyBtnHtml(m, idx) {
   var ac = (typeof activeChat === "function") ? activeChat() : null;
   if (!ac || !ac.case) return "";
   var part = caseSuggestPart(m.text);
-  return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' data-file-part='" + part + "' aria-label='File this reply into the bound case as " + casePartArticle(part) + " " + part + "' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case — as " + casePartArticle(part) + " " + part + "</button></div>";
+  var dest = casePartDestLabel(part, m.text);
+  return "<div style='margin-top:6px'><button class='ghost' data-file-reply='" + idx + "' data-file-part='" + part + "' aria-label='File this reply into the bound case " + dest + "' style='min-height:36px;padding:4px 12px;font-size:12px'>File into this case — " + dest + "</button></div>";
 }
 function caseStartedHtml(m) {
   // v0.5.14e (#289): the receipt for the "Start a case from
@@ -7639,7 +7784,7 @@ function caseStartedHtml(m) {
   var s = m.caseStarted;
   if (!s) return "";
   var h = "<div class='card' style='margin-top:8px;padding:8px 10px'><div class='mono' style='font-size:12px'><b>Case started</b> <span style='color:var(--dim)'>by your tap \u00b7 receipted by the bridge</span></div>"
-    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(s.name || s.slug) + "</b> (" + esc(s.type || "investigation") + ") \u2014 " + (!s.part || s.part === "finding" ? "the reply stands in its findings, in her name" : (s.part === "event" ? "the reply stands on its timeline, in her name" : "the reply stands in the case as " + casePartArticle(s.part) + " " + esc(s.part) + ", in her name")) + "</div>"
+    + "<div style='font-size:13px;margin-top:2px'><b>" + esc(s.name || s.slug) + "</b> (" + esc(s.type || "investigation") + ") \u2014 " + (!s.part || s.part === "finding" ? "the reply stands in its findings, in her name" : (s.part === "event" || s.part === "timeline" ? "the reply stands on its timeline, in her name" : (s.part === "task" ? "the reply stands in its tasks, in her name" : (s.part === "evidence" ? "the reply stands in its evidence, in her name" : (s.part === "report" ? "the reply stands in its report material, in her name" : "the reply stands in the case as " + casePartArticle(s.part) + " " + esc(s.part) + ", in her name"))))) + "</div>"
     + "<div class='mono' style='color:var(--dim);font-size:11px;margin-top:2px'>" + esc(s.path || "") + "</div>";
   (s.grounding || []).forEach(function (g) {
     h += "<div style='font-size:12px;color:var(--am);margin-top:2px'>Grounding flag: the reply states " + esc(g.field) + " " + esc(g.claimed) + " for " + esc(g.cve) + " \u2014 the Wire record says " + esc(g.record) + ". Filed as written; the record's values govern.</div>";
@@ -7657,7 +7802,8 @@ function caseStartBtnHtml(m, idx) {
   var ac = (typeof activeChat === "function") ? activeChat() : null;
   if (!ac || ac.case) return "";
   var spart = caseSuggestPart(m.text);
-  return "<div style='margin-top:6px'><button class='ghost' data-start-case='" + idx + "' data-start-part='" + spart + "' aria-label='Start a case from this reply, filed as " + casePartArticle(spart) + " " + spart + "' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case from this — as " + casePartArticle(spart) + " " + spart + "</button></div>";
+  var sdest = casePartDestLabel(spart, m.text);
+  return "<div style='margin-top:6px'><button class='ghost' data-start-case='" + idx + "' data-start-part='" + spart + "' aria-label='Start a case from this reply, filed " + sdest + "' style='min-height:36px;padding:4px 12px;font-size:12px'>Start a case from this — " + sdest + "</button></div>";
 }
 function caseFilingsHtml(m) {
   // Build 15 (#161): the receipt for Navi's own case filings —
