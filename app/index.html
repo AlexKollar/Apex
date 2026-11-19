@@ -2199,8 +2199,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-18.32";
-var SHIPPED_BUILD_SEQ = 32;
+var BRIDGE_BUILD = "2026-11-18.33";
+var SHIPPED_BUILD_SEQ = 33;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2715,7 +2715,7 @@ var DOC_GROUPS = [
   { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "working-day", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
-  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "fedichat", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
+  { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "fleet-answers", "fedichat", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
   { id: "topic-help", title: "Help", pages: ["troubleshooting", "glossary"] }
 ];
 var docsTopicClosed = {};    // topic id -> true while the operator has it collapsed
@@ -6677,6 +6677,16 @@ var DOC_PAGES = [
   "<p><b>Your own node sends it.</b> The bridge holds a push keypair it minted itself \u2014 per node, kept in its own config, never synced \u2014 signs each delivery with it, and encrypts every payload end-to-end for your phone's subscription. The only other parties are the push services the platform itself runs, which are the transport the Web Push standard is built on; there is no relay and no account. The delivery's outcome stands on the tray record itself \u2014 sent, or failed with the reason named. A phone the push service has forgotten (it answers 404 or 410) comes off the list and is <b>named in the tray</b> until it subscribes again; a record born on another seat and converged here never re-rings.</p>" +
   "<p><b>The door, honestly.</b> The bell panel and Settings both carry the phone door, and it names its own state: live, blocked (with the fix), unsupported \u2014 or, on an iPhone, <b>install-first</b>: iOS gives push only to web apps added to the Home Screen and opened from their icon, so the door shows those steps as a card rather than a button that cannot work. Several phones can ring; each subscribes to the node it talks to.</p></div>" 
  },
+  { id: "fleet-answers", title: "Fleet Answers — one ask, answered by the fleet", related: ["federation", "mesh"], html:
+    "<p style='color:var(--dim)'>Borrowing sends one whole ask to one stronger machine. A fleet answer divides one ask into whole sub-tasks — each answered whole by the machine best placed for it — and composes one answer with the seams showing.</p>" +
+    "<div class='doc-sec'><h4>Joining the fleet</h4>" +
+    "<p>Fleet membership is a <b>toggle on the Federation page</b>, and it is <b>off by default</b>. It is this node's own posture: joining offers this machine's answers to fleet asks from machines already paired here or on a joined fedinet's roster, under the <b>same caps and consent as borrowing</b> — joining grants nobody anything by itself, and every contribution is still judged at the answering machine's own door. Join or leave at will, with no ceremony; the toggle, the stored state, and what a reload shows are one truth, and a refusal (the Mesh off, an unminted identity) is spoken on the card itself. Leaving <b>mid-ask</b> degrades that answer by the named-gap rule: the piece is badged missing, never silently dropped.</p></div>" +
+    "<div class='doc-sec'><h4>Asking the fleet</h4>" +
+    "<p>Start a chat line with <span class='mono'>fleet:</span> — or simply ask a plainly multi-part question and Navi will judge it a fleet ask. She decomposes it into <b>whole sub-tasks</b> in the Mesh's existing classes — <b>generate</b>, <b>collect</b>, <b>lookup</b>, <b>report</b> — names a piece for a machine and that machine answers it; the rest spread across the fleet, this node included. The fan-out is capped (4 machines by default, settable in config) and the ask carries a deadline: when it passes, the answer ships as a <b>badged partial</b> rather than hanging. A plain single-part question is never routed to the fleet — it is answered the ordinary way, untouched.</p>" +
+    "<p><b>One hop, hard.</b> A contribution never fans out again, and a <b>peek never fans out</b> at all — a piece that names a peek is held back and named in the plan. Every contribution counts against the answering machine's ordinary borrow caps, and both sides of the door write one ledger entry per contribution, cross-referenced to the fleet ask's id.</p></div>" +
+    "<div class='doc-sec'><h4>The answer, seams showing</h4>" +
+    "<p>The composed answer signs every contribution with its machine's name and class. A machine that is dark, refuses, times out, is preempted by its own operator, or leaves mid-ask appears as a <b>named gap</b> — the answer is never silently thinner than the fleet that was asked. Under the fan-out cap the plan stays silent; above it, the plan leads the answer. In a case chat, the plan and its contributions stand in the thread as their own record, and the standing filing proposal under it files them as <b>leads with their machine provenance</b>; the composed answer is the reply itself, finding-shaped. Nothing files itself.</p></div>" 
+ },
   { id: "working-day", title: "Her working day — captures, reminders, standing orders & the brief", related: ["chat-cli", "voice"], html:
     "<p style='color:var(--dim)'>One book, held by the bridge, that every seat reads: what she keeps, what she owes you, and the brief she opens the day with.</p>" +
     "<div class='doc-sec'><h4>The day book (v0.6.0e, #294)</h4>" +
@@ -9796,6 +9806,18 @@ function federationHtml() {
       : "<button class='act' data-fed-badge-enroll='1' style='min-height:44px'>Enroll this dashboard's Operator Badge</button>") +
     (s.viaDhd ? "<span style='color:var(--dim);font-size:12px'>This view is through the DHD door — enrollment itself is in-person only.</span>" : "") +
     "</div></div>";
+  // Fleet Answers (v0.6.1e, #293): this node's membership in
+  // the fleet — a node-level posture, so it stands on its own
+  // card, not on any one fedinet's. The switch gate holds, in
+  // the page's own structural way: the switch never flips
+  // locally — a press sends the act, the bridge answers with
+  // the state it stored, and the card re-renders from that
+  // answer alone; a refusal lands on THIS card as a sentence.
+  var fl = s.fleet || { member: false, cap: 4, deadlineSec: 120 };
+  h += "<div class='card' style='margin-top:12px'><b>Fleet Answers</b>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>A fleet ask divides one question into <b>whole sub-tasks</b> — each answered whole by the machine best placed for it, then composed into one answer with every contribution <b>signed by its machine</b>. Joining is this node's own posture: it offers this machine's answers to fleet asks from machines already paired here or on a joined fedinet's roster, under the same caps and consent as borrowing — and joining grants nobody anything by itself. <b>Off by default.</b> Join or leave at will; leaving mid-ask names the gap in that answer rather than hanging it.</p>" +
+    (fedMsg.error && fedMsg.errorFor === "__fleet__" ? "<p style='color:#f58a8a;font-size:12px;margin-top:6px'>" + esc(fedMsg.error) + "</p>" : "") +
+    "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'>" + fedSwitch(!!fl.member, "data-fed-fleet='1'", "Fleet Answers membership for this node") + "<span style='font-size:12px'><b>" + (fl.member ? "In the fleet" : "Not in the fleet") + "</b> — a fleet ask spans at most " + (fl.cap || 4) + " machines and ships by its " + (fl.deadlineSec || 120) + "s deadline, gaps badged by name.</span></div></div>";
   // Join: import a gateway card, or found a fedinet.
   h += "<div class='fed-grid'>";
   h += "<div class='card'><b>Join a fedinet</b>" +
@@ -9888,6 +9910,10 @@ function wireFederation() {
     if (!f) return;
     if (f.trustByDefault) { fedConfirm = null; federationAct({ act: "trust", fedinetId: id, on: false }, id); }
     else { fedConfirm = { act: "trust", fedinetId: id, label: "trust " + f.name, extra: { on: true } }; fedMsg.error = ""; render(); }
+  }; });
+  qa("[data-fed-fleet]").forEach(function (b) { b.onclick = function () {
+    var flNow = (federationState && federationState.fleet) || {};
+    federationAct({ act: "fleet", on: !flNow.member }, "__fleet__");
   }; });
   qa("[data-fed-tick]").forEach(function (b) { b.onclick = function () {
     var id = b.getAttribute("data-fed-tick");

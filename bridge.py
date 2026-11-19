@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.0"
+SHIPPED_VERSION = "0.6.1"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-18.32"
+BRIDGE_BUILD = "2026-11-18.33"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 32
+SHIPPED_BUILD_SEQ = 33
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4973,6 +4973,9 @@ def mesh_handle_status(handler, body):
         "idle": mesh_idle_seconds() >= ms["lend"]["idleAfterSeconds"],
         "model": "navi",
         "capabilities": mesh_capabilities(cfg),
+        # v0.6.1e (#293): fleet discovery rides the existing
+        # status door — one additive field, nothing else moves.
+        "fleet": {"member": bool(fleet_settings(cfg)["member"])},
     }
 
 
@@ -5030,6 +5033,33 @@ def mesh_handle_borrow(handler, body):
         messages = _chat_sanitize_messages(messages)
     except Exception:
         return 200, {"ok": False, "reason": "empty-turn"}
+    # v0.6.1e (#293): a fleet contribution rides this same door
+    # with a "fleet" block in the signed body — the ask's id,
+    # the sub-task's class, and its depth. The block can only
+    # ADD checks, never remove one: admission above (pairing,
+    # sanitize) already ran exactly as for any borrow, and the
+    # caps, busy and consent gates below judge a contribution
+    # exactly as they judge a borrow. The fleet's own locks:
+    # peek never fans out (refused by name at the door), one
+    # hop hard (a block arriving already inside a fleet ask is
+    # refused — contributions never re-delegate), and this
+    # node serves fleet work only while its own toggle is on.
+    fleet = data.get("fleet") if isinstance(data.get("fleet"), dict) else None
+    fleet_cls = ""
+    if fleet is not None:
+        fleet_cls = str(fleet.get("class") or "")
+        if not str(fleet.get("ask") or "") or fleet_cls not in FLEET_CLASSES_ALL:
+            return 200, {"ok": False, "reason": "fleet-shape"}
+        if fleet_cls == "peek":
+            return 200, {"ok": False, "reason": "fleet-peek"}
+        try:
+            fleet_depth = int(fleet.get("depth") or 0)
+        except Exception:
+            fleet_depth = 1
+        if fleet_depth != 0:
+            return 200, {"ok": False, "reason": "fleet-hop"}
+        if not fleet_settings(cfg)["member"]:
+            return 200, {"ok": False, "reason": "fleet-off"}
     # 0.2.0e Build 7 (#154): a relayed ask declares its carrier
     # inside the signed body ("via"). The declaration can only
     # ADD a check, never remove one — the asker is authenticated
@@ -5097,9 +5127,22 @@ def mesh_handle_borrow(handler, body):
         MESH_STATE["borrowed_fedinet"] = fed_id
     stop_stamp = MESH_STATE["lend_stop_stamp"]
     preempt_stamp = MESH_STATE["preempt_stamp"]
+    fleet_stamp = FLEET_STATE["member_stamp"]
     started = time.time()
     try:
-        reply, usage = mesh_lender_generate(messages, endpoint, model)
+        if fleet is not None and fleet_cls in ("report", "collect"):
+            # Deterministic classes execute as themselves — the
+            # machine's own report / its held digest — through
+            # the same admission, caps and ledger as a borrowed
+            # generation, but with no model call.
+            _prompt_text = ""
+            for _m in messages:
+                if isinstance(_m, dict) and _m.get("role") == "user":
+                    _prompt_text = str(_m.get("content") or "")
+            reply = fleet_run_class(fleet_cls, _prompt_text, cfg)
+            usage = None
+        else:
+            reply, usage = mesh_lender_generate(messages, endpoint, model)
     except Exception:
         wall_ms = int((time.time() - started) * 1000)
         if MESH_STATE["lend_stop_stamp"] != stop_stamp:
@@ -5128,6 +5171,17 @@ def mesh_handle_borrow(handler, body):
         wall_ms = int((time.time() - started) * 1000)
         mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "aborted"})
         return "drop", None
+    if fleet is not None and FLEET_STATE["member_stamp"] != fleet_stamp:
+        # v0.6.1e (#293): this node left the fleet while the
+        # contribution was being answered — the reply is NOT
+        # served, and the refusal names it, so the asker's
+        # answer badges the gap instead of silently thinning.
+        wall_ms = int((time.time() - started) * 1000)
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "lent",
+                            "wallMs": wall_ms, "outcome": "fleet-left",
+                            "fleetAsk": str(fleet.get("ask") or ""),
+                            "class": fleet_cls})
+        return 200, {"ok": False, "reason": "fleet-left"}
     wall_ms = int((time.time() - started) * 1000)
     entry = {"peer": peer["nodeId"], "direction": "lent", "wallMs": wall_ms, "outcome": "ok"}
     if via:
@@ -5135,6 +5189,9 @@ def mesh_handle_borrow(handler, body):
         # never anything about the content it carried.
         entry["via"] = via
         entry["path"] = "relay"
+    if fleet is not None:
+        entry["fleetAsk"] = str(fleet.get("ask") or "")
+        entry["class"] = fleet_cls
     if isinstance(usage, dict):
         if usage.get("prompt_tokens") is not None:
             entry["promptTokens"] = usage.get("prompt_tokens")
@@ -8631,6 +8688,10 @@ def federation_payload(cfg, via_dhd=False):
                                   "itself lives on its gateway and is never "
                                   "baked into an install.")},
         "fedinets": out,
+        # v0.6.1e (#293): this node's Fleet Answers posture —
+        # the Federation page's toggle renders from this and
+        # the act answers with it (the switch gate).
+        "fleet": fleet_public(cfg),
         "audit": federation_audit_read(),
     }
 
@@ -8775,6 +8836,35 @@ def federation_act(data, via_dhd=False):
                          "until a Badge is enrolled again.", via)
         return state(sentence="The Badge enrollment is cleared.")
 
+    if act == "fleet":
+        # v0.6.1e (#293): Fleet Answers membership — this node's
+        # own posture, so it is a plain act, not a crown act and
+        # not a manage act: joining grants nobody anything (every
+        # contribution is still judged at the lender's own door,
+        # under its caps and consent), and leaving must never be
+        # gated — an operator can always take their machine out.
+        # Joining is refused BY NAME when there is no fleet to
+        # join: the Mesh off, or this node's identity unminted —
+        # the toggle stays off and the card carries the sentence.
+        want = data.get("on") is True
+        if want and not fleet_settings(cfg)["member"]:
+            ms = mesh_settings(cfg)
+            if not ms["enabled"] or not mesh_node_id():
+                return refuse("Fleet Answers rides the Mesh \u2014 this "
+                              "node's Mesh is off, or its identity is not "
+                              "minted yet, so there is no fleet to join. "
+                              "The toggle stays off.")
+        if want != fleet_settings(cfg)["member"]:
+            fleet_set_member(want, load_config())
+            federation_audit("fleet-join" if want else "fleet-leave", "",
+                             "this node " + ("joined" if want else "left")
+                             + " the fleet (Federation page)", via)
+        return state(sentence=("This node is in the fleet \u2014 it answers "
+                               "fleet asks from paired machines and joined "
+                               "fedinets, under the same caps as borrowing.")
+                       if want else
+                       ("This node has left the fleet \u2014 it serves no "
+                        "fleet asks, and its own asks run locally."))
     if act == "found":
         name = str(data.get("name") or "").strip()[:80]
         if not name:
@@ -9157,6 +9247,702 @@ def federation_act(data, via_dhd=False):
                                if fed["borrowCap"] else "off."))
 
     return refuse("That Federation act is not one this build knows.")
+
+
+# -- Fleet Answers (v0.6.1e, #293) -------------------------------
+# One ask, divided into WHOLE sub-tasks — each answered whole
+# by the machine best placed for it, composed into one answer
+# with the seams showing: every contribution signed with its
+# machine's name. Design of record:
+# files/fleet-answers-prep.md, with Alex's 2026-11-18 rulings:
+# membership is a toggle on the Federation page, OFF by
+# default, join/leave at will; the switch gate holds; a node
+# leaving mid-ask degrades the answer by the named-gap rule.
+# The doctrine locks, restated where they bind:
+#   * The unit of work stays WHOLE (Mesh Doctrine II) — a
+#     fleet ask fans out into whole sub-tasks in the existing
+#     classes (generate / collect / lookup / report); tokens
+#     and layers are never split, under any name.
+#   * peek NEVER fans out — a peek-named piece is held back
+#     and named in the plan, never sent anywhere.
+#   * One hop, hard — a contribution never fans out again:
+#     the borrow door refuses a fleet block that arrives
+#     already inside a fleet ask (its depth), and the ask
+#     machinery refuses to run from inside a contribution.
+#   * No new trust — contributions ride the existing borrow
+#     door, pairings and roster terms exactly as they stand,
+#     and count against the lender's existing caps, one
+#     ledger entry per contribution, cross-referenced to the
+#     fleet ask's id on both sides of the door.
+#   * A dark, refusing, timed-out, preempted or departing
+#     contributor degrades the answer with the gap NAMED —
+#     never a silently thinner answer, never a hang: the ask
+#     carries a deadline and ships a badged partial.
+#   * The fleet route never gates a plain answer (#289): the
+#     judged route fires only on a multi-part ask, and a plain
+#     single-part question falls through to the ordinary path
+#     untouched.
+FLEET_CLASSES = ("generate", "collect", "lookup", "report")
+FLEET_CLASSES_ALL = FLEET_CLASSES + ("peek",)
+FLEET_STATE = {"member_stamp": 0, "executing": 0}
+_FLEET_FRAMING = {
+    "generate": ("You are answering one whole sub-task of a larger ask, "
+                 "as one machine in a fleet. Answer this piece whole and "
+                 "on its own terms; do not mention the fleet."),
+    "lookup": ("You are answering one lookup of a larger ask, as one "
+               "machine in a fleet. Answer directly and briefly, from "
+               "what you know; name uncertainty as uncertainty; do not "
+               "invent specifics."),
+}
+_FLEET_TRIGGER = re.compile(
+    r"^\s*(?:fleet\s*:\s*|ask the fleet\s*[:\-]?\s*)", re.I)
+
+
+def fleet_settings(cfg):
+    # This node's fleet posture, read from the federation slice
+    # of the config — node-local, like lend posture: membership
+    # is a property of THIS machine, not an account fact, so it
+    # never rides Sync. Defaults: out of the fleet; fan-out cap
+    # 4 (the ruled default, operator-settable in config);
+    # a 120-second per-ask deadline; composing at home unless
+    # the profile marks this node a non-composer with a home
+    # node named (Doctrine V).
+    raw = {}
+    try:
+        fed = (cfg or {}).get("federation")
+        if isinstance(fed, dict) and isinstance(fed.get("fleet"), dict):
+            raw = fed["fleet"]
+    except Exception:
+        raw = {}
+
+    def _int(key, default, lo, hi):
+        try:
+            v = int(raw.get(key))
+        except Exception:
+            return default
+        return max(lo, min(hi, v))
+
+    return {
+        "member": raw.get("member") is True,
+        "cap": _int("cap", 4, 1, 16),
+        "deadlineSec": _int("deadlineSec", 120, 1, 600),
+        "canCompose": raw.get("canCompose") is not False,
+        "composeHome": str(raw.get("composeHome") or "").strip(),
+    }
+
+
+def fleet_public(cfg):
+    # The Federation page's view of the posture — the toggle
+    # renders from exactly this, and the act answers with it,
+    # so flip, stored state, and reload read one truth.
+    s = fleet_settings(cfg)
+    return {"member": s["member"], "cap": s["cap"],
+            "deadlineSec": s["deadlineSec"],
+            "canCompose": s["canCompose"],
+            "composeHomeSet": bool(s["composeHome"])}
+
+
+def fleet_set_member(on, cfg):
+    # The toggle's stored half. Writes the fleet slice through
+    # the raw federation config (preserving the fedinets and
+    # the Badge fingerprint, the way the badge acts do), and
+    # bumps the member stamp whenever the value actually
+    # changes — the stamp is how a lender notices, mid-
+    # contribution, that this node has left the fleet.
+    rawcfg = dict(_federation_slice(cfg))
+    was = fleet_settings(cfg)["member"]
+    raw = rawcfg.get("fleet")
+    raw = dict(raw) if isinstance(raw, dict) else {}
+    raw["member"] = bool(on)
+    rawcfg["fleet"] = raw
+    cfg["federation"] = rawcfg
+    save_config(cfg)
+    if bool(on) != was:
+        FLEET_STATE["member_stamp"] += 1
+    return fleet_settings(cfg)
+
+
+def fleet_own_name(cfg):
+    ms = mesh_settings(cfg)
+    return str(ms.get("nodeName") or "").strip() or "This node"
+
+
+def fleet_run_class(cls, prompt, cfg):
+    # Execute ONE whole sub-task of the given class on THIS
+    # machine. report and collect are deterministic — the
+    # machine's own facts, no model call, so they answer even
+    # with a cold model; generate and lookup ride the local
+    # model under the class's framing.
+    prompt = str(prompt or "")
+    if cls == "report":
+        ms = mesh_settings(cfg)
+        rows = mesh_ledger_read()
+        lent = sum(1 for r in rows if r.get("direction") == "lent")
+        borrowed = sum(1 for r in rows if r.get("direction") == "borrowed")
+        machines = len({str(r.get("peer") or "") for r in rows} - {""})
+        lines = [fleet_own_name(cfg) + " reporting in.",
+                 "Mesh " + ("on" if ms["enabled"] else "off")
+                 + "; lending " + ("on" if ms["lend"]["enabled"] else "off")
+                 + "; borrowing "
+                 + ("on" if ms["borrow"]["enabled"] else "off")
+                 + "; in the fleet: "
+                 + ("yes" if fleet_settings(cfg)["member"] else "no") + ".",
+                 "Ledger: " + str(lent) + " generations lent, "
+                 + str(borrowed) + " borrowed, across "
+                 + str(machines) + " machines."]
+        return "\n".join(lines)
+    if cls == "collect":
+        try:
+            digest = INTEL.build_digest()
+        except Exception:
+            digest = None
+        if not digest:
+            return (fleet_own_name(cfg) + " holds no Wire digest right "
+                    "now — the collector has not built one on this "
+                    "machine.")
+        lines = ["The Wire digest this machine holds (built "
+                 + str(digest.get("generated_at") or "at an unrecorded time")
+                 + "):"]
+        for src in digest.get("sources") or []:
+            age = src.get("ageHours")
+            lines.append("- " + str(src.get("label") or src.get("source")
+                                    or "source")
+                         + ": " + str(src.get("count") or 0) + " items"
+                         + ((", last gathered " + str(age) + "h ago")
+                            if isinstance(age, (int, float)) else ""))
+        sections = digest.get("sections") or {}
+        for key in ("kev_new", "stack_matches", "top_new"):
+            rows = sections.get(key) or []
+            if rows:
+                lines.append("- " + key.replace("_", " ") + ": "
+                             + str(len(rows)) + " entries")
+        return "\n".join(lines)
+    framing = _FLEET_FRAMING.get(cls) or _FLEET_FRAMING["generate"]
+    messages = [{"role": "system", "content": framing},
+                {"role": "user", "content": prompt}]
+    endpoint = cfg.get("live", {}).get("llamafile_endpoint",
+                                       "http://localhost:8080/v1")
+    model = cfg.get("live", {}).get("model_name") or "navi"
+    reply, _usage = llamafile_chat(messages, endpoint, model)
+    return str(reply or "")
+
+
+def fleet_discover(cfg):
+    # The candidate answerers: this node first, then every
+    # borrow peer — pairwise, then each joined fedinet's roster
+    # doors — each probed once for its fleet membership over
+    # the existing /mesh/status door. A peer the probe cannot
+    # reach is "unknown": named in a clause it is still asked
+    # (the ask itself names the gap); unnamed, it stays out of
+    # the rotation.
+    own_id = mesh_node_id()
+    out = [{"nodeId": own_id, "name": fleet_own_name(cfg),
+            "self": True, "member": True, "peer": None}]
+    seen = {own_id}
+    # The borrow peer list is the whole roster of roads:
+    # hand-made pairings and federation members alike (the
+    # federation's adopted members stand in it as records,
+    # under their roster terms).
+    try:
+        peers = list(mesh_settings(cfg)["borrow"]["peers"])
+    except Exception:
+        peers = []
+    for peer in peers:
+        nid = str(peer.get("nodeId") or "")
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        status, _err = mesh_probe_peer(peer)
+        member = None
+        if isinstance(status, dict):
+            member = bool((status.get("fleet") or {}).get("member"))
+        out.append({"nodeId": nid,
+                    "name": str(peer.get("name") or "A peer"),
+                    "self": False, "member": member, "peer": peer})
+    return out
+
+
+def fleet_split_clauses(text):
+    # The decomposition's knife: sentence ends, semicolons,
+    # and "and also" — the joints an operator actually writes
+    # a multi-part ask at. Deliberately conservative: text it
+    # cannot split stays one clause, and one clause on the
+    # judged route is not a fleet ask at all.
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not text:
+        return []
+    parts = re.split(r"(?<=[.?!])\s+|\s*;\s*|\s+and also\s+", text)
+    out = []
+    for p in parts:
+        p = p.strip().strip(".").strip()
+        if len(p.split()) >= 2:
+            out.append(p)
+    return out
+
+
+def fleet_classify(clause):
+    low = str(clause or "").lower()
+    if re.search(r"\bpeek\b|on (your|its|their) screen|screen right now",
+                 low):
+        return "peek"
+    if re.search(r"\b(collect|gather|digest)\b|on the wire|headlines|"
+                 r"threat (intel|news)", low):
+        return "collect"
+    if re.search(r"\b(report|status|health|vitals)\b|"
+                 r"how is .{0,40} (doing|running)", low):
+        return "report"
+    if re.search(r"^(what|what's|who|when|where|which|how|is|are|does|"
+                 r"do|did|can|could)\b|look up|find out", low):
+        return "lookup"
+    return "generate"
+
+
+def _fleet_named(clause, cand):
+    low = str(clause or "").lower()
+    name = str(cand.get("name") or "").lower()
+    if name and name in low:
+        return True
+    nid = str(cand.get("nodeId") or "")
+    return bool(nid) and nid[:8].lower() in low
+
+
+def fleet_plan(ask_text, cfg, candidates, explicit=False):
+    # Decomposition — deterministic, and a record: who was
+    # asked what, under which class, and what was held back or
+    # never asked, by name. Returns None when the ask is not a
+    # fleet ask at all (a plain single-part question on the
+    # judged route — #289: the fleet never seizes it).
+    settings = fleet_settings(cfg)
+    clauses = fleet_split_clauses(ask_text)
+    if not clauses:
+        return None
+    if not explicit and len(clauses) < 2:
+        return None
+    rotation = [c for c in candidates if c["member"] is True]
+    if not rotation:
+        rotation = [candidates[0]]
+    subtasks, gaps, held = [], [], []
+    ri = 0
+    for clause in clauses:
+        cls = fleet_classify(clause)
+        if cls == "peek":
+            held.append({"task": clause, "class": "peek",
+                         "sentence": "Held back: \u201c" + clause
+                         + "\u201d names a peek \u2014 peeks never fan "
+                         "out, under any name."})
+            continue
+        named = None
+        for c in candidates:
+            if not c["self"] and _fleet_named(clause, c):
+                named = c
+                break
+        if named is not None and named["member"] is False:
+            gaps.append({"name": named["name"], "task": clause,
+                         "class": cls,
+                         "sentence": named["name"] + " is not in the "
+                         "fleet \u2014 its toggle is off, so this piece "
+                         "was never asked."})
+            continue
+        if named is not None:
+            target = named
+        else:
+            target = rotation[ri % len(rotation)]
+            ri += 1
+        subtasks.append({"id": "s" + str(len(subtasks) + 1),
+                         "task": clause, "class": cls,
+                         "answererId": target["nodeId"],
+                         "answererName": target["name"],
+                         "self": bool(target["self"]),
+                         "peer": target["peer"]})
+    # The fan-out cap counts distinct answerers. Answerers
+    # beyond it are not asked at all — the gap is named in the
+    # plan, and the plan surfaces (it is no longer silent).
+    cap = settings["cap"]
+    distinct, kept, overflow = [], [], False
+    for st in subtasks:
+        if st["answererId"] not in distinct:
+            if len(distinct) >= cap:
+                overflow = True
+                gaps.append({"name": st["answererName"],
+                             "task": st["task"], "class": st["class"],
+                             "sentence": st["answererName"] + " was not "
+                             "asked \u2014 the fan-out cap is " + str(cap)
+                             + " machines, and this ask already spans "
+                             "it."})
+                continue
+            distinct.append(st["answererId"])
+        kept.append(st)
+    surfaced = bool(overflow or held or len(kept) > cap)
+    return {"subtasks": kept, "gaps": gaps, "held": held,
+            "surfaced": surfaced, "cap": cap}
+
+
+def fleet_gap_sentence(name, outcome, detail):
+    # The named-gap rule: every missing piece is badged with
+    # its machine's name and the reason in plain words.
+    if outcome == "refusal":
+        reason = str(detail or "")
+        table = {
+            "cap": name + "'s borrow cap for the hour is spent \u2014 "
+                   "it could not take this piece.",
+            "fleet-off": name + " is not in the fleet \u2014 its "
+                         "toggle is off.",
+            "fleet-left": name + " left the fleet mid-ask \u2014 this "
+                          "piece is missing.",
+            "fleet-peek": "A peek never fans out \u2014 " + name
+                          + " was never going to be asked this.",
+            "fleet-hop": name + " refused a fleet ask inside a fleet "
+                         "ask \u2014 one hop is the whole road.",
+            "preempted": name + "'s operator needed the machine back "
+                         "mid-answer \u2014 preempted.",
+            "no-consent": name + " has not ticked lend consent for "
+                          "this road.",
+            "mesh-off": name + " is not lending right now \u2014 its "
+                        "Mesh is off.",
+            "lend-off": name + " is not lending right now.",
+            "unauthorized": name + " did not accept this node's "
+                            "signature.",
+            "too-large": "The piece was too large for " + name
+                         + "'s door.",
+        }
+        if reason in table:
+            return table[reason]
+        return name + " refused this piece (" + (reason or "unnamed") + ")."
+    if outcome == "dropped":
+        return "The connection to " + name + " dropped mid-answer."
+    if outcome == "timeout":
+        return name + " did not answer before the fleet deadline."
+    if outcome == "error":
+        kind = str(detail or "")
+        if kind == "timeout":
+            return name + " did not answer before the fleet deadline."
+        if kind in ("unreachable", "relay-dark", "dest-dark"):
+            return name + " is dark \u2014 no answer came back."
+        return name + " could not be reached (" + (kind or "error") + ")."
+    return name + " did not answer."
+
+
+def fleet_send_contribution(peer, subtask, ask_id, cfg, timeout):
+    # One contribution over the existing roads: a signed POST
+    # to the peer's /mesh/borrow door carrying a fleet block
+    # (the ask's id, the sub-task's class, depth 0), falling
+    # back to a relay when the direct road fails — the same
+    # roads, the same consent, as an ordinary borrow. Outcomes
+    # mirror the borrower's: ("ok", text) / ("refusal", reason)
+    # / ("dropped", None) / ("error", kind).
+    messages = [{"role": "system",
+                 "content": _FLEET_FRAMING.get(subtask["class"])
+                 or _FLEET_FRAMING["generate"]},
+                {"role": "user", "content": subtask["task"]}]
+    fleet_block = {"ask": ask_id, "class": subtask["class"], "depth": 0}
+    request_id = secrets.token_hex(8)
+    body = json.dumps({"requestId": request_id, "messages": messages,
+                       "model": "navi", "maxTokens": CHAT_MAX_TOKENS,
+                       "fleet": fleet_block}).encode()
+    kind = "unreachable"
+    try:
+        code, raw = _mesh_request(peer, "POST", "/mesh/borrow", body,
+                                  request_id, timeout)
+    except _MeshFpError:
+        return ("error", "fingerprint")
+    except _MeshTlsError:
+        return ("error", "tls")
+    except _MeshTimeout:
+        kind = "timeout"
+    except _MeshDropped:
+        return ("dropped", None)
+    except _MeshUnreachable:
+        kind = "unreachable"
+    except Exception:
+        kind = "unreachable"
+    else:
+        if code in (401, 403):
+            return ("refusal", "unauthorized")
+        try:
+            data = json.loads(raw.decode())
+        except Exception:
+            return ("dropped", None)
+        if not isinstance(data, dict):
+            return ("dropped", None)
+        if data.get("ok"):
+            return ("ok", str(data.get("reply") or ""))
+        return ("refusal", str(data.get("reason") or "lender-error"))
+    # The direct road failed: the relay is the other existing
+    # road — one hop, under the relay's own consent rules.
+    try:
+        relays = mesh_relay_candidates(peer, cfg)
+    except Exception:
+        relays = []
+    for relay in relays:
+        out = _mesh_borrow_via_relay(relay, peer, messages,
+                                     fleet=fleet_block)
+        if out[0] == "ok":
+            return ("ok", out[1])
+        if out[0] == "refusal":
+            return ("refusal", out[1])
+        if out[0] == "dropped":
+            return ("dropped", None)
+        if out[0] == "stage":
+            stage = out[1]
+            if stage == "dest-dark":
+                return ("error", "unreachable")
+            if stage == "dest-refused":
+                return ("refusal",
+                        str((out[2] or {}).get("detail") or "lender-error"))
+            if stage == "no-consent":
+                return ("refusal", "no-consent")
+            return ("error", stage)
+    return ("error", kind)
+
+
+def fleet_record_text(ask_text, plan, sections, gaps):
+    # The plan as a standing record: who was asked what, under
+    # which class; the contributions with their machine
+    # provenance on their face ("According to <machine>
+    # (<class>):" — the lead shape, deliberately, so the
+    # filing suggestion under this record reads lead); the
+    # gaps named. In a case chat the bridge appends this
+    # record to the thread, so the standing proposal under it
+    # files the plan and its contributions as leads with
+    # provenance intact (#291).
+    lines = ["Fleet plan \u2014 " + str(ask_text or "")]
+    for st in plan["subtasks"]:
+        lines.append("\u2022 " + st["task"] + " \u2014 " + st["class"]
+                     + " \u2192 " + st["answererName"])
+    if sections:
+        lines.append("")
+        lines.append("Contributions")
+        for s in sections:
+            lines.append("According to " + s["name"] + " (" + s["class"]
+                         + "): " + s["text"])
+    if gaps:
+        lines.append("")
+        lines.append("Named gaps")
+        for g in gaps:
+            lines.append("\u2014 " + g["sentence"])
+    return "\n".join(lines)
+
+
+def fleet_compose(ask_text, plan, results, cfg, ask_id):
+    # Composition — the asker's Navi assembles the answer with
+    # the seams visible. The assembly is structural on
+    # purpose: each contribution stands under its machine's
+    # name and class, and the gaps stand as a named block —
+    # never a model rewrite that could smooth a seam (or a
+    # missing piece) away. Doctrine V: a node whose profile
+    # says it cannot compose sends the assembly job — one
+    # more whole generate sub-task, under this ask's id — to
+    # its home node; if home cannot answer either, the
+    # structural assembly ships with that gap named too.
+    settings = fleet_settings(cfg)
+    sections, gaps = [], list(plan["gaps"])
+    for g in plan["held"]:
+        gaps.append({"name": "", "task": g["task"], "class": "peek",
+                     "sentence": g["sentence"]})
+    for st in plan["subtasks"]:
+        out = results.get(st["id"])
+        if out is None:
+            gaps.append({"name": st["answererName"], "task": st["task"],
+                         "class": st["class"],
+                         "sentence": st["answererName"] + " did not "
+                         "answer before the fleet deadline \u2014 the "
+                         "answer ships without that piece."})
+        elif out[0] == "ok":
+            sections.append({"name": st["answererName"],
+                             "class": st["class"], "task": st["task"],
+                             "text": str(out[1] or "")})
+        else:
+            gaps.append({"name": st["answererName"], "task": st["task"],
+                         "class": st["class"],
+                         "sentence": fleet_gap_sentence(
+                             st["answererName"], out[0], out[1])})
+    if not settings["canCompose"] and settings["composeHome"]:
+        home_peer = None
+        try:
+            for peer in mesh_settings(cfg)["borrow"]["peers"]:
+                if str(peer.get("nodeId") or "") == settings["composeHome"]:
+                    home_peer = peer
+                    break
+        except Exception:
+            home_peer = None
+        if home_peer is not None:
+            home_name = str(home_peer.get("name") or "Home")
+            prompt = ("Compose one answer to the operator's ask from "
+                      "these signed fleet contributions. Keep each "
+                      "machine's contribution attributable to its "
+                      "machine; do not invent missing pieces; name "
+                      "the gaps as gaps.\n\nThe ask: " + str(ask_text)
+                      + "\n\n" + fleet_record_text(ask_text, plan,
+                                                   sections, gaps))
+            out = fleet_send_contribution(
+                home_peer, {"class": "generate", "task": prompt},
+                ask_id, cfg, settings["deadlineSec"])
+            if out[0] == "ok" and str(out[1] or "").strip():
+                return {"answer": str(out[1]), "composedBy": home_name,
+                        "sections": sections, "gaps": gaps}
+            gaps.append({"name": home_name, "task": "compose this answer",
+                         "class": "generate",
+                         "sentence": home_name + " could not compose "
+                         "this answer \u2014 it is assembled here "
+                         "instead, seams as they stand."})
+    lines = []
+    for s in sections:
+        lines.append("**" + s["name"] + "** \u00b7 " + s["class"])
+        lines.append(s["text"])
+        lines.append("")
+    if gaps:
+        lines.append("**Named gaps**")
+        for g in gaps:
+            lines.append("\u2014 " + g["sentence"])
+    answer = "\n".join(lines).strip()
+    if not answer:
+        answer = ("The fleet answered with nothing \u2014 every piece "
+                  "is a named gap above.")
+    return {"answer": answer, "composedBy": fleet_own_name(cfg),
+            "sections": sections, "gaps": gaps}
+
+
+def fleet_ask(ask_text, cfg, explicit=False, chat_id=None):
+    # Run one fleet ask end to end: plan, fan out in parallel
+    # (the wall clock becomes the longest contribution, not
+    # the sum — the speed case for the weakest node), compose
+    # with the seams showing. Returns None when the ask is not
+    # a fleet ask; a refused dict when the machinery itself
+    # says no; else the run record.
+    if FLEET_STATE["executing"] > 0:
+        return {"refused": "A fleet ask never fans out from inside a "
+                "fleet contribution \u2014 one hop, hard."}
+    settings = fleet_settings(cfg)
+    candidates = fleet_discover(cfg)
+    plan = fleet_plan(ask_text, cfg, candidates, explicit=explicit)
+    if plan is None:
+        return None
+    ask_id = "fleet-" + secrets.token_hex(6)
+    deadline = time.time() + settings["deadlineSec"]
+    results = {}
+    lock = threading.Lock()
+
+    def run_one(st):
+        started = time.time()
+        if st["self"]:
+            try:
+                out = ("ok", fleet_run_class(st["class"], st["task"], cfg))
+            except Exception:
+                out = ("error", "local")
+        else:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                out = ("timeout", None)
+            else:
+                out = fleet_send_contribution(
+                    st["peer"], st, ask_id, cfg,
+                    max(1, int(min(remaining, CHAT_TIMEOUT))))
+            if out[0] == "ok":
+                try:
+                    mesh_ledger_append({
+                        "peer": st["answererId"], "direction": "borrowed",
+                        "wallMs": int((time.time() - started) * 1000),
+                        "outcome": "ok",
+                        "fleetAsk": ask_id, "class": st["class"]})
+                except Exception:
+                    pass
+        with lock:
+            results[st["id"]] = out
+
+    FLEET_STATE["executing"] += 1
+    try:
+        threads = []
+        for st in plan["subtasks"]:
+            t = threading.Thread(target=run_one, args=(st,), daemon=True)
+            t.start()
+            threads.append(t)
+        for t in threads:
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            t.join(left)
+    finally:
+        FLEET_STATE["executing"] -= 1
+    composed = fleet_compose(ask_text, plan, results, cfg, ask_id)
+    return {"ask": ask_id, "plan": plan, "results": results,
+            "answer": composed["answer"],
+            "composedBy": composed["composedBy"],
+            "gaps": composed["gaps"], "sections": composed["sections"]}
+
+
+def fleet_chat_reply(last, cfg, chat_id=None):
+    # The chat door. Two ways in: the explicit trigger
+    # ("fleet: ..." / "ask the fleet ...") — the operator
+    # invoking the machinery by name — and Navi's judgment on
+    # a plainly multi-part ask. A plain single-part question
+    # NEVER routes here (#289's lock, kept): it falls through
+    # to the ordinary answer untouched. An explicit trigger on
+    # a node that is not in the fleet gets the honest named
+    # answer, not a silent fall-through — the operator asked
+    # for machinery, and the bridge says why it cannot run.
+    text = str(last or "").strip()
+    if not text:
+        return None
+    m = _FLEET_TRIGGER.match(text)
+    explicit = bool(m)
+    ask = text[m.end():].strip() if explicit else text
+    if not ask:
+        return None
+    settings = fleet_settings(cfg)
+    if not settings["member"]:
+        if explicit:
+            return {"reply": "I can't run a fleet ask \u2014 this node "
+                    "is not in the fleet. Fleet Answers is a toggle on "
+                    "the Federation page, off by default; joining is "
+                    "this node's own act, and the fleet only ever "
+                    "spans machines already paired or on a joined "
+                    "fedinet's roster."}
+        return None
+    if not explicit and len(fleet_split_clauses(ask)) < 2:
+        return None
+    run = fleet_ask(ask, cfg, explicit=explicit, chat_id=chat_id)
+    if run is None:
+        return None
+    if run.get("refused"):
+        return {"reply": run["refused"]}
+    plan = run["plan"]
+    reply = run["answer"]
+    if plan["surfaced"]:
+        head = ["The fleet plan for that ask:"]
+        for st in plan["subtasks"]:
+            head.append("\u2022 " + st["task"] + " \u2014 " + st["class"]
+                        + " \u2192 " + st["answererName"])
+        reply = "\n".join(head) + "\n\n" + reply
+    # Case tie-in (#286/#291): in a case chat the plan and its
+    # contributions stand in the thread as their own record —
+    # appended by the bridge, like every receipt — so the
+    # standing proposal under it files them as LEADS with
+    # machine provenance; the composed answer above is this
+    # turn's reply, finding-shaped. Nothing files itself.
+    if chat_id is not None:
+        try:
+            chat = None
+            for rec in chats_all():
+                if str(rec.get("id")) == str(chat_id):
+                    chat = rec
+                    break
+            if chat is not None and chat.get("case"):
+                record = fleet_record_text(ask, plan, run["sections"],
+                                           run["gaps"])
+                now_ms = int(time.time() * 1000)
+                msgs = list(chat.get("messages") or [])
+                msgs.append({"who": "NAVI", "text": record, "exec": None,
+                             "ts": now_ms, "fleetAsk": run["ask"]})
+                chat["messages"] = msgs
+                chat["updatedAt"] = now_ms
+                chat_write(chat)
+        except Exception:
+            pass
+    return {"reply": reply,
+            "fleet": {"ask": run["ask"],
+                      "contributions": len(run["sections"]),
+                      "gaps": len(run["gaps"]),
+                      "composedBy": run["composedBy"]}}
 
 
 # -- Borrower transport ----------------------------------------------
@@ -9587,7 +10373,7 @@ def _mesh_relay_candidates(ms, dest):
     return out
 
 
-def _mesh_borrow_via_relay(relay, dest, messages):
+def _mesh_borrow_via_relay(relay, dest, messages, fleet=None):
     # One relayed borrow attempt. Builds the inner request
     # exactly as _mesh_borrow_once does — the destination could
     # not tell it from a direct ask but for the signed body's
@@ -9598,13 +10384,19 @@ def _mesh_borrow_via_relay(relay, dest, messages):
     # the relay named (no-consent / relay-dark / dest-dark /
     # dest-refused / dest-unknown / hop-limit).
     request_id = secrets.token_hex(8)
-    inner_body = json.dumps({
+    _inner = {
         "requestId": request_id,
         "messages": messages,
         "model": "navi",
         "maxTokens": CHAT_MAX_TOKENS,
         "via": relay["nodeId"],
-    }).encode()
+    }
+    if fleet is not None:
+        # v0.6.1e (#293): a relayed fleet contribution carries
+        # its fleet block inside the sealed inner body, exactly
+        # as on the direct road.
+        _inner["fleet"] = fleet
+    inner_body = json.dumps(_inner).encode()
     inner_headers = mesh_signed_headers(request_id, inner_body)
     outer_id = secrets.token_hex(8)
     outer = json.dumps({
@@ -38772,6 +39564,32 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 if data.get("speak"):
                     payload["spoken"] = speak_reply(_dyreply, cfg)
+                self._send(200, payload)
+                return
+            # Fleet Answers (v0.6.1e, #293): an explicit fleet
+            # trigger, or a plainly multi-part ask while this
+            # node is in the fleet, routes to the fleet
+            # machinery — decompose, fan out whole sub-tasks,
+            # compose with the seams showing. A plain
+            # single-part question returns None here and falls
+            # through to the ordinary answer untouched (#289).
+            _freply = None
+            try:
+                _freply = fleet_chat_reply(last or "", cfg,
+                                           chat_id=str(data.get("chatId") or ""))
+            except Exception:
+                _freply = None
+            if _freply:
+                payload = {
+                    "reply": _freply["reply"],
+                    "exec": None,
+                    "mode": "model",
+                    "llamafile": "running" if llamafile_alive(endpoint) else "stopped",
+                }
+                if _freply.get("fleet"):
+                    payload["fleet"] = _freply["fleet"]
+                if data.get("speak"):
+                    payload["spoken"] = speak_reply(_freply["reply"], cfg)
                 self._send(200, payload)
                 return
             # Deep search + the conversational pull (v0.5.10e,
