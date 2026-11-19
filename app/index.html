@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <style>
   :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --blue:#58a6ff; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
-  /* Curated themes (Settings): the same variables, eleven palettes.
+  /* Curated themes (Settings): the same variables, twelve palettes.
      Nocturne Row is the default (issue #118); the others swap the
      whole variable set on <body data-theme>, so every view — selects and
      inputs included — follows the one choice. Nord is the dark Nord
@@ -35,6 +35,15 @@
   body[data-theme="casefile"] .exec, body[data-theme="casefile"] .md-code { font-family:ui-monospace,"Courier New",monospace; }
   body[data-theme="bloodmoon"] { color-scheme:dark; --bg:#070203; --panel:#12050a; --panel2:#180710; --line:#4a1020; --text:#f3e9e4; --dim:#c9a9a0; --cy:#e7c65a; --am:#d4af37; --red:#e11d48; --green:#a3be8c; --ver-alpha:#ff4d6d; --ver-beta:#e7c65a; --ver-stable:#e7c65a; --syn-cmd:#e7c65a; --syn-bad:#ff4d6d; --syn-flag:#93c5fd; --syn-str:#fbbf24; --syn-path:#cbd5e1; --syn-kw:#ff7b54; --syn-num:#fda4af; --syn-op:#ff9e7a; --exec-bg:#0d0205; }
   body[data-theme="phosphor"] { color-scheme:dark; --bg:#050300; --panel:#0d0801; --panel2:#120b02; --line:#7c4a03; --text:#ffd166; --dim:#e8a33d; --cy:#ffb000; --am:#ffd166; --red:#ff6b6b; --green:#ffb000; --ver-alpha:#ff6b6b; --ver-beta:#ffd166; --ver-stable:#ffb000; --syn-cmd:#ffb000; --syn-bad:#ff6b6b; --syn-flag:#ffd166; --syn-str:#fef08a; --syn-path:#ffcf87; --syn-kw:#fb923c; --syn-num:#ffe066; --syn-op:#ff9f1c; --exec-bg:#000000; }
+  /* LCARS (v0.6.4e, #324): the palette half — a black field,
+     pale blue-white text, and the accent family in the app's
+     own slots: ice blue in cyan's, the classic orange in
+     amber's, brick in red's, the 2.0 teal in green's. The
+     geometry half stands below with the glass theme's
+     structural block. */
+  body[data-theme="lcars"] { color-scheme:dark; --bg:#000000; --panel:#07070c; --panel2:#0b0b12; --line:#33334a; --text:#dfe8f5; --dim:#9aa8cc; --cy:#99ccff; --blue:#9999ff; --am:#ff9900; --red:#dd4444; --green:#2fd4c4; --ver-alpha:#dd4444; --ver-beta:#ff9900; --ver-stable:#99ccff; --syn-cmd:#99ffcc; --syn-bad:#ff8888; --syn-flag:#99ccff; --syn-str:#ffcc99; --syn-path:#9999ff; --syn-kw:#cc99cc; --syn-num:#ccddff; --syn-op:#ffcc99; --exec-bg:#000000; --lc-orange:#ff9900; --lc-peach:#ffcc99; --lc-lilac:#cc99cc; --lc-peri:#9999ff; --lc-blue:#99ccff; --lc-teal:#33ccdd; --lc-brick:#cc4444; }
+  body[data-theme="lcars"] .nav-ico-dhd { color:#99ccff; }
+  body[data-theme="lcars"] .nav-ico-mesh { color:#33ccdd; }
   /* Dark Liquid Glass treatment (build .55, #30): resource-light — backdrop blur only on the large surfaces, translucent fill + specular edge on repeated surfaces, multi-glow backdrop, opaque fallbacks. */
   body[data-theme="glass"] { background:#05080d radial-gradient(600px 300px at 15% 0%, rgba(34,211,238,.14), transparent 60%), radial-gradient(700px 400px at 90% 100%, rgba(88,80,236,.12), transparent 60%), radial-gradient(400px 300px at 70% 10%, rgba(52,211,153,.08), transparent 60%); background-attachment:fixed; }
   body[data-theme="glass"] nav, body[data-theme="glass"] aside { background:rgba(10,17,27,.55); backdrop-filter:blur(12px) saturate(1.4); -webkit-backdrop-filter:blur(12px) saturate(1.4); }
@@ -42,6 +51,52 @@
   body[data-theme="glass"] .ac, body[data-theme="glass"] .acsearch { background:rgba(10,17,27,.82); backdrop-filter:blur(12px) saturate(1.4); -webkit-backdrop-filter:blur(12px) saturate(1.4); }
   @supports not ((backdrop-filter:blur(4px)) or (-webkit-backdrop-filter:blur(4px))) { body[data-theme="glass"] nav, body[data-theme="glass"] aside, body[data-theme="glass"] .ac, body[data-theme="glass"] .acsearch { background:#0a111b; backdrop-filter:none; -webkit-backdrop-filter:none; } body[data-theme="glass"] .card, body[data-theme="glass"] .msg { background:#101a26; } }
   @media (prefers-reduced-transparency: reduce) { body[data-theme="glass"] nav, body[data-theme="glass"] aside, body[data-theme="glass"] .ac, body[data-theme="glass"] .acsearch { background:#0a111b; backdrop-filter:none; -webkit-backdrop-filter:none; } body[data-theme="glass"] .card, body[data-theme="glass"] .msg, body[data-theme="glass"] .foldcard { background:#101a26; } }
+  /* LCARS geometry (v0.6.4e, #324): skin, not layout — the
+     same DOM under a theme class, per the addendum's lock.
+     The reference is LCARS 2.0 (Alex's amendment): sleeker
+     proportions than the 1987 original — thinner bars and
+     pills, cooler blue/teal woven through the classic
+     palette, denser readouts, more black space. The grammar:
+     pill-ended bars and buttons with BLACK text on color,
+     elbow curves on cards and panels, uppercase condensed
+     micro-labels on the furniture (never on authored
+     content — chat, notes and documents read as written).
+     Typography is local-first: the system condensed stack,
+     no fetched font. The rail's collapsible groups keep
+     their exact mechanics — a collapsed group is its header
+     pill alone; nothing here touches the collapse state,
+     the grid, or the aria. */
+  body[data-theme="lcars"] { font-family:"Arial Narrow","Liberation Sans Narrow","Roboto Condensed","Helvetica Neue Condensed","Helvetica Neue",Arial,sans-serif; }
+  body[data-theme="lcars"] nav, body[data-theme="lcars"] aside { background:#000000; }
+  body[data-theme="lcars"] h1, body[data-theme="lcars"] h2, body[data-theme="lcars"] h3, body[data-theme="lcars"] h4 { text-transform:uppercase; letter-spacing:.14em; color:var(--lc-peach); font-weight:600; }
+  body[data-theme="lcars"] h3 { border-bottom:3px solid var(--lc-orange); padding-bottom:5px; }
+  body[data-theme="lcars"] button { border-radius:999px; text-transform:uppercase; letter-spacing:.09em; font-weight:600; }
+  body[data-theme="lcars"] button.act { background:var(--lc-orange); color:#000000; border-color:transparent; }
+  body[data-theme="lcars"] button.act:hover { background:var(--lc-peach); }
+  body[data-theme="lcars"] button.ghost { background:transparent; border:1.5px solid var(--lc-peri); color:var(--lc-blue); }
+  body[data-theme="lcars"] button.ghost:hover { border-color:var(--lc-blue); color:#000000; background:var(--lc-blue); }
+  body[data-theme="lcars"] .card, body[data-theme="lcars"] .foldcard { background:#050508; border:1px solid #1c1c28; border-left:8px solid var(--lc-orange); border-radius:22px 6px 6px 22px; }
+  body[data-theme="lcars"] .card > b { text-transform:uppercase; letter-spacing:.1em; color:var(--lc-blue); }
+  body[data-theme="lcars"] .msg { border-radius:18px 6px 6px 18px; border-left:6px solid var(--lc-blue); background:#050508; }
+  body[data-theme="lcars"] input, body[data-theme="lcars"] select, body[data-theme="lcars"] textarea { border-radius:999px; border:1.5px solid var(--lc-peri); background:#000000; color:var(--text); }
+  body[data-theme="lcars"] textarea { border-radius:14px; }
+  body[data-theme="lcars"] .switch { background:#1a1a26; border:1.5px solid var(--lc-lilac); }
+  body[data-theme="lcars"] .switch .knob { background:var(--lc-lilac); }
+  body[data-theme="lcars"] .switch[aria-checked="true"] { background:var(--lc-orange); border-color:var(--lc-orange); }
+  body[data-theme="lcars"] .switch[aria-checked="true"] .knob { background:#000000; }
+  body[data-theme="lcars"] #nav-menu button { border-radius:999px; text-transform:uppercase; letter-spacing:.08em; }
+  body[data-theme="lcars"] .nav-group-head { background:var(--lc-peri); color:#000000; border-radius:999px; }
+  body[data-theme="lcars"] .nav-group-head .nav-chev { color:#000000; }
+  body[data-theme="lcars"] #nav-group-network { background:var(--lc-blue); }
+  body[data-theme="lcars"] #nav-group-navi { background:var(--lc-orange); }
+  body[data-theme="lcars"] #nav-group-apps { background:var(--lc-lilac); }
+  body[data-theme="lcars"] #nav-group-utilities { background:var(--lc-teal); }
+  body[data-theme="lcars"] #nav-menu .nav-child { border:1.5px solid #2c2c40; color:var(--text); background:#050508; }
+  body[data-theme="lcars"] #nav-menu .nav-child.on { background:var(--lc-peach); color:#000000; border-color:transparent; }
+  body[data-theme="lcars"] .nav-break { border-top:3px solid var(--lc-brick); }
+  body[data-theme="lcars"] ::-webkit-scrollbar { width:8px; height:8px; }
+  body[data-theme="lcars"] ::-webkit-scrollbar-thumb { background:var(--lc-peri); border-radius:999px; }
+  body[data-theme="lcars"] ::-webkit-scrollbar-track { background:#000000; }
   /* Nordic icon color-coding: each menu icon carries its own color
      from the Aurora/Frost family — the same color in the expanded
      menu and the collapsed rail, since the icon span never changes.
@@ -553,7 +608,7 @@
   /* Composer cleanup (build .66): the composer's whole zone — the
      chips row, the bar itself, the mode-toggle row — is one dock,
      not a stack: a hairline top border, the lifted panel tone
-     (--panel stands off the --bg message area in all eleven
+     (--panel stands off the --bg message area in all twelve
      themes), and bottom padding that clears the phone safe area.
      It bleeds to the frame's edges (the negative margins cancel
      main's padding; the padding inside restores the inset). One
@@ -2212,8 +2267,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.35";
-var SHIPPED_BUILD_SEQ = 35;
+var BRIDGE_BUILD = "2026-11-19.36";
+var SHIPPED_BUILD_SEQ = 36;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2658,7 +2713,7 @@ function ghImportApply() {
     if (!snap) { ghSetMsg("No backup is on record yet.", true); render(); return; }
     if (snap.items.indexOf("soul") !== -1) CONFIG.soul = snap.soul;
     if (snap.items.indexOf("memory") !== -1) CONFIG.memory = snap.memory;
-    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; if (snap.motion === "potato" || snap.motion === "full") CONFIG.motion = snap.motion; if ([1, 1.1, 1.25, 1.5].indexOf(Number(snap.uiScale)) !== -1) CONFIG.uiScale = Number(snap.uiScale); }
+    if (snap.items.indexOf("settings") !== -1) { CONFIG.operatorName = snap.operatorName; if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(snap.theme) !== -1) CONFIG.theme = snap.theme; if (snap.motion === "potato" || snap.motion === "full") CONFIG.motion = snap.motion; if ([1, 1.1, 1.25, 1.5].indexOf(Number(snap.uiScale)) !== -1) CONFIG.uiScale = Number(snap.uiScale); }
     saveCfg(); applyTheme(); applyMotion(); applyUiScale(); refreshSeedGreeting();
     githubState.lastImportAt = new Date().toISOString();
     githubState.lastImportResult = "Imported the (simulated) backup from " + String(snap.takenAt).slice(0, 10) + " — documents and dashboard settings restored.";
@@ -2672,7 +2727,7 @@ function ghImportApply() {
       githubApplied = j;
       if (j.dashboard) {
         if (typeof j.dashboard.operatorName === "string") CONFIG.operatorName = j.dashboard.operatorName;
-        if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(j.dashboard.theme) !== -1) CONFIG.theme = j.dashboard.theme;
+        if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(j.dashboard.theme) !== -1) CONFIG.theme = j.dashboard.theme;
         if (j.dashboard.motion === "potato" || j.dashboard.motion === "full") CONFIG.motion = j.dashboard.motion;
         if ([1, 1.1, 1.25, 1.5].indexOf(Number(j.dashboard.uiScale)) !== -1) CONFIG.uiScale = Number(j.dashboard.uiScale);
         if (typeof j.dashboard.operatorPicture === "string" && /^data:image\//.test(j.dashboard.operatorPicture) && j.dashboard.operatorPicture.length <= 420000) CONFIG.operatorPicture = j.dashboard.operatorPicture;
@@ -3142,7 +3197,7 @@ function hydrateChatsFromServer() {
 function adoptDashboardSlice(d) {
   if (!d) return;
   if (typeof d.operatorName === "string") CONFIG.operatorName = d.operatorName;
-  if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor"].indexOf(d.theme) !== -1) CONFIG.theme = d.theme;
+  if (["dark", "light", "contrast", "nord", "terminal", "glass", "nocturne", "abyss", "casefile", "bloodmoon", "phosphor", "lcars"].indexOf(d.theme) !== -1) CONFIG.theme = d.theme;
   if (d.motion === "potato" || d.motion === "full") CONFIG.motion = d.motion;
   if ([1, 1.1, 1.25, 1.5].indexOf(Number(d.uiScale)) !== -1) CONFIG.uiScale = Number(d.uiScale);
   if (typeof d.operatorPicture === "string" && /^data:image\//.test(d.operatorPicture) && d.operatorPicture.length <= 420000) CONFIG.operatorPicture = d.operatorPicture;
@@ -6214,12 +6269,15 @@ function vaultHtml() {
       h += "<div class='card vault-preview' data-vault-pressedit='1' title='Press inside the text to edit' style='margin-top:8px'>" + (split.fm ? "<pre class='mono' style='font-size:11px;color:var(--dim);overflow-x:auto' aria-label='Frontmatter, shown raw'>---\n" + esc(split.fm) + "\n---</pre>" : "") + "<div class='md'>" + mdToHtml(split.body, cur.path.indexOf("/") === -1 ? "" : cur.path.slice(0, cur.path.lastIndexOf("/") + 1)) + "</div></div>";
     }
     // v0.5.9e (#280, the Vault door): a formed case document
-    // (cases/<slug>.md) names the dossier elements standing
-    // in it, each with its delete — the same global delete
-    // the dossier and case doors fire, from here.
-    var _formed = /^cases\/([^/]+)\.md$/.exec(cur.path);
-    if (_formed) {
-      var _fslug = _formed[1];
+    // names the dossier elements standing in it, each with
+    // its delete — the same global delete the dossier and
+    // case doors fire, from here. v0.6.4e (#320): the bridge
+    // marks formed documents in the listing (formedCase) —
+    // the strip keys off the mark, not the path, since the
+    // document now lives on its type shelf under the case's
+    // own name.
+    if (cur.formedCase) {
+      var _fslug = cur.formedCase;
       if (CONFIG.backend === "live" && (!vaultCaseEls || vaultCaseEls.slug !== _fslug) && !vaultCaseElsFetching) vaultFetchCaseEls(_fslug);
       h += "<div class='card' style='margin-top:8px'><p class='mono' style='font-size:10px;color:var(--dim)'>DOSSIER ELEMENTS IN THIS DOCUMENT</p>";
       if (vaultCaseEls && vaultCaseEls.slug === _fslug) {
@@ -6532,7 +6590,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Your command shows once</h4>" +
   "<p>A command you run shows exactly once in the thread: in your own line, in its colors. The terminal block under it carries the output only — no repeated command line inside the block. A small line under the block says how the command ended (like <span class='mono'>exit 0</span>) when that is known.</p></div>" +
     "<div class='doc-sec'><h4>Colors for commands</h4>" +
-  "<p>Command lines are colored the same way everywhere — while you type in the chat bar, in your sent line in the thread, and on a folded card: the command word is one color when the system knows it and another when it does not, and flags, quoted words, file paths, numbers, operators like <span class='mono'>|</span>, and <span class='mono'>$VARIABLES</span> each get their own. After a pipe, the next word is colored as a command again, because it is one. Every theme tunes these colors for its own surfaces, so they stay readable in all eleven themes. Ordinary sentences to Navi stay plain — only lines that read as commands get the colors.</p></div>" +
+  "<p>Command lines are colored the same way everywhere — while you type in the chat bar, in your sent line in the thread, and on a folded card: the command word is one color when the system knows it and another when it does not, and flags, quoted words, file paths, numbers, operators like <span class='mono'>|</span>, and <span class='mono'>$VARIABLES</span> each get their own. After a pipe, the next word is colored as a command again, because it is one. Every theme tunes these colors for its own surfaces, so they stay readable in all twelve themes. Ordinary sentences to Navi stay plain — only lines that read as commands get the colors.</p></div>" +
     "<div class='doc-sec'><h4>The shell remembers — recall, search, completion, and shortcuts</h4>" +
   "<p>Your command history is kept in one place, like a shell's history file: it survives switching chats, clearing a chat, and closing the page, and it holds up to 200 commands. With the suggestion list closed, press the <b>Up arrow</b> to walk back through commands you have run and the <b>Down arrow</b> to walk forward again — going past the newest brings back what you had typed. Press <b>Ctrl+R</b> to search the history: type some letters and the newest matching command shows; press Ctrl+R or the arrow keys to step through matches, <b>Enter</b> or <b>Tab</b> to put the match in the bar (it does not run yet), and <b>Escape</b> to cancel and get your typed line back. As you type a command, the list now completes more than the first word: file and folder paths complete from the real filesystem (a folder completes with a slash and opens its contents), known flags and subcommands for common commands like <span class='mono'>git</span> and <span class='mono'>ls</span> are offered, and arguments you have used with that command before are offered too, marked as used before. The editing shortcuts from the shell work as well: <b>Ctrl+A</b> and <b>Ctrl+E</b> jump to the start and end of the line, <b>Ctrl+U</b> cuts everything before the cursor, <b>Ctrl+K</b> cuts everything after it, <b>Ctrl+W</b> cuts the word before the cursor, and <b>Ctrl+Y</b> pastes back what a cut took. History shortcuts like <span class='mono'>!!</span> (the last command), <span class='mono'>!$</span> (its last argument), and <span class='mono'>!3</span> (the third command in the history) never run silently: the first Enter rewrites the bar with the expanded command and asks you to check it — press Enter again to run exactly what you see.</p></div>" +
     "<div class='doc-sec'><h4>Raw terminal work — Chat's CLI mode</h4>" +
@@ -6659,11 +6717,11 @@ var DOC_PAGES = [
   "<p><b>Keeping it.</b> The vault folder is on the installer's persistence keep-list beside her chips, packs, Soul, and Memory: updates, reinstalls, and <span class='mono'>--fresh</span> installs preserve it. In Settings → GitHub &amp; Backup it is listed with chips and packs as an optional include; Soul, Memory, and Settings stay the always-ticked core.</p></div>" +
     "<div class='doc-sec'><h4>Reading: rendered markdown, images as images (v0.5.3e, #265)</h4>" +
   "<p>The Vault's preview renders notes through the product's one markdown renderer — the same one chat, these Docs and Case Files use — so a note reads as the document it is. <b>Images present as images:</b> a reference to a file in the Vault (a screenshot dropped beside the note, an evidence picture) is served by the bridge and shown inline; a data image shows as itself; an <b>external</b> image URL is shown as a link and never auto-fetched — opening a note must not announce the reader to a third-party host. The renderer escapes first and constructs only its own tags, so a note's content can never inject markup or script into the page.</p>" +
-  "<p><b>Formed case files.</b> Under <span class='mono'>cases/</span> the bridge also keeps one formed document per case — <span class='mono'>cases/&lt;name&gt;.md</span> — the whole case as a single readable file (manifest, findings in filed order, registers, evidence with its images, timeline, each entry under its provenance), formed from the case's folder and kept current by the bridge. It is the case's reading copy in the Vault; the folder remains the working record.</p></div>" +
+  "<p><b>Formed case files.</b> The Vault holds one formed document per case — the whole case as a single readable file (head facts, leads, findings in filed order, registers, evidence with its images, timeline, and the case's report when one has been drawn — each entry under its provenance), formed from the case's folder and kept current by the bridge. Since v0.6.4e (#320) it stands on a shelf of folders, <b>one folder per case type</b>, under the case's own name — <span class='mono'>Investigation/&lt;Case Name&gt;.md</span> — and dossiers stand the same way under <span class='mono'>Dossiers/</span>. The case's working folder (<span class='mono'>cases/&lt;slug&gt;/</span>) is the case manager's archive: it no longer lists as notes at all. Delete a case in the case manager and its formed file leaves the Vault in the same act — gone means gone.</p></div>" +
     "<div class='doc-sec'><h4>On a phone: a list and a reader (v0.5.9e, #279)</h4>" +
   "<p>At phone widths the Vault is <b>two states, one column</b>. The <b>list</b> is the entry state: the search pinned at the top, the RECENT chips in their own sideways-scrolling row (the page itself never scrolls sideways), and the note tree as full-width rows under it — the notes are the first content, not a card below a card. Open a note and the <b>reader</b> takes the whole view; its <b>← Notes</b> button returns to the list with its scroll position and your selection exactly as you left them. The header paragraph rests at a single line — this page keeps the full text.</p>" +
   "<p><b>Creating lives behind one New button.</b> New note, new folder, the daily note and the export all open from the <b>＋ New</b> button beside the search, in a floating sheet (tap the shade, the ×, or Escape to close it). The standing create card does not exist at phone widths; on the desktop nothing changes — the card stays where it always was, and the sheet's controls fire the very same acts.</p>" +
-  "<p><b>A formed case document names its elements.</b> Open one (<span class='mono'>cases/&lt;name&gt;.md</span>) and a strip in the reader lists the dossier elements standing in the case, each with its <b>Delete</b> — the Vault door of the element delete (#280): confirm, and the element leaves the dossier, every case, and the Vault formations at once, with the case's custody record keeping the line.</p></div>" +
+  "<p><b>A formed case document names its elements.</b> Open one (on its type shelf, under the case's own name) and a strip in the reader lists the dossier elements standing in the case, each with its <b>Delete</b> — the Vault door of the element delete (#280): confirm, and the element leaves the dossier, every case, and the Vault formations at once, with the case's custody record keeping the line.</p></div>" +
     "<div class='doc-sec'><h4>Reading first, everywhere (v0.5.11e, #284)</h4>" +
   "<p>Markdown documents across Apex open <b>rendered</b> — a Vault note, and the README documents on the Chips and Knowledge screens alike. <b>Press inside the text</b> and the editor opens on the same words, automatically; the document's standing way out — backing out of the note, saving the README — returns it to its rendered form. There is <b>no split view anywhere</b> in the app, and no Edit / Preview mode buttons: the rendered document is the resting state, and the press is the only door into the editor. A press on a wikilink or a link inside the text still follows it — reading furniture keeps its acts.</p></div>" },
   { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
@@ -6989,7 +7047,7 @@ var DOC_PAGES = [
   "<li><b>GitHub &amp; Backup</b> — sign-in and the backup/import block.</li>" +
   "<li><b>System</b> — the hardware profile (the detected profile, its override, and re-detect), plus installed commands.</li></ul>" +
   "<p>There is no backend switch: the app always talks Live to the real bridge and llamafile, and the llamafile's Running state in the status column is the live signal.</p>" +
-  "<p><b>Themes.</b> Settings' Appearance tab holds the theme picker: eleven palettes over the same colors the whole app is built from, so every screen — dropdowns and typing boxes included — changes together:</p><ul>" +
+  "<p><b>Themes.</b> Settings' Appearance tab holds the theme picker: twelve palettes over the same colors the whole app is built from, so every screen — dropdowns and typing boxes included — changes together:</p><ul>" +
   "<li><b>Nordic dark</b>: the Nord family — Polar Night backgrounds in steps, pale Snow Storm words, and Frost-blue highlights with muted Aurora colors. In Nordic, each menu icon gets its own color from that palette — Chat is Frost blue, Voice Aurora purple, Chips Aurora yellow, and so on — the same color everywhere it appears, even in the collapsed rail, and her written answers dress the same way: Snow Storm words, Frost headings and links, and code sitting on the deepest Polar Night step.</li>" +
   "<li><b>Dark Liquid Glass</b> comes second: frosted dark glass — deep near-black blue panels you can half see through, with a cheap blur on the big surfaces only (the side menu, the status column, the bar you type in), so it stays smooth on modest graphics; where blur or see-through panels are unavailable it falls back gracefully to the same colors, solid.</li>" +
   "<li><b>Terminal</b> is green on black, the classic console.</li>" +
@@ -7000,7 +7058,8 @@ var DOC_PAGES = [
   "<li><b>Abyss</b> is the deep sea off her app icon — near-black and quiet, with one bioluminescent cyan, the anglerfish lure, as the only loud color.</li>" +
   "<li><b>Case File</b> is a light theme — warm paper, ink-black words, evidence-red string accents, and terminal blocks set like a typewriter.</li>" +
   "<li><b>Blood Moon</b> is crimson over black with gold thread for highlights.</li>" +
-  "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li></ul>" +
+  "<li><b>Phosphor Amber</b> is amber on black, Terminal's warmer sibling.</li>" +
+  "<li><b>LCARS</b> (v0.6.4e, #324) is the starship console — the one theme that changes the shapes as well as the colors: a black field, pill-ended bars and buttons with black text on the color, elbow-curved cards, uppercase condensed labels, in the classic accent family (orange, peach, lilac, periwinkle, brick) with the modern 2.0 cooler blues and teals woven through. It is a skin over the same screens — the rail's groups still collapse to their header pills, every switch still answers to the same state — and the lettering is your system's own condensed face; nothing is fetched.</li></ul>" +
   "<p>Pick one and it stays picked — the choice is saved in your config like the other settings, and a choice you already saved is always honored over the default.</p>" +
   "<p><b>Motion.</b> The whole app moves in one language — menus unfold, panes swap, and views arrive on the same curves. On a low-power machine, Appearance's <b>Potato mode</b> turns the decorative motion off across Apex: state changes become instant, and the glass theme's backdrop blur is suspended as well, since on weak graphics the blur costs more than the motion does. Your operating system's reduced-motion setting always wins over the switch, either way.</p>" +
   "<p><b>Interface size.</b> Appearance's <b>UI scale</b> — 100%, 110%, 125%, 150% — scales the whole interface, words and layout together, like a display scale: one knob, deliberately, because a separate text size would multiply against it and squeeze the fixed rows at the big end. It applies the moment you pick it and persists beside the theme.</p>" +
@@ -9880,6 +9939,21 @@ function federationHtml() {
   if (!s) { h += "<div class='card'>Federation runs through the live bridge — switch the backend to Live in Settings.</div>"; return h; }
   if (fedMsg.sentence) h += "<p style='color:var(--accent);margin-top:8px'>" + esc(fedMsg.sentence) + "</p>";
   if (fedMsg.error && !fedMsg.errorFor) h += "<p style='color:#f58a8a;margin-top:8px'>" + esc(fedMsg.error) + "</p>";
+  // The Mesh itself (v0.6.4e, #322): everything on this page
+  // rides on the Mesh — fedinets, borrowing, FediChat, the
+  // fleet — so the door's own toggle stands at the head of
+  // the page, where its consequences are administered. It is
+  // the SAME state the Mesh page's control flips: one stored
+  // setting, one door (/api/mesh/settings), two surfaces. The
+  // switch gate holds structurally, as everywhere on this
+  // page: a press posts the flip and flips nothing locally;
+  // the card re-renders from the bridge's state, and a
+  // refusal lands on this card.
+  h += "<div class='card' style='margin-top:12px'><b>The Mesh</b>" +
+    "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'>" + fedSwitch(!!s.meshOn, "data-fed-mesh='1'", "The Mesh — this node's door") + "<span style='font-size:12px'><b>" + (s.meshOn ? "Mesh on" : "Mesh off") + "</b> — " + (s.meshOn ? "this node's door is open." : "this node's door is shut.") + "</span></div>" +
+    "<p style='color:var(--dim);font-size:12px;margin-top:4px'>Everything on this page rides on the Mesh: with it off, fedinets, borrowing, FediChat and Fleet Answers are dark — the roster may be signed and the ticks all set, and none of it moves. This is the same switch as the Mesh page's own control; there is one Mesh state, and both surfaces tell it.</p>" +
+    (fedMsg.error && fedMsg.errorFor === "__mesh__" ? "<p style='color:#f58a8a;font-size:12px;margin-top:6px'>" + esc(fedMsg.error) + "</p>" : "") +
+    "</div>";
   // The Badge card: the DHD step-up factor.
   h += "<div class='card' style='margin-top:12px'><b>The Operator Badge — the DHD step-up</b>" +
     "<p style='color:var(--dim);font-size:12px;margin-top:4px'>" + (s.badgeEnrolled
@@ -9961,7 +10035,8 @@ function federationHtml() {
     // Fedinet actions.
     h += "<div class='row' style='margin-top:12px;flex-wrap:wrap;gap:8px'>" +
       (f.role === "gateway"
-        ? "<button class='ghost' data-fed-sync='" + esc(f.id) + "' style='min-height:44px'>Republish the roster</button>"
+        ? "<button class='ghost' data-fed-sync='" + esc(f.id) + "' style='min-height:44px'>Republish the roster</button>" +
+          "<button class='ghost' data-fed-dissolve='" + esc(f.id) + "' style='min-height:44px;color:#f58a8a'>Dissolve this fedinet</button>"
         : "<button class='ghost' data-fed-sync='" + esc(f.id) + "' style='min-height:44px'>Sync the roster</button>" +
           (f.ownNumber ? "" : "<button class='ghost' data-fed-knock='" + esc(f.id) + "' style='min-height:44px'>Knock — ask to join</button>") +
           "<button class='ghost' data-fed-leave='" + esc(f.id) + "' style='min-height:44px'>Leave this fedinet</button>") +
@@ -9996,6 +10071,25 @@ function wireFederation() {
     if (f.trustByDefault) { fedConfirm = null; federationAct({ act: "trust", fedinetId: id, on: false }, id); }
     else { fedConfirm = { act: "trust", fedinetId: id, label: "trust " + f.name, extra: { on: true } }; fedMsg.error = ""; render(); }
   }; });
+  qa("[data-fed-mesh]").forEach(function (b) { b.onclick = function () {
+    // v0.6.4e (#322): the flip goes to the Mesh settings door
+    // — the same door the Mesh page's control posts to — and
+    // the card then re-renders from the bridge's federation
+    // state, which carries the stored Mesh state back. A
+    // refusal (the identity cannot be minted, the save does
+    // not take) lands on this card and the switch stays where
+    // the stored state puts it.
+    if (CONFIG.backend !== "live") { fedMsg.error = "Federation runs through the live bridge."; fedMsg.errorFor = "__mesh__"; render(); return; }
+    var want = !(federationState && federationState.meshOn);
+    fetch("/api/mesh/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: want }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) { fedMsg.error = ""; fedMsg.errorFor = ""; }
+        else { fedMsg.error = (j && j.error) || "The bridge refused that change."; fedMsg.errorFor = "__mesh__"; }
+        federationFetchState();
+      })
+      .catch(function () { fedMsg.error = "The bridge did not answer — is it running?"; fedMsg.errorFor = "__mesh__"; if (view === "Federation") render(); });
+  }; });
   qa("[data-fed-fleet]").forEach(function (b) { b.onclick = function () {
     var flNow = (federationState && federationState.fleet) || {};
     federationAct({ act: "fleet", on: !flNow.member }, "__fleet__");
@@ -10028,6 +10122,17 @@ function wireFederation() {
   qa("[data-fed-knock]").forEach(function (b) { b.onclick = function () { federationAct({ act: "knock", fedinetId: b.getAttribute("data-fed-knock") }, b.getAttribute("data-fed-knock")); }; });
   qa("[data-fed-sync]").forEach(function (b) { b.onclick = function () { federationAct({ act: "sync", fedinetId: b.getAttribute("data-fed-sync") }, b.getAttribute("data-fed-sync")); }; });
   qa("[data-fed-leave]").forEach(function (b) { b.onclick = function () { federationAct({ act: "leave", fedinetId: b.getAttribute("data-fed-leave") }, b.getAttribute("data-fed-leave")); }; });
+  qa("[data-fed-dissolve]").forEach(function (b) { b.onclick = function () {
+    var id = b.getAttribute("data-fed-dissolve");
+    var f = (federationState.fedinets || []).filter(function (x) { return x.id === id; })[0];
+    if (!f) return;
+    // v0.6.4e (#321): dissolving is a crown act — the confirm
+    // label is computed exactly as the bridge computes it,
+    // louder when the roster holds other members.
+    var others = (f.members || []).filter(function (m) { return m.nodeId !== federationState.nodeId; }).length;
+    var label = "dissolve " + f.name + (others ? " and strand " + others + " member" + (others !== 1 ? "s" : "") : "");
+    fedConfirm = { act: "dissolve", fedinetId: id, label: label, extra: {} }; fedMsg.error = ""; render();
+  }; });
   qa("[data-fed-invitation]").forEach(function (b) { b.onclick = function () { federationAct({ act: "import-invitation", badge: fedBadge() }, "__join__"); }; });
   qa("[data-fed-badge-enroll]").forEach(function (b) { b.onclick = function () {
     if (!CONFIG.operatorBadge) { fedMsg.error = "This dashboard holds no Operator Badge yet — set it under Settings → Operator first, then enroll it here."; fedMsg.errorFor = ""; render(); return; }
@@ -13896,7 +14001,7 @@ function render() {
       [["operator", "Operator"], ["persona", "Persona"], ["appearance", "Appearance"], ["voice", "Voice"], ["github", "GitHub & Backup"], ["system", "System"]].map(function (t) {
         return "<button type='button' role='tab' aria-selected='" + (settingsTab === t[0]) + "' class='" + (settingsTab === t[0] ? "act" : "ghost") + "' data-settab='" + t[0] + "'>" + t[1] + "</button>";
       }).join("") + "</div>";
-    if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option></select></label><p style='color:var(--dim)'>Eleven palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
+    if (settingsTab === "appearance") h += "<div class='card'><label>Theme<br><select id='th' aria-label='Interface theme'><option value='nord'" + (CONFIG.theme === "nord" ? " selected" : "") + ">Nordic dark — Polar Night surfaces, Snow Storm text, Aurora accents, color-coded icons</option><option value='glass'" + (CONFIG.theme === "glass" ? " selected" : "") + ">Dark Liquid Glass — frosted dark glass, cheap blur on the big surfaces</option><option value='terminal'" + (CONFIG.theme === "terminal" ? " selected" : "") + ">Terminal — green on black, the classic console</option><option value='dark'" + (CONFIG.theme === "dark" ? " selected" : "") + ">Signature dark — her console, cyan on near-black</option><option value='light'" + (CONFIG.theme === "light" ? " selected" : "") + ">Light — the same console on pale slate</option><option value='contrast'" + (CONFIG.theme === "contrast" ? " selected" : "") + ">High contrast — pure black, white text, bright signals</option><option value='nocturne'" + (CONFIG.theme === "nocturne" ? " selected" : "") + ">Nocturne Row — rain-slick Rockport night, neon cyan and magenta</option><option value='abyss'" + (CONFIG.theme === "abyss" ? " selected" : "") + ">Abyss — deep-sea black, one bioluminescent lure cyan</option><option value='casefile'" + (CONFIG.theme === "casefile" ? " selected" : "") + ">Case File — warm paper, ink text, evidence-red accents</option><option value='bloodmoon'" + (CONFIG.theme === "bloodmoon" ? " selected" : "") + ">Blood Moon — Sanguinari crimson over black, gold thread</option><option value='phosphor'" + (CONFIG.theme === "phosphor" ? " selected" : "") + ">Phosphor Amber — amber on black, Terminal's warmer sibling</option><option value='lcars'" + (CONFIG.theme === "lcars" ? " selected" : "") + ">LCARS — the starship console: black field, pill bars and elbow cards, the classic accent family with the 2.0 cooler blues</option></select></label><p style='color:var(--dim)'>Twelve palettes over the same style variables — every view, select, and input follows the choice, and it persists in your config like the other settings. Nocturne Row is the default. Nordic dark is the dark Nord family: Polar Night backgrounds, Snow Storm text, Frost and Aurora accents — and every menu icon carries its own color from the palette, in the full menu and the collapsed rail alike. Terminal is green on black. Her markdown answers follow the same palette in Nordic and Terminal too.</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface motion</h3><div style='display:flex;align-items:center;gap:8px'><button class='switch' id='motion-potato' role='switch' aria-checked='" + (CONFIG.motion === "potato" ? "true" : "false") + "' aria-label='Potato mode'><span class='knob'></span></button><span><b>Potato mode</b></span></div><p style='color:var(--dim)'>For low-power machines — turns off decorative animation across Apex. Menus, panes and views change instantly instead of traveling, and the Dark Liquid Glass theme's backdrop blur is suspended too (its colors stay). Off by default: the full motion language. The choice persists in your config like the theme, and rides the settings backup beside it." + ((window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ? " Your system asks for reduced motion — Apex honors that over this switch, either way." : "") + "</p></div>";
     if (settingsTab === "appearance") h += "<div class='card'><h3>Interface size</h3><p style='color:var(--dim)'>One scale for the whole interface — words and layout together, the way an operating system's display scale works, so nothing outgrows its row or its rail. (A separate text-size knob would multiply against this one and squeeze fixed rows at the big end; there is deliberately just the one.) Applies the moment you pick it, persists in your config beside the theme, and rides the settings backup with it.</p><div class='row' role='group' aria-label='UI scale'>" + [[1, "100%"], [1.1, "110%"], [1.25, "125%"], [1.5, "150%"]].map(function (o) { return "<button class='" + (Number(CONFIG.uiScale) === o[0] ? "act" : "ghost") + "' data-uiscale='" + o[0] + "' aria-pressed='" + (Number(CONFIG.uiScale) === o[0] ? "true" : "false") + "'>" + o[1] + "</button>"; }).join("") + "</div></div>";
     if (settingsTab === "system") (function () {

@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.3"
+SHIPPED_VERSION = "0.6.4"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.35"
+BRIDGE_BUILD = "2026-11-19.36"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 35
+SHIPPED_BUILD_SEQ = 36
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -5486,6 +5486,56 @@ def _fed_confirm_trust(fed_name):
     return "trust " + str(fed_name or "")
 
 
+def _fed_confirm_dissolve(fed):
+    # v0.6.4e (#321): the dissolve's spoken name — louder when
+    # the roster holds other members, because dissolving
+    # strands them: the confirm names the stranding, so the
+    # operator speaks the consequence, not just the act.
+    others = 0
+    try:
+        own = mesh_node_id()
+        others = sum(1 for m in _fed_roster_members(fed)
+                     if isinstance(m, dict) and str(m.get("nodeId") or "") != own)
+    except Exception:
+        others = 0
+    label = "dissolve " + str(fed.get("name") or "")
+    if others:
+        label += (" and strand " + str(others) + " member"
+                  + ("s" if others != 1 else ""))
+    return label
+
+
+def _fed_departed(fid):
+    # v0.6.4e (#321): has this node (or another seat of this
+    # account, whose tombstones ride the same set) recorded a
+    # departure from this fedinet? The tombstone is the ONLY
+    # memory a departure leaves that sync cannot argue with.
+    try:
+        tombs = (_sync_state_load().get("tombstones") or {}).get("fedinets") or {}
+        return str(fid) in tombs
+    except Exception:
+        return False
+
+
+def _fed_clear_departure(fid):
+    # A MANUAL import is the operator overruling the tombstone
+    # in person — it clears the departure record, so the
+    # fedinet may be dealt and admitted again. (The deck's own
+    # apply path never calls this: a card cannot clear the
+    # refusal that stops it.)
+    try:
+        state = _sync_state_load()
+        tombs = state.get("tombstones") or {}
+        rows = tombs.get("fedinets") or {}
+        if str(fid) in rows:
+            rows.pop(str(fid), None)
+            tombs["fedinets"] = rows
+            state["tombstones"] = tombs
+            _sync_state_save(state)
+    except Exception:
+        pass
+
+
 def _fed_confirm_tunnel(peer_name):
     return "authorize tunnel key for " + str(peer_name or "")
 
@@ -8692,6 +8742,16 @@ def federation_payload(cfg, via_dhd=False):
         # the Federation page's toggle renders from this and
         # the act answers with it (the switch gate).
         "fleet": fleet_public(cfg),
+        # v0.6.4e (#322): the Mesh's own state — the page's
+        # head carries the Mesh toggle itself, on the grounds
+        # that everything on this page rides on it: Mesh off
+        # means fedinets, borrowing, FediChat and the fleet are
+        # all dark, and the toggle that decides that belongs
+        # where its consequences are administered. meshOn is
+        # the stored setting; meshIdentity says whether this
+        # node has its Mesh identity minted.
+        "meshOn": bool(ms.get("enabled")),
+        "meshIdentity": bool(own_id),
         "audit": federation_audit_read(),
     }
 
@@ -8927,6 +8987,9 @@ def federation_act(data, via_dhd=False):
         fed2, ierr = _fed_import_gateway_payload(load_config(), payload)
         if fed2 is None:
             return refuse(ierr)
+        # v0.6.4e (#321): a manual import overrules a recorded
+        # departure — the tombstone clears at THIS door only.
+        _fed_clear_departure(fed2["id"])
         federation_audit("import", fed2["name"], "Imported the gateway card "
                          "of '" + fed2["name"] + "' — admission and "
                          "introduction only; no trust was granted by the "
@@ -9134,10 +9197,53 @@ def federation_act(data, via_dhd=False):
             save_config(cfg2)
         fedinets.pop(idx)
         _federation_save(load_config(), fedinets)
+        # v0.6.4e (#321): the departure is tombstoned — without
+        # it, the fedinet's gateway card rides the ChipDeck
+        # forever, and any seat that converges the deck
+        # re-admits what the operator left (the ghost fedinet).
+        sync_record_tombstone("fedinets", fed["id"])
         federation_audit("leave", fed["name"], "Left the fedinet — its "
                          "federation-made pairings went with it; hand-made "
                          "pairings stand.", via)
         return state(sentence="This node has left '" + fed["name"] + "'.")
+
+    if act == "dissolve":
+        # v0.6.4e (#321): a gateway retires its own fedinet.
+        # Until this build the door did not exist — leave
+        # refused a gateway outright and nothing else could
+        # end a fedinet, so a gateway's fedinet could only
+        # ghost. Dissolving is a crown act: the spoken confirm
+        # (louder when the roster holds other members — it
+        # names the stranding), the audit, and the departure
+        # tombstone, so no deck on any seat re-deals or
+        # re-admits what was dissolved.
+        if fed["role"] != "gateway":
+            return refuse("Only the gateway dissolves its fedinet — a "
+                          "member leaves, above.")
+        ok, err = _fed_crown_ok(cfg, via_dhd, data, _fed_confirm_dissolve(fed))
+        if not ok:
+            return refuse(err)
+        ms = mesh_settings(cfg)
+        keep = [p for p in ms["borrow"]["peers"] if p.get("viaFedinet") != fed["id"]]
+        if len(keep) != len(ms["borrow"]["peers"]):
+            cfg2 = load_config()
+            block = dict(cfg2.get("mesh") or {})
+            borrow = dict(block.get("borrow") or {})
+            borrow["peers"] = keep
+            block["borrow"] = borrow
+            cfg2["mesh"] = block
+            save_config(cfg2)
+        fedinets.pop(idx)
+        _federation_save(load_config(), fedinets)
+        sync_record_tombstone("fedinets", fed["id"])
+        federation_audit("dissolve", fed["name"], "Dissolved the fedinet — "
+                         "its federation-made pairings went with it; "
+                         "hand-made pairings stand. The departure is "
+                         "tombstoned, so the deck cannot re-deal it.", via)
+        return state(sentence="'" + fed["name"] + "' is dissolved. Its "
+                              "members keep their own pairings; the "
+                              "fedinet itself is gone, and the deck will "
+                              "not deal it again.")
 
     if act == "trust":
         want = data.get("on") is True
@@ -11926,15 +12032,33 @@ class _MeshDoorServer(ThreadingHTTPServer):
 # borrower converges that — so one answered door settles both
 # machines. Convergence is sync_apply's, unchanged: the transport
 # differs, the semantics (including deletion tombstones) do not.
-# Serving requires only the pairing itself — mesh_authenticate IS
-# the consent — and one hard refusal: when both machines know
-# their operator's GitHub login and they differ, the sets are
-# different people's data and nothing crosses.
+# Serving requires the pairing (mesh_authenticate) AND a proven
+# shared account (v0.6.4e, #323). The pre-gate law read pairing
+# itself as consent, with one refusal that fired only when BOTH
+# machines knew their operator's GitHub login and they differed
+# — a check that failed open on unknown identity, and did: the
+# operator's chats, Case Files, notes and day book converged
+# onto a paired peer's brand-new, never-signed-in seat (the
+# field report that filed #323). Pairing is consent between
+# operators — for borrow, chat, fleet. Sync is one operator's
+# own data moving between that operator's own seats, so its
+# door demands positive proof: a signed account handshake
+# (/mesh/sync/hello) states each side's login, and a set crosses
+# only when both logins are present and EQUAL. Unknown is a
+# refusal, never a pass — in both directions, at every door.
 
-def _mesh_sync_operator_refusal(body):
-    mine = github_auth()
+def _mesh_sync_account_verdict(body):
+    # "" when the requester's stated account is proven equal to
+    # this machine's own; otherwise the refusal's name —
+    # "operator-unknown" when either side is unstated,
+    # "different-operator" when both are stated and differ.
+    mine = str((github_auth() or {}).get("login") or "")
     theirs = str((body or {}).get("operatorLogin") or "")
-    return bool(mine and theirs and mine["login"].lower() != theirs.lower())
+    if not mine or not theirs:
+        return "operator-unknown"
+    if mine.lower() != theirs.lower():
+        return "different-operator"
+    return ""
 
 
 def _mesh_sync_set_wire():
@@ -11977,9 +12101,39 @@ def _mesh_sync_admit(handler, body):
     peer = mesh_authenticate(handler, body, str(data.get("requestId") or ""))
     if peer is None:
         return None, (401, {"ok": False, "reason": "unauthorized"})
-    if _mesh_sync_operator_refusal(data):
-        return None, (200, {"ok": False, "reason": "different-operator"})
+    verdict = _mesh_sync_account_verdict(data)
+    if verdict:
+        # v0.6.4e (#323): the refusal is ledgered like an
+        # exchange is — a refused door is a fact of the road,
+        # named with its reason, never a silent nothing.
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
+                            "outcome": "refused-" + verdict})
+        return None, (200, {"ok": False, "reason": verdict,
+                            "account": str((github_auth() or {}).get("login") or "")})
     return (data, peer), None
+
+
+def mesh_handle_sync_hello(handler, body):
+    # POST /mesh/sync/hello — the account handshake (v0.6.4e,
+    # #323): a paired peer states its account, this machine
+    # states its own, and NO set data rides in either direction.
+    # The initiator verifies the answer before any set byte is
+    # offered; this door is how it learns what the responder
+    # claims to be. Authentication is the pairing's, unchanged.
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    peer = mesh_authenticate(handler, body, str(data.get("requestId") or ""))
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
+                        "outcome": "hello"})
+    return 200, {"ok": True,
+                 "account": str((github_auth() or {}).get("login") or ""),
+                 "nodeId": mesh_node_id() or ""}
 
 
 def mesh_handle_sync_pull(handler, body):
@@ -12084,6 +12238,9 @@ class MeshHandler(BaseHTTPRequestHandler):
             self._send(code, payload)
         elif self.path.split("?")[0] == "/mesh/roster":
             code, payload = mesh_handle_roster(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/sync/hello":
+            code, payload = mesh_handle_sync_hello(self, self._body())
             self._send(code, payload)
         elif self.path.split("?")[0] == "/mesh/sync/pull":
             code, payload = mesh_handle_sync_pull(self, self._body())
@@ -17643,6 +17800,13 @@ def github_save_auth(token, login, refresh_token=None, expires_in=None):
         os.chmod(GITHUB_TOKEN_PATH, 0o600)
     except Exception:
         pass
+    # v0.6.4e (#323): signing in is the moment the account
+    # gate can judge the standing corpus — a seat that was
+    # unsigned at upgrade gets its purge judgment now.
+    try:
+        sync_account_gate_sweep()
+    except Exception:
+        pass
 
 
 def github_refresh_auth():
@@ -21793,6 +21957,18 @@ def _vault_tags(content):
     return out
 
 
+def _vault_is_case_fragment(rel):
+    # v0.6.4e (#320): a case's WORKING folder (cases/<slug>/…)
+    # is the case manager's archive, not Vault reading matter —
+    # its fragments (manifest, findings, registers, timeline,
+    # custody) never surface as notes. The case itself reads
+    # as ONE formed file on its type shelf (see
+    # case_formed_rel). The legacy formed document
+    # (cases/<slug>.md, two segments) is not a fragment.
+    parts = rel.split("/")
+    return len(parts) >= 3 and parts[0] == "cases"
+
+
 def vault_notes_raw():
     vault_ensure_seed()
     notes = []
@@ -21804,6 +21980,8 @@ def vault_notes_raw():
                     continue
                 full = os.path.join(base, name)
                 rel = os.path.relpath(full, VAULT_DIR).replace(os.sep, "/")
+                if _vault_is_case_fragment(rel):
+                    continue
                 try:
                     with open(full, encoding="utf-8") as f:
                         content = f.read()
@@ -21825,13 +22003,37 @@ def vault_list_payload():
         for base, dirs, files in os.walk(VAULT_DIR):
             for d in dirs:
                 rel = os.path.relpath(os.path.join(base, d), VAULT_DIR).replace(os.sep, "/")
+                # v0.6.4e (#320): the working archive's folders
+                # are not shelf structure — the listing's
+                # folders are the shelves and the free notes'
+                # homes, never cases/<slug> machinery.
+                if rel == "cases" or rel.startswith("cases/"):
+                    continue
                 folders.add(rel)
+    # v0.6.4e (#320): formed documents are marked by the
+    # bridge that formed them — the reader's element strip
+    # (and any other consumer) keys off the mark, never off a
+    # path shape that a rename could silently break.
+    try:
+        _formed_cases = {}
+        for _slug in _case_all_slugs():
+            _formed_cases[case_formed_rel(_slug)] = _slug
+        _formed_dossiers = {}
+        _dstore = _dossier_store()
+        for _d in _dstore.get("dossiers") or []:
+            _formed_dossiers[dossier_formed_rel(_d, _dstore)] = _d["id"]
+    except Exception:
+        _formed_cases, _formed_dossiers = {}, {}
     for n in notes:
         parts = n["path"].split("/")
         title = parts[-1][:-3] if parts[-1].lower().endswith(".md") else parts[-1]
         n["title"] = title
         n["outgoing"] = _vault_links(n["content"])
         n["tags"] = _vault_tags(n["content"])
+        if n["path"] in _formed_cases:
+            n["formedCase"] = _formed_cases[n["path"]]
+        if n["path"] in _formed_dossiers:
+            n["formedDossier"] = _formed_dossiers[n["path"]]
     for n in notes:
         n["backlinks"] = [
             o["path"] for o in notes
@@ -23925,7 +24127,7 @@ def _sync_state_save(state):
 def _sync_tombstones_pruned(tombs, now=None):
     now = now if now is not None else time.time()
     out = {}
-    for kind in ("chats", "cases", "vault", "entries", "dossier", "daybook"):
+    for kind in ("chats", "cases", "vault", "entries", "dossier", "daybook", "fedinets"):
         rows = tombs.get(kind) if isinstance(tombs, dict) else None
         out[kind] = {}
         if isinstance(rows, dict):
@@ -23939,7 +24141,7 @@ def sync_record_tombstone(kind, key, at=None):
     # The deletion funnels' one call. Best-effort by design: a
     # tombstone that fails to record must never fail the delete
     # the operator asked for — the delete itself already happened.
-    if kind not in ("chats", "cases", "vault", "entries", "dossier", "daybook") or not key:
+    if kind not in ("chats", "cases", "vault", "entries", "dossier", "daybook", "fedinets") or not key:
         return
     try:
         state = _sync_state_load()
@@ -25182,6 +25384,12 @@ def _sync_deck_collect(cfg):
             continue
     for fed in federation_settings(cfg):
         try:
+            # v0.6.4e (#321): a departed fedinet's card is never
+            # dealt again — even if a ghost copy of the record
+            # stands in this node's settings, the tombstone
+            # outranks it, so the ghost cannot spread by deck.
+            if _fed_departed(fed.get("id")):
+                continue
             png = build_gateway_card_png(cfg, fed)
             fid = re.sub(r"[^A-Za-z0-9_-]", "", str(fed.get("id") or ""))[:16]
             if png and fid:
@@ -25260,6 +25468,15 @@ def _sync_apply_deck_card(cfg, name, data, summary, before_peers, before_feds):
         fed = payload.get("fedinet") if isinstance(payload.get("fedinet"), dict) else {}
         fid = str(payload.get("fedinetId") or fed.get("id") or "")
         if not fid or fid in before_feds:
+            return
+        if _fed_departed(fid):
+            # v0.6.4e (#321): refused BY NAME in the round's
+            # summary — a departed fedinet's card does not
+            # re-admit, and the refusal is a stated fact of
+            # the round, not a silent skip. Only a manual
+            # import at the Federation door clears it.
+            summary.setdefault("ghostRefusals", []).append(
+                str(payload.get("name") or fed.get("name") or fid))
             return
         got, err = _fed_import_gateway_payload(cfg, payload, trust_default=False)
         if got and not err:
@@ -25799,12 +26016,21 @@ def sync_fetch(cfg):
             manifest = None
     if manifest is not None:
         acct = str(manifest.get("account") or "")
-        if acct:
-            mine = str((github_auth() or {}).get("login") or "")
-            if mine and acct.lower() != mine.lower():
-                return None, {"ok": False, "kind": "auth", "state": "auth",
-                              "route": "Backup repo",
-                              "error": "That sync set belongs to a different GitHub account (" + acct + ") — sync is anchored to the account, and this machine is signed in as " + mine + ". Nothing crossed. Sign in with the account that owns the set, or let this machine start a set of its own."}
+        mine = str((github_auth() or {}).get("login") or "")
+        if not acct or not mine:
+            # v0.6.4e (#323): defense in depth on the repo road —
+            # a set the door cannot attribute to an account is
+            # not passed through on the strength of repo access
+            # alone. (A repo with no manifest at all is still an
+            # empty remote, above; this is a set that NAMES
+            # itself sync and names no owner.)
+            return None, {"ok": False, "kind": "auth", "state": "auth",
+                          "route": "Backup repo",
+                          "error": "That sync set names no GitHub account, so it cannot be attributed — sync is anchored to the account, and a set that cannot be attributed does not cross. Nothing was applied."}
+        if acct.lower() != mine.lower():
+            return None, {"ok": False, "kind": "auth", "state": "auth",
+                          "route": "Backup repo",
+                          "error": "That sync set belongs to a different GitHub account (" + acct + ") — sync is anchored to the account, and this machine is signed in as " + mine + ". Nothing crossed. Sign in with the account that owns the set, or let this machine start a set of its own."}
     return {"files": files, "manifest": manifest}, None
 
 
@@ -26251,6 +26477,43 @@ def sync_apply(cfg, fetched):
         _sync_apply_daybook(fetched, summary, merged)
     if not _seat_shell:
         _sync_apply_seat(fetched, summary)
+    # v0.6.4e (#323): attribution — the apply path records, per
+    # item it converged, the account the arriving set named as
+    # its own ("" when it named none). The ledger is the purge's
+    # evidence (see sync_account_gate_sweep): from this build
+    # on, every converged item can be attributed to the set
+    # that carried it, exactly, at the moment it landed.
+    try:
+        _src_acct = str(remote_manifest.get("account") or "")
+        if not _src_acct and isinstance(fetched.get("manifest"), dict):
+            _src_acct = str(fetched["manifest"].get("account") or "")
+        _st3 = _sync_state_load()
+        _attr = _st3.get("attribution") if isinstance(_st3.get("attribution"), dict) else {}
+        for _fam in ("chats", "cases", "docs", "daybook"):
+            if not isinstance(_attr.get(_fam), dict):
+                _attr[_fam] = {}
+        for _c in remote_chats:
+            _rec = _chat_normalize(_c)
+            if _rec is not None:
+                _attr["chats"][str(_rec["id"])] = _src_acct
+        for _slug in _remote_case_slugs:
+            _attr["cases"][str(_slug)] = _src_acct
+        for _name, _label in _SYNC_DOCS:
+            if SYNC_PREFIX + "docs/" + _name + ".md" in files:
+                _attr["docs"][_name] = _src_acct
+        _db_raw = files.get(SYNC_PREFIX + "daybook.json")
+        if _db_raw:
+            try:
+                _db = json.loads(_db_raw.decode("utf-8", "replace"))
+                for _e in ((_db or {}).get("entries") or []):
+                    if isinstance(_e, dict) and _e.get("id"):
+                        _attr["daybook"][str(_e["id"])] = _src_acct
+            except Exception:
+                pass
+        _st3["attribution"] = _attr
+        _sync_state_save(_st3)
+    except Exception:
+        pass
     summary["changed"] = (summary["removedChats"] + summary["removedCases"]
                           + summary["removedNotes"] + summary["chatsAdded"]
                           + summary["chatsReplaced"] + summary["chatsSiblings"]
@@ -26359,6 +26622,10 @@ def _sync_record_result(state, trigger, result):
         # v0.6.3e (#318): a renamed verdict carries the main
         # thread's disagreement on the receipt too.
         "mainThread": result.get("mainThread") or None,
+        # v0.6.4e (#323): a Mesh-road account refusal the round
+        # met is named on the receipt — the fall-through to the
+        # repo road is never a silent success shape.
+        "meshRefusal": result.get("meshRefusal") or _sync_mesh_refusal_take(),
         "material": bool(receipt.get("material")),
         "roundId": result.get("roundId") or "",
         # v0.5.1e (#257): the round's measured duration rides
@@ -26385,6 +26652,7 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "caseFilesPulled": summary["caseFilesPulled"],
         "deckFilesPulled": summary.get("deckFilesPulled", 0),
         "cardsImported": summary.get("cardsImported", 0),
+        "ghostRefusals": list(summary.get("ghostRefusals") or []),
         "docsPulled": summary.get("docsPulled", 0),
         "entriesPulled": summary.get("entriesPulled", 0),
         "entriesRemoved": summary.get("entriesRemoved", 0),
@@ -26478,6 +26746,61 @@ def _sync_mesh_peers():
     return [p for p in ms["borrow"]["peers"] if p["canBorrow"]]
 
 
+# -- The account gate, initiator side (v0.6.4e, #323) -------------
+# A set is offered to a peer only after the handshake proves
+# the peer is a SEAT OF THIS ACCOUNT: the peer states its
+# GitHub login at /mesh/sync/hello, and the logins must be
+# present and equal. Pairing proves the road, never the
+# account — peers are other operators by design; seats are
+# this operator's own machines. A refusal is remembered for
+# the round's receipt (the fall-through to the repo road is
+# correct behavior for the operator's own seats, but it is
+# never silent about why the Mesh road was not used).
+_SYNC_MESH_REFUSAL = {"text": ""}
+
+
+def _sync_mesh_refusal_note(text):
+    if text and not _SYNC_MESH_REFUSAL["text"]:
+        _SYNC_MESH_REFUSAL["text"] = text
+
+
+def _sync_mesh_refusal_take():
+    text = _SYNC_MESH_REFUSAL["text"]
+    _SYNC_MESH_REFUSAL["text"] = ""
+    return text
+
+
+def _sync_mesh_hello(peer):
+    # The peer's stated account, or None when the handshake
+    # itself did not answer (a dark road, or a build too old
+    # to state one — either way, nothing it says can prove it
+    # a seat, and no set is offered to it).
+    payload = _sync_mesh_ask(peer, "/mesh/sync/hello", {})
+    if payload is None:
+        return None
+    return str(payload.get("account") or "")
+
+
+def _sync_mesh_peer_gate(peer):
+    # "" when the peer is proven a seat of this account; else
+    # the refusal sentence the receipt carries. Called only
+    # for peers whose road probed lit.
+    mine = str((github_auth() or {}).get("login") or "")
+    if not mine:
+        return ("Mesh road refused: this seat's own account is "
+                "unknown — sign in so Sync can prove which "
+                "machines are its seats.")
+    theirs = _sync_mesh_hello(peer)
+    if theirs is None or not theirs:
+        return ("Mesh road refused: " + str(peer.get("name") or "the peer")
+                + " would not state an account — Sync cannot "
+                "prove it is a seat of this account.")
+    if theirs.lower() != mine.lower():
+        return ("Mesh road refused: " + str(peer.get("name") or "the peer")
+                + " is not a seat of this account.")
+    return ""
+
+
 def _sync_mesh_ask(peer, path, body):
     # One signed sync request; the peer's parsed payload, or None
     # for every failure shape (unlit, refused, misshapen) — the
@@ -26506,6 +26829,224 @@ def _sync_mesh_ask(peer, path, body):
     return payload
 
 
+# -- The foreign-data purge (v0.6.4e, #323) -----------------------
+# The gate stops new crossings; this cleans up what crossed
+# before it existed. Attribution is the evidence: sync_apply
+# records, per converged item, the account the arriving set
+# named as its own ("" when it named none). On the first gated
+# run the standing corpus gets a ledger too — a seat signed in
+# adopts its corpus to its own account (the normal upgrade:
+# one operator, their machines, their data); a seat NOT signed
+# in ledgers "" (unattributed), except day book entries born
+# on this very machine, which ledger "local".
+#
+# Judgment runs only when the seat HAS an account to judge
+# against — an unsigned seat purges nothing, ever. An item is
+# purgeable when its ledger entry names a DIFFERENT account,
+# or names none AND the item carries no local proof. Local
+# proof for an unattributed item: a day book entry whose
+# origin names this host, or a file whose mtime predates this
+# seat's first recorded Mesh sync arrival — material older
+# than the first crossing cannot have come through it. With
+# NO recorded arrival, unattributed items are NOT purgeable:
+# the fail-safe leans toward keeping data, always. Items with
+# no ledger entry at all are never touched — they were
+# created on this seat after the ledger began.
+
+def _sync_first_mesh_arrival():
+    ts = []
+    for r in mesh_ledger_read():
+        if r.get("direction") == "sync" and r.get("outcome") in ("exchange", "pull"):
+            t = r.get("ts")
+            if isinstance(t, (int, float)) and not isinstance(t, bool):
+                ts.append(t)
+    return min(ts) if ts else None
+
+
+def _purge_predates(path, first_arrival):
+    if first_arrival is None:
+        return False
+    try:
+        return os.path.getmtime(path) < first_arrival
+    except Exception:
+        return False
+
+
+def sync_account_gate_sweep():
+    # The purge judgment. Returns its receipt dict when a
+    # judgment ran, else None. Idempotent; safe at bridge
+    # start and on sign-in — the two moments the answer can
+    # change. Never raises.
+    try:
+        state = _sync_state_load()
+        mine = str((github_auth() or {}).get("login") or "")
+        attr = state.get("attribution")
+        if not isinstance(attr, dict):
+            attr = {"chats": {}, "cases": {}, "docs": {}, "daybook": {}}
+            host = socket.gethostname()[:80]
+            for c in chats_all():
+                attr["chats"][str(c["id"])] = mine
+            croot = os.path.join(VAULT_DIR, "cases")
+            if os.path.isdir(croot):
+                for slug in sorted(os.listdir(croot)):
+                    if os.path.isdir(os.path.join(croot, slug)):
+                        attr["cases"][str(slug)] = mine
+            for name, _label in _SYNC_DOCS:
+                if os.path.isfile(_sync_doc_path(name)):
+                    attr["docs"][name] = mine
+            try:
+                for e in _daybook_load().get("entries") or []:
+                    oseat = str((e.get("origin") or {}).get("seat") or "")
+                    if mine:
+                        attr["daybook"][str(e["id"])] = mine
+                    else:
+                        attr["daybook"][str(e["id"])] = "local" if oseat == host else ""
+            except Exception:
+                pass
+            state["attribution"] = attr
+            state["gateLedgerAt"] = int(time.time())
+            _sync_state_save(state)
+        for fam in ("chats", "cases", "docs", "daybook"):
+            if not isinstance(attr.get(fam), dict):
+                attr[fam] = {}
+        if not mine:
+            return None
+        foreign_named = any(
+            isinstance(v, str) and v and v != "local" and v.lower() != mine.lower()
+            for fam in attr.values() if isinstance(fam, dict)
+            for v in fam.values())
+        if state.get("purgeJudgedFor") == mine and not foreign_named:
+            return None
+        first_arrival = _sync_first_mesh_arrival()
+        host = socket.gethostname()[:80]
+
+        def verdict(fam, key):
+            # "purge" / "keep" / None (unattributed — the
+            # caller decides on local proof).
+            if key not in attr.get(fam, {}):
+                return "keep"
+            v = attr[fam][key]
+            if v == "local":
+                return "keep"
+            if v:
+                return "keep" if str(v).lower() == mine.lower() else "purge"
+            return None
+
+        purged = {"chats": [], "cases": [], "docs": [], "daybook": []}
+        main_reset = False
+        main_held = False
+        main_rec = None
+        for c in chats_all():
+            if str(c["id"]) == "1":
+                main_rec = c
+        for c in chats_all():
+            cid = str(c["id"])
+            j = verdict("chats", cid)
+            if j is None:
+                j = "keep" if _purge_predates(_chat_path(cid), first_arrival) else "purge"
+            if j != "purge":
+                continue
+            if cid == "1":
+                # The main thread is never deleted. A main
+                # wholly adopted from a foreign set is reset
+                # under a fresh clear epoch; a locally-born
+                # main with foreign lines merged in cannot be
+                # unmerged honestly, so it is HELD and named.
+                if _purge_predates(_chat_path("1"), first_arrival):
+                    main_held = True
+                else:
+                    now = time.time()
+                    chat_write({"id": "1",
+                                "title": (main_rec or {}).get("title") or "Main session",
+                                "messages": [],
+                                "createdAt": (main_rec or {}).get("createdAt") or now,
+                                "updatedAt": now,
+                                "clearedAt": now,
+                                "clearedBy": _chat_seat_name()})
+                    main_reset = True
+                continue
+            if chat_delete(cid):
+                purged["chats"].append(cid)
+        croot = os.path.join(VAULT_DIR, "cases")
+        if os.path.isdir(croot):
+            for slug in sorted(os.listdir(croot)):
+                d = os.path.join(croot, slug)
+                if not os.path.isdir(d):
+                    continue
+                j = verdict("cases", slug)
+                if j is None:
+                    j = "keep" if _purge_predates(d, first_arrival) else "purge"
+                if j != "purge":
+                    continue
+                case_delete(slug)
+                if not os.path.isdir(d):
+                    purged["cases"].append(slug)
+                    legacy = os.path.join(croot, slug + ".md")
+                    try:
+                        if os.path.isfile(legacy):
+                            os.remove(legacy)
+                    except Exception:
+                        pass
+        for name, _label in _SYNC_DOCS:
+            j = verdict("docs", name)
+            if j is None:
+                j = "keep" if _purge_predates(_sync_doc_path(name), first_arrival) else "purge"
+            if j != "purge":
+                continue
+            try:
+                if os.path.isfile(_sync_doc_path(name)):
+                    os.remove(_sync_doc_path(name))
+                    purged["docs"].append(name)
+            except Exception:
+                pass
+        try:
+            for e in list(_daybook_load().get("entries") or []):
+                eid = str(e["id"])
+                j = verdict("daybook", eid)
+                if j is None:
+                    oseat = str((e.get("origin") or {}).get("seat") or "")
+                    j = "keep" if oseat == host else "purge"
+                if j != "purge":
+                    continue
+                gone, _err = daybook_delete_entry(eid)
+                if gone is not None:
+                    purged["daybook"].append(eid)
+        except Exception:
+            pass
+        for fam, keys in purged.items():
+            for k in keys:
+                attr.get(fam, {}).pop(k, None)
+        if main_reset:
+            attr.get("chats", {}).pop("1", None)
+        parts = []
+        if purged["chats"]:
+            parts.append(str(len(purged["chats"])) + " chat" + ("s" if len(purged["chats"]) != 1 else ""))
+        if purged["cases"]:
+            parts.append(str(len(purged["cases"])) + " case file" + ("s" if len(purged["cases"]) != 1 else ""))
+        if purged["docs"]:
+            parts.append(str(len(purged["docs"])) + " synced note" + ("s" if len(purged["docs"]) != 1 else ""))
+        if purged["daybook"]:
+            parts.append(str(len(purged["daybook"])) + " day book entr" + ("ies" if len(purged["daybook"]) != 1 else "y"))
+        if main_reset:
+            parts.append("the main thread, which had been adopted whole from the foreign set")
+        receipt = {"at": int(time.time()), "account": mine,
+                   "chats": len(purged["chats"]), "cases": len(purged["cases"]),
+                   "docs": len(purged["docs"]), "daybook": len(purged["daybook"]),
+                   "mainReset": main_reset, "mainHeld": main_held,
+                   "fact": ("Sync's account gate removed material that could not be "
+                            "attributed to your account: " + ", ".join(parts) + ".")
+                   if parts else ""}
+        state = _sync_state_load()
+        state["attribution"] = attr
+        state["purgeJudgedFor"] = mine
+        if parts or main_held:
+            state["lastPurge"] = receipt
+        _sync_state_save(state)
+        return receipt
+    except Exception:
+        return None
+
+
 def _sync_mesh_round(cfg, open_chat_id):
     # A finished round result (route named for the peer) when a
     # Mesh exchange completes, else None. Runs under sync_round's
@@ -26522,6 +27063,10 @@ def _sync_mesh_round(cfg, open_chat_id):
     local_ids = set(str(c["id"]) for c in chats_payload()["chats"])
     for peer in peers:
         if mesh_probe_peer(peer) is None:
+            continue
+        refusal = _sync_mesh_peer_gate(peer)
+        if refusal:
+            _sync_mesh_refusal_note(refusal)
             continue
         payload = _sync_mesh_ask(peer, "/mesh/sync/exchange",
                                  {"files": files, "manifest": manifest})
@@ -26561,18 +27106,23 @@ def _sync_mesh_round(cfg, open_chat_id):
 
 def _mesh_sync_foreign_account(payload):
     # The account anchor on the Mesh road (v0.3.0e Build 1,
-    # #200): a set whose manifest names a different GitHub
-    # account than this machine's sign-in is not applied — the
-    # peer is skipped and the round falls through, exactly as
-    # the repo door refuses such a set by name.
+    # #200; inverted v0.6.4e, #323): a set is applied only when
+    # it is ATTRIBUTABLE to this machine's own account — its
+    # manifest names an account, this machine knows its own,
+    # and the two are equal. Anything else is foreign for this
+    # door's purpose: a different account, or a set (or a seat)
+    # that cannot be named at all. The handshake is the road's
+    # gate; this is the same law read off the set itself, kept
+    # as defense in depth against a peer that states one
+    # account at the hello and ships another's set.
     manifest = payload.get("manifest") if isinstance(payload, dict) else None
     if not isinstance(manifest, dict):
-        return False
+        return True
     acct = str(manifest.get("account") or "")
-    if not acct:
-        return False
     mine = str((github_auth() or {}).get("login") or "")
-    return bool(mine and acct.lower() != mine.lower())
+    if not acct or not mine:
+        return True
+    return acct.lower() != mine.lower()
 
 
 def _sync_mesh_pull(cfg):
@@ -26580,6 +27130,10 @@ def _sync_mesh_pull(cfg):
     # apply a peer's set, push nothing, mirroring the repo pull.
     for peer in _sync_mesh_peers():
         if mesh_probe_peer(peer) is None:
+            continue
+        refusal = _sync_mesh_peer_gate(peer)
+        if refusal:
+            _sync_mesh_refusal_note(refusal)
             continue
         payload = _sync_mesh_ask(peer, "/mesh/sync/pull", {})
         if payload is None:
@@ -26873,8 +27427,11 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
     _sync_progress_set("fetch", trigger, round_id)
     try:
         # Build 6 (#176 phase 2): a lit Mesh road carries the
-        # round before the repo is asked — the exchange needs no
-        # GitHub sign-in at all. Anything less than a completed
+        # round before the repo is asked. v0.6.4e (#323): the
+        # Mesh road is account-gated — the exchange runs only
+        # with a peer the handshake proved a seat of this
+        # account, which needs the sign-in the old comment here
+        # said it did not. Anything less than a completed
         # exchange falls through to the repo round below, which
         # keeps its own sign-in gate and wording.
         mesh_result = None
@@ -27109,6 +27666,10 @@ def _sync_send_mesh(cfg, files, manifest):
         wire[path] = base64.b64encode(blob).decode("ascii")
     for peer in peers:
         if mesh_probe_peer(peer) is None:
+            continue
+        refusal = _sync_mesh_peer_gate(peer)
+        if refusal:
+            _sync_mesh_refusal_note(refusal)
             continue
         payload = _sync_mesh_ask(peer, "/mesh/sync/exchange",
                                  {"files": wire, "manifest": manifest})
@@ -27404,6 +27965,10 @@ def sync_state_payload():
         # v0.6.2e (#303): the override setting, so every sync
         # surface renders the button's behavior from the bridge.
         "choiceOnPress": sync_choice_enabled(),
+        # v0.6.4e (#323): the last Mesh-road account refusal,
+        # and the foreign-data purge's standing record.
+        "meshRefusal": (state.get("lastReceipt") or {}).get("meshRefusal") or "",
+        "lastPurge": state.get("lastPurge") or None,
     }
 
 
@@ -28148,6 +28713,98 @@ def _dossier_save(store):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(store, f, indent=1)
     os.replace(tmp, DOSSIER_PATH)
+    # v0.6.4e (#320): the Dossiers shelf stays true on every
+    # save — formed documents re-form, and a dossier that left
+    # the store (a merge's dropped half, a deletion) loses its
+    # shelf file in the same act. Gone means gone.
+    try:
+        dossier_form_all()
+    except Exception:
+        pass
+
+
+def dossier_formed_rel(d, store):
+    # A dossier's one file on the Dossiers shelf, named simply
+    # for the dossier. Collisions resolve as the cases' do:
+    # first by sorted id keeps the plain name.
+    safe = _vault_safe_name(d.get("title"), d["id"])
+    for other in sorted(store.get("dossiers") or [], key=lambda x: x["id"]):
+        if other["id"] >= d["id"]:
+            break
+        if _vault_safe_name(other.get("title"), other["id"]) == safe:
+            return DOSSIERS_FOLDER + "/" + safe + " (" + str(d["id"])[-6:] + ").md"
+    return DOSSIERS_FOLDER + "/" + safe + ".md"
+
+
+def dossier_form_document(d):
+    # The dossier's Vault document: its head facts and the
+    # document the store derives from its elements — the same
+    # text the dossier view shows, standing on the shelf.
+    lines = ["# " + str(d.get("title") or "Untitled dossier"), ""]
+    facts = []
+    if d.get("created"):
+        facts.append("- **Opened:** " + str(d["created"]))
+    if d.get("updated"):
+        facts.append("- **Updated:** " + str(d["updated"]))
+    keys = d.get("keys") or []
+    if keys:
+        facts.append("- **Keys:** " + ", ".join(
+            str(k.get("type") or "") + ": " + str(k.get("value") or "")
+            for k in keys if isinstance(k, dict)))
+    if d.get("caseSlug"):
+        facts.append("- **Filed into case:** " + str(d["caseSlug"]))
+    facts.append("- **Elements:** " + str(len(d.get("elements") or [])))
+    lines += facts + [""]
+    body = ""
+    if d.get("elements"):
+        try:
+            body = _dossier_replay_markdown(d["elements"])
+        except Exception:
+            body = ""
+    if not body:
+        body = str(d.get("markdown") or "")
+    lines += [body.strip() if body.strip() else "No material gathered yet.", ""]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def dossier_form_all():
+    # The Dossiers shelf sweep: form every dossier in the
+    # store (writing only when the text actually changed), and
+    # prune shelf files no living dossier claims. Run at
+    # bridge start and after every store save.
+    formed = []
+    try:
+        store = _dossier_store()
+        keep = set()
+        for d in store.get("dossiers") or []:
+            rel = dossier_formed_rel(d, store)
+            keep.add(rel)
+            text = dossier_form_document(d)
+            full = vault_fs_path(rel)
+            cur = None
+            try:
+                if os.path.isfile(full):
+                    with open(full, encoding="utf-8") as f:
+                        cur = f.read()
+            except Exception:
+                cur = None
+            if cur != text:
+                try:
+                    vault_write(rel, text)
+                except Exception:
+                    continue
+            formed.append(rel)
+        spot = os.path.join(VAULT_DIR, DOSSIERS_FOLDER)
+        if os.path.isdir(spot):
+            for name in sorted(os.listdir(spot)):
+                if not name.lower().endswith(".md"):
+                    continue
+                rel = DOSSIERS_FOLDER + "/" + name
+                if rel not in keep:
+                    vault_delete_note(rel)
+    except Exception:
+        pass
+    return formed
 
 
 def _dossier_now():
@@ -31971,6 +32628,14 @@ def case_update(slug, fields):
     with open(os.path.join(d, "case.md"), "w", encoding="utf-8") as f:
         f.write(_fm_render(pairs, body))
     sync_note_write("case")
+    # v0.6.4e (#320): a title or type edit moves the formed
+    # document on the shelf — re-form at the new rel and prune
+    # the old in the same act, so the shelf never holds the
+    # case twice under two names.
+    try:
+        case_ensure_formed(slug)
+    except Exception:
+        pass
     return case_detail_payload(slug), None
 
 
@@ -32909,8 +33574,104 @@ def case_clean_existing(slug):
 # are migrated by the same act — nothing dropped, entries in
 # the order they were filed.
 
+# -- The Vault shelf (v0.6.4e, #320) ------------------------------
+# Alex's ruling (2026-11-19): "One folder per case type. The
+# whole case as it sits is contained in one file, not branched
+# out into separate files. OSINT Dossiers Folder. The names on
+# all of them should simply be the case names. If they are
+# deleted from the case manager they get deleted from the
+# vault. Same with the Dossier's section itself. If something
+# is gone. Its gone."
+#
+# So: a case's formed document — the whole case in one file —
+# lives at <Type Folder>/<Case Name>.md, formed from the
+# working folder (cases/<slug>/), which remains the manager's
+# archive and no longer surfaces in the Vault listing at all.
+# Dossiers form the same way onto their own shelf. Formation
+# is derived, so migration is re-formation: the first sweep
+# under this build writes every case and dossier to its shelf
+# and prunes the old shapes (the legacy cases/<slug>.md
+# documents included) in the same pass.
+CASE_TYPE_FOLDERS = {"incident": "Incident",
+                     "investigation": "Investigation",
+                     "research": "Research",
+                     "hunt": "Hunt",
+                     "locate": "Locate",
+                     "osint": "OSINT"}
+DOSSIERS_FOLDER = "Dossiers"
+_CASE_FORM_DEPTH = {"n": 0}
+
+
+def _vault_safe_name(title, fallback):
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", str(title or ""))
+    s = " ".join(s.split()).strip(" .")
+    if len(s) > 120:
+        s = s[:120].rstrip()
+    return s or str(fallback)
+
+
+def _case_all_slugs():
+    root = os.path.join(VAULT_DIR, "cases")
+    out = []
+    if os.path.isdir(root):
+        for slug in sorted(os.listdir(root)):
+            if os.path.isdir(os.path.join(root, slug)):
+                out.append(slug)
+    return out
+
+
+def _case_shelf(slug):
+    # (folder, safe name) for a case, or None when the case is
+    # not on this desk.
+    meta = _case_manifest(slug)
+    if meta is None:
+        return None
+    head = _case_head(slug, meta)
+    folder = CASE_TYPE_FOLDERS.get(head["type"], "Investigation")
+    return folder, _vault_safe_name(head["name"], slug)
+
+
 def case_formed_rel(slug):
-    return "cases/" + slug + ".md"
+    # The case's one file on its type shelf. Name collisions
+    # (two cases, one type, one name) resolve deterministically:
+    # the first slug in sorted order keeps the plain name; a
+    # later one carries its slug as a suffix, so every case
+    # keeps exactly one file and no file is ever shared.
+    shelf = _case_shelf(slug)
+    if shelf is None:
+        return "cases/" + slug + ".md"
+    folder, safe = shelf
+    for other in _case_all_slugs():
+        if other >= slug:
+            break
+        oshelf = _case_shelf(other)
+        if oshelf is not None and oshelf == (folder, safe):
+            return folder + "/" + safe + " (" + slug + ").md"
+    return folder + "/" + safe + ".md"
+
+
+def _case_formed_prune():
+    # Remove formed documents no living case claims: the
+    # legacy cases/<slug>.md shape, and shelf files orphaned
+    # by a rename, a retype, or a deletion. A file is removed
+    # only when NO case's current rel names it — the prune can
+    # never eat a living case's document.
+    try:
+        keep = {case_formed_rel(s) for s in _case_all_slugs()}
+        spots = [os.path.join(VAULT_DIR, "cases")]
+        for folder in set(CASE_TYPE_FOLDERS.values()):
+            spots.append(os.path.join(VAULT_DIR, folder))
+        for spot in spots:
+            if not os.path.isdir(spot):
+                continue
+            for name in sorted(os.listdir(spot)):
+                if not name.lower().endswith(".md"):
+                    continue
+                rel = os.path.relpath(os.path.join(spot, name), VAULT_DIR).replace(os.sep, "/")
+                if rel not in keep:
+                    vault_delete_note(rel)
+    except Exception:
+        pass
 
 
 def _case_folder_newest(slug):
@@ -32957,7 +33718,8 @@ def case_form_document(slug):
     lines += ["> The case's full file in the Vault — formed by the bridge from "
               "the case record and its entries, in the order they were filed. "
               "It holds case substance and the filings' custody lines only; "
-              "the case manager's working folder stands beside it.", ""]
+              "the working folder it was formed from is the case manager's "
+              "own archive, and this file is the case as it reads on the shelf.", ""]
     findings = []
     fdir = os.path.join(d, "findings") if d else ""
     if fdir and os.path.isdir(fdir):
@@ -32965,22 +33727,39 @@ def case_form_document(slug):
             if name.lower().endswith(".md"):
                 findings.append(name)
     by_file = {f["file"]: f for f in _case_findings(slug)}
-    lines += ["## Findings", ""]
-    if not findings:
-        lines += ["No findings on file.", ""]
-    for name in findings:
+    # v0.6.4e (#320): filings that declared the lead
+    # destination (#291) stand in their own section — the
+    # receipt that named the section names a real one.
+    def _finding_block(name):
         f = by_file.get(name)
         if f is None:
-            continue
+            return None
         prov = (f["severity"].upper()
                 + (" · INTERNAL" if f["internal"] else "")
                 + " · " + ("FILED BY NAVI" if f["author"] == "navi" else "OPERATOR")
                 + " · " + ("LEAD — UNVERIFIED" if f["state"] == "lead" else "CONFIRMED")
                 + ((" · " + f["filed"]) if f["filed"] else "")
                 + " · findings/" + name)
-        lines += ["### " + f["title"], "", "*" + prov + "*", ""]
         body = case_strip_machinery(f["body"])
-        lines += [body if body else "_(no detail recorded)_", ""]
+        return ["### " + f["title"], "", "*" + prov + "*", "",
+                body if body else "_(no detail recorded)_", ""]
+    lead_names = [n for n in findings
+                  if (by_file.get(n) or {}).get("part") == "lead"]
+    find_names = [n for n in findings
+                  if (by_file.get(n) or {}).get("part") != "lead"]
+    if lead_names:
+        lines += ["## Leads", ""]
+        for name in lead_names:
+            block = _finding_block(name)
+            if block:
+                lines += block
+    lines += ["## Findings", ""]
+    if not find_names:
+        lines += ["No findings on file.", ""]
+    for name in find_names:
+        block = _finding_block(name)
+        if block:
+            lines += block
     for reg, title in (("entities", "Entities"), ("observables", "Observables"),
                        ("tasks", "Tasks")):
         entries = _case_register(slug, reg)
@@ -33018,7 +33797,11 @@ def case_form_document(slug):
         lines += ["### " + ev["name"] + " (" + str(ev["size"]) + " bytes)", ""]
         ext = os.path.splitext(ev["name"])[1].lower()
         if ext in CASE_IMAGE_MIMES:
-            lines += ["![" + ev["name"] + "](" + slug + "/evidence/" + ev["name"] + ")", ""]
+            # v0.6.4e (#320): the formed file sits on its type
+            # shelf now, one level down from the Vault root —
+            # the evidence reference climbs out and into the
+            # working folder, where the bytes live.
+            lines += ["![" + ev["name"] + "](../cases/" + slug + "/evidence/" + ev["name"] + ")", ""]
         if ev["sha256"]:
             lines += ["- **SHA-256:** `" + ev["sha256"] + "`"]
         if ev["acquired"]:
@@ -33035,6 +33818,22 @@ def case_form_document(slug):
     for e in timeline:
         lines += ["### " + e["date"] + " — " + e["title"], "",
                   case_strip_machinery(e["body"]) or "", ""]
+    # v0.6.4e (#320): the case's report, when one has been
+    # drawn, stands as the document's closing section — the
+    # report's own title line yields to the section's.
+    if d:
+        rpath = os.path.join(d, "report.md")
+        if os.path.isfile(rpath):
+            try:
+                with open(rpath, encoding="utf-8") as f:
+                    rtext = f.read().strip()
+            except Exception:
+                rtext = ""
+            if rtext:
+                rlines = rtext.split("\n")
+                if rlines and rlines[0].startswith("# "):
+                    rlines = rlines[1:]
+                lines += ["## Report", ""] + [ln for ln in rlines] + [""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -33066,6 +33865,27 @@ def case_ensure_formed(slug):
         vault_write(rel, text)
     except Exception:
         return None
+    # v0.6.4e (#320): a rename or retype moves the document —
+    # the old shelf file is pruned in the same pass, so the
+    # shelf never holds a case twice.
+    _case_formed_prune()
+    # v0.6.4e (#320): a namesake on the same shelf can displace
+    # this case's file (the plain name passes to the first
+    # slug in sorted order) — re-form any same-shelf sibling in
+    # the same pass, so a collision never leaves a case with
+    # no file or a file holding the wrong case.
+    if _CASE_FORM_DEPTH["n"] == 0:
+        _CASE_FORM_DEPTH["n"] += 1
+        try:
+            shelf = _case_shelf(slug)
+            if shelf is not None:
+                for other in _case_all_slugs():
+                    if other != slug and _case_shelf(other) == shelf:
+                        case_ensure_formed(other)
+        except Exception:
+            pass
+        finally:
+            _CASE_FORM_DEPTH["n"] -= 1
     return rel
 
 
@@ -33074,7 +33894,11 @@ def case_form_all():
     # its formed Vault document (and its purity cleaning) —
     # run at bridge start, so existing cases are migrated
     # before anything asks. Best-effort per case, like every
-    # sweep in this file.
+    # sweep in this file. v0.6.4e (#320): the sweep is also
+    # the migration to the type shelves — every case re-forms
+    # at its shelf rel, and the prune retires the legacy shape
+    # (cases/<slug>.md) and any orphaned shelf file in the
+    # same pass.
     root = os.path.join(VAULT_DIR, "cases")
     formed = []
     if os.path.isdir(root):
@@ -33087,6 +33911,7 @@ def case_form_all():
                 rel = None
             if rel:
                 formed.append(rel)
+    _case_formed_prune()
     return formed
 
 
@@ -33797,6 +34622,13 @@ def case_delete(slug):
     d = _case_dir(slug)
     if not d or not os.path.isdir(d):
         return None, "No such case."
+    # v0.6.4e (#320): the formed documents' rels are captured
+    # BEFORE the folder goes — after it, the manifest that
+    # names them is gone. Deletion converges: the shelf file
+    # (and any legacy-shape file) is removed below, which is
+    # also #268's resolution — a deleted case leaves no formed
+    # document standing as a reference.
+    _formed_rels = [case_formed_rel(slug), "cases/" + slug + ".md"]
     detail = case_detail_payload(slug)
     counts = {
         "findings": len(detail["findings"]) if detail else 0,
@@ -33811,6 +34643,11 @@ def case_delete(slug):
         shutil.rmtree(d)
     except Exception as e:
         return None, "The case folder could not be removed: " + str(e)
+    for _rel in _formed_rels:
+        try:
+            vault_delete_note(_rel)
+        except Exception:
+            pass
     # Build 3 (#177): the case's deletion is tombstoned (its tied
     # chat's was recorded by chat_delete above), so convergence
     # with another machine cannot resurrect the case — while the
@@ -37604,6 +38441,27 @@ def _notif_wanted_sync():
     }]
 
 
+def _notif_wanted_purge():
+    # Producer (v0.6.4e, #323): the account gate's purge is an
+    # act done in the operator's name on their own machine —
+    # it is announced like every other act, in Navi's voice
+    # (kind "sync" rides the #319 sync voice), from the
+    # standing purge record. The record retires when a newer
+    # purge supersedes it; no purge, no notice.
+    state = _sync_state_load()
+    p = state.get("lastPurge") or {}
+    if not p.get("at") or not p.get("fact"):
+        return []
+    return [{
+        "id": "purge:" + str(p.get("at") or ""),
+        "kind": "sync",
+        "title": "Sync removed another account's material",
+        "body": str(p.get("fact") or ""),
+        "target": {"view": "Chat"},
+        "count": 1,
+    }]
+
+
 def _notif_wanted_fedichat(cfg):
     # Producer (f) (v0.5.4e, #267): FediChat arrivals. The
     # bridge journals one entry per arrival round at merge
@@ -37893,6 +38751,7 @@ def notifications_reconcile(cfg=None):
             ("case-review", lambda: _notif_wanted_case_reviews()),
             ("update", lambda: _notif_wanted_update()),
             ("sync", lambda: _notif_wanted_sync()),
+            ("sync-purge", lambda: _notif_wanted_purge()),
             ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
             ("pulse", lambda: _notif_wanted_pulse(cfg)),
             ("reminder", lambda: _notif_wanted_day(cfg)),
@@ -43434,6 +44293,27 @@ if __name__ == "__main__":
         if _formed:
             print("Case Files: formed " + str(len(_formed))
                   + " full case file(s) in the Vault.", flush=True)
+    except Exception:
+        pass
+    # Dossiers shelf (v0.6.4e, #320): every dossier stands as
+    # one file under Dossiers/ before the doors open, and a
+    # dossier no longer in the store leaves no file behind.
+    try:
+        _dformed = dossier_form_all()
+        if _dformed:
+            print("Dossiers: formed " + str(len(_dformed))
+                  + " dossier file(s) on the Vault shelf.", flush=True)
+    except Exception:
+        pass
+    # Sync account gate (v0.6.4e, #323): the first gated run
+    # ledgers the standing corpus's attribution and, when this
+    # seat is signed in, judges it — material that cannot be
+    # attributed to this seat's account is purged before the
+    # doors open, with its receipt standing in the sync state.
+    try:
+        _purge = sync_account_gate_sweep()
+        if _purge and _purge.get("fact"):
+            print("Sync: " + _purge["fact"], flush=True)
     except Exception:
         pass
     # Navi Mesh (Ring 1; dedicated door since build .86): if Mesh
