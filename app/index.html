@@ -1397,6 +1397,19 @@
   .brief-greet { font-size:20px; font-weight:700; line-height:1.2; }
   .brief-line { font-size:13px; color:var(--dim); margin-top:6px; line-height:1.5; }
   .brief-lead { font-size:15px; color:var(--text); }
+  /* Brief v2 (v0.6.2e, #304): the list drawn from the brief's
+     markdown — sections as headers, items as rows, her quips
+     as rows in her name under their items. */
+  .brief-list { margin-top:6px; }
+  .brief-sec { font-size:11px; letter-spacing:.14em; color:var(--dim); margin:10px 0 4px; }
+  .brief-row { display:flex; gap:8px; align-items:baseline; padding:3px 0; font-size:13.5px; line-height:1.45; }
+  .brief-row .b-time { font-family:var(--mono); font-size:11.5px; color:var(--cy); white-space:nowrap; }
+  .brief-row .b-state { font-size:10.5px; letter-spacing:.06em; color:var(--am); white-space:nowrap; }
+  .brief-row .b-count { font-size:10.5px; color:var(--dim); white-space:nowrap; }
+  .brief-row.gap { color:var(--am); }
+  .brief-quip { display:flex; gap:8px; align-items:baseline; padding:2px 0 4px 18px; font-size:13px; font-style:italic; color:var(--text); }
+  .brief-quip .b-who { font-style:normal; font-size:10.5px; letter-spacing:.1em; color:var(--cy); white-space:nowrap; }
+  .brief-doc { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:4px; background:var(--panel2); }
   .sit-head { margin-bottom:8px; }
   .sit-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
   .sit-tile { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
@@ -2199,8 +2212,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-18.33";
-var SHIPPED_BUILD_SEQ = 33;
+var BRIDGE_BUILD = "2026-11-18.34";
+var SHIPPED_BUILD_SEQ = 34;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -3641,6 +3654,63 @@ function homeSurfaceHtml() {
   return h;
 }
 
+// --- Brief v2 (v0.6.2e, #304) -----------------------------------
+// The brief is a markdown document; no surface presents the
+// markdown. This parser is the page's half of the one grammar
+// the bridge composes in: sections, item bullets with their
+// leading time and trailing [state · pushed ×N] marks, GAP
+// bullets, and "Navi: " bullets folding into the row above.
+function briefParseMd(md) {
+  var doc = { day: "", sections: [] };
+  var cur = null;
+  String(md || "").split("\n").forEach(function (raw) {
+    var line = raw.replace(/\s+$/, "");
+    if (line.indexOf("# ") === 0) { doc.day = line.slice(2).replace("Day brief — ", "").trim(); return; }
+    if (line.indexOf("## ") === 0) { cur = { title: line.slice(3).trim(), rows: [] }; doc.sections.push(cur); return; }
+    if (line.indexOf("- ") !== 0 || !cur) return;
+    var body = line.slice(2).trim();
+    if (body.indexOf("Navi: ") === 0) {
+      if (cur.rows.length) cur.rows[cur.rows.length - 1].quip = body.slice(6).trim();
+      return;
+    }
+    var row = { text: body, time: "", state: "", count: 0, quip: "", gap: false };
+    if (body.indexOf("GAP — ") === 0) { row.gap = true; row.text = body.slice(6).trim(); cur.rows.push(row); return; }
+    var tm = /^(\d{1,2}:\d{2})\s—\s/.exec(body);
+    if (tm) { row.time = tm[1]; body = body.slice(tm[0].length); row.text = body; }
+    var mk = /\s\[([^\]]+)\]\s*$/.exec(body);
+    if (mk) {
+      row.text = body.slice(0, mk.index).replace(/\s+$/, "");
+      mk[1].split(" · ").forEach(function (part) {
+        part = part.trim();
+        if (part.indexOf("pushed ×") === 0) { var n = parseInt(part.slice(8), 10); if (!isNaN(n)) row.count = n; }
+        else if (part) row.state = part;
+      });
+    }
+    cur.rows.push(row);
+  });
+  return doc;
+}
+function briefListHtml(md, inChat) {
+  var doc = briefParseMd(md);
+  if (!doc.sections.length) return "";
+  var h = "<div class='brief-list'>";
+  doc.sections.forEach(function (sec) {
+    h += "<div class='brief-sec'>" + esc(sec.title.toUpperCase()) + "</div>";
+    sec.rows.forEach(function (r) {
+      h += "<div class='brief-row" + (r.gap ? " gap" : "") + "'>" +
+        (r.time ? "<span class='b-time'>" + esc(r.time) + "</span>" : "") +
+        "<span>" + esc(r.text) + "</span>" +
+        (r.state ? "<span class='b-state'>" + esc(r.state.toUpperCase()) + "</span>" : "") +
+        (r.count > 1 && r.state.indexOf("pushed") < 0 ? "<span class='b-count'>PUSHED ×" + r.count + "</span>" : "") + "</div>";
+      if (r.quip) h += "<div class='brief-quip'><span class='b-who'>NAVI</span><span>" + esc(r.quip) + "</span></div>";
+    });
+  });
+  return h + "</div>";
+}
+function isBriefDoc(text) {
+  return typeof text === "string" && text.indexOf("# Day brief — ") === 0;
+}
+
 // --- Her working day (v0.6.0e, #294/#295/#296) -------------------
 // Home's third resident: the day book the bridge holds — the
 // brief as a stored record, the standing reminders (fired
@@ -3669,7 +3739,12 @@ function homeDayHtml() {
   if (!dayState) return h + "<div class='brief-line brief-lead' style='margin-top:6px'>Gathering her day\u2026</div></div>";
   var d = dayState;
   var brief = d.brief;
-  if (brief && brief.lines && brief.lines.length) {
+  if (brief && (brief.md || brief.text)) {
+    // v0.6.2e (#304): the card draws the list from the stored
+    // document — never the markdown itself as the face.
+    h += "<div style='margin-top:8px'><b>Today's brief</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(brief.day || "") + "</span></div>";
+    h += briefListHtml(brief.md || brief.text, false);
+  } else if (brief && brief.lines && brief.lines.length) {
     h += "<div style='margin-top:8px'><b>Today's brief</b> <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(brief.day || "") + "</span></div>";
     brief.lines.forEach(function (line) { h += "<div class='brief-line'>" + esc(line) + "</div>"; });
   } else {
@@ -3681,7 +3756,7 @@ function homeDayHtml() {
   if (fired.length || standing.length) {
     h += "<div style='margin-top:10px'><b>Reminders</b></div>";
     fired.forEach(function (r) {
-      h += "<div class='eyes-row'><div class='eyes-main'><b>" + esc(r.text || "") + "</b><div class='eyes-body'>Due " + esc(dayWhen(r.dueAt)) + " \u2014 it fired and waits for your word.</div></div><button type='button' class='ghost' data-day-ack='" + esc(r.id) + "' style='min-height:44px'>Acknowledge</button></div>";
+      h += "<div class='eyes-row'><div class='eyes-main'><b>" + esc(r.text || "") + "</b><div class='eyes-body'>Due " + esc(dayWhen(r.dueAt)) + " \u2014 it fired and waits for your word." + ((r.deferrals || 0) > 1 ? " Pushed \u00d7" + r.deferrals + "." : "") + "</div></div><button type='button' class='ghost' data-day-postpone='" + esc(r.id) + "' style='min-height:44px'>Push to tomorrow</button><button type='button' class='ghost' data-day-ack='" + esc(r.id) + "' style='min-height:44px'>Acknowledge</button></div>";
     });
     standing.forEach(function (r) {
       h += "<div class='brief-line'>" + esc(r.text || "") + " <span class='mono' style='font-size:11px;color:var(--dim)'>" + esc(dayWhen(r.dueAt)) + "</span></div>";
@@ -3700,6 +3775,7 @@ function homeDayHtml() {
 }
 function wireDay() {
   document.querySelectorAll("[data-day-ack]").forEach(function (b) { b.onclick = function () { dayAct({ action: "ack", id: b.getAttribute("data-day-ack") }); }; });
+  document.querySelectorAll("[data-day-postpone]").forEach(function (b) { b.onclick = function () { dayAct({ action: "postpone", id: b.getAttribute("data-day-postpone"), when: "tomorrow" }); }; });
   document.querySelectorAll("[data-day-revoke]").forEach(function (b) { b.onclick = function () { dayAct({ action: "revoke", id: b.getAttribute("data-day-revoke") }); }; });
   document.querySelectorAll("[data-day-brief]").forEach(function (b) { b.onclick = function () { dayAct({ action: "brief" }); }; });
   document.querySelectorAll("[data-day-capture]").forEach(function (b) { b.onclick = function () { var inp = document.getElementById("day-cap-text"); var t = inp ? inp.value : ""; if (t && t.trim()) dayAct({ action: "capture", text: t }); }; });
@@ -6695,11 +6771,15 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Capture &amp; recall</h4>" +
     "<p>Ask her to keep something — <i>remember that the lab renews in March</i> — and the save lands in the day book with its <b>provenance</b>: who decided it (your trigger, or her own call, named as such) and when. She can also save on her own judgment in a conversation; those saves are receipted the same way and named as hers. A correction <b>supersedes</b> the fact it corrects — the old wording is kept, marked superseded, never silently rewritten. <i>Undo that</i> takes the last capture back, and <i>recall the lab</i> reads the book back to you. Home's <b>Her working day</b> card has a plain capture line too — same book, same rules.</p></div>" +
     "<div class='doc-sec'><h4>Reminders (v0.6.0e, #295)</h4>" +
-    "<p><i>Remind me to call the dentist tomorrow at 9</i> — the reminder is bridge state, kept by a scheduler that lives in the bridge itself, so it survives restarts and fires whether or not any window is open. When it fires it lands on the <b>bell</b> and, with push on, on your <b>phone's lock screen</b> — the same words in both places. It then <b>stands fired</b> until you acknowledge it; the acknowledgement is itself synced, so clearing it on your phone clears it everywhere. If the bridge was down when a reminder came due, it fires on the next start — late, and named late.</p></div>" +
+    "<p><i>Remind me to call the dentist tomorrow at 9</i> — the reminder is bridge state, kept by a scheduler that lives in the bridge itself, so it survives restarts and fires whether or not any window is open. When it fires it lands on the <b>bell</b> and, with push on, on your <b>phone's lock screen</b> — the same words in both places. It then <b>stands fired</b> until you acknowledge it; the acknowledgement is itself synced, so clearing it on your phone clears it everywhere. If the bridge was down when a reminder came due, it fires on the next start — late, and named late.</p>" +
+    "<p><b>Pushing one off</b> (v0.6.2e, #304). <i>Snooze it to tomorrow</i>, <i>push it in 30 minutes</i> — or the <b>Push to tomorrow</b> button beside a fired reminder on Home's card. The push is an act recorded on the reminder's own record, and the reminder stands again for its new time. The record matters: the brief counts deferrals from it (see <i>The day brief</i> below).</p></div>" +
     "<div class='doc-sec'><h4>Standing orders</h4>" +
     "<p>A standing order is a small, durable instruction she executes on a trigger: <span class='mono'>standing order: every day at 08:00, report the wire count</span>. The vocabulary is deliberately bounded — an order can <b>remind</b>, <b>report</b> (her greeting's own sources), <b>file</b> into a case, or <b>check a Pulse watch</b>. It can never send, spend, elevate or run anything, and an order that asks for those is refused <b>by name</b> when you give it. Every execution is recorded on the order itself — when, what it did, how it ended — and read back from Home's card, where an order can be revoked. A file order names its case; if the case is not there, the execution says so and files nowhere.</p></div>" +
     "<div class='doc-sec'><h4>The day brief (v0.6.0e, #296)</h4>" +
-    "<p>Her greeting grows a day section: <b>what is on</b> (today's standing reminders and orders), <b>what changed</b> (what the book gained, what fired, what a watch flashed), and <b>what needs you</b> (anything fired and unacknowledged, anything that ran and failed). The brief is a <b>stored record</b> — composed at the day's first light and again whenever you ask (<i>brief me</i>, or the button on Home's card) — and a source that cannot be reached is <b>badged as a gap</b> in the brief, never smoothed over. There is no calendar connection in this cut: the day she briefs is the day the book knows.</p></div>" },
+    "<p>Her greeting grows a day section: <b>what is on</b> (today's standing reminders and orders), <b>what changed</b> (what the book gained, what fired, what a watch flashed), and <b>what needs you</b> (anything fired and unacknowledged, anything that ran and failed). The brief is a <b>stored record</b> — composed at the day's first light and again whenever you ask (<i>brief me</i>, or the button on Home's card) — and a source that cannot be reached is <b>badged as a gap</b> in the brief, never smoothed over. There is no calendar connection in this cut: the day she briefs is the day the book knows.</p></div>" +
+    "<div class='doc-sec'><h4>Brief v2 — the journal page (v0.6.2e, #304)</h4>" +
+    "<p>The brief is composed and stored as a <b>markdown document</b> — a dated title, its sections (<b>On / Changed / Needs you / Standing</b>), one bullet per item, the bullet journal's discipline — and recall returns the document whole. But no surface shows you markdown: Home's card and the chat's brief answer <b>draw a list from the document</b> — sections as headers, each item a row carrying its time and its state.</p>" +
+    "<p><b>She is in the rows.</b> An item pushed off more than once — postponed, or carried unacknowledged across days — shows its count on its row, and under it stands a line in <b>Navi's</b> name: a quip, keyed to the count. The second push gets a raised eyebrow; the third gets pointed; the fourth gets her full attention. The lines are deterministic — the same count always draws the same line, and she does not quip again until the count moves — and the standing orders' items get the professional register. Push something off in chat and the quip may land in that reply too.</p></div>" },
   { id: "voice", title: "Voice & calls", related: ["chat-cli", "settings"], html:
     "<div class='doc-sec'><h4>Her voice — calling Navi</h4>" +
   "<p>Navi can be <b>called</b>, not just typed at — and the whole loop is local, running on CPU on this machine, because a voice that phones home isn't hers. A call runs in four steps:</p><ol>" +
@@ -6971,7 +7051,8 @@ var DOC_PAGES = [
   "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union <b>by fact</b> — each fact keeps the origin it was born with (by hand, from chat at your ask, her own call, a correction), and a correction replaces its fact's text rather than piling up beside it. <b>Forgetting is a tombstone too</b> (v0.5.1e, #256): forget an entry on any seat and the forget itself syncs — the entry leaves every seat and a stale copy cannot resurrect it. Your name, picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p>" +
   "<p><b>The operator class converges</b> (v0.5.1e, #256). What she knows about <i>you</i> — your name, your picture, your badge, and her memory entries about you — is one class of its own, and since this build it actually crosses. The bridge's seat record is the truth: a window's list is a cache of it, written through on every change and replaced by the converged answer, so a fact added at the server is simply <i>there</i> at the laptop — no seat keeps a private list the sync merges underneath. The status pane's <b>MEMORY</b> line reports the class's true state — the entry count and the sync clock, in the sync bar's own terms — and the <i>(local)</i> it used to confess to is retired. On the backup road the same discipline names its keys: an import applies a deliberate list — your name, threat level, sudo mode, installed commands, updater channel — and nothing else in the config crosses; a machine keeps its own hardware profile, its Mesh identity, and its install facts, always.</p>" +
   "<p><b>Fluid sync — push-on-write</b> (v0.5.1e, #257). The occasions above still fire, but a change no longer waits for one: a <b>write</b> on any seat — a chat message, a memory entry added or forgotten, a case change, a deletion — asks for a round of its own, promptly, and the receiving seat converges <b>inside ten seconds</b> while both seats are up and in Mesh contact. The Mesh is the primary road; the repo push is the writing seat's fallback act, and a seat off both roads converges at its next occasion, as before. The standard is the account's, not one operator's: it holds for anyone with an account, on their own seats. Every landing receipt on the sync bar names the road the round took and the time it measured — <i>landed in 3s via Mesh</i> — so the standard is checkable at a glance, and a push that cannot land names its stall on the bar rather than silently aging. No daemon was added: the push rides the bridge's own resident life, and a burst of writes coalesces into one round.</p>" +
-  "<p><b>Substance, not shells</b> (v0.5.13e, #262). A round used to converge whatever arrived and call it synced — and once, a case chat's <i>existence</i> crossed to the phone while its transcript stayed behind, and a theme never crossed at all. Now the set's manifest <b>declares the substance</b>: every chat's message count and a digest of its messages, and a digest of the seat (your settings and theme) and of the Pulse store. The receiving side <b>verifies arrivals against the declaration</b> — a chat whose count or digest falls short is named <b>incomplete</b> on the sync bar and in the record; a seat or Pulse payload whose bytes fail their digest is refused rather than merged over good local substance; and where this seat already holds more of a conversation, a short copy never replaces it. A shell is not a dead end: the next round's <b>full arrival heals it in place</b>, and the name clears. Sets from older builds declare nothing and are taken as they come, as before.</p></div>" +
+  "<p><b>Substance, not shells</b> (v0.5.13e, #262). A round used to converge whatever arrived and call it synced — and once, a case chat's <i>existence</i> crossed to the phone while its transcript stayed behind, and a theme never crossed at all. Now the set's manifest <b>declares the substance</b>: every chat's message count and a digest of its messages, and a digest of the seat (your settings and theme) and of the Pulse store. The receiving side <b>verifies arrivals against the declaration</b> — a chat whose count or digest falls short is named <b>incomplete</b> on the sync bar and in the record; a seat or Pulse payload whose bytes fail their digest is refused rather than merged over good local substance; and where this seat already holds more of a conversation, a short copy never replaces it. A shell is not a dead end: the next round's <b>full arrival heals it in place</b>, and the name clears. Sets from older builds declare nothing and are taken as they come, as before.</p>" +
+  "<p><b>The override — Send or Receive</b> (v0.6.2e, #303). Sometimes you do not want the cadence's timing; you want it <i>now</i>, in one direction. A setting — <b>Settings → GitHub &amp; Backup → The Sync button</b>, on by default — makes the <b>Sync</b> control offer a choice when pressed: <b>Send a sync</b> publishes this seat's set and pulls nothing down; <b>Receive a sync</b> pulls the converged set and publishes nothing. Each is the standing machinery standing alone by direction, over the same roads, and each lands with its own receipt naming what actually moved — files published, what came down — or saying plainly that there was nothing to move. Turn the setting off and a press runs the whole round at once, as it always did. The automatic rounds never consult the setting.</p></div>" +
     "<div class='doc-sec'><h4>One sign-in, and failures with names (Build 2, completed in Build 6)</h4>" +
   "<p><b>Who Apex speaks as.</b> Build 2 taught Apex to keep its GitHub identities apart — your sign-in for backup and import, a separate pasted token for the app's own reads — and Build 6 finished the thought by collapsing them to <b>one</b>: your GitHub account sign-in, and nothing else. There is no token to create, paste, or rotate; the Updater's checks, the NUR's catalog searches, downloads, sync's repo transport, backup and import all ride the one sign-in, which lives in <span class='mono'>config/github-auth.json</span> (readable only by you, never backed up, deleted by signing out). <b>Release Automation</b> still holds no credential in Apex at all, by design: releases are published from your signed-in browser session and the local git remote. And failures keep their names everywhere GitHub is read: <b>auth</b> (the credential itself is refused), <b>rate</b> (a bucket is spent — the sentence carries its reset), <b>abuse</b> (GitHub's secondary safeguard — the sentence carries the wait it asked for, and Apex stops rather than retrying). No surface shows a bare “HTTP 403”.</p></div>" },
   { id: "server-mode", title: "Server mode — headless & at boot", related: ["installing", "dhd"], html:
@@ -11312,7 +11393,7 @@ function updaterFallbackHtml() {
 // what moved, the route actually used, at most one action. A
 // success dismisses itself after five seconds (tap-away sooner);
 // a held, failed, or Needs-your-eyes card NEVER auto-dismisses.
-var syncCardState = { last: null, resting: null, timer: null };
+var syncCardState = { last: null, resting: null, timer: null, direction: "" };
 function ensureSyncCard() {
   if (document.getElementById("syncCard")) return;
   var shade = document.createElement("div");
@@ -11487,10 +11568,42 @@ function openSyncCard() {
   ensureSyncCard();
   document.getElementById("syncShade").style.display = "block";
   document.getElementById("syncCard").style.display = "block";
-  if (CONFIG.backend === "live") {
-    fetch("/api/sync").then(function (r) { return r.json(); }).then(function (j) { syncCardState.resting = j; }).catch(function () {});
-  }
-  runSyncRound();
+  if (CONFIG.backend !== "live") { runSyncRound(""); return; }
+  // v0.6.2e (#303): the override — with the setting on (its
+  // default), a press offers Send / Receive before anything
+  // moves; with it off, the press runs the legacy full round
+  // at once, exactly as it always did. The setting is the
+  // bridge's word, read fresh on every open.
+  fetch("/api/sync").then(function (r) { return r.json(); }).then(function (j) {
+    syncCardState.resting = j;
+    if (j && j.choiceOnPress === false) runSyncRound("");
+    else renderSyncCard({ state: "choice" });
+  }).catch(function () { renderSyncCard({ state: "choice" }); });
+}
+// The override setting's page half (v0.6.2e, #303): the
+// bridge's stored choice, fetched from GET /api/sync and
+// flipped only through its settings door — the page never
+// holds a private copy of the truth.
+var syncChoiceState = null, syncChoiceFetching = false, syncChoiceMsg = "";
+function fetchSyncChoice() {
+  if (CONFIG.backend !== "live") { syncChoiceState = true; return; }
+  syncChoiceFetching = true;
+  fetch("/api/sync").then(function (r) { return r.json(); }).then(function (j) {
+    syncChoiceFetching = false;
+    if (j && typeof j.choiceOnPress === "boolean") { syncChoiceState = j.choiceOnPress; if (view === "Settings") render(); }
+  }).catch(function () { syncChoiceFetching = false; });
+}
+function syncChoiceFlip() {
+  var want = !(syncChoiceState !== false);
+  if (CONFIG.backend !== "live") { syncChoiceState = want; syncChoiceMsg = ""; render(); return; }
+  fetch("/api/settings/sync-choice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choiceOnPress: want }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok) { syncChoiceState = j.choiceOnPress; syncChoiceMsg = ""; }
+      else syncChoiceMsg = (j && j.error) || "The bridge refused the change — the setting stands as it was.";
+      render();
+    })
+    .catch(function () { syncChoiceMsg = "The bridge did not answer — the setting stands as it was."; render(); });
 }
 function closeSyncCard() {
   if (syncCardState.timer) { clearTimeout(syncCardState.timer); syncCardState.timer = null; }
@@ -11499,14 +11612,17 @@ function closeSyncCard() {
   if (shade) shade.style.display = "none";
   if (card) card.style.display = "none";
 }
-function runSyncRound() {
+function runSyncRound(direction) {
   if (syncCardState.timer) { clearTimeout(syncCardState.timer); syncCardState.timer = null; }
+  syncCardState.direction = direction || "";
   if (CONFIG.backend !== "live") {
     renderSyncCard({ state: "mock" });
     return;
   }
-  renderSyncCard({ state: "working" });
-  fetch("/api/sync/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ openChatId: (typeof activeChatId !== "undefined" ? activeChatId : ""), seat: seatStateOut() }) }).then(function (r) { return r.json(); }).then(function (j) {
+  renderSyncCard({ state: "working", direction: syncCardState.direction });
+  var body = { openChatId: (typeof activeChatId !== "undefined" ? activeChatId : ""), seat: seatStateOut() };
+  if (syncCardState.direction) body.direction = syncCardState.direction;
+  fetch("/api/sync/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).then(function (j) {
     syncCardState.last = j;
     if (j && j.seat) adoptSeat(j.seat);
     renderSyncCard(j || { state: "held", error: "The bridge answered without a verdict — the round is held." });
@@ -11523,6 +11639,7 @@ function syncMovedHtml(j) {
   var bits = [];
   if (j.pulledChats) bits.push(n(j.pulledChats, "chat", "chats") + " pulled");
   if (j.pushedChats) bits.push(n(j.pushedChats, "chat", "chats") + " pushed");
+  if (j.filesWritten) bits.push(n(j.filesWritten, "file", "files") + " published");
   if (j.caseFilesPulled) bits.push(n(j.caseFilesPulled, "case file", "case files") + " pulled");
   if (j.deckFilesPulled) bits.push(n(j.deckFilesPulled, "deck file", "deck files") + " pulled");
   if (j.cardsImported) bits.push(n(j.cardsImported, "card", "cards") + " taken in");
@@ -11541,12 +11658,20 @@ function renderSyncCard(j) {
   if (!body) return;
   if (syncCardState.timer) { clearTimeout(syncCardState.timer); syncCardState.timer = null; }
   var h = "";
-  if (j.state === "working") {
-    h = "<div class='sc-state'>Syncing…</div><div class='sc-moved'>Pulling, converging, pushing — one round, both ways.</div>";
+  if (j.state === "choice") {
+    h = "<div class='sc-state'>Sync — your call</div><div class='sc-moved'>Move now, in the direction you name — not at the cadence's pace. The full round still runs on its own occasions either way.</div>" +
+      "<div class='row' style='margin-top:8px;gap:8px'><button type='button' class='sc-act' data-sync-dir='send' style='min-height:44px'>Send a sync</button><button type='button' class='sc-act' data-sync-dir='receive' style='min-height:44px'>Receive a sync</button></div>" +
+      "<div class='sc-moved' style='margin-top:8px'><b>Send</b> publishes this seat's set and pulls nothing down. <b>Receive</b> pulls the converged set and publishes nothing.</div>";
+  } else if (j.state === "working") {
+    if (j.direction === "send") h = "<div class='sc-state'>Sending…</div><div class='sc-moved'>Publishing this seat's set — nothing comes down.</div>";
+    else if (j.direction === "receive") h = "<div class='sc-state'>Receiving…</div><div class='sc-moved'>Pulling the converged set — nothing goes up.</div>";
+    else h = "<div class='sc-state'>Syncing…</div><div class='sc-moved'>Pulling, converging, pushing — one round, both ways.</div>";
   } else if (j.state === "mock") {
     h = "<div class='sc-state'>Sync runs over the live bridge</div><div class='sc-moved'>This window is in Mock backend mode (Settings → System), so no round runs from here. Switch to Live and one tap moves your chats, Case Files, the ChipDeck, her Soul and memory, and your seat between your machines.</div>";
   } else if (j.state === "synced") {
-    h = "<div class='sc-state'>Synced · just now</div><div class='sc-moved'>" + syncMovedHtml(j) + "</div>";
+    var dirWord = j.direction === "send" ? "Sent" : (j.direction === "receive" ? "Received" : "Synced");
+    var moved = (j.direction && j.message) ? esc(j.message) : syncMovedHtml(j);
+    h = "<div class='sc-state'>" + dirWord + " · just now</div><div class='sc-moved'>" + moved + "</div>";
   } else if (j.state === "eyes") {
     h = "<div class='sc-state' style='color:#f5b544'>Needs your eyes</div><div class='sc-moved'>" + esc(j.message || "A pair parked both copies.") + "</div><div class='sc-moved'>Both copies are kept — nothing was overwritten. Open the thread or case to settle it.</div>";
   } else if (j.state === "auth") {
@@ -11561,8 +11686,11 @@ function renderSyncCard(j) {
     h += "<div class='sc-route'>Last round: " + esc(syncAgoText(syncCardState.resting.lastSyncEpoch)) + (syncCardState.resting.lastResult ? " — " + esc(syncCardState.resting.lastResult) : "") + "</div>";
   }
   body.innerHTML = h;
+  body.querySelectorAll("[data-sync-dir]").forEach(function (b) {
+    b.addEventListener("click", function () { runSyncRound(b.getAttribute("data-sync-dir")); });
+  });
   var retry = document.getElementById("scRetry");
-  if (retry) retry.addEventListener("click", runSyncRound);
+  if (retry) retry.addEventListener("click", function () { runSyncRound(syncCardState.direction); });
   var signin = document.getElementById("scSignIn");
   if (signin) signin.addEventListener("click", function () { closeSyncCard(); goView("Settings"); });
   if (j.state === "synced") {
@@ -12929,6 +13057,17 @@ function githubSettingsHtml() {
   h += "<div style='margin-top:8px'><button class='ghost' id='gh-settings-save'>Save backup settings</button> <button class='act' id='gh-backup'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Back up now</button></div>";
   if (!gh.signedIn) h += "<p style='color:var(--dim);font-size:12px'>Back up now needs a sign-in — writing to GitHub is one of the actions that does.</p>";
   h += "<p class='mono' style='color:var(--dim);font-size:11px;margin-top:8px'>LAST BACKUP · " + (gh.lastBackupAt ? ghWhen(gh.lastBackupAt) + " — " + esc(gh.lastBackupResult || "") : "never yet") + "</p></div>";
+  // The sync override's setting (v0.6.2e, #303): the switch
+  // renders from the bridge's stored choice alone; a press
+  // asks the bridge to store the new value and the re-render
+  // reads the answer — flip, stored state and reload are one
+  // truth, and a refusal stands on this card, switch unmoved.
+  if (CONFIG.backend === "live" && syncChoiceState === null && !syncChoiceFetching) fetchSyncChoice();
+  var scOn = syncChoiceState !== false;
+  h += "<div class='card'><h3>The Sync button — Send or Receive</h3><p style='color:var(--dim)'>The <b>Sync</b> control in Apex | Utilities, with this on, offers a choice when you press it: <b>Send a sync</b> (publish this seat now, pull nothing) or <b>Receive a sync</b> (pull the converged set now, publish nothing) — a manual override, so a sync happens when you say, not when the cadence gets to it. Turn it off and a press runs the full round at once, as it always did. The automatic rounds — app start, DHD sessions, Mesh contact, push-on-write — never consult this setting.</p>";
+  h += "<div style='display:flex;align-items:center;gap:8px;margin-top:8px'><button class='switch' id='gh-sync-choice' role='switch' aria-checked='" + (scOn ? "true" : "false") + "' aria-label='Sync button offers Send or Receive'><span class='knob'></span></button><span><b>" + (scOn ? "On — a press offers Send / Receive" : "Off — a press runs the full round") + "</b></span></div>";
+  if (syncChoiceMsg) h += "<p style='color:var(--am);font-size:12px;margin-top:6px'>" + esc(syncChoiceMsg) + "</p>";
+  h += "</div>";
   // Import card.
   h += "<div class='card'><h3>Import — bring a Navi back</h3><p style='color:var(--dim)'>Import pulls the backup down and shows you, essential by essential, what would change — <b>nothing is overwritten until you confirm</b>. Restored packs come back with their indexes and active states; restored chips come back whole and runnable. What's not in the backup (call logs, the old machine's hardware profile, voice models) simply starts fresh, the way a new install should.</p>";
   h += "<button class='ghost' id='gh-preview'" + (gh.signedIn ? "" : " disabled title='Sign in above first'") + ">Preview what would change</button>";
@@ -13421,7 +13560,9 @@ function render() {
         // other chat save.
         h += "<div style='margin-top:4px'><button class='ghost' data-memsg='" + idx + "' aria-label='Save this message to memory' style='padding:1px 8px;font-size:11px;border-radius:999px'>Save to memory</button></div>";
       } else if (m.who === "NAVI" && m.text) {
-        if (!isCurrent && isLongNavi(m.text)) {
+        if (isBriefDoc(m.text)) {
+          h += "<div class='brief-doc'>" + briefListHtml(m.text, true) + "</div>"; if (m.who === "NAVI") h += pillRow(m.mesh, m.sources);
+        } else if (!isCurrent && isLongNavi(m.text)) {
           var openAttr = chatFoldState[foldKey] ? " open" : "";
           var lineCount = String(m.text).split("\n").length;
           h += "<details class='foldcard' data-fold='" + esc(foldKey) + "'" + openAttr + "><summary>Navi reply · " + esc(firstHintLine(m.text, true)) + " · " + lineCount + " lines · " + String(m.text).length + " chars</summary><div class='md'>" + mdToHtml(stripCite(m.text)) + "</div>" + pillRow(m.mesh, m.sources) + "</details>";
@@ -15305,6 +15446,8 @@ function wire() {
     bind("gh-signout", ghSignOut);
     bind("gh-settings-save", ghSaveBackupSettings);
     bind("gh-backup", ghBackupNow);
+    var scSw = document.getElementById("gh-sync-choice");
+    if (scSw) scSw.onclick = function () { syncChoiceFlip(); };
     bind("gh-preview", ghImportPreview);
     bind("gh-apply", ghImportApply);
     bind("gh-badge-sync", ghBadgeSync);

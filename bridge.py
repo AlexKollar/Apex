@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.1"
+SHIPPED_VERSION = "0.6.2"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-18.33"
+BRIDGE_BUILD = "2026-11-18.34"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 33
+SHIPPED_BUILD_SEQ = 34
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -26199,6 +26199,9 @@ def _sync_record_result(state, trigger, result):
         "state": result.get("state") or "",
         "message": result.get("message") or result.get("error") or "",
         "counts": receipt,
+        # v0.6.2e (#303): a directional round (Send / Receive)
+        # names its direction on the durable receipt too.
+        "direction": result.get("direction") or "",
         "material": bool(receipt.get("material")),
         "roundId": result.get("roundId") or "",
         # v0.5.1e (#257): the round's measured duration rides
@@ -26722,6 +26725,320 @@ def sync_pull_round(cfg, trigger):
         _SYNC_LOCK.release()
 
 
+# -- The sync override (v0.6.2e, #303) ---------------------------
+# A setting such that hitting the Sync button — the one control,
+# wherever it is tapped — offers a choice: Send a sync or
+# Receive a sync, a manual override that moves NOW, on demand,
+# rather than at the automatic cadence's pace. The directions
+# are not a second sync system: Send is the full round's publish
+# half standing alone (this seat's set goes out; nothing is
+# applied), Receive is the trigger pull with its verdict spoken
+# (the converged set comes down; nothing is published). Both
+# ride the standing roads — the Mesh first when a peer's road is
+# lit, the backup repo otherwise (#257) — and the standing
+# convergence law (#251-#253) is untouched. The setting governs
+# the button's behavior only: ON (the default — the feature IS
+# the behavior), a press offers the choice; OFF, a press runs
+# the legacy full round at once. The automatic cadence — app
+# start, DHD sessions, Mesh contact, push-on-write — never
+# consults the setting.
+
+
+def sync_choice_enabled(cfg=None):
+    # The setting's read: config's sync block, default ON. An
+    # absent block, or a value that is not plainly false, reads
+    # as the feature standing.
+    if cfg is None:
+        cfg = load_config()
+    try:
+        block = cfg.get("sync") if isinstance(cfg, dict) else None
+        if isinstance(block, dict) and "choiceOnPress" in block:
+            return block.get("choiceOnPress") is not False
+    except Exception:
+        pass
+    return True
+
+
+def sync_set_choice(on, cfg=None):
+    # The setting's stored half: the sync block in the config,
+    # written through save_config like every operator setting.
+    # Returns the value that now stands, or None when the save
+    # itself failed — the caller names that refusal rather than
+    # letting the switch pretend.
+    if cfg is None:
+        cfg = load_config()
+    block = cfg.get("sync") if isinstance(cfg.get("sync"), dict) else {}
+    block = dict(block)
+    block["choiceOnPress"] = bool(on)
+    cfg["sync"] = block
+    if not save_config(cfg):
+        return None
+    return bool(on)
+
+
+def _sync_send_mesh(cfg, files, manifest):
+    # Send's Mesh road: the exchange's first leg IS the publish
+    # — the peer applies this seat's set at its own door. The
+    # set it sends back is deliberately NOT applied here: a
+    # Send moves one way. Returns (route, None) on a completed
+    # publish, (None, None) when no peer's road is lit.
+    peers = _sync_mesh_peers()
+    if not peers:
+        return None, None
+    if sum(len(b) for b in files.values()) > _SYNC_MESH_MAX_BYTES:
+        return None, None
+    wire = {}
+    for path, blob in files.items():
+        wire[path] = base64.b64encode(blob).decode("ascii")
+    for peer in peers:
+        if mesh_probe_peer(peer) is None:
+            continue
+        payload = _sync_mesh_ask(peer, "/mesh/sync/exchange",
+                                 {"files": wire, "manifest": manifest})
+        if payload is None:
+            continue
+        return "Mesh — " + peer["name"], None
+    return None, None
+
+
+_SYNC_STAMP_KEYS = ("exportedAt", "syncedAt", "mtime", "bridgeBuild")
+
+
+def _sync_substance(path, data):
+    # A sync file's substance, with the collect stamps stripped:
+    # the set's bookkeeping files restamp themselves on every
+    # collect (an exportedAt here, a syncedAt there, a card's
+    # mtime), so a byte diff alone would claim movement where
+    # nothing of the operator's moved. JSON files compare
+    # parsed, with stamp keys dropped at any depth (and the
+    # manifest's derived digests, which only echo those
+    # stamps); everything else compares byte for byte.
+    if data is None:
+        return None
+    if not str(path).endswith(".json"):
+        return data
+    try:
+        obj = json.loads(data.decode("utf-8", "replace"))
+    except Exception:
+        return data
+
+    def strip(x, top=False):
+        if isinstance(x, dict):
+            out = {}
+            for k, v in x.items():
+                if k in _SYNC_STAMP_KEYS:
+                    continue
+                if top and str(k).endswith("Sha"):
+                    continue
+                out[k] = strip(v)
+            return out
+        if isinstance(x, list):
+            return [strip(v) for v in x]
+        return x
+
+    try:
+        return json.dumps(strip(obj, top=True), sort_keys=True).encode()
+    except Exception:
+        return data
+
+
+def sync_send_round(cfg, trigger="button", open_chat_id=""):
+    # SEND: publish this seat's set, now — and apply nothing.
+    # The receipt names what went up: files written on the repo
+    # road; on the Mesh road, the set carried to the named peer.
+    # A seat with nothing new to publish says so plainly.
+    if not _SYNC_LOCK.acquire(False):
+        return {"ok": False, "state": "held", "kind": "busy",
+                "direction": "send", "route": "Backup repo",
+                "error": "A sync round is already running — this "
+                         "Send is held, and the running round's "
+                         "verdict is the one that counts."}
+    round_id = uuid.uuid4().hex[:12]
+    if _SYNC_ROUND["depth"] == 0:
+        _SYNC_ROUND["thread"] = threading.get_ident()
+    _SYNC_ROUND["depth"] += 1
+    _t0 = time.time()
+    _sync_progress_set("write", trigger, round_id)
+    try:
+        files, manifest, _index = sync_collect()
+        route, _none = _sync_send_mesh(cfg, files, manifest)
+        if route is not None:
+            result = {"ok": True, "state": "synced", "direction": "send",
+                      "route": route, "filesCarried": len(files),
+                      "pushedFiles": len(files), "pushedChats": 0,
+                      "message": "Sent — this seat's set ("
+                                 + str(len(files)) + " files) went to "
+                                 + route + ". Nothing was pulled down."}
+            result["roundId"] = round_id
+            result["durationMs"] = int((time.time() - _t0) * 1000)
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, result)
+            state["lastRoute"] = route
+            _sync_state_save(state)
+            return result
+        if not github_auth():
+            out = _sync_auth_error()
+            out["direction"] = "send"
+            out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _t0) * 1000)
+            _sync_fail_record(trigger, out)
+            return out
+        got = _sync_repo(cfg)
+        if got[0] is None:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(got[1] or _sync_auth_error())
+            out["direction"] = "send"
+            out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _t0) * 1000)
+            _sync_fail_record(trigger, out)
+            return out
+        auth, base = got[0]
+        fetched, fail = sync_fetch(cfg)
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            out["direction"] = "send"
+            out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _t0) * 1000)
+            _sync_fail_record(trigger, out)
+            return out
+        # What of the operator's actually moves, stamps aside.
+        moved = [p for p in files
+                 if _sync_substance(p, files[p])
+                 != _sync_substance(p, fetched["files"].get(p))]
+        if not moved:
+            result = {"ok": True, "state": "synced",
+                      "direction": "send", "route": "Backup repo",
+                      "filesWritten": 0, "pushedFiles": 0,
+                      "pushedChats": 0,
+                      "message": "Send — nothing to move: this "
+                                 "seat's set is already the "
+                                 "published set."}
+            result["roundId"] = round_id
+            result["durationMs"] = int((time.time() - _t0) * 1000)
+            state = _sync_state_load()
+            _sync_record_result(state, trigger, result)
+            state["lastRoute"] = "Backup repo"
+            _sync_state_save(state)
+            return result
+        written, fail = _sync_push(cfg, base, auth["token"], files,
+                                   fetched["files"])
+        if fail:
+            out = {"ok": False, "route": "Backup repo"}
+            out.update(fail)
+            out["direction"] = "send"
+            out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _t0) * 1000)
+            _sync_fail_record(trigger, out)
+            return out
+        message = ("Sent — " + str(len(moved)) + " file"
+                   + ("s" if len(moved) != 1 else "")
+                   + " published to the backup repo. Nothing "
+                     "was pulled down.")
+        result = {"ok": True, "state": "synced", "direction": "send",
+                  "route": "Backup repo", "filesWritten": len(moved),
+                  "pushedFiles": written, "pushedChats": 0,
+                  "message": message}
+        result["roundId"] = round_id
+        result["durationMs"] = int((time.time() - _t0) * 1000)
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        state["lastRoute"] = "Backup repo"
+        _sync_state_save(state)
+        return result
+    finally:
+        _sync_progress_set("done")
+        _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
+        if _SYNC_ROUND["depth"] == 0:
+            _SYNC_ROUND["thread"] = None
+        _SYNC_LOCK.release()
+
+
+def sync_receive_round(cfg, trigger="button"):
+    # RECEIVE: pull + converge, publish nothing — the trigger
+    # pull's machinery with the button's spoken verdict. The
+    # receipt names what came down (the finish summary's own
+    # counts); a round where nothing new arrived says so.
+    if not _SYNC_LOCK.acquire(False):
+        return {"ok": False, "state": "held", "kind": "busy",
+                "direction": "receive", "route": "Backup repo",
+                "error": "A sync round is already running — this "
+                         "Receive is held, and the running round's "
+                         "verdict is the one that counts."}
+    round_id = uuid.uuid4().hex[:12]
+    if _SYNC_ROUND["depth"] == 0:
+        _SYNC_ROUND["thread"] = threading.get_ident()
+    _SYNC_ROUND["depth"] += 1
+    _t0 = time.time()
+    _sync_progress_set("fetch", trigger, round_id)
+    try:
+        mesh_hit = None
+        try:
+            mesh_hit = _sync_mesh_pull(cfg)
+        except Exception:
+            mesh_hit = None
+        if mesh_hit is not None:
+            result = _sync_finish_summary(mesh_hit[1], 0, "", set())
+            result["route"] = mesh_hit[0]
+        elif not github_auth():
+            out = _sync_auth_error()
+            out["direction"] = "receive"
+            out["roundId"] = round_id
+            out["durationMs"] = int((time.time() - _t0) * 1000)
+            _sync_fail_record(trigger, out)
+            return out
+        else:
+            fetched, fail = sync_fetch(cfg)
+            if fail:
+                out = {"ok": False, "route": "Backup repo"}
+                out.update(fail)
+                out["direction"] = "receive"
+                out["roundId"] = round_id
+                out["durationMs"] = int((time.time() - _t0) * 1000)
+                _sync_fail_record(trigger, out)
+                return out
+            _sync_progress_set("merge")
+            summary = sync_apply(cfg, fetched)
+            result = _sync_finish_summary(summary, 0, "", set())
+            result["route"] = "Backup repo"
+        result["direction"] = "receive"
+        if (result.get("state") == "synced"
+                and not result.get("receipt", {}).get("changed")
+                and not result.get("needsEyes")):
+            result["message"] = ("Receive — nothing new came down: "
+                                 "this seat already holds the "
+                                 "converged set.")
+        elif result.get("state") == "synced":
+            result["message"] = ("Received — the converged set came "
+                                 "down and landed. Nothing was "
+                                 "published.")
+        result["roundId"] = round_id
+        result["durationMs"] = int((time.time() - _t0) * 1000)
+        state = _sync_state_load()
+        _sync_record_result(state, trigger, result)
+        state["lastRoute"] = result["route"]
+        _sync_state_save(state)
+        return result
+    finally:
+        _sync_progress_set("done")
+        _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
+        if _SYNC_ROUND["depth"] == 0:
+            _SYNC_ROUND["thread"] = None
+        _SYNC_LOCK.release()
+
+
+def sync_override_round(cfg, direction, trigger="button",
+                        open_chat_id=""):
+    # The button's dispatch (#303): a named direction runs its
+    # one-way round; anything else is the legacy full round,
+    # exactly as the button always ran it.
+    if direction == "send":
+        return sync_send_round(cfg, trigger, open_chat_id)
+    if direction == "receive":
+        return sync_receive_round(cfg, trigger)
+    return sync_round(cfg, trigger, open_chat_id)
+
+
 def sync_state_payload():
     auth = github_auth()
     state = _sync_state_load()
@@ -26742,6 +27059,9 @@ def sync_state_payload():
         # v0.5.13e (#262): shells still standing, named — the
         # record clears as fuller arrivals heal them.
         "incomplete": state.get("incomplete") or [],
+        # v0.6.2e (#303): the override setting, so every sync
+        # surface renders the button's behavior from the bridge.
+        "choiceOnPress": sync_choice_enabled(),
     }
 
 
@@ -34165,7 +34485,9 @@ def _daybook_clean_entry(raw):
     out = {
         "id": eid[:80],
         "kind": kind,
-        "text": str(raw.get("text") or "")[:1000],
+        # v0.6.2e (#304): a brief's text is a whole document —
+        # its cap is a document's, not a line's.
+        "text": str(raw.get("text") or "")[:12000 if kind == "brief" else 1000],
         "createdAt": _daybook_num(raw.get("createdAt")),
         "updatedAt": _daybook_num(raw.get("updatedAt")),
         "origin": dict(raw.get("origin")) if isinstance(raw.get("origin"), dict) else {},
@@ -34180,6 +34502,18 @@ def _daybook_clean_entry(raw):
         out["firedAt"] = _daybook_num(raw.get("firedAt"))
         out["ackedAt"] = _daybook_num(raw.get("ackedAt"))
         out["orderId"] = str(raw.get("orderId") or "")[:80]
+        # v0.6.2e (#304): the entry's act record — postpones
+        # live here, and the deferral count derives from them.
+        acts = []
+        for a in (raw.get("acts") or []):
+            if isinstance(a, dict):
+                acts.append({
+                    "act": str(a.get("act") or "")[:20],
+                    "at": _daybook_num(a.get("at")),
+                    "from": _daybook_num(a.get("from")),
+                    "to": _daybook_num(a.get("to")),
+                })
+        out["acts"] = acts[-24:]
     elif kind == "order":
         out["verb"] = str(raw.get("verb") or "")[:20]
         trig = raw.get("trigger") if isinstance(raw.get("trigger"), dict) else {}
@@ -34205,10 +34539,32 @@ def _daybook_clean_entry(raw):
     elif kind == "brief":
         out["day"] = str(raw.get("day") or "")[:10]
         out["via"] = str(raw.get("via") or "")[:20]
-        out["lines"] = [str(x)[:400] for x in (raw.get("lines") or [])
-                        if str(x or "").strip()][:24]
+        out["lines"] = [str(x)[:500] for x in (raw.get("lines") or [])
+                        if str(x or "").strip()][:200]
         out["gaps"] = [str(x)[:200] for x in (raw.get("gaps") or [])
                        if str(x or "").strip()][:8]
+        # v0.6.2e (#304): the document itself, and the rows it
+        # was composed from, ride the record.
+        out["md"] = str(raw.get("md") or raw.get("text") or "")[:12000]
+        secs = []
+        for sec in (raw.get("sections") or []):
+            if not isinstance(sec, dict):
+                continue
+            rows = []
+            for r in (sec.get("rows") or []):
+                if isinstance(r, dict):
+                    rows.append({
+                        "text": str(r.get("text") or "")[:500],
+                        "time": str(r.get("time") or "")[:8],
+                        "state": str(r.get("state") or "")[:40],
+                        "count": int(r.get("count") or 0),
+                        "quip": str(r.get("quip") or "")[:500],
+                        "gap": r.get("gap") is True,
+                        "entryId": str(r.get("entryId") or "")[:80],
+                    })
+            secs.append({"title": str(sec.get("title") or "")[:40],
+                         "rows": rows[:60]})
+        out["sections"] = secs[:8]
     return out
 
 
@@ -34372,6 +34728,151 @@ def daybook_add_reminder(text, due_at, chat_id="", order_id="",
         store["entries"].append(entry)
         _daybook_save(store)
     return entry, None
+
+
+# -- Postponement & her quips (v0.6.2e, #304) --------------------
+# A reminder is pushed off by an ACT on its own record: the
+# entry's acts list gains a postpone entry naming the old and
+# new due times, the due time moves, and a fired reminder
+# stands again to fire at its new time. The deferral COUNT is
+# never stored — it is derived from the record every time it
+# is read: the postpone acts on the entry, plus the whole days
+# a fired reminder has been carried unacknowledged past the
+# day it fired. One source, no counter that can drift.
+
+
+def daybook_postpone(entry_id, due_at, cfg=None):
+    # Postpone the named reminder — or, unnamed, the oldest
+    # fired-and-waiting one, else the next standing one. The
+    # act lands on the entry's record; the count it feeds is
+    # derived, never kept.
+    now = time.time()
+    with _daybook_lock:
+        store = _daybook_load()
+        target = None
+        if entry_id:
+            target = _daybook_get(store, entry_id)
+            if target is not None and target["kind"] != "reminder":
+                return None, "That entry is not a reminder — only a reminder can be pushed."
+        if target is None:
+            fired = [e for e in store["entries"]
+                     if e["kind"] == "reminder" and e["state"] == "fired"]
+            fired.sort(key=lambda e: e.get("firedAt") or e.get("createdAt") or 0)
+            standing = [e for e in store["entries"]
+                        if e["kind"] == "reminder" and e["state"] == "standing"]
+            standing.sort(key=lambda e: e.get("dueAt") or 0)
+            target = (fired or standing or [None])[0]
+        if target is None:
+            return None, "Nothing stands to push — no reminder is waiting or standing."
+        acts = target.get("acts")
+        if not isinstance(acts, list):
+            acts = []
+            target["acts"] = acts
+        acts.append({"act": "postpone", "at": now,
+                     "from": target.get("dueAt") or 0,
+                     "to": float(due_at)})
+        target["acts"] = acts[-24:]
+        target["dueAt"] = float(due_at)
+        if target["state"] == "fired":
+            # Standing again: the firing is superseded, and
+            # the act record above is its history — firedAt
+            # means the CURRENT firing, so it clears.
+            target["state"] = "standing"
+            target["firedAt"] = 0
+        target["updatedAt"] = now
+        _daybook_save(store)
+        return target, None
+
+
+def _daybook_day_index(epoch):
+    lt = time.localtime(epoch or 0)
+    return int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                            0, 0, 0, 0, 0, -1)) // 86400)
+
+
+def daybook_deferral_count(entry, now=None):
+    # The count, derived from the entry's own record: one per
+    # postpone act, plus one per whole day a fired reminder has
+    # been carried past its firing day, unacknowledged.
+    now = now or time.time()
+    if entry.get("state") in ("acked", "done"):
+        return 0
+    n = 0
+    for a in (entry.get("acts") or []):
+        if isinstance(a, dict) and a.get("act") == "postpone":
+            n += 1
+    if entry.get("state") == "fired" and entry.get("firedAt"):
+        n += max(0, _daybook_day_index(now)
+                 - _daybook_day_index(entry["firedAt"]))
+    return n
+
+
+# Her voice in the brief, keyed to the count: the second push
+# gets a raised eyebrow, the third gets pointed, the fourth
+# and beyond get her full attention. Two registers — the
+# personal set, and a professional set for items the standing
+# orders spawned. Selection is deterministic (the greeting's
+# pattern, #288): a stable hash of the entry and the count
+# picks the line, so the same count always draws the same
+# line, consecutive counts never draw the same line twice in
+# a row, and she quips once per count — never again until
+# the count moves.
+DAYBOOK_QUIPS = {
+    2: {
+        "personal": (
+            "Twice now. I'm not saying anything — I'm just keeping the tally where you can see it.",
+            "Pushed again. It doesn't mind. I might.",
+            "That's two. The list remembers, even when it's being polite about it.",
+        ),
+        "pro": (
+            "Deferred twice. The record notes it without comment — this is the comment.",
+            "Second deferral on this item. Flagging it here so the pattern is visible.",
+            "Pushed a second time. Standing items age; the brief is watching the clock on this one.",
+        ),
+    },
+    3: {
+        "personal": (
+            "Third time this one's moved. It's starting to think you don't like it.",
+            "Three pushes. At some point the task becomes the pushing, love.",
+            "Pushed a third time. I could keep moving it, or we could admit it's not happening today.",
+        ),
+        "pro": (
+            "Third deferral. Items deferred three times rarely land without a decision — worth one.",
+            "This item has been deferred three times. The brief recommends a verdict: schedule it, or strike it.",
+            "Three deferrals on record. The pattern, not the item, is what needs attention now.",
+        ),
+    },
+    4: {
+        "personal": (
+            "Four. FOUR. This reminder has its own forwarding address now.",
+            "Pushed again — I've started introducing it to the other furniture. It lives here now.",
+            "That's four moves. Either do it, or let me strike it and we'll both stop pretending.",
+        ),
+        "pro": (
+            "Four deferrals. The brief's standing advice: an item deferred this often is a decision being avoided, not a task being scheduled.",
+            "Deferred four times. Recommend the operator settle this item's fate at the next review.",
+            "Four pushes on record. This item is now the oldest open question on the book.",
+        ),
+    },
+}
+
+
+def daybook_quip(entry, count=None, now=None):
+    # The quip for this entry at this count, or "" — she is
+    # silent at counts 0 and 1, and the line is a pure function
+    # of (entry, count): once per count, rotating by the count
+    # itself so back-to-back counts never repeat a line.
+    if count is None:
+        count = daybook_deferral_count(entry, now)
+    if count < 2:
+        return ""
+    tier = 4 if count >= 4 else count
+    register = "pro" if entry.get("orderId") else "personal"
+    lines = DAYBOOK_QUIPS[tier][register]
+    seed = 0
+    for ch in str(entry.get("id") or entry.get("text") or ""):
+        seed = (seed * 31 + ord(ch)) % 997
+    return lines[(seed + count) % len(lines)]
 
 
 def daybook_ack(entry_id=None, cfg=None):
@@ -34964,12 +35465,129 @@ def _notif_wanted_day(cfg):
     return items
 
 
+# -- Brief v2 (v0.6.2e, #304) -------------------------------------
+# The brief is composed as a MARKDOWN DOCUMENT and stored as
+# one: a dated title, section headings, one bullet per item —
+# the bullet journal's discipline. The document is the record:
+# recall returns it whole. No surface presents the markdown;
+# surfaces DRAW FROM it — the parser below (and its mirror in
+# the page) reads the document back into sections and rows,
+# and the rows carry their facts in the document's own
+# grammar: a leading "HH:MM — " when the item has a time, a
+# trailing "[state]" marker where a state matters, and her
+# quip as a bullet in her name directly under its item.
+
+
+def brief_render_md(day, sections, gaps):
+    out = ["# Day brief — " + day, ""]
+    for title, rows in sections:
+        if not rows:
+            continue
+        out.append("## " + title)
+        for r in rows:
+            line = "- "
+            if r.get("time"):
+                line += r["time"] + " — "
+            line += r["text"]
+            marks = []
+            if r.get("state"):
+                marks.append(r["state"])
+            if (r.get("count") or 0) > 1:
+                marks.append("pushed \u00d7" + str(r["count"]))
+            if marks:
+                line += " [" + " \u00b7 ".join(marks) + "]"
+            out.append(line)
+            if r.get("quip"):
+                out.append("- Navi: " + r["quip"])
+        out.append("")
+    if gaps:
+        out.append("## Gaps")
+        for g in gaps:
+            out.append("- GAP — " + g
+                       + " — the brief names what it could not "
+                         "read rather than thinning silently.")
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+_BRIEF_ROW_MARKS = re.compile(r"\s\[([^\]]+)\]\s*$")
+_BRIEF_ROW_TIME = re.compile(r"^(\d{1,2}:\d{2})\s—\s")
+
+
+def brief_parse_md(md):
+    # The document read back into its list: the one grammar
+    # both the bridge and the page parse. Returns
+    # {"day": str, "sections": [{"title":..., "rows": [...]}]}
+    # where a row is {"text", "time", "state", "count",
+    # "quip", "gap"} — a quip bullet folds into the row above
+    # it, a GAP bullet stands as its own flagged row.
+    doc = {"day": "", "sections": []}
+    cur = None
+    for raw in str(md or "").splitlines():
+        line = raw.rstrip()
+        if line.startswith("# "):
+            doc["day"] = line[2:].replace("Day brief — ", "").strip()
+            continue
+        if line.startswith("## "):
+            cur = {"title": line[3:].strip(), "rows": []}
+            doc["sections"].append(cur)
+            continue
+        if not line.startswith("- ") or cur is None:
+            continue
+        body = line[2:].strip()
+        if body.startswith("Navi: "):
+            if cur["rows"]:
+                cur["rows"][-1]["quip"] = body[6:].strip()
+            continue
+        row = {"text": body, "time": "", "state": "",
+               "count": 0, "quip": "", "gap": False}
+        if body.startswith("GAP — "):
+            row["gap"] = True
+            row["text"] = body[6:].strip()
+            cur["rows"].append(row)
+            continue
+        m = _BRIEF_ROW_TIME.match(body)
+        if m:
+            row["time"] = m.group(1)
+            body = body[m.end():]
+            row["text"] = body
+        m = _BRIEF_ROW_MARKS.search(body)
+        if m:
+            row["text"] = body[:m.start()].rstrip()
+            for part in m.group(1).split(" \u00b7 "):
+                part = part.strip()
+                if part.startswith("pushed \u00d7"):
+                    try:
+                        row["count"] = int(part[len("pushed \u00d7"):])
+                    except Exception:
+                        pass
+                elif part:
+                    row["state"] = part
+        cur["rows"].append(row)
+    return doc
+
+
+def _brief_row(text, entry=None, now=None, state="", when=None):
+    row = {"text": text, "time": "", "state": state,
+           "count": 0, "quip": "", "gap": False,
+           "entryId": (entry or {}).get("id") or ""}
+    if when:
+        row["time"] = time.strftime("%H:%M", time.localtime(when))
+    if entry is not None and entry.get("kind") == "reminder":
+        row["count"] = daybook_deferral_count(entry, now)
+        if row["count"] > 1:
+            row["quip"] = daybook_quip(entry, row["count"], now)
+    return row
+
+
 def daybook_brief_compose(cfg=None, via="on-demand", now=None):
-    # #296: the brief, assembled deterministically from what
-    # she already legitimately sees. Sections in the ruled
-    # order — what is on, what changed, what needs him — and
-    # every source wrapped on its own: a source that does not
-    # answer is a GAP on the brief's face, never a silent
+    # #296's composition, #304's form: deterministic, no model
+    # call — but the assembly is rows first (one bullet per
+    # item, the journal's discipline) and the stored record is
+    # the markdown document rendered from them. Sections in
+    # the ruled order — On, Changed, Needs you, Standing —
+    # and every source wrapped on its own: a source that does
+    # not answer is a GAP in the document, never a silent
     # thinning. The brief lands in the store as a record
     # (today's earlier brief is superseded, not stacked).
     if cfg is None:
@@ -35016,50 +35634,54 @@ def daybook_brief_compose(cfg=None, via="on-demand", now=None):
                 _daybook_save(_store)
     except Exception:
         pass
-    lines, gaps = [], []
-    on, changed, needs = [], [], []
+    gaps = []
+    on, changed, needs, standing_sec = [], [], [], []
     try:
         store = _daybook_load()
         rems = [e for e in store["entries"] if e["kind"] == "reminder"]
         standing = [e for e in rems if e["state"] == "standing"]
         standing.sort(key=lambda e: e.get("dueAt") or 0)
         fired = [e for e in rems if e["state"] == "fired"]
-        if standing:
-            nxt = standing[0]
-            on.append(str(len(standing)) + " reminder(s) standing — "
-                      "next: \u201c" + nxt["text"][:120] + "\u201d at "
-                      + time.strftime("%H:%M", time.localtime(
-                          nxt.get("dueAt") or now)) + ".")
+        for e in standing:
+            on.append(_brief_row("\u201c" + e["text"][:160] + "\u201d",
+                                 e, now, state="standing",
+                                 when=e.get("dueAt") or None))
         orders = [e for e in store["entries"]
                   if e["kind"] == "order" and e["state"] == "standing"]
-        if orders:
-            on.append(str(len(orders)) + " standing order(s) on the "
-                      "book: " + ", ".join(
-                          "\u201c" + o["text"][:60] + "\u201d"
-                          for o in orders[:3]) + ".")
+        for o in orders:
+            standing_sec.append(_brief_row(
+                "\u201c" + o["text"][:120] + "\u201d", None, now,
+                state="standing order"))
         last_brief_at = store.get("lastBriefAt") or 0
         fresh_caps = [e for e in store["entries"]
                       if e["kind"] == "capture"
                       and e["state"] == "standing"
                       and (e.get("createdAt") or 0) > last_brief_at]
-        if fresh_caps:
-            changed.append(str(len(fresh_caps)) + " capture(s) since "
-                           "the last brief — the newest: \u201c"
-                           + fresh_caps[-1]["text"][:120] + "\u201d.")
+        for e in fresh_caps[-3:]:
+            changed.append(_brief_row(
+                "Captured: \u201c" + e["text"][:160] + "\u201d",
+                None, now))
+        if len(fresh_caps) > 3:
+            changed.append(_brief_row(
+                "…and " + str(len(fresh_caps) - 3)
+                + " more capture(s) since the last brief.", None, now))
         proposed = [e for e in store["entries"]
                     if e["kind"] == "capture" and e.get("proposed")
                     and e["state"] == "standing"]
-        if proposed:
-            needs.append(str(len(proposed)) + " capture proposal(s) "
-                         "waiting for your word.")
+        for e in proposed:
+            needs.append(_brief_row(
+                "A capture proposal waits for your word: \u201c"
+                + e["text"][:160] + "\u201d", None, now,
+                state="waiting"))
         for e in fired:
-            needs.append("A reminder is waiting: \u201c"
-                         + e["text"][:160] + "\u201d.")
+            needs.append(_brief_row(
+                "\u201c" + e["text"][:160] + "\u201d", e, now,
+                state="waiting", when=e.get("firedAt") or None))
     except Exception:
         gaps.append("the day book did not answer for this brief")
     try:
         for d in _pulse_digest_lines():
-            changed.append("Pulse — " + d["line"] + ".")
+            changed.append(_brief_row("Pulse — " + d["line"], None, now))
     except Exception:
         gaps.append("Pulse did not answer for this brief")
     try:
@@ -35067,40 +35689,45 @@ def daybook_brief_compose(cfg=None, via="on-demand", now=None):
         unv = sum(int(h.get("unverified") or 0) for h in heads
                   if isinstance(h, dict))
         if unv:
-            needs.append(str(unv) + " unverified case entr"
-                         + ("y is" if unv == 1 else "ies are")
-                         + " waiting for your review.")
+            needs.append(_brief_row(
+                str(unv) + " unverified case entr"
+                + ("y is" if unv == 1 else "ies are")
+                + " waiting for your review.", None, now,
+                state="waiting"))
         elif heads:
-            on.append(str(len(heads)) + " case(s) stand, none waiting "
-                      "on review.")
+            on.append(_brief_row(
+                str(len(heads)) + " case(s) stand, none waiting "
+                "on review.", None, now))
     except Exception:
         gaps.append("the case list did not answer for this brief")
     try:
         unread = int(notifications_payload(cfg).get("unread") or 0)
         if unread:
-            needs.append(str(unread) + " notice(s) stand unread in "
-                         "the tray.")
+            needs.append(_brief_row(
+                str(unread) + " notice(s) stand unread in the tray.",
+                None, now, state="waiting"))
     except Exception:
         gaps.append("the tray did not answer for this brief")
-    for label, rows in (("On", on), ("Changed", changed),
-                        ("Needs you", needs)):
-        if rows:
-            lines.append(label + ": " + " ".join(rows))
-    if gaps:
-        lines.append("Gaps: " + "; ".join(gaps) + " — the brief names "
-                     "what it could not read rather than thinning "
-                     "silently.")
-    if not lines:
-        lines.append("A quiet day on the book — nothing standing, "
-                     "nothing waiting.")
+    sections = [("On", on), ("Changed", changed),
+                ("Needs you", needs), ("Standing", standing_sec)]
+    if not any(rows for _t, rows in sections) and not gaps:
+        on.append(_brief_row(
+            "A quiet day on the book — nothing standing, "
+            "nothing waiting.", None, now))
+        sections = [("On", on), ("Changed", changed),
+                    ("Needs you", needs), ("Standing", standing_sec)]
+    md = brief_render_md(day, sections, gaps)
+    lines = md.splitlines()
     entry = {
         "id": _daybook_new_id("brief", day + via),
-        "kind": "brief", "text": "\n".join(lines),
+        "kind": "brief", "text": md, "md": md,
         "createdAt": now, "updatedAt": now,
         "origin": {"via": str(via or "on-demand")[:20],
                    "seat": socket.gethostname()[:80], "thread": ""},
         "state": "standing", "day": day, "via": str(via or "on-demand"),
         "lines": lines, "gaps": gaps,
+        "sections": [{"title": t, "rows": rows}
+                     for t, rows in sections if rows],
     }
     with _daybook_lock:
         store = _daybook_load()
@@ -35114,7 +35741,8 @@ def daybook_brief_compose(cfg=None, via="on-demand", now=None):
         store["lastBriefAt"] = now
         _daybook_save(store)
     return {"day": day, "via": entry["via"], "lines": lines,
-            "gaps": gaps, "text": entry["text"], "id": entry["id"]}
+            "gaps": gaps, "text": md, "md": md,
+            "sections": entry["sections"], "id": entry["id"]}
 
 
 def _daybook_greeting_lines(cfg=None):
@@ -35176,6 +35804,11 @@ def daybook_payload(cfg=None):
     props.sort(key=lambda e: -(e.get("createdAt") or 0))
     rems.sort(key=lambda e: (0 if e["state"] == "fired" else 1,
                              e.get("dueAt") or 0))
+    # v0.6.2e (#304): each reminder row carries its deferral
+    # count, derived from its record at read time.
+    _now = time.time()
+    rems = [dict(e, deferrals=daybook_deferral_count(e, _now))
+            for e in rems]
     briefs.sort(key=lambda e: -(e.get("createdAt") or 0))
     return {"ok": True,
             "captures": caps[:30], "proposals": props[:10],
@@ -35231,6 +35864,20 @@ def daybook_act(data, cfg=None):
         if err:
             return {"ok": False, "error": err}
         return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
+    if action == "postpone":
+        # v0.6.2e (#304): the push-off door — the act lands on
+        # the reminder's own record, and the deferral count the
+        # brief reads is derived from exactly these acts.
+        due, _rest = _day_parse_when(str(data.get("when") or ""))
+        if not due:
+            return {"ok": False, "error": "Name the new time in a "
+                    "shape I can read — \u201cin 30 minutes\u201d, "
+                    "\u201cat 18:30\u201d, \u201ctomorrow at 9\u201d."}
+        entry, err = daybook_postpone(
+            str(data.get("id") or "") or None, due, cfg=cfg)
+        if err:
+            return {"ok": False, "error": err}
+        return {"ok": True, "entry": entry, "day": daybook_payload(cfg)}
     if action == "order":
         entry, err = daybook_add_order(str(data.get("text") or ""),
                                        cfg=cfg)
@@ -35269,6 +35916,11 @@ _DAY_ORDER_RES = (
                r"((?:remind|report|file|watch[-\s]check)\b.+?)\s*$",
                re.I | re.S),
 )
+_DAY_POSTPONE_RE = re.compile(
+    r"^\s*(?:snooze(?:\s+(?:it|that|this))?|"
+    r"push\s+(?:it|that|this)(?:\s+(?:to|until|off))?)"
+    r"\s*(?:to|until|for)?\s*(.*?)\s*$",
+    re.I | re.S)
 _DAY_ACK_RE = re.compile(
     r"^\s*(got\s+it|ack|acknowledge|acknowledged|"
     r"that'?s\s+handled|handled|done)\s*[.!]?\s*$", re.I)
@@ -35417,6 +36069,29 @@ def day_chat_reply(last, cfg=None, chat_id=""):
                 + ". It fires on whichever seat you're at, once, "
                   "and your \u201cgot it\u201d anywhere settles it "
                   "everywhere.")
+    m = _DAY_POSTPONE_RE.match(text)
+    if m:
+        tail = (m.group(1) or "").strip()
+        due = None
+        if tail:
+            due, _rest = _day_parse_when(tail)
+        if due is None and tail in ("", "later"):
+            due = time.time() + 3600
+        if due is None:
+            return ("I can't read a time in that — say "
+                    "\u201csnooze it to tomorrow\u201d, "
+                    "\u201cpush it in 30 minutes\u201d, or name a "
+                    "clock time, and it moves. Nothing moved.")
+        entry, err = daybook_postpone(None, due, cfg=cfg)
+        if err:
+            return err
+        reply = ("Pushed — \u201c" + entry["text"][:160]
+                 + "\u201d now stands "
+                 + _daybook_when_words(due) + ".")
+        quip = daybook_quip(entry)
+        if quip:
+            reply += "\n" + quip
+        return reply
     if _DAY_ACK_RE.match(text):
         entry, err = daybook_ack(None, cfg)
         if entry is not None:
@@ -35434,8 +36109,10 @@ def day_chat_reply(last, cfg=None, chat_id=""):
         return None  # nothing fired — the line is talk, hers to answer
     if _DAY_BRIEF_RE.match(text):
         out = daybook_brief_compose(cfg=cfg, via="on-demand")
-        return ("The day brief — " + out["day"] + ":\n"
-                + "\n".join(out["lines"]))
+        # v0.6.2e (#304): the answer IS the document — the
+        # page draws the list from it; the markdown is what
+        # the thread holds and what recall returns.
+        return out["md"]
     m = _DAY_RECALL_RE.match(text)
     if m:
         want = m.group(1).lower()
@@ -38565,6 +39242,24 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
             self._send(200, {"ok": True, "channel": chan, "channelExplicit": True})
             return
+        if self.path == "/api/settings/sync-choice":
+            # The sync override's setting (v0.6.2e, #303):
+            # persist the operator's choice in the config's sync
+            # block. The answer carries the value that now
+            # stands, so the Settings switch renders the stored
+            # truth — and a failed save answers with its refusal,
+            # the switch unmoved.
+            data = self._body()
+            want = data.get("choiceOnPress")
+            if not isinstance(want, bool):
+                self._send(200, {"ok": False, "error": "The choice must be true or false."})
+                return
+            stood = sync_set_choice(want, load_config())
+            if stood is None:
+                self._send(200, {"ok": False, "error": "The choice could not be saved — the config did not take the write, so the setting stands as it was."})
+                return
+            self._send(200, {"ok": True, "choiceOnPress": stood})
+            return
         if self.path == "/api/settings/public":
             # The Local server toggle itself (build .61 — one
             # action): persist the choice in the config block AND
@@ -41568,7 +42263,11 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             if isinstance(data.get("seat"), dict):
                 _seat_merge(data.get("seat"), source="round")
-            result = sync_round(load_config(), "button", str(data.get("openChatId") or ""))
+            # v0.6.2e (#303): a directional press runs its
+            # one-way round; no direction is the legacy round.
+            result = sync_override_round(
+                load_config(), str(data.get("direction") or ""),
+                "button", str(data.get("openChatId") or ""))
             if isinstance(result, dict):
                 result["seat"] = seat_state_payload()
             self._send(200, result)

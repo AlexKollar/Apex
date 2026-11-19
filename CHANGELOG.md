@@ -2,6 +2,13 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.6.2
+
+Release tag: v0.6.2e — chapter 0.6's third build. The sync override: every Sync press offers Send or Receive — and Brief v2: the day brief as a markdown document, presented as a list, with Navi in the rows.
+
+- **The sync override (#303).** A **setting** (Settings → GitHub & Backup, on by default) governs the Sync button: with it on, a press offers **Send a sync** or **Receive a sync** — a manual override, so a sync happens now, on demand, not at the automatic cadence's pace. **Send** publishes this seat's set and applies nothing; **Receive** pulls and converges and publishes nothing. Both are the standing machinery standing alone by direction — the same roads (Mesh first when lit, the backup repo otherwise), the same convergence law — never a second sync system. Each round is **receipted** with what actually moved: files published, what came down, what converged — and a direction with nothing to move says so plainly. With the setting off, a press runs the legacy full round at once. The automatic cadence is untouched.
+- **Brief v2 (#304).** The day brief is composed and **stored as a markdown document** — a dated title, section headings (On / Changed / Needs you / Standing), one bullet per item — and recall returns the document. No surface presents the markdown: Home's Her working day card and the chat's brief answer **draw a native list from it** — sections as headers, each item a row with its time and state. Reminders gain a **postpone** act (chat: *snooze it to tomorrow*, *push it in 30 minutes*; the act is recorded on the reminder's own record), and the **deferral count is derived** from those acts plus the days a fired reminder has been carried — never a stored counter. When a count passes one, the item's row gains a **quip in Navi's name**, deterministic and once per count, escalating with the count — professional in register for the standing orders' items. Reminders' machinery — firing, ack as a synced fact, push parity — is untouched; the greeting's day lines stay terse.
+
 ## 0.6.1
 
 Release tag: v0.6.1e — chapter 0.6's second build. Fleet Answers: one ask, divided into whole sub-tasks, each answered whole by the machine best placed for it, composed into one answer with the seams showing.
