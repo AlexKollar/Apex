@@ -2365,8 +2365,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.38";
-var SHIPPED_BUILD_SEQ = 38;
+var BRIDGE_BUILD = "2026-11-19.39";
+var SHIPPED_BUILD_SEQ = 39;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -4296,13 +4296,37 @@ function wireDoPull(slug) {
     render();
   });
 }
+var shelfClosed = {};
+try { shelfClosed = JSON.parse(localStorage.getItem("navi.shelfClosed") || "{}") || {}; } catch (e) { shelfClosed = {}; }
+function shelfIsClosed(slug) { return !!(slug && shelfClosed[slug]); }
+function shelfToggle(slug) {
+  if (!slug) return;
+  if (shelfClosed[slug]) delete shelfClosed[slug]; else shelfClosed[slug] = true;
+  try { localStorage.setItem("navi.shelfClosed", JSON.stringify(shelfClosed)); } catch (e) {}
+  render();
+}
 function caseShelfHtml(ac) {
   // The reference shelf, standing at the head of the case's
   // room — labeled as what it is, distinct from messages and
   // from findings: reference, not findings. Removal is
   // shelf-local and says so.
+  // v0.6.7e (#333): the shelf COLLAPSES. Its header row is a
+  // real button — tap it and the shelf folds to the header
+  // alone; tap again and it stands back up. The state is
+  // remembered PER CASE in this seat's view state
+  // (localStorage navi.shelfClosed — view state only, never
+  // written into the case file), so it survives reload and
+  // one case's fold never folds another's. Collapsing is a
+  // view act only: the items, their Remove buttons and
+  // Navi's reading of the shelf are exactly as they were,
+  // and nothing is removed or filed by folding.
   if (!ac || !ac.case || !ac.shelf || !ac.shelf.length) return "";
-  var h = "<div class='card shelf-card' style='margin-top:10px'><div class='mono' style='font-size:12px'><b>REFERENCE SHELF</b> <span style='color:var(--dim)'>pulled from the Wire \u00b7 reference, not case findings</span></div>";
+  var closed = shelfIsClosed(ac.case);
+  var h = "<div class='card shelf-card' style='margin-top:10px'>"
+    + "<button type='button' class='ghost shelf-toggle' data-shelf-toggle='" + esc(ac.case) + "' aria-expanded='" + (closed ? "false" : "true") + "' aria-label='Toggle this case's reference shelf' style='min-height:44px;width:100%;text-align:left'>"
+    + "<span class='mono' style='font-size:12px'><b>REFERENCE SHELF</b> <span style='color:var(--dim)'>pulled from the Wire \u00b7 reference, not case findings \u00b7 " + ac.shelf.length + (ac.shelf.length === 1 ? " item" : " items") + "</span></span>"
+    + "<span style='float:right' aria-hidden='true'>" + (closed ? "\u25b8" : "\u25be") + "</span></button>";
+  if (closed) return h + "</div>";
   ac.shelf.forEach(function (r) {
     h += "<div style='display:flex;gap:8px;align-items:flex-start;margin-top:8px'><div style='flex:1;min-width:0'><span class='mono' style='font-size:11px;color:var(--am)'>" + esc(r.id) + "</span> "
       + (r.link ? "<a href='" + esc(r.link) + "' target='_blank' rel='noopener' style='color:var(--cy)'>" + esc(r.title) + "</a>" : "<b>" + esc(r.title) + "</b>")
@@ -6896,6 +6920,14 @@ var DOC_PAGES = [
   "<p>A case is not one bucket. It has <b>parts</b> — the findings, the observables register, the entities register, the timeline — and a filing lands in one of them. Through v0.5.14e every chat filing door filed to findings whatever it was handed, so an indicator stated in a reply became a finding to be read back out of the register it belonged in. Now <b>every filing door carries its destination</b>: <b>finding</b> (the default), <b>lead</b>, <b>observable</b>, <b>entity</b>, <b>event</b>. A lead is a finding-shaped note that stands in the findings <i>as a lead</i>, unverified on its face; an observable or an entity lands in its register; an event lands on the timeline. Since v0.6.6e (#326) the set is complete — <b>task</b>, <b>timeline</b>, <b>evidence</b> and <b>report</b> are filing parts too (see <i>The case suite</i> below): a task filing splits a list reply into one Tasks entry per item; a timeline filing dates its entry by the date the reply names, or the filing moment; an evidence filing takes the reply as a text exhibit, exactly as written, under a bridge-computed SHA-256; a report filing appends the reply to the case's report material.</p>" +
   "<p><b>The suggestion names its destination — and senses it.</b> Print-first stands (#286, #289): the answer prints whole, and only then is filing offered — and the offer itself carries the part. The button under a reply reads <b>File into this case — as a lead</b> (or finding, or observable), read deterministically from the reply itself: a bare indicator in a short reply suggests <i>observable</i>; a reply reporting what a source says suggests <i>lead</i>; the rest suggest <i>finding</i>. Since v0.6.6e (#327) the read covers the reply's whole shape: a chronological narrative (three or more dated lines) suggests the <i>timeline</i>; a list of indicator data suggests <i>observables</i>; an imperative next-step list suggests <i>tasks</i> — the button names the count, <i>as tasks (5)</i>; a short reply whose subject is typed on its face (<i>X — a vendor</i>) suggests <i>entity</i>; a reply opening on a date suggests <i>event</i>. Anything the read cannot place is a <i>finding</i>, plainly the default — never dressed as a confident guess. She may make the same suggestion in her own words (<i>that one is worth filing — as a lead</i>), and the receipt names the landing either way, so a wrong part shows at filing time, not at read-back.</p>" +
   "<p><b>Your words govern.</b> Say <i>file that as a lead</i>, <i>add this to the case as an observable</i>, <i>log it as an event</i>, <i>file that as tasks</i>, <i>put it on the timeline</i>, <i>file it as evidence</i>, <i>add it to the report</i> — in the case's room the words file the reply they point at, at the part you named, over any suggestion the furniture made; anywhere else they file the exchange into the open case at that part. Your named part is absolute: it governs even when it contradicts the shape of the material. A named place that is <b>not</b> a filing part — a <i>note</i>, a <i>register</i> — is refused <b>by name</b>, out loud, and nothing is filed: the refusal names the nine parts the case does have. Nothing is ever silently rerouted to findings. The case file itself keeps the purity rule: the part is structure in the entry's frontmatter or its register, never machinery text in the body.</p></div>" +
+    "<div class='doc-sec'><h4>The field fixes (v0.6.7e, #305–#316, #331, #332)</h4>" +
+  "<p><b>Her prompt is budgeted (#310).</b> Before a chat turn is sent, the bridge measures the assembled prompt — persona, briefs, teaching, case context — against this seat's context size. Briefs that can grow are capped, background sheds before anything she stands on, the shell and case teaching ride only on turns that can use them, and the estimate rides the reply as a readout. What cannot fit even shed is refused by name — the numbers and the doors stated — never sent to die truncated at the model. A fresh install's context never derives below 4096, the floor her standing prompt needs.</p>" +
+  "<p><b>A borrowed reply is inert (#315, #314).</b> A reply served by a Mesh lender is answered with, never acted on: it cannot reach your shell, its memory markers are held as proposals, its findings are not filed. What leaves for a lender is cleaned at the door — no marker teaching, no shell teaching — and the threat-intel watchlist never leaves this machine at all: not in the digest served to peers, not in a borrowed prompt, not in the GitHub backup.</p>" +
+  "<p><b>Federation tells the truth (#311, #316).</b> Lending to new fedinet members defaults <b>off</b>, as the page always promised — the switch, the stored state and the reloaded page agree. The roster sync reports the roster's real version.</p>" +
+  "<p><b>The gate door is throttled (#313).</b> The bridge's own access-code door locks after five wrong codes, like the DHD door — the wait is named, and the right code clears the count.</p>" +
+  "<p><b>The updater minds its manners (#305, #306, #308, #312).</b> On a systemd seat the apply lets the unit own the restart instead of spawning a process that polls it forever. Apply evidence — traces and logs under <span class='mono'>updates/</span> — survives the swap it records. The install markers record the stamp of the tree actually installed. A root shell is refused at another user's tree, by name; a migrated tree is never migrated twice; and the installer never advises ending another user's processes.</p>" +
+  "<p><b>Case talk knows its watch (#331).</b> In a case's room, her facts state whether a Pulse watch stands attached — topic and last check — or that none does. She will not call a case monitored over nothing.</p>" +
+  "<p><b>One phone, one record (#332).</b> Push subscriptions key on the phone itself, not the endpoint iOS keeps re-minting: re-subscribing replaces the phone's record, label carried. Settings shows when each record subscribed, and any record can be removed from any seat — that phone stops ringing; the tray is untouched.</p></div>" +
     "<div class='doc-sec'><h4>The case suite (v0.6.6e, #326–#330)</h4>" +
   "<p><b>Every part takes a filing.</b> A <b>task</b> filing splits the reply: one Tasks entry per list item, marker stripped; a reply with no list is a single task — its first line — and the prose around a list is never dropped and never a task: it rides the receipt as the filing's source note. A <b>timeline</b> filing enters under the date the reply names for the event when it names one, and under the filing moment when it does not. An <b>evidence</b> filing is a custody act: the reply stands as a text exhibit, exactly as written, its register entry carrying the SHA-256 the bridge computed at filing time, its size, and the chat it came from. A <b>report</b> filing appends to the case's report material — entries in filed order, dated on their face — and the formed document's Report section draws them ahead of any drawn export.</p>" +
   "<p><b>Headings print once (#329).</b> A filed reply whose first line repeats its heading no longer prints three times — heading, rendered title, the body's own opening line. The filed note keeps the reply's exact words (no writer title line is added above a body that already opens with its heading), and the surfaces that print the heading themselves — the formed document, the report export — open the body after the repeated line, for filings from before this build exactly as for new ones, across every part and in dossier documents: exact match, or the heading with a colon. A heading that recurs later in a body is the author's text and stands; the answer as printed in chat is never altered.</p>" +
@@ -6913,7 +6945,8 @@ var DOC_PAGES = [
   "<p>Either way, the case keeps the receipt: a line in its <b>custody record</b> (<span class='mono'>custody.md</span> in the case folder) naming the finding or element, when it left, <b>where it was deleted from</b> (the dossier / this case / another case / the Vault), and the reason if one was given. The custody record is part of the case folder — it rides Sync and backups with the case — but it is not part of the formed document: a formed case file holds the case's substance, and a deletion leaves no residue in it beyond the custody line's home in the folder.</p></div>" +
     "<div class='doc-sec'><h4>The reference shelf (v0.5.10e, #283)</h4>" +
   "<p>A case chat can hold a <b>reference shelf</b>: Wire cards — a news story, a CVE or KEV card, a CTF listing — pulled in from the Wire page with the card's <b>Pull into a case</b> button, or pulled by Navi herself when you ask her to (<i>“pull the OpenSSH card into this case”</i>). A shelf entry carries the card's full text, its link and its provenance, and it stands at the head of the case's room, labeled <b>REFERENCE SHELF — reference, not case findings</b>.</p>" +
-  "<p>The shelf is <b>reference, not evidence</b>. It never enters the case file, the registers, the findings, or any export — filing stays a separate, deliberate act, and a pulled card becomes a finding only when something is filed. Navi reads the shelf in the room: the refs stand in her context by name, and naming one (<i>“use reference R1”</i>) or letting her pull it into a reply brings its full text to bear — cited <b>as reference</b>, never as a finding, with the pull receipted under her answer. The shelf rides the case chat's Sync, so it stands on every seat the chat does. Removing a ref is <b>shelf-local</b>: it leaves this shelf only — unlike a dossier element's delete, it reaches nowhere else, and it says so where it stands.</p></div>" +
+  "<p>The shelf is <b>reference, not evidence</b>. It never enters the case file, the registers, the findings, or any export — filing stays a separate, deliberate act, and a pulled card becomes a finding only when something is filed. Navi reads the shelf in the room: the refs stand in her context by name, and naming one (<i>“use reference R1”</i>) or letting her pull it into a reply brings its full text to bear — cited <b>as reference</b>, never as a finding, with the pull receipted under her answer. The shelf rides the case chat's Sync, so it stands on every seat the chat does. Removing a ref is <b>shelf-local</b>: it leaves this shelf only — unlike a dossier element's delete, it reaches nowhere else, and it says so where it stands.</p>" +
+  "<p><b>The shelf folds (v0.6.7e, #333).</b> The shelf's header is a button: tap it and the shelf collapses to the header alone — source line and item count still showing — tap again and it stands back up. The fold is remembered <b>per case</b> on this seat (view state only; the case file never hears about it), and it works the same at every width and in both layouts. Folding is a view act: the items, their Remove buttons and Navi's reading of the shelf are untouched.</p></div>" +
     "<div class='doc-sec'><h4>The report export</h4>" +
   "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
   { id: "threat-intelligence", title: "The Wire — the Center", related: ["case-files", "mesh"], html:
@@ -12220,7 +12253,15 @@ function pushDoorHtml() {
       + "<div style='margin-top:8px'><button type='button' class='act' data-push-enable='1' style='min-height:44px'" + (pushState.busy ? " disabled" : "") + ">Ring this device</button></div>";
   }
   if (pushState.subscriptions && pushState.subscriptions.length) {
-    h += "<div style='font-size:12px;color:var(--dim);margin-top:8px'>Ringing: " + pushState.subscriptions.map(function (s) { return esc(s.label || "a phone"); }).join(" \u00b7 ") + "</div>";
+    // v0.6.7e (#332): the roster can be told apart and
+    // cleaned — each record shows WHEN it subscribed, and
+    // any seat can remove a stale one (that record stops
+    // ringing; the tray is untouched).
+    h += "<div style='font-size:12px;color:var(--dim);margin-top:8px'>Ringing:</div>" + pushState.subscriptions.map(function (s) {
+      var when = "";
+      try { if (s.created) when = " · since " + new Date(s.created).toLocaleDateString(); } catch (e) {}
+      return "<div class='row' style='gap:8px;align-items:center;margin-top:4px'><span style='font-size:12px'>" + esc(s.label || "a phone") + esc(when) + "</span><button type='button' class='ghost' data-push-remove='" + esc(s.id || "") + "' style='min-height:32px;padding:2px 10px;font-size:12px'>Remove</button></div>";
+    }).join("");
   }
   return h + "</div>";
 }
@@ -12286,6 +12327,16 @@ function pushEnable() {
     pushRenderDoors();
   });
 }
+function pushRemove(id) {
+  if (!id) return;
+  fetch("/api/push/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id }) }).then(function (r) { return r.json(); }).then(function (j) {
+    pushState.note = (j && j.ok) ? "That record was removed \u2014 it will not ring again. The tray is untouched." : ("The removal was refused \u2014 " + ((j && j.error) || "unnamed refusal."));
+    pushRefresh();
+  }).catch(function (e) {
+    pushState.note = "Removing that record failed \u2014 " + String((e && e.message) || e);
+    pushRenderDoors();
+  });
+}
 function pushDisable() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.getRegistration().then(function (reg) {
@@ -12307,9 +12358,10 @@ function pushDisable() {
   });
 }
 document.addEventListener("click", function (e) {
-  var b = (e.target && e.target.closest) ? e.target.closest("[data-push-enable],[data-push-disable]") : null;
+  var b = (e.target && e.target.closest) ? e.target.closest("[data-push-enable],[data-push-disable],[data-push-remove]") : null;
   if (!b) return;
   if (b.getAttribute("data-push-enable")) pushEnable();
+  else if (b.getAttribute("data-push-remove")) pushRemove(b.getAttribute("data-push-remove"));
   else pushDisable();
 });
 window.addEventListener("load", function () {
@@ -14685,6 +14737,12 @@ function wire() {
     // Reference shelf removal (v0.5.10e, #283): shelf-local —
     // the bridge drops the ref from this case's shelf only,
     // and the room rehydrates with the shelf as it now stands.
+    // Reference shelf collapse (v0.6.7e, #333): the header
+    // is the toggle — per-case view state, re-rendered in
+    // place; the shelf's contents are untouched by folding.
+    mainEl.querySelectorAll("[data-shelf-toggle]").forEach(function (b) { b.onclick = function () {
+      shelfToggle(b.getAttribute("data-shelf-toggle"));
+    }; });
     mainEl.querySelectorAll("[data-shelf-remove]").forEach(function (b) { b.onclick = function () {
       b.disabled = true;
       casePost("/api/cases/shelf", { case: b.getAttribute("data-shelf-case"), act: "remove", ref: b.getAttribute("data-shelf-remove") }, function (j) {

@@ -838,7 +838,13 @@ class Intel:
         return {"ok": True, "imported": len(digest.get("items") or [])}
 
     # -- Navi's picture ----------------------------------------------
-    def brief_text(self):
+    def brief_text(self, for_share=False):
+        # v0.6.7e (#314): for_share builds the text that may
+        # LEAVE the machine (the shared digest's brief, a
+        # borrowed prompt's brief): no matched-term lines, no
+        # stack/case match section, no match counts — the
+        # inventory never leaves the machine (the doctrine at
+        # this file's head). The local brief keeps everything.
         with self._db() as conn:
             total = conn.execute("SELECT COUNT(*) AS n FROM cve").fetchone()["n"]
             if not total:
@@ -849,9 +855,12 @@ class Intel:
         who = collector.get("name") or "this node"
         lines = ["[Threat intelligence — gathered by " + who + ", as of "
                  + _iso(time.time()) + "]"]
-        lines.append("Known-exploited (KEV): " + str(sec["kev_total"]) + " total, "
-                     + str(len(sec["kev_new"])) + " new. Matched to this operator's stack/cases: "
-                     + str(len(sec["stack_matches"])) + ".")
+        _head = ("Known-exploited (KEV): " + str(sec["kev_total"]) + " total, "
+                 + str(len(sec["kev_new"])) + " new.")
+        if not for_share:
+            _head += (" Matched to this operator's stack/cases: "
+                      + str(len(sec["stack_matches"])) + ".")
+        lines.append(_head)
 
         def fmt(r):
             bits = [r["id"]]
@@ -873,13 +882,13 @@ class Intel:
                 m = json.loads(r["matched"]) if r["matched"] else None
             except Exception:
                 m = None
-            if m:
+            if m and not for_share:
                 bits.append("matches " + str(m.get("via")) + " term “" + str(m.get("term")) + "” (" + str(m.get("grade")) + ")")
             title = (r["title"] or "")[:90]
             return " · ".join(bits) + (" — " + title if title else "")
 
         shown = 0
-        if sec["stack_matches"]:
+        if sec["stack_matches"] and not for_share:
             lines.append("Stack & case matches:")
             for r in sec["stack_matches"][:6]:
                 lines.append("- " + fmt(r))
@@ -907,11 +916,37 @@ class Intel:
         text = "\n".join(lines)
         return text[:2300]
 
-    def brief_block(self):
+    def brief_block(self, for_share=False):
         s = self.settings()
         if not s.get("enabled", True):
             return ""
-        return self.brief_text()
+        return self.brief_text(for_share=for_share)
+
+    def shared_digest(self):
+        # v0.6.7e (#314): the wire copy of the digest — the
+        # object that LEAVES this machine at the Mesh door.
+        # Public intel only: the stack_matches and
+        # watchlist_hits sections are emptied, every item's
+        # "matched" annotation is stripped, and the embedded
+        # brief is the for-share text (no match lines). The
+        # local digest keeps all of it; matching is local,
+        # always, and a receiver re-matches what it imports
+        # against its own inventory.
+        digest = self.build_digest()
+        if not digest:
+            return digest
+        out = dict(digest)
+        sections = dict(out.get("sections") or {})
+        for key in ("kev_new", "top_new"):
+            sections[key] = [dict(it, matched=None)
+                             for it in (sections.get(key) or [])]
+        sections["stack_matches"] = []
+        sections["watchlist_hits"] = []
+        out["sections"] = sections
+        out["items"] = [dict(it, matched=None)
+                        for it in (out.get("items") or [])]
+        out["brief_text"] = self.brief_text(for_share=True)
+        return out
 
     def _record_lines(self, rows, cap=1500):
         out = []

@@ -374,6 +374,19 @@ def _shell_window_state(root):
     return "ok", ""
 
 
+def _relaunch_systemd_owned(job):
+    # v0.6.7e (#305): does systemd own this install's bridge?
+    # The job's startup mode is the install's own recorded
+    # answer: an "on-boot" install registered systemd user
+    # units (navi-llamafile.service, navi-bridge.service) and
+    # the installer started them itself. On such a seat a
+    # start.sh spawn can only adopt the unit's bridge and then
+    # hold the foreground polling it — one immortal start.sh
+    # per Apply, in a transient scope, lying about who
+    # supervises the bridge.
+    return bool(job) and job.get("startup") == "on-boot"
+
+
 def _install_headless(job, root):
     # v0.4.6e (#185): is this a headless install? Returns
     # (headless, source). The determination mirrors the
@@ -911,6 +924,31 @@ def main():
 
     def relaunch():
         try:
+            if _relaunch_systemd_owned(job):
+                # v0.6.7e (#305): systemd owns the restart on
+                # a boot-startup seat — signal the unit and
+                # let the confirmation loop below prove the
+                # new build answers. No start.sh is spawned.
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "restart",
+                         "navi-bridge.service"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=60)
+                    trace("relaunch-systemd",
+                          "systemd owns this install's bridge "
+                          "(--startup boot) — navi-bridge.service "
+                          "was signalled to restart; no start.sh "
+                          "was spawned")
+                except Exception as e:
+                    trace("relaunch-systemd",
+                          "systemd owns this install's bridge "
+                          "(--startup boot); the restart signal "
+                          "could not be sent (" + str(e) + ") — "
+                          "the unit's own state stands, and the "
+                          "confirmation below judges what answers")
+                return ""
             # The relaunch log lives in the stage folder, which
             # the installer's swap parks with the previous tree
             # on a same-home apply: without its folder recreated

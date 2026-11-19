@@ -80,6 +80,17 @@ cd "$SRC_DIR"
 
 STAMP="2026-11-14.11"
 BUILD_STAMP="2026-11-14.11"
+# v0.6.7e (#308): the stamp the install RECORDS is the stamp
+# of the tree actually being installed, read from that tree's
+# own bridge — the #271 rider fixed the summary line to read
+# the tree's stamp back; the two marker files kept writing
+# this script's constant, five builds stale. Read it here,
+# before anything is touched; the constant remains only as
+# the fallback for a tree that cannot be read. (STAMP itself
+# still names the failed-install parking folder — a name,
+# not a claim about the tree.)
+TREE_STAMP="$(sed -n 's/^BRIDGE_BUILD = "\(.*\)"$/\1/p' "$SRC_DIR/bridge.py" 2>/dev/null | head -n 1)"
+[ -n "$TREE_STAMP" ] || TREE_STAMP="$BUILD_STAMP"
 
 # --- Who is running this, and in whose name -------------------
 # SUDO in the old sense is GONE: placement runs unprivileged in
@@ -152,6 +163,7 @@ STARTUP=""
 VOICE=""
 FRESH=""
 NO_RELAUNCH=""
+AS_ROOT=""
 # Headless (#185): HEADLESS_ARG is the operator's explicit word
 # (--headless); the determination itself (flag / implied by
 # --startup boot / recorded / auto-detected) is resolved after
@@ -167,6 +179,7 @@ while [ $# -gt 0 ]; do
     --headless) HEADLESS_ARG=1; shift ;;
     --fresh) FRESH=1; shift ;;
     --no-relaunch) NO_RELAUNCH=1; shift ;;
+    --as-root) AS_ROOT=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -197,6 +210,37 @@ if [ -n "$INVOKED_DIR" ]; then
     INSTALL_DIR="$DEFAULT_HOME"
   fi
 fi
+# --- Root shell vs another user's tree (v0.6.7e, #312) -------
+# A genuine root shell (no SUDO_USER — the sudo case is the
+# guard above) is the operator of its own context; a
+# container's first boot is the standing case and proceeds.
+# But when a NON-ROOT user already owns an Apex tree on this
+# machine, a root run does not get to strand a second,
+# root-owned install beside it, nor re-open a migration that
+# already landed in that user's home. Refuse by name, naming
+# the owner and their door; --as-root is the deliberate
+# override, spoken out loud.
+if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ] && [ -z "$AS_ROOT" ]; then
+  _other_tree=""; _other_owner=""
+  for _cand in "$LEGACY_DIR" /home/*/.local/share/navi-apex; do
+    if [ -f "$_cand/bridge.py" ]; then
+      _o="$(stat -c %U "$_cand/bridge.py" 2>/dev/null || true)"
+      if [ -n "$_o" ] && [ "$_o" != "root" ]; then
+        _other_tree="$_cand"; _other_owner="$_o"; break
+      fi
+    fi
+  done
+  if [ -n "$_other_tree" ]; then
+    echo "ERROR: Apex already stands on this machine under another user's ownership — refusing a root-shell install over it." >&2
+    echo "       The tree at $_other_tree belongs to $_other_owner. A root install here would strand a second," >&2
+    echo "       root-owned Apex beside theirs, owned by no one who can tend it." >&2
+    echo "       Run this installer as $_other_owner instead — placement never needs root:" >&2
+    echo "           su - $_other_owner -c 'bash install.sh'" >&2
+    echo "       or pass --as-root if a root-owned install is genuinely what this machine wants." >&2
+    exit 1
+  fi
+fi
+
 PARENT_DIR="$(dirname "$INSTALL_DIR")"
 STAGE_DIR="$PARENT_DIR/.apex-stage"
 PREV_DIR="$PARENT_DIR/.apex-prev"
@@ -260,8 +304,18 @@ LEGACY_STATE_INTERRUPTED=""
 MIGRATION_PROVEN=""
 if [ -f "$INSTALL_DIR/config/migration.json" ]; then
   MIGRATION_PROVEN=1
-elif [ -f "$LEGACY_DIR/.apex-migration.json" ] \
-     && grep -qF "\"to\": \"$INSTALL_DIR\"" "$LEGACY_DIR/.apex-migration.json" 2>/dev/null; then
+elif [ -f "$LEGACY_DIR/MIGRATED.txt" ]; then
+  # v0.6.7e (#312): the park's own word, READ at last — a
+  # tree that was migrated wears MIGRATED.txt on its face,
+  # and that word stands regardless of which home a later
+  # invocation targets.
+  MIGRATION_PROVEN=1
+elif [ -f "$LEGACY_DIR/.apex-migration.json" ]; then
+  # v0.6.7e (#312): the marker's EXISTENCE is the proof now.
+  # The old test also demanded its "to" name the CURRENT
+  # target — a root shell's home is /root, so a user's
+  # already-migrated tree read as unproven from root and
+  # was migrated AGAIN.
   MIGRATION_PROVEN=1
 fi
 if [ "$INSTALL_DIR" = "$DEFAULT_HOME" ] && [ "$LEGACY_DIR" != "$INSTALL_DIR" ] \
@@ -987,8 +1041,10 @@ stop_bridge() {
   hcmd="$(python3 -c 'import sys; raw = open(sys.argv[1], "rb").read(); print(" ".join(part.decode("utf-8", "replace") for part in raw.split(bytes([0]))).strip())' "/proc/$holder/cmdline" 2>/dev/null || true)"
   echo "ERROR: port 8675 is still held by process $holder ($hcmd) and this installer cannot clear it." >&2
   echo "       No files have been replaced, and the pid file is untouched. The update has NOT happened." >&2
-  echo "       End that process with:  kill -9 $holder" >&2
-  echo "       then run this installer again." >&2
+  _howner="$(stat -c %U "/proc/$holder" 2>/dev/null || echo 'another user')"
+  echo "       That process belongs to $_howner, and this installer does not end another user's processes — no kill command is offered for it." >&2
+  echo "       Its owner can stop it from their own session:  systemctl --user stop navi-bridge.service" >&2
+  echo "       — or run this installer as $_howner. Then run this installer again." >&2
   return 1
 }
 
@@ -1053,7 +1109,7 @@ stop_llamafile() {
   for p in $pids; do bridge_pid_gone "$p" || alive="$alive $p"; done
   if [ -n "$alive" ]; then
     echo "    WARNING: the previous model server (pid(s):$alive) did not stop and still holds the model port." >&2
-    echo "             The install continues — the new model server cannot bind while it lives. End it with:  kill -9$alive" >&2
+    echo "             The install continues — the new model server cannot bind while it lives. Its owner can stop it from their own session:  systemctl --user stop navi-llamafile.service" >&2
   fi
   return 0
 }
@@ -1596,6 +1652,19 @@ if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   # The stage starts from the OLD tree, so update staging the
   # updater left behind never rides into the new version.
   rm -rf "$STAGE_DIR/updates"
+  # v0.6.7e (#306, the cheap leg): the updater's EVIDENCE —
+  # each apply stage's trace, install and relaunch logs and
+  # job records under updates/ — is carried across the swap
+  # like the config above, so a successful Apply stops
+  # deleting the record of itself (the apply trace is the
+  # #208 acceptance evidence; the helper appends to it by
+  # path after the swap, so the chain continues on the
+  # carried file). Package PAYLOADS do not ride: the helper
+  # restores the live apply's staged package itself, and a
+  # spent apply's payload is bulk, not evidence. The full
+  # relocation of the stage home out of the tree remains
+  # #306's open half.
+  [ -d "$FOUNDATION_SRC/updates" ] && (cd "$FOUNDATION_SRC/updates" && tar --exclude='*/package' --exclude='*.zip' --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/updates" && cd "$STAGE_DIR/updates" && tar --no-same-owner -xf -) 2>/dev/null || true
 elif [ -n "$IS_UPDATE" ]; then
   echo "    fresh install: keeping the llamafile, chips, packs, the Vault, DHD and Mesh homes,"
   echo "    chats, config and the voice venv — everything else is rebuilt from the package"
@@ -1838,7 +1907,7 @@ elif logical >= 16: threads = 8; reason.append(f"Threads 8: half of {logical} lo
 elif logical >= 8: threads = 4; reason.append(f"Threads 4: half of {logical} logical cores.")
 elif logical >= 4: threads = 2; reason.append(f"Threads 2: conservative for a {logical}-core machine.")
 else: threads = 1; reason.append("Threads 1: single-core floor.")
-if ram < 6: ctx = 2048; reason.append("Context 2048: under 6 GiB RAM.")
+if ram < 6: ctx = 4096; reason.append("Context 4096: under 6 GiB RAM — floored at the product's own prompt floor (#310): below it, her standing prompt does not fit.")
 elif ram < 12: ctx = 4096; reason.append(f"Context 4096: {ram:.1f} GiB RAM — proven fluid size for this class (Framework 13 baseline).")
 elif ram < 20: ctx = 8192; reason.append(f"Context 8192: {ram:.1f} GiB RAM.")
 elif ram < 40: ctx = 16384; reason.append(f"Context 16384: {ram:.1f} GiB RAM.")
@@ -1995,7 +2064,7 @@ esac
 # and none of it is ever run under sudo, so systemctl --user
 # always talks to the operator's own bus (incident 17).
 PROVISIONED_MARK="$INSTALL_DIR/.apex-provisioned"
-printf '{"operator": "%s", "at": "%s", "build": "%s"}\n' "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" > "$PROVISIONED_MARK"
+printf '{"operator": "%s", "at": "%s", "build": "%s"}\n' "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TREE_STAMP" > "$PROVISIONED_MARK"
 
 
 # Headless (#185): a headless install creates NO application-
@@ -2858,7 +2927,7 @@ fi
 _hl_json="false"
 if [ -n "$HEADLESS" ]; then _hl_json="true"; fi
 printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed", "headless": %s, "headlessSource": "%s"}\n' \
-  "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STAMP" "$(cat "$INSTALL_DIR/VERSION")" "$_hl_json" "$HEADLESS_SOURCE" \
+  "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TREE_STAMP" "$(cat "$INSTALL_DIR/VERSION")" "$_hl_json" "$HEADLESS_SOURCE" \
   > "$INSTALL_DIR/.apex-install-record"
 python3 - "$INSTALL_DIR/.apex-install-record" "$INSTALL_DIR/config/install-self-check.json" $AUDIT_CASUALTY_LIST <<'PY' || true
 import json, sys

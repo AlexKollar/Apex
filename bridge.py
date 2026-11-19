@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.6"
+SHIPPED_VERSION = "0.6.7"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.38"
+BRIDGE_BUILD = "2026-11-19.39"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 38
+SHIPPED_BUILD_SEQ = 39
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -3623,7 +3623,7 @@ class _IntelUnavailable:
     def state(self):
         return {"ok": False, "error": "intel.py is missing from this install — The Wire is unavailable.", "sources": [], "queue": [], "advisories": [], "watchlist": []}
 
-    def brief_block(self):
+    def brief_block(self, for_share=False):
         return ""
 
     def message_context(self, _text):
@@ -3639,6 +3639,9 @@ class _IntelUnavailable:
         return "The Wire is unavailable on this install (intel.py missing)."
 
     def build_digest(self):
+        return {}
+
+    def shared_digest(self):
         return {}
 
     def import_digest(self, _digest):
@@ -4990,7 +4993,7 @@ def mesh_handle_intel_digest(handler, body):
     if peer is None:
         return 401, {"ok": False, "reason": "unauthorized"}
     try:
-        digest = INTEL.build_digest()
+        digest = INTEL.shared_digest()
     except Exception as e:
         return 200, {"ok": False, "reason": "digest-failed", "error": str(e)[:160]}
     if not digest:
@@ -5096,10 +5099,7 @@ def mesh_handle_borrow(handler, body):
         ctx_limit = int((cfg.get("runtime") or {}).get("ctx_size") or 4096)
     except Exception:
         pass
-    est_tokens = 0
-    for m in messages:
-        if isinstance(m, dict):
-            est_tokens += len(str(m.get("content") or "")) // 4 + 4
+    est_tokens = estimate_messages_tokens(messages)
     if est_tokens > ctx_limit:
         return 200, {"ok": False, "reason": "too-large"}
     lend = ms["lend"]
@@ -5574,7 +5574,7 @@ def _fed_sanitize(raw):
         "roster": roster,
         "rosterSyncedAt": _mesh_int(raw.get("rosterSyncedAt"), 0),
         "trustByDefault": raw.get("trustByDefault") is True,
-        "lendToNew": raw.get("lendToNew") is not False,
+        "lendToNew": raw.get("lendToNew") is True,
         "untrusted": _mesh_id_list(raw.get("untrusted")),
         "lendOverrides": _mesh_id_list(raw.get("lendOverrides")),
         "memberSince": since,
@@ -6477,7 +6477,7 @@ def _fed_roster_sync(cfg, fed):
     if err:
         return "The roster the gateway sent was refused (" + err + ") — the stored roster stands."
     federation_apply(load_config())
-    return "Roster synced — version " + str(_fed_roster_version(roster)) + " is this node's word now."
+    return "Roster synced — version " + str(_fed_roster_version({"roster": roster})) + " is this node's word now."
 
 
 def _fed_roster_ask_via_relay(cfg, fed, gw_rec, payload):
@@ -15810,6 +15810,19 @@ def _shell_window_state(root):
     return "ok", ""
 
 
+def _relaunch_systemd_owned(job):
+    # v0.6.7e (#305): does systemd own this install's bridge?
+    # The job's startup mode is the install's own recorded
+    # answer: an "on-boot" install registered systemd user
+    # units (navi-llamafile.service, navi-bridge.service) and
+    # the installer started them itself. On such a seat a
+    # start.sh spawn can only adopt the unit's bridge and then
+    # hold the foreground polling it — one immortal start.sh
+    # per Apply, in a transient scope, lying about who
+    # supervises the bridge.
+    return bool(job) and job.get("startup") == "on-boot"
+
+
 def _install_headless(job, root):
     # v0.4.6e (#185): is this a headless install? Returns
     # (headless, source). The determination mirrors the
@@ -16347,6 +16360,31 @@ def main():
 
     def relaunch():
         try:
+            if _relaunch_systemd_owned(job):
+                # v0.6.7e (#305): systemd owns the restart on
+                # a boot-startup seat — signal the unit and
+                # let the confirmation loop below prove the
+                # new build answers. No start.sh is spawned.
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "restart",
+                         "navi-bridge.service"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=60)
+                    trace("relaunch-systemd",
+                          "systemd owns this install's bridge "
+                          "(--startup boot) — navi-bridge.service "
+                          "was signalled to restart; no start.sh "
+                          "was spawned")
+                except Exception as e:
+                    trace("relaunch-systemd",
+                          "systemd owns this install's bridge "
+                          "(--startup boot); the restart signal "
+                          "could not be sent (" + str(e) + ") — "
+                          "the unit's own state stands, and the "
+                          "confirmation below judges what answers")
+                return ""
             # The relaunch log lives in the stage folder, which
             # the installer's swap parks with the previous tree
             # on a same-home apply: without its folder recreated
@@ -18162,6 +18200,11 @@ def github_collect_backup(cfg, dashboard=None):
             k: v for k, v in cfg.items()
             if k not in ("github", "bridge", "hardware_profile", "runtime")
         }
+        if isinstance(clean.get("intel"), dict):
+            clean["intel"] = {
+                k: v for k, v in clean["intel"].items()
+                if k != "watchlist"
+            }
         files["settings.json"] = json.dumps(clean, indent=2).encode()
         files["voice.json"] = json.dumps(cfg.get("voice") or {}, indent=2).encode()
         if isinstance(dashboard, dict):
@@ -23577,7 +23620,7 @@ def derive_hardware_settings(d):
     else:
         threads = 1; reasoning.append("Threads 1: single-core floor.")
     if ram < 6:
-        ctx = 2048; reasoning.append("Context 2048: under 6 GiB RAM — smallest fluid window.")
+        ctx = PROMPT_FLOOR_CTX; reasoning.append(f"Context {PROMPT_FLOOR_CTX}: under 6 GiB RAM — floored at the product's prompt floor (#310): a smaller window cannot hold her standing prompt.")
     elif ram < 12:
         ctx = 4096; reasoning.append(f"Context 4096: {ram:.1f} GiB RAM — the proven fluid size for this class.")
     elif ram < 20:
@@ -23955,6 +23998,130 @@ def _chat_sanitize_messages(messages):
             "the conversation held nothing the model could answer "
             "— every message in it was empty. Nothing was sent.")
     return out
+
+
+# ---------------------------------------------------------------------
+# The local prompt budget (v0.6.7e, #310).
+#
+# Until this build the local chat path measured NOTHING: the
+# assembly appended block after block every turn (persona,
+# Guardian, vitals, the intel brief, awareness, shell and case
+# teaching, the Row, the case brief) and handed the result to a
+# context the hardware profile had derived from RAM alone —
+# 4096 on the 6–12 GiB class. On such a seat the standing
+# prompt alone overflowed the window and EVERY local chat died
+# at the model with out_of_context_due_to_long_message. The
+# lend door has measured since Build 8 (#154) — refused whole,
+# never truncated; the local path now keeps the same discipline
+# with the opposite hand: it sheds BACKGROUND, lowest-value
+# first, and never the operator's words. Three instruments:
+#
+#   * conditional teaching — the shell teaching rides only a
+#     machine-directed turn (the #240 gate's own read), the
+#     case teaching only a case-shaped one (a case bound or
+#     open, or the turn naming case work);
+#   * per-block caps — no single dynamic brief may eat the
+#     window; an over-cap block is trimmed and the trim named;
+#   * the budget itself — assembled prompt vs the seat's own
+#     ctx_size (the lend estimator, shared), a reply's room
+#     reserved (CHAT_MAX_TOKENS), background segments shed in
+#     a fixed order, then per-turn system extras, then the
+#     oldest history — and if even the standing core does not
+#     fit, an honest named refusal instead of a dead model
+#     call. The accounting rides the turn's payload as its
+#     readout (promptBudget), so the size of her prompt is a
+#     fact on the record, not a mystery in the field.
+PROMPT_FLOOR_CTX = 4096
+PROMPT_BLOCK_CAP_CHARS = 6000
+
+
+def estimate_messages_tokens(messages):
+    # The one estimator: four chars to a token plus a small
+    # per-message frame — the lend door's arithmetic, shared.
+    total = 0
+    for m in messages or []:
+        if isinstance(m, dict):
+            total += len(str(m.get("content") or "")) // 4 + 4
+    return total
+
+
+def prompt_budget_apply(segments, rest, ctx_size):
+    # segments: [{name, text, shed, cap}] in standing order —
+    # shed is the shedding order (1 sheds first) or None for
+    # the standing core, which never sheds. rest: the messages
+    # after the system message; per-turn system extras in it
+    # carry a "_budget_name" tag naming their drop order.
+    # Returns (messages, report).
+    try:
+        ctx = int(ctx_size or 0)
+    except Exception:
+        ctx = 0
+    if ctx <= 0:
+        msgs = [{"role": "system",
+                 "content": "\n\n".join(s["text"] for s in segments if s.get("text"))}] + list(rest)
+        return msgs, {"estTokens": estimate_messages_tokens(msgs),
+                      "ctxSize": ctx, "budgetTokens": 0, "shed": [],
+                      "overflow": False}
+    reserve = CHAT_MAX_TOKENS
+    budget = ctx - reserve if ctx > reserve else ctx
+    segs = [dict(s) for s in segments]
+    shed = []
+    for s in segs:
+        if s.get("cap") and len(s.get("text") or "") > PROMPT_BLOCK_CAP_CHARS:
+            s["text"] = (s["text"][:PROMPT_BLOCK_CAP_CHARS]
+                         + "\n… (trimmed to this seat's prompt budget)")
+            shed.append(s["name"] + " (trimmed)")
+
+    def compose():
+        return "\n\n".join(s["text"] for s in segs if s.get("text"))
+
+    def total():
+        return estimate_messages_tokens(
+            [{"role": "system", "content": compose()}] + list(rest))
+
+    est = total()
+    if est > budget:
+        for s in sorted((s for s in segs if s.get("shed") is not None),
+                        key=lambda s: s["shed"]):
+            if est <= budget:
+                break
+            if s.get("text"):
+                s["text"] = ""
+                shed.append(s["name"])
+                est = total()
+    if est > budget:
+        for name in ("intel-seam", "rag", "shelf-ref"):
+            while est > budget:
+                kept, dropped = [], False
+                for m in rest:
+                    if not dropped and isinstance(m, dict) \
+                            and m.get("_budget_name") == name:
+                        dropped = True
+                        shed.append(name)
+                        continue
+                    kept.append(m)
+                if not dropped:
+                    break
+                rest = kept
+                est = total()
+    if est > budget:
+        # History sheds oldest-first; the operator's current
+        # turn (the last conversation message) never sheds.
+        while est > budget:
+            conv = [i for i, m in enumerate(rest)
+                    if isinstance(m, dict) and m.get("role") != "system"]
+            if len(conv) <= 1:
+                break
+            rest = rest[:conv[0]] + rest[conv[0] + 1:]
+            shed.append("history")
+            est = total()
+    for m in rest:
+        if isinstance(m, dict):
+            m.pop("_budget_name", None)
+    msgs = [{"role": "system", "content": compose()}] + list(rest)
+    return msgs, {"estTokens": est, "ctxSize": ctx,
+                  "budgetTokens": budget, "shed": shed,
+                  "overflow": est > budget}
 
 
 def llamafile_chat(messages, endpoint, model):
@@ -33694,6 +33861,44 @@ def case_shelf_named_refs(slug, text):
 PULL_REF_RE = re.compile(r"\[\[pull-ref:\s*([A-Za-z0-9_-]+)\s*\]\]", re.I)
 
 
+def borrow_hygiene_messages(messages, local_persona, borrow_persona,
+                            case_open_text, local_brief, shared_brief):
+    # v0.6.7e (#314/#315): the copy of the assembled messages
+    # that may LEAVE this machine for a lender. The local
+    # assembly stays exactly as built; the travelling copy is
+    # cleaned at the door:
+    #   * the persona rides WITHOUT its memory-marker teaching
+    #     (the trigger-mode shape) — a lender's model is never
+    #     taught the grammar that writes this node's memory;
+    #   * SHELL_TEACHING does not ride — the lender is never
+    #     taught the block that drives this node's shell;
+    #   * the [Case open] finding-marker teaching does not
+    #     ride — findings are filed in this Navi's name, by
+    #     this node's own turns;
+    #   * the intel brief rides in its for-share shape — no
+    #     watchlist term lines ever leave the machine (#314).
+    # Only the standing system message (index 0) is touched;
+    # the conversation itself is the borrow's whole point and
+    # rides as the operator sent it.
+    out = []
+    for i, m in enumerate(messages or []):
+        if i == 0 and isinstance(m, dict) and m.get("role") == "system":
+            content = str(m.get("content") or "")
+            if local_persona and content.startswith(local_persona):
+                content = borrow_persona + content[len(local_persona):]
+            if SHELL_TEACHING:
+                content = content.replace(SHELL_TEACHING, "")
+            if case_open_text:
+                content = content.replace(case_open_text, "")
+            if local_brief:
+                content = content.replace(local_brief, shared_brief or "")
+            content = re.sub(r"\n{3,}", "\n\n", content).strip()
+            m = dict(m)
+            m["content"] = content
+        out.append(m)
+    return out
+
+
 def extract_pull_refs(reply, slug, messages, endpoint, model, mesh_payload):
     # Her pull, honored in the same exchange: the markers come
     # out of her reply, the named references' full texts are
@@ -33811,14 +34016,29 @@ def navi_file_finding(slug, severity, content):
 
 
 def extract_finding_markers(reply, cfg):
-    # Returns (clean_reply, filings). Markers are honored only
-    # while a case is open — the prompt only teaches them then —
-    # and a stray marker with no case open is stripped and
-    # dropped, never filed anywhere.
+    # The standing shape (returns (clean_reply, filings)) —
+    # the funnel's held variant lives just below.
+    clean, filings, _held = _extract_finding_markers(reply, cfg, hold=False)
+    return clean, filings
+
+
+def _extract_finding_markers(reply, cfg, hold=False):
+    # Returns (clean_reply, filings, held). Markers are honored
+    # only while a case is open — the prompt only teaches them
+    # then — and a stray marker with no case open is stripped
+    # and dropped, never filed anywhere.
+    # v0.6.7e (#315): hold=True strips the markers WITHOUT
+    # filing — the shape for a Mesh-served reply, whose text
+    # may not file findings in this Navi's name. Held markers
+    # are counted, so the hold is a fact, not a silence.
     slug = case_open_slug(cfg)
     filings = []
+    held = [0]
 
     def _take(m):
+        if hold:
+            held[0] += 1
+            return ""
         if not slug or len(filings) >= 2:
             return ""
         sev = (m.group(1) or "info").lower()
@@ -33829,7 +34049,7 @@ def extract_finding_markers(reply, cfg):
 
     clean = FINDING_MARKER_RE.sub(_take, reply or "")
     clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-    return clean, filings
+    return clean, filings, held[0]
 
 
 def case_register_add(slug, register, heading, fields, body):
@@ -35496,6 +35716,31 @@ def _case_brief_block(slug):
     lines.append("Status: " + head["status"] + " · type: " + head["type"]
                  + " · priority: " + head["priority"]
                  + ((" · client: " + head["client"]) if head["client"] else ""))
+    # v0.6.7e (#331): whether a Pulse watch stands attached
+    # to this case — the fact that grounds (or refuses) any
+    # claim that the case is being monitored.
+    try:
+        _watches = [w for w in _pulse_load()["watches"]
+                    if str(w.get("case") or "") == slug]
+    except Exception:
+        _watches = []
+    if _watches:
+        for w in _watches[:3]:
+            _wl = ("Pulse watch on this case: “" + str(w.get("topic") or "")
+                   + "” — " + ("standing, checked every few hours"
+                               if w.get("state") == "active" else "PAUSED"))
+            if w.get("lastCheckIso"):
+                _wl += "; last checked " + str(w["lastCheckIso"])
+            _wl += ("; new coverage lands on this case's reference "
+                    "shelf. This watch is the ONLY monitoring this "
+                    "case has.")
+            lines.append(_wl)
+    else:
+        lines.append("Pulse watch on this case: none stands attached — "
+                     "nothing is monitoring this case. If the operator "
+                     "wants coverage watched, they can flag a topic and "
+                     "attach it to this case; until then, do not "
+                     "describe the case as monitored.")
     ents = _case_register(slug, "entities")
     if ents:
         conf = [e for e in ents if e["fields"].get("state") == "confirmed"]
@@ -38915,7 +39160,7 @@ def push_clear_record(rec_id, cfg):
     return sent
 
 
-def push_subscribe(data, cfg=None):
+def push_subscribe(data, cfg=None, device=""):
     # The subscribe door: validates the subscription the page
     # hands over before anything is stored — the endpoint must
     # be a push service (https; http only on loopback, where
@@ -38924,6 +39169,15 @@ def push_subscribe(data, cfg=None):
     # same endpoint replaces it; one carrying "replaces" (the
     # service worker's self-heal) inherits the old label and
     # clears that phone's death note. Returns (view, error).
+    # v0.6.7e (#332): the record keys on the phone's durable
+    # DOOR-DEVICE identity when the request carries one (the
+    # handler resolves it from the session's device token):
+    # a subscribe from a device that already holds a record
+    # REPLACES that record — new endpoint, label and standing
+    # carried — so one phone holds exactly one record, set
+    # once, however often iOS re-mints its endpoint. Without
+    # a device identity the endpoint remains the key, exactly
+    # as before.
     data = data if isinstance(data, dict) else {}
     sub_in = data.get("subscription")
     if not isinstance(sub_in, dict):
@@ -38947,21 +39201,25 @@ def push_subscribe(data, cfg=None):
         return None, "The subscription's auth secret is too short."
     label = str(data.get("label") or "").strip()[:60]
     replaces = str(data.get("replaces") or "")
+    device = str(device or "")[:80]
     with _push_lock:
         store = _push_load()
         subs = store.get("subscriptions") or []
-        if not label and replaces:
+        if not label:
             for s in subs:
-                if s.get("endpoint") == replaces:
+                if s.get("endpoint") == replaces or \
+                        (device and s.get("device") == device):
                     label = str(s.get("label") or "")
                     break
         subs = [s for s in subs
                 if s.get("endpoint") != endpoint
-                and s.get("endpoint") != replaces]
+                and s.get("endpoint") != replaces
+                and not (device and s.get("device") == device)]
         rec = {"id": hashlib.sha256(endpoint.encode()).hexdigest()[:12],
                "endpoint": endpoint,
                "keys": {"p256dh": p256dh, "auth": auth},
                "label": label or ("Phone — " + (parts.hostname or "push service")),
+               "device": device,
                "created": int(time.time() * 1000)}
         subs.append(rec)
         store["subscriptions"] = subs
@@ -38969,7 +39227,27 @@ def push_subscribe(data, cfg=None):
             store["dead"] = [d for d in (store.get("dead") or [])
                              if d.get("label") != rec["label"]]
         _push_save(store)
-    return {"id": rec["id"], "label": rec["label"]}, None
+    return {"id": rec["id"], "label": rec["label"],
+            "device": rec["device"]}, None
+
+
+def push_remove_record(record_id, cfg=None):
+    # v0.6.7e (#332): any seat may remove a subscription
+    # record — the roster-cleaning act the five-"iPhone" field
+    # state needed. Removing a record stops that record's
+    # ringing and nothing else: the tray is untouched, other
+    # records stand, and the phone itself may subscribe again
+    # whenever it likes. Returns the removal count.
+    rid = str(record_id or "")
+    if not rid:
+        return {"ok": False, "error": "The removal named no record."}
+    with _push_lock:
+        store = _push_load()
+        subs = store.get("subscriptions") or []
+        kept = [s for s in subs if s.get("id") != rid]
+        store["subscriptions"] = kept
+        _push_save(store)
+    return {"ok": True, "removed": len(subs) - len(kept)}
 
 
 def push_unsubscribe(data, cfg=None):
@@ -38990,7 +39268,8 @@ def push_state_payload(cfg=None):
             "vapidPublicKey": push_vapid_public(),
             "subscriptions": [
                 {"id": s.get("id"), "label": s.get("label"),
-                 "created": s.get("created")}
+                 "created": s.get("created"),
+                 "device": s.get("device") or ""}
                 for s in (store.get("subscriptions") or [])]}
 
 
@@ -40982,6 +41261,30 @@ class Handler(BaseHTTPRequestHandler):
             # and its waiting room, approved from a trusted session
             # in Settings -> System -> Door. Failure serves the
             # gate page again with the reason, and nothing else.
+            # v0.6.7e (#313, leg 1): this door is throttled
+            # like the DHD door — the same dhd_throttle_*
+            # helpers and constants, keyed on the socket peer.
+            # (Legs 2 and 3 are NOT in this build: the
+            # first-device bootstrap is #173 doctrine awaiting
+            # Alex's ruling, and proxy-aware client IPs are a
+            # design item of their own.)
+            _gate_ip = ""
+            try:
+                _gate_ip = str(self.client_address[0] or "")
+            except Exception:
+                _gate_ip = ""
+            _gfails, _glock = dhd_throttle_state(_gate_ip)
+            if _glock > time.time():
+                self._send(
+                    429,
+                    gate_page_html(
+                        "Too many wrong codes - this door is locked.",
+                        lock_seconds=int(_glock - time.time()),
+                        approval_mode=bool(door_approved_devices(cfg)),
+                    ).encode(),
+                    "text/html; charset=utf-8",
+                )
+                return
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
             form = urllib.parse.parse_qs(raw)
@@ -40989,6 +41292,7 @@ class Handler(BaseHTTPRequestHandler):
             dev_name = (form.get("device_name") or [""])[0].strip()
             want = public_settings(cfg)["access_code"]
             if want and given == want.upper():
+                dhd_throttle_clear(_gate_ip)
                 action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
                 if action == "session":
                     self.send_response(303)
@@ -40999,10 +41303,24 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send(200, gate_pending_html(dev["id"], dev["name"], door="node").encode(), "text/html; charset=utf-8")
             else:
+                _gfails = dhd_throttle_fail(_gate_ip)
+                if _gfails >= DHD_LOCKOUT_FAILS:
+                    self._send(
+                        429,
+                        gate_page_html(
+                            "Too many wrong codes - this door is now locked.",
+                            lock_seconds=DHD_LOCKOUT_SECONDS,
+                            approval_mode=bool(door_approved_devices(cfg)),
+                        ).encode(),
+                        "text/html; charset=utf-8",
+                    )
+                    return
+                time.sleep(min(2 ** (_gfails - 1), 8))
                 self._send(
                     200,
                     gate_page_html(
                         "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again.",
+                        attempts_remaining=max(0, DHD_LOCKOUT_FAILS - _gfails),
                         approval_mode=bool(door_approved_devices(cfg)),
                     ).encode(),
                     "text/html; charset=utf-8",
@@ -42041,12 +42359,29 @@ class Handler(BaseHTTPRequestHandler):
             # node's tray. The bridge validates the
             # subscription's keys before anything is stored;
             # a refusal is named and nothing is held.
+            # v0.6.7e (#332): the caller's door-device identity
+            # rides along when its token speaks for it, so the
+            # record keys on the device, not the endpoint.
             data = self._body()
-            view, err = push_subscribe(data, cfg)
+            _pdev = ""
+            try:
+                _pok, _pdev_rec, _pleg = door_gate_acceptance(
+                    cfg, door_cookie_value(self.headers.get("Cookie")))
+                if _pok and _pdev_rec is not None:
+                    _pdev = str(_pdev_rec.get("id") or "")
+            except Exception:
+                _pdev = ""
+            view, err = push_subscribe(data, cfg, device=_pdev)
             if err:
                 self._send(200, {"ok": False, "error": err})
             else:
                 self._send(200, {"ok": True, "subscription": view})
+        elif self.path == "/api/push/remove":
+            # v0.6.7e (#332): remove one subscription record
+            # by id — from any seat. That record stops ringing;
+            # the tray and every other record are untouched.
+            data = self._body()
+            self._send(200, push_remove_record(data.get("id"), cfg))
         elif self.path == "/api/push/unsubscribe":
             # v0.5.14e (#272): this device stops ringing. The
             # tray is untouched; only the door comes down.
@@ -42729,7 +43064,7 @@ class Handler(BaseHTTPRequestHandler):
             if _vhits:
                 _vctx = "\n\n".join("[Vault · " + h["path"] + "] " + h["excerpt"] for h in _vhits)
                 messages = messages + [{
-                    "role": "system",
+                    "role": "system", "_budget_name": "rag",
                     "content": "Material from the shared Vault — the operator's and your own notes. Use it where it answers the question, in your own words. Do not name or cite the sources in your reply — the dashboard shows them under your message on its own:\n" + _vctx,
                 }]
             if _hits:
@@ -42738,113 +43073,36 @@ class Handler(BaseHTTPRequestHandler):
                     for h in _hits
                 )
                 messages = messages + [{
-                    "role": "system",
+                    "role": "system", "_budget_name": "rag",
                     "content": "Material from the operator's active knowledge packs — use it where it answers the question, in your own words. Do not name or cite the sources in your reply — the dashboard shows them under your message on its own:\n" + _ctx,
                 }]
             # Navi's persona (Soul + Memory, from the config files)
             # rides along as the system prompt on every chat.
-            _system_prompt = persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode)
-            # Guardian (Build 14, #156): she answers questions
-            # about this machine from what is true of it NOW, so
-            # the Guardian brief — pressure, headroom, current
-            # offenders, the latest actions — rides the system
-            # prompt actually sent, exactly as assembled here
-            # (the Mesh borrow path below carries these same
-            # assembled messages, unchanged, as it always has).
-            try:
-                if guardian_settings(cfg)["enabled"]:
-                    _system_prompt += "\n\n[Guardian — this machine right now]\n" + GUARDIAN.context_block()
-                    # v0.4.2e (#232): the brief is BACKGROUND, and
-                    # it is framed as such in the prompt itself —
-                    # in the field an uptime question was answered
-                    # with this block read back verbatim, because
-                    # nothing told her it was not a reply.
-                    _system_prompt += ("\n(The Guardian brief above is background for questions "
-                                       "about this machine — answer from it in your own words, "
-                                       "and never read it back as your reply.)")
-            except Exception:
-                pass
-            # v0.4.6e (#187): her own vitals ride beside the
-            # Guardian brief — the teaching always (she may not
-            # invent her speed), the measured figures when the
-            # bridge's stopwatch has any.
-            try:
-                _system_prompt += "\n\n" + VITALS_TEACHING
-                _vitals = model_vitals_block()
-                if _vitals:
-                    _system_prompt += "\n\n" + _vitals
-            except Exception:
-                pass
-            # Case Files (Build 15, #161): while a case is open
-            # she knows which one it is, and she can file her own
-            # findings into it — her words, her name on them,
-            # receipted in the thread (extract_finding_markers,
-            # below, beside her memory saves).
-            _open_case = open_case_payload(cfg)
-            if _open_case:
-                _system_prompt += (
-                    "\n\n[Case open — " + _open_case["name"] + "]\n"
-                    "The case \"" + _open_case["name"] + "\" is open on the desk, and work in this conversation may belong to it. "
-                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by putting a line of exactly this form FIRST in your reply, before your words (a long reply can be cut off before it ends, and a marker that never lands files nothing): "
-                    "[[finding: <short title> | <the finding, stated plainly>]] — optionally with a severity: [[finding[high]: <title> | <finding>]]. "
-                    "At most two per reply, and only for real conclusions about this case — not small talk, and not the operator's words restated as yours. "
-                    "The marker line is removed before the operator sees your reply; the filing is made in your name, a line goes into the case's timeline, and the operator is shown a receipt of exactly what you filed — never mention the marker itself."
-                )
-            # Threat Intelligence Center (Build 15, #165): the
-            # standing brief rides the system prompt the way the
-            # Guardian's does — one bounded block (~700 tokens),
-            # only when the store holds anything at all, always
-            # carrying its freshness so she never states a stale
-            # picture as a fresh one. In a case-bound chat the
-            # case's own matched records ride too — the join
-            # between the Center and the case on the desk.
-            try:
-                _ibrief = INTEL.brief_block()
-                if _ibrief:
-                    _system_prompt += "\n\n" + _ibrief
-            except Exception:
-                pass
-            # Awareness (0.2.0e Build 7, #188/#189/Add.5): the
-            # wire, the CTF board and the bounty board ride the
-            # same way - one composed block, staleness included,
-            # so "what's the sitch" is a behavior, not a search.
-            try:
-                _aw = _awareness_brief_block()
-                if _aw:
-                    _system_prompt += "\n\n" + _aw
-            except Exception:
-                pass
-            # CLI Mode (Build 3, #209): the standing teaching
-            # rides every model turn — it is the only way she
-            # knows the session exists — and when this chat holds
-            # a live session its tail rides too, so she answers
-            # the prompt she is actually looking at.
-            _system_prompt += "\n\n" + SHELL_TEACHING
-            # v0.4.5e (#241): the case-intake teaching rides
-            # every model turn the same way — an intake can be
-            # asked for in any chat, not only in a case room.
-            _system_prompt += "\n\n" + CASE_TEACHING
-            # v0.4.9e (#248): the Row rides the same way — the
-            # teaching always, then the record's blocks: the
-            # standing brief, the intent's supply, and the
-            # pace block when her measured pace is slow.
-            try:
-                _system_prompt += "\n\n" + ROW_TEACHING
-                _rowblk = row_context_blocks(last or "")
-                if _rowblk:
-                    _system_prompt += "\n\n" + _rowblk
-                if "dossier" in (last or "").lower():
-                    _dzblk = dossier_context_block()
-                    if _dzblk:
-                        _system_prompt += "\n\n" + _dzblk
-            except Exception:
-                pass
-            try:
-                _sbrief = shell_session_brief(data.get("chatId"))
-                if _sbrief:
-                    _system_prompt += "\n\n" + _sbrief
-            except Exception:
-                pass
+            #
+            # v0.6.7e (#310): the prompt is assembled as NAMED
+            # SEGMENTS now, and the local budget
+            # (prompt_budget_apply) judges the whole before any
+            # model sees it — shedding background in a fixed
+            # order when the seat's context is small, and
+            # refusing by name when even the standing core does
+            # not fit, instead of dying at the model. Two of the
+            # teachings are conditional from this build: the
+            # shell teaching rides only a machine-directed turn
+            # (the #240 gate's own read), the case teaching only
+            # a case-shaped one. What was not carried is named
+            # in the budget report on the payload.
+            _persona_text = persona_prompt(cfg, str(data.get("operator_name") or ""), memory_mode)
+            _segs = [{"name": "persona", "text": _persona_text,
+                      "shed": None, "cap": False}]
+            _not_carried = []
+
+            def _seg(name, text, shed=None, cap=False):
+                if text:
+                    _segs.append({"name": name, "text": text,
+                                  "shed": shed, "cap": cap})
+            # The case this chat is bound to, read early: the
+            # case teaching's condition and the case room's
+            # blocks both stand on it.
             _bound_case = ""
             try:
                 _cid = data.get("chatId")
@@ -42855,12 +43113,129 @@ class Handler(BaseHTTPRequestHandler):
                             break
             except Exception:
                 _bound_case = ""
+            _open_case = open_case_payload(cfg)
+            # Guardian (Build 14, #156): she answers questions
+            # about this machine from what is true of it NOW, so
+            # the Guardian brief — pressure, headroom, current
+            # offenders, the latest actions — rides the system
+            # prompt actually sent, exactly as assembled here
+            # (the Mesh borrow path below carries a hygienic
+            # copy of these same assembled messages — v0.6.7e,
+            # #314/#315).
+            try:
+                if guardian_settings(cfg)["enabled"]:
+                    _gtext = ("[Guardian — this machine right now]\n" + GUARDIAN.context_block()
+                              + "\n(The Guardian brief above is background for questions "
+                              "about this machine — answer from it in your own words, "
+                              "and never read it back as your reply.)")
+                    _seg("guardian", _gtext, shed=3, cap=True)
+            except Exception:
+                pass
+            # v0.4.6e (#187): her own vitals ride beside the
+            # Guardian brief — the teaching always (she may not
+            # invent her speed), the measured figures when the
+            # bridge's stopwatch has any.
+            try:
+                _seg("vitals-teaching", VITALS_TEACHING)
+                _vitals = model_vitals_block()
+                if _vitals:
+                    _seg("vitals", _vitals, shed=4, cap=True)
+            except Exception:
+                pass
+            # Case Files (Build 15, #161): while a case is open
+            # she knows which one it is, and she can file her own
+            # findings into it — her words, her name on them,
+            # receipted in the thread (extract_finding_markers,
+            # below, beside her memory saves).
+            _case_open_text = ""
+            if _open_case:
+                _case_open_text = (
+                    "[Case open — " + _open_case["name"] + "]\n"
+                    "The case \"" + _open_case["name"] + "\" is open on the desk, and work in this conversation may belong to it. "
+                    "When you reach a conclusion about the case that belongs in its record — a finding, in your own words — you may file it yourself by putting a line of exactly this form FIRST in your reply, before your words (a long reply can be cut off before it ends, and a marker that never lands files nothing): "
+                    "[[finding: <short title> | <the finding, stated plainly>]] — optionally with a severity: [[finding[high]: <title> | <finding>]]. "
+                    "At most two per reply, and only for real conclusions about this case — not small talk, and not the operator's words restated as yours. "
+                    "The marker line is removed before the operator sees your reply; the filing is made in your name, a line goes into the case's timeline, and the operator is shown a receipt of exactly what you filed — never mention the marker itself."
+                )
+                _seg("case-open", _case_open_text)
+            # Threat Intelligence Center (Build 15, #165): the
+            # standing brief rides the system prompt the way the
+            # Guardian's does — one bounded block (~700 tokens),
+            # only when the store holds anything at all, always
+            # carrying its freshness so she never states a stale
+            # picture as a fresh one. In a case-bound chat the
+            # case's own matched records ride too — the join
+            # between the Center and the case on the desk.
+            _ibrief_text = ""
+            try:
+                _ibrief_text = INTEL.brief_block()
+                if _ibrief_text:
+                    _seg("intel", _ibrief_text, shed=6, cap=True)
+            except Exception:
+                _ibrief_text = ""
+            # Awareness (0.2.0e Build 7, #188/#189/Add.5): the
+            # wire, the CTF board and the bounty board ride the
+            # same way - one composed block, staleness included,
+            # so "what's the sitch" is a behavior, not a search.
+            try:
+                _aw = _awareness_brief_block()
+                if _aw:
+                    _seg("awareness", _aw, shed=2, cap=True)
+            except Exception:
+                pass
+            # CLI Mode (Build 3, #209): the standing teaching —
+            # v0.6.7e (#310): it rides only a machine-directed
+            # turn, judged by the #240 gate's own read (the
+            # composer latched to CLI mode, a live session in
+            # this chat, or the operator's words carrying
+            # machine intent). On a conversation turn it is
+            # weight the prompt does not carry.
+            try:
+                _machine_turn = shell_turn_machine_directed(
+                    last or "", data.get("chatId"), chat_mode)
+            except Exception:
+                _machine_turn = True
+            if _machine_turn:
+                _seg("shell-teaching", SHELL_TEACHING)
+            else:
+                _not_carried.append("shell-teaching")
+            # v0.4.5e (#241): the case-intake teaching —
+            # v0.6.7e (#310): it rides a case-shaped turn (a
+            # case bound to this chat or standing open, or the
+            # operator's words naming case work).
+            if _bound_case or _open_case or re.search(
+                    r"\b(case|investigation|filing|file this)\b",
+                    (last or ""), re.I):
+                _seg("case-teaching", CASE_TEACHING)
+            else:
+                _not_carried.append("case-teaching")
+            # v0.4.9e (#248): the Row rides the same way — the
+            # teaching always, then the record's blocks: the
+            # standing brief, the intent's supply, and the
+            # pace block when her measured pace is slow.
+            try:
+                _seg("row-teaching", ROW_TEACHING)
+                _rowblk = row_context_blocks(last or "")
+                if _rowblk:
+                    _seg("row", _rowblk, shed=1, cap=True)
+                if "dossier" in (last or "").lower():
+                    _dzblk = dossier_context_block()
+                    if _dzblk:
+                        _seg("dossier", _dzblk, shed=5, cap=True)
+            except Exception:
+                pass
+            try:
+                _sbrief = shell_session_brief(data.get("chatId"))
+                if _sbrief:
+                    _seg("shell-session", _sbrief, shed=10, cap=True)
+            except Exception:
+                pass
             if _bound_case:
                 try:
                     _cterms = [t["term"] for t in _intel_case_terms(cfg, _bound_case)]
                     _cctx = INTEL.case_context(_cterms)
                     if _cctx:
-                        _system_prompt += "\n\n" + _cctx
+                        _seg("case-ctx", _cctx, shed=7, cap=True)
                 except Exception:
                     pass
                 # Build 2 (#199): in the case's own room she
@@ -42872,7 +43247,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     _cbrief = _case_brief_block(_bound_case)
                     if _cbrief:
-                        _system_prompt += "\n\n" + _cbrief
+                        _seg("case-brief", _cbrief, shed=9, cap=True)
                     # v0.5.10e (#283): the case's reference
                     # shelf rides the same way — listed by
                     # title and link, with the pull marker she
@@ -42880,13 +43255,13 @@ class Handler(BaseHTTPRequestHandler):
                     # full text placed before her.
                     _shelfblk = case_shelf_block(_bound_case)
                     if _shelfblk:
-                        _system_prompt += "\n\n" + _shelfblk
-                    _system_prompt += (
-                        "\n\n[Working this case]\n"
+                        _seg("shelf", _shelfblk, shed=8, cap=True)
+                    _seg("working-case", (
+                        "[Working this case]\n"
                         "This conversation is the case room for the case above. Your answers here are conversation, not filings: nothing you write is filed into the case automatically, whatever shape it takes — there is no block, no format, and no filing hidden in a reply. Answer fully and plainly, in whatever form serves the question.\n"
                         "Filing is the operator's act: every reply of yours in this room carries a \"File into this case\" button beneath it whose label names the part it will file to — the case has nine parts (v0.6.6e, #326): finding, lead, observable, entity, event, task, timeline, evidence, report — and the label is sensed from the reply's shape (v0.6.6e, #327): \"File into this case — as a finding\", \"— as tasks (3)\" for a next-step list, \"— as a timeline entry\" for a dated narrative, \"— as evidence\", \"— as report material\". Pressing it files that reply exactly as printed, to that part, in your name, receipted in the room with the landing named. You may suggest filing — \"that one is worth filing — as a lead\" — suggesting the part the content plainly is (a sourced claim is a lead, not a finding; a named person or system an entity; a bare indicator an observable; a thing that happened an event; a list of next steps tasks; a dated narrative the timeline; material for the write-up the report), and then let it stand: never wait on the press, never repeat the ask, and never narrate a filing that has not been receipted. The operator's words naming a part govern over the button's suggestion — absolutely, on every door. When the operator says \"brief me\" in this room, the bridge posts a fresh briefing drawn from the case's live state — that is bridge work, not yours to compose. If the conversation moves on, it moves on; an unpressed reply simply stays conversation.\n"
                         "Treat unverified material in the case brief above as leads: reason from them, never cite them as established. A detail that belongs to a DIFFERENT case is never written across — mention it in conversation instead. Facts drawn from a Wire record keep the record's values — its CVE id, CVSS, EPSS and dates; a reply the operator files that contradicts the record is flagged on its filing's receipt."
-                    )
+                    ))
                 except Exception:
                     pass
             # The message seam: an exact CVE ID or a stack/case
@@ -42895,7 +43270,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 _ictx = INTEL.message_context(last or "")
                 if _ictx:
-                    messages = messages + [{"role": "system", "content": _ictx}]
+                    messages = messages + [{"role": "system", "content": _ictx,
+                                            "_budget_name": "intel-seam"}]
             except Exception:
                 pass
             # v0.5.10e (#283): the operator names a shelf
@@ -42913,13 +43289,34 @@ class Handler(BaseHTTPRequestHandler):
                                        + "\nThe operator named this reference "
                                        "for this reply: use it where it bears, "
                                        "and cite it as reference.",
+                            "_budget_name": "shelf-ref",
                         }]
                 except Exception:
                     pass
-            messages = [{
-                "role": "system",
-                "content": _system_prompt,
-            }] + messages
+            # The budget itself (#310): the assembled prompt is
+            # measured against this seat's context before any
+            # model — local or lender — is asked. Overflow past
+            # every shed is a named refusal, never a dead call.
+            try:
+                _ctx_size = runtime_settings(cfg)["ctx_size"]
+            except Exception:
+                _ctx_size = 4096
+            messages, _budget_report = prompt_budget_apply(
+                _segs, messages, _ctx_size)
+            _budget_report["notCarried"] = _not_carried
+            if _budget_report["overflow"]:
+                self._send(200, {
+                    "reply": ("This conversation's standing prompt — her persona and the briefs "
+                              "that ride it — comes to about " + str(_budget_report["estTokens"])
+                              + " tokens, and this seat's context is " + str(_budget_report["ctxSize"])
+                              + ": even with every background brief shed, it does not fit, so "
+                              "nothing was sent to the model. Raise the context size in "
+                              "Settings → Runtime, or trim what stands in Soul and Memory, "
+                              "and ask again."),
+                    "exec": exec_block, "mode": "model",
+                    "llamafile": "running",
+                    "promptBudget": _budget_report})
+                return
             try:
                 model = cfg.get("live", {}).get("model_name") or "navi"
                 # Navi Mesh (Ring 1): the model route is the ONLY
@@ -42946,7 +43343,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not (_route and _route.get("mode") == "local"):
                     _ms = mesh_settings(cfg)
                     if _ms["enabled"] and _ms["borrow"]["enabled"] and _ms["borrow"]["peers"]:
-                        reply, _mesh_payload = mesh_try_borrow(messages, cfg, _ms, route=_route)
+                        # v0.6.7e (#314/#315): what LEAVES for
+                        # the lender is the hygienic copy — no
+                        # marker teaching, no shell teaching, the
+                        # intel brief in its for-share shape. The
+                        # local assembly above is untouched; if
+                        # no lender answers, it is what the local
+                        # model sees, whole.
+                        try:
+                            _shared_brief = INTEL.brief_block(for_share=True)
+                        except Exception:
+                            _shared_brief = ""
+                        reply, _mesh_payload = mesh_try_borrow(
+                            borrow_hygiene_messages(
+                                messages, _persona_text,
+                                persona_prompt(cfg, str(data.get("operator_name") or ""), "trigger"),
+                                _case_open_text, _ibrief_text, _shared_brief),
+                            cfg, _ms, route=_route)
                 if reply is None:
                     # Build 8 (#154): owner preemption — the
                     # owner's own work starting takes the machine
@@ -42983,12 +43396,26 @@ class Handler(BaseHTTPRequestHandler):
                             _mesh_payload)
                     except Exception:
                         _refpulls = []
+                # v0.6.7e (#315): provenance decides what this
+                # reply may DO here. A reply served by a Mesh
+                # lender was not written by this node's Navi:
+                # trust to answer is not trust to actuate. Its
+                # memory markers are held as PROPOSALS (never
+                # autonomous saves), its finding markers are
+                # stripped without filing, and the shell gate
+                # below is shut for it outright. A pull-ref
+                # re-ask is this node's own generation — when
+                # one fired, the words are local again.
+                _borrowed = bool(_mesh_payload
+                                 and _mesh_payload.get("servedBy") == "mesh"
+                                 and not _refpulls)
                 # Memory from chat — her own call (build .81,
                 # #72): her [[remember: …]] markers come out of
                 # the reply before it is shown or spoken, and the
                 # saves ride the payload back as data for the
                 # dashboard to file and receipt.
-                reply, _msaves, _mrefused = extract_memory_markers(reply, memory_mode)
+                reply, _msaves, _mrefused = extract_memory_markers(
+                    reply, "ask" if _borrowed else memory_mode)
                 # v0.6.0e (#294): her autonomous saves are
                 # recorded in the foundation store as they are
                 # receipted — the same record the trigger door
@@ -43010,7 +43437,8 @@ class Handler(BaseHTTPRequestHandler):
                 # same way, are filed into the open case in her
                 # name before this payload returns, and ride back
                 # as data for the dashboard's receipt.
-                reply, _cfilings = extract_finding_markers(reply, cfg)
+                reply, _cfilings, _cheld = _extract_finding_markers(
+                    reply, cfg, hold=_borrowed)
                 # v0.5.12e (#286): no case-log parsing stands
                 # between Navi and the operator — a bound-case
                 # reply prints whole, exactly as composed.
@@ -43032,16 +43460,20 @@ class Handler(BaseHTTPRequestHandler):
                 # v0.4.6e (#240): the drive is gated on the turn
                 # being machine-directed (shell_turn_machine_
                 # directed) — computed here, where the operator's
-                # words and the composer's latch both live, and
-                # applied identically whether this reply was
-                # generated locally or served by a Mesh lender:
-                # the extraction below is the one funnel every
-                # reply passes through.
+                # words and the composer's latch both live.
+                # v0.6.7e (#315) narrows the funnel the field
+                # indicted: a Mesh-served reply never reaches the
+                # gate at all — it is shut for borrowed text
+                # outright, whatever the turn's shape — and a
+                # gate that cannot be computed fails CLOSED, not
+                # open: an exception is not machine intent.
                 try:
                     _shell_gate = shell_turn_machine_directed(
                         last or "", data.get("chatId"), chat_mode)
                 except Exception:
-                    _shell_gate = True
+                    _shell_gate = False
+                if _borrowed:
+                    _shell_gate = False
                 try:
                     reply, _shell_drove = extract_shell_block(
                         reply, data.get("chatId"),
@@ -43072,6 +43504,12 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 payload = {"reply": reply, "exec": exec_block, "mode": "model", "llamafile": "running"}
+                if _budget_report:
+                    payload["promptBudget"] = _budget_report
+                if _borrowed:
+                    payload["borrowedInert"] = {
+                        "memory": "proposals", "findingsHeld": _cheld,
+                        "shell": "gated"}
                 if _mesh_payload:
                     payload["mesh"] = _mesh_payload
                 if _refpulls:
