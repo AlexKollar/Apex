@@ -265,7 +265,7 @@
   /* Build .87 (Alex's ruling): Docs and Settings leave the main
      stack and sit at the foot of the menu, stacked directly over
      the version line. Superseded in 0.1.9e Build 4: the foot is
-     the Apex | Utilities group now — its container (.nav-util)
+     the Utilities group now — its container (.nav-util)
      carries the auto margin, its children (Settings, Docs,
      GitHub) open UPWARD over the header, and the version follows
      the group with no gap. */
@@ -1902,11 +1902,11 @@ function badgeForgeFinish(cv, cx, name, nodeName, cb) {
 }
 
 
-var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federation", "GitHub", "Docs", "Settings", "Guardian"];
+var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federation", "Seraph", "GitHub", "Docs", "Settings", "Guardian"];
 // The grouped menu (0.1.9e Build 4): Chat pinned at the top; the
-// Apex | Network group (Federation / Mesh / DHD — Node and DHD both open
+// Network group (Federation / Mesh / DHD — Node and DHD both open
 // the DHD view, whose page holds the Node controls); the flat work
-// surfaces; and the Apex | Utilities drop-up at the foot. NAV keeps
+// surfaces; and the Utilities drop-up at the foot. NAV keeps
 // every REACHABLE view key for the active-state sweep; NAV_GROUPS
 // drives what the menu renders, and the Memory view is retired —
 // its chats live on in the status pane's Chats tab (Build 6,
@@ -1918,31 +1918,32 @@ var NAV = ["Chat", "Chips", "ChipDeck", "RAG", "Vault", "DHD", "Mesh", "Federati
 // list IS the on-screen reading order, top to bottom:
 // Settings, Updater, GitHub, Docs — verified in pixels by the
 // real-browser geometry gate, not just in the markup.
-// Apex | Navi (Build 6, #112, as amended by #113): her mind
+// Navi (Build 6, #112, as amended by #113): her mind
 // and tools — Chips, ChipDeck, RAG. (Voice was drafted into
 // this group for one amendment and retired as a view by the
 // next; it lives in Settings → Voice now, and appears nowhere
 // in the menu.) Build 12 (#137): the Vault leaves the flat row
-// for the new Apex | Apps group, seated directly under Case
+// for the new Casework group, seated directly under Case
 // Files — the first app — because the desk and the casework
 // are one work surface now. Nav placement only: the Vault's
 // view, route and behavior are exactly as #134/#135 left them.
 var NAV_GROUPS = {
-  network: { label: "Apex | Network", children: [["Federation", "Federation"], ["FediChat", "FediChat"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
-  navi: { label: "Apex | Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
+  network: { label: "Network", children: [["Federation", "Federation"], ["FediChat", "FediChat"], ["Mesh", "Mesh"], ["DHD", "DHD"]] },
+  siem: { label: "SIEM", children: [["Seraph", "Seraph"]] },
+  navi: { label: "Navi", children: [["Chips", "Chips"], ["ChipDeck", "ChipDeck"], ["RAG", "RAG"]] },
   // Build 9: the Threat Intelligence section wears a new display
   // name — The Wire — and the CTF Board's separate menu entry is
   // retired into the CTFs tab inside it (the board's home now).
   // Display only: the view keys (ThreatIntel, CTFBoard) and every
   // internal name stay exactly as they were; only the labels moved.
-  apps: { label: "Apex | Apps", children: [["Case Files", "CaseFiles"], ["The Wire", "ThreatIntel"], ["The Dossier", "Dossier"], ["Vault", "Vault"]] },
-  utilities: { label: "Apex | Utilities", children: [["Settings", "Settings"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
+  apps: { label: "Casework", children: [["The Wire", "ThreatIntel"], ["Case Files", "CaseFiles"], ["The Dossier", "Dossier"], ["Vault", "Vault"]] },
+  utilities: { label: "Utilities", children: [["Settings", "Settings"], ["GitHub", "GitHub"], ["Docs", "Docs"], ["Guardian", "Guardian"], ["Sync", "Sync"]] }
 };
 var NAV_FLAT = ["Chat"];
 // Display names (0.1.9e, issue #92; the pipe separator is Build 4):
 // the view keys stay what they have always been; the labels wear
 // the product line — Apex | DHD, Apex | Mesh.
-var NAV_LABELS = { DHD: "Apex | DHD", Mesh: "Apex | Mesh", Federation: "Apex | Federation" };
+var NAV_LABELS = { DHD: "DHD", Mesh: "Mesh", Federation: "Federation" };
 function navLabel(name) { return NAV_LABELS[name] || name; }
 // Every menu option carries its own icon beside the label (the same
 // Lucide-style stroke set the Apex test bench uses). Collapsed
@@ -1965,7 +1966,8 @@ var NAV_ICON_PATHS = {
   // Threat Intelligence wears the radar — the standing watch, sweeping for
   // what is coming (0.1.9 full release; the Center shipped in Build 15 with
   // no entry here and its nav child rendered an empty frame — issue #168).
-  ThreatIntel: '<path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/><path d="M4 6h.01"/><path d="M2.29 9.62A10 10 0 1 0 21.31 8.35"/><path d="M16.24 7.76A6 6 0 1 0 8.23 16.67"/><path d="M12 18h.01"/><path d="M17.99 11.66A6 6 0 0 1 15.77 16.67"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59 5.66-5.66"/>'
+  ThreatIntel: '<path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/><path d="M4 6h.01"/><path d="M2.29 9.62A10 10 0 1 0 21.31 8.35"/><path d="M16.24 7.76A6 6 0 1 0 8.23 16.67"/><path d="M12 18h.01"/><path d="M17.99 11.66A6 6 0 0 1 15.77 16.67"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59 5.66-5.66"/>',
+  Seraph: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="4.6"/><path d="M12 9.4c.9 1.3 1.7 2.1 1.7 3.2a1.7 1.7 0 1 1-3.4 0c0-1.1.8-1.9 1.7-3.2z"/>'
 };
 // The DHD glyph (build .74): the same dial the bench draws - an
 // outer ring, twelve plain wedge buttons, one large center circle.
@@ -2018,15 +2020,16 @@ function dossierGlyphSvg() {
   return "<path d='M3.5 6.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z'/><circle cx='10' cy='11.2' r='1.9'/><path d='M6.9 17.3c.5-1.5 1.7-2.3 3.1-2.3s2.6.8 3.1 2.3'/><path d='M15.4 12h3.4M15.4 15.2h3.4'/>";
 }
 function navIcon(name) {
-  if (name === "Apex | Network") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='3.5' width='19' height='7' rx='1.8'/><rect x='2.5' y='13.5' width='19' height='7' rx='1.8'/><circle cx='6.5' cy='7' r='1' fill='currentColor' stroke='none'/><circle cx='6.5' cy='17' r='1' fill='currentColor' stroke='none'/></svg>";
-  if (name === "Apex | Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
+  if (name === "Network") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2.5' y='3.5' width='19' height='7' rx='1.8'/><rect x='2.5' y='13.5' width='19' height='7' rx='1.8'/><circle cx='6.5' cy='7' r='1' fill='currentColor' stroke='none'/><circle cx='6.5' cy='17' r='1' fill='currentColor' stroke='none'/></svg>";
+  if (name === "Utilities") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z'/></svg>";
   if (name === "ChipDeck") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-deck'>" + chipdeckGlyphSvg() + "</svg>";
   if (name === "Mesh") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-mesh'>" + meshGlyphSvg() + "</svg>";
   if (name === "Federation") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-fed'><circle cx='12' cy='5' r='2.6'/><circle cx='5' cy='18' r='2.6'/><circle cx='19' cy='18' r='2.6'/><path d='M10.2 7.2L6.6 15.6M13.8 7.2l3.6 8.4M7.6 18h8.8'/></svg>";
   if (name === "FediChat") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-fedichat'>" + fedichatGlyphSvg() + "</svg>";
   if (name === "Dossier") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dossier'>" + dossierGlyphSvg() + "</svg>";
-  if (name === "Apex | Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
-  if (name === "Apex | Apps") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='8' height='8' rx='1.5'/><rect x='13' y='3' width='8' height='8' rx='1.5'/><rect x='3' y='13' width='8' height='8' rx='1.5'/><rect x='13' y='13' width='8' height='8' rx='1.5'/></svg>";
+  if (name === "Navi") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2.5l2.3 7.2 7.2 2.3-7.2 2.3L12 21.5l-2.3-7.2-7.2-2.3 7.2-2.3z'/></svg>";
+  if (name === "SIEM") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.6'/><circle cx='12' cy='12' r='4.6'/><path d='M12 9.4c.9 1.3 1.7 2.1 1.7 3.2a1.7 1.7 0 1 1-3.4 0c0-1.1.8-1.9 1.7-3.2z'/></svg>";
+  if (name === "Casework") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='8' height='8' rx='1.5'/><rect x='13' y='3' width='8' height='8' rx='1.5'/><rect x='3' y='13' width='8' height='8' rx='1.5'/><rect x='13' y='13' width='8' height='8' rx='1.5'/></svg>";
   if (name === "DHD") return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='nav-ico-dhd'>" + dhdGlyphSvg() + "</svg>";
   return "<svg aria-hidden='true' focusable='false' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" + (NAV_ICON_PATHS[name] || "") + "</svg>";
 }
@@ -2044,7 +2047,7 @@ var navClosed = false;
 // own open/collapsed state is NOT part of this ruling: it
 // keeps its remembered behavior — see the navClosed read
 // below. The correction is recorded in the build report.)
-var navGroupsOpen = { systems: false, navi: false, apps: false, utilities: false };
+var navGroupsOpen = { systems: false, navi: false, apps: false, siem: false, utilities: false };
 try { localStorage.removeItem("navi.navGroups"); } catch (e) {}
 // The tabbed status pane (0.1.9e Build 6, issues #107/#108):
 // Status is the default pane — the first render and every
@@ -2365,8 +2368,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.39";
-var SHIPPED_BUILD_SEQ = 39;
+var BRIDGE_BUILD = "2026-11-19.40";
+var SHIPPED_BUILD_SEQ = 40;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -6894,7 +6897,7 @@ var DOC_PAGES = [
   "<p>Markdown documents across Apex open <b>rendered</b> — a Vault note, and the README documents on the Chips and Knowledge screens alike. <b>Press inside the text</b> and the editor opens on the same words, automatically; the document's standing way out — backing out of the note, saving the README — returns it to its rendered form. There is <b>no split view anywhere</b> in the app, and no Edit / Preview mode buttons: the rendered document is the resting state, and the press is the only door into the editor. A press on a wikilink or a link inside the text still follows it — reading furniture keeps its acts.</p></div>" },
   { id: "case-files", title: "Case Files — the engagement workspace", related: ["vault", "chips-guide", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>Cases, findings, evidence, timeline</h4>" +
-  "<p><b>Case Files</b> (in the menu's <b>Apex | Apps</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
+  "<p><b>Case Files</b> (in the menu's <b>Casework</b> group, with the Vault seated under it) is where an engagement lives. A case is a folder of plain markdown in the Vault — <span class='mono'>cases/&lt;name&gt;/</span> — with its manifest in <span class='mono'>case.md</span> (client, scope, status, opened date, as frontmatter), its findings as notes in <span class='mono'>findings/</span>, its evidence as files in <span class='mono'>evidence/</span>, and its story in one newest-first <span class='mono'>timeline.md</span>. Plain files, on purpose: a case rides the Vault's backups, opens in Obsidian exactly as it lies, and can be read with any text editor on any machine.</p>" +
   "<p>The view cold-starts on the <b>case list</b>, always. Open a case for its findings (structured cards, by severity), its evidence (drop files straight onto the case), and its timeline. Mark <b>one case open</b> and it becomes the case Navi works: ask her in chat to <i>“file that as a finding”</i> and she files the exchange into the open case and tells you she did — out loud, naming the case and the file, never silently. The latest terminal or chip output from chat can be filed as a finding from the case page, too.</p></div>" +
     "<div class='doc-sec'><h4>The case chat, her own findings, and the open case (Build 15)</h4>" +
   "<p>Every case has <b>its own chat</b>, made the first time the case is opened and returned to ever after — one case, one canonical thread, riding the same server-side store as every other chat (it survives machines the way chats now do). It is listed on the Chats tab with a CASE tag, and <b>Open the case chat</b> on the case page walks you straight into it. The chat is a reference, not a container: the case's content stays in the Vault's plain files.</p>" +
@@ -6951,7 +6954,7 @@ var DOC_PAGES = [
   "<p><b>Export the report</b> composes one markdown document per case — the head (name, client, scope, dates, status), the findings by severity in full, the timeline as an appendix, the evidence — and lands it as <span class='mono'>report.md</span> inside the case folder, with a download to match. Since Build 15, <b>image evidence is shown, not just named</b>: PNG/JPG/GIF/WebP evidence is embedded in the report itself as data, so the single file stays self-contained wherever it travels; an image over ~8 MB stays listed by name with the reason stated, and non-image evidence keeps the name-and-size listing. A finding marked <b>internal</b> is withheld from the export <i>and counted in it</i> (“2 internal notes withheld”) — never silently omitted — and no internal machine names or Mesh details are ever written into a report. Reports export as markdown; there is no PDF path in the app today, and the export does not pretend otherwise.</p></div>" },
   { id: "threat-intelligence", title: "The Wire — the Center", related: ["case-files", "mesh"], html:
     "<div class='doc-sec'><h4>What the Center is</h4>" +
-  "<p><b>The Wire</b> (in the menu's <b>Apex | Apps</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
+  "<p><b>The Wire</b> (in the menu's <b>Casework</b> group) is Apex's standing picture of the threat landscape — and the one Navi reasons with. It pulls <b>public, keyless feeds</b> on a cadence into a local store (<span class='mono'>config/intel.db</span>): the <b>NVD</b> (CVEs, CVSS scores, affected products), <b>CISA's KEV catalog</b> (the vulnerabilities known to be exploited, with remediation due dates), <b>EPSS</b> (each CVE's likelihood of exploitation, refreshed daily), <b>CISA advisories</b>, and curated reporting (Krebs on Security, BleepingComputer). No accounts, no API keys, no scraping — published feeds, pulled politely, each keeping its own fields: a record's identity is its CVE ID, and KEV owns the exploited status, NVD the scores and products, EPSS the likelihood.</p>" +
   "<p>The page is <b>freshness first</b>: a strip up top says who gathered the picture and how old every source is — <i>fresh</i> under 12 hours, <i>aging</i> under 48, <i>stale</i> beyond — because a stale picture presented as fresh is worse than none. Below it, the <b>triage queue</b> (your matches first, then what's newly exploited, then the loudest new disclosures), <b>the record</b> (one CVE in full: description, products, references, EPSS history), and <b>Navi's brief</b> — the same standing summary she carries into chat. On a phone the arrangement is its own: one column, brief first.</p></div>" +
     "<div class='doc-sec'><h4>Matching — declared, local, honest</h4>" +
   "<p>The Center matches records against a small, specific profile: the <b>watchlist</b> you declare on the page (the software you run), the <b>Mesh roster</b> (node names, this machine's platform), and <b>your cases' registers</b> — their observables, entity names and tags (since v0.3.0e — Build 2, the values an investigator wrote down, not words scraped from the manifest). A match to a declared product through its CPE identity is an <i>exact</i> match; a watch term appearing in a record's text is a <i>keyword</i> mention — the queue labels which, because the grades mean different things. Matching happens <b>on this machine</b>: the watchlist and the case terms are never sent to a feed. The only outbound traffic is the feed pulls themselves, on vendor-published schedules.</p></div>" +
@@ -7039,7 +7042,7 @@ var DOC_PAGES = [
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
   "<li>The <b>same access code</b> as the home-network door guards DHD — one code, both doors. Since Build 2 the code <b>knocks</b> rather than opens: a device presenting it names itself and waits for an approval (the first device approves itself), and each approved device holds its own 30-day session — the <i>Trusted devices</i> section below has the whole flow. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
-  "<p>DHD has its own page, reached from the menu's <b>Apex | Network</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
+  "<p>DHD has its own page, reached from the menu's <b>Network</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
@@ -7077,7 +7080,7 @@ var DOC_PAGES = [
   { id: "mesh", title: "Apex | Mesh — pooled inference", related: ["settings", "dhd", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What Mesh is</h4>" +
   "<p><b>Apex | Mesh</b> lets your own machines share the work of answering. One machine assembles a chat request the way it always does — persona, Vault, knowledge packs, conversation — and a stronger machine you own writes the reply on its own model. The routing is <b>whole-request</b>: one machine answers, start to finish, and the reply carries a small pill saying which machine wrote it — the Hexlink glyph and <i>via &lt;name&gt;</i> in Mesh cyan. There is no split answer and no streaming between machines in Ring 1.</p>" +
-  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex | Node</b>, <b>Apex | Mesh</b>, <b>Apex | DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu's Apex | Network group — one calm column of cards: your door (this machine's identity, its card, and the import drop zone), lending &amp; borrowing, one card per paired machine carrying its capability line, live status and balance, the roads (the managed backup routes), and the Mesh health check at the foot.</p>" +
+  "<p>Mesh is off until you turn it on, and it works only between machines you pair by hand. Nothing about it is tied to a specific person, machine name, or domain: every name and address comes from your own settings and the cards you exchange. The status column's <b>Servers</b> group lists them in product order — <b>Navi</b> (the engine), <b>Apex | Node</b>, <b>Apex | Mesh</b>, <b>Apex | DHD</b>. Every Mesh control lives on the <b>Mesh page</b> — Mesh in the left menu's Network group — one calm column of cards: your door (this machine's identity, its card, and the import drop zone), lending &amp; borrowing, one card per paired machine carrying its capability line, live status and balance, the roads (the managed backup routes), and the Mesh health check at the foot.</p>" +
   "<p>That Servers row is also where Mesh warnings live — the persistent place to check when something feels off. Its dot and line read the connection state at a glance: grey when Mesh is off or no machine is paired yet, green when a paired machine is reachable (amber while a borrow or a lend is actually running), and amber with the reason in short words — <i>“&lt;machine&gt; unreachable”</i>, <i>“&lt;machine&gt; dropped”</i> — when a connection breaks. The chat notice still speaks in the moment a borrow falls back; the status row is what keeps the warning on screen afterwards, until the machine answers again.</p></div>" +
     "<div class='doc-sec'><h4>Pairing — the card is the handshake</h4>" +
   "<p>Each machine has a <b>Mesh card</b> — a PNG picture whose face a person can read and whose inside carries the card data: its name, its node id, its public key, the fingerprint of the certificate its Mesh door serves, the addresses it can be reached at, and a <b>capabilities block</b> — the machine's own report of its hardware class, GPU or CPU, RAM, model, speed class, and the caps it lends under.</p><ol>" +
@@ -7149,7 +7152,7 @@ var DOC_PAGES = [
   "<p>The <b>Federation page</b> is the admin surface, and DHD serves the same page remotely — for <b>this node's own</b> switches only; no door flips another operator's. The tiers: <b>read + revoke</b> are open through DHD always. <b>Manage</b> acts — imports, ticks, caps, admissions — need the trusted-device session plus the <b>Operator Badge step-up</b>: you present your Badge (the operator card), and the node compares it against the fingerprint you enrolled <b>in person</b> (the picture itself is never stored). <b>Crown acts</b> — enabling deep trust, founding a fedinet, authorizing a tunnel key — run through DHD under the full ceremony: session, Badge, and a <b>named-action confirm</b> (the act spelled in words, typed to confirm). At the desk the same crown acts need the same confirm. <b>Every trust-class act, through any door, lands in the audit log</b> on the Federation page — sentences, metadata only.</p></div>" },
   { id: "fedichat", title: "FediChat — the rooms where the Row talks", related: ["federation", "mesh", "dhd"], html:
     "<div class='doc-sec'><h4>Rooms — one fedinet, many rooms</h4>" +
-  "<p><b>FediChat</b> (Apex | Network → FediChat) is the fedinet's rooms. Every fedinet has its <b>general room</b>, named for it — <span class='mono'>#rockport-mesh</span> — standing since phase 1 with its history intact, and Build 2 (v0.5.7e) grows the rest: <b>invite rooms</b> an operator creates for a named set of members, <b>direct messages</b> (a room of exactly two), <b>vanishing rooms</b> whose lines age out, and rooms <b>tied to a case</b>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no editing or deleting what was said. Through DHD the rooms read and post as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
+  "<p><b>FediChat</b> (Network → FediChat) is the fedinet's rooms. Every fedinet has its <b>general room</b>, named for it — <span class='mono'>#rockport-mesh</span> — standing since phase 1 with its history intact, and Build 2 (v0.5.7e) grows the rest: <b>invite rooms</b> an operator creates for a named set of members, <b>direct messages</b> (a room of exactly two), <b>vanishing rooms</b> whose lines age out, and rooms <b>tied to a case</b>. The operators talk; their nodes carry the messages; their Navis are in the room. Admission is the <b>signed roster</b>: no roster entry, no room — reading or writing — and there is no guest mode and no editing or deleting what was said. Through DHD the rooms read and post as your own speech — it is not a crown act and needs no Badge step-up.</p>" +
   "<p><b>Rooms are signed records.</b> A room beyond the general room is a <b>descriptor</b> — its id, name, creator, member set, kind, vanishing term and case tie — <b>signed by its creator</b> and gossiped on exchange like a line. A descriptor whose signature fails is refused by name and never materializes. Only the creator changes the member set, the case tie, or dissolves the room — every change a signed revision, auditable in the rev chain. An <b>invite room's member set is its boundary</b>: a non-member is never offered the room's lines, holds none of its log, and never sees that the room stands. A DM's id is derived from its pair, so creating it twice opens the same room once. A room tied to a case renders the case's link in its header, and the case renders its rooms — the link is typed, and both faces carry it.</p>" +
   "<p><b>Vanishing, honestly.</b> A vanishing room's lines older than its term are pruned on every honoring node in the retention shape — the newest older line kept as the chain's floor — and a creator may dissolve the room by signed revision, after which honoring nodes prune it to its floor and refuse new lines. The room's face says the posture in plain words: <b>vanishing is honored by every member node; it is not a proof of deletion.</b> A member node that kept a copy against the posture is a member who broke the room's law, not a flaw the protocol hides.</p>" +
   "<p><b>The log.</b> Every line is a record in an append-only, <b>hash-chained</b> log kept on the member nodes: it carries the fedinet id, the previous line's hash, the author's node id and roster number, a timestamp and the body, signed with the author's node key. A nick is a node underneath — the signing identity — but the room is between <i>users</i>, so lines show under the author's <b>operator name</b> (below), with the node name and roster number beside it. A seat a member hasn't spoken from yet shows as an empty chair, not an absence. The room's About window states the chain's verdict: verified, or the break named — a broken chain is evidence, never silently healed.</p>" +
@@ -7164,9 +7167,16 @@ var DOC_PAGES = [
   "<p><b>Navi to Navi (v0.5.7e, #274).</b> <span class='mono'>/navinavi -&lt;user&gt; &lt;question&gt;</span> instructs <b>your</b> Navi to put a question to <b>that member's</b> Navi. The question is a Navi-authored line, born only of an operator's instruction; the answer posts in the open, signed by the answering node and logged, bounded by the answering operator's sharing posture. The discipline is one hop, hard: <b>a Navi never answers an answer, and after answering a Navi-to-Navi question she answers no further one until fresh operator speech lands in the room</b> — two Navis never volley unattended. When an answer amounts to a case lead, the answering Navi may emit a <b>referral</b>: a lead card in the room naming its title, its summary, and the line it derives from. A referral <b>never files itself</b> — it becomes a case finding only when the receiving operator files it, through the room's own door, into a case that stands on their node, with the referral's custody on the finding's face.</p></div>" +
     "<div class='doc-sec'><h4>The room's settings — retention & carriage</h4>" +
   "<p>The room's rules are the operator's to set, per node, in the room's settings — the floating About &amp; settings window. The <b>muzzle</b> is per room (a room's own entry wins; the fedinet's stands behind it). <b>Retention</b> — how long this node keeps the log: <i>keep</i> (the default) holds the whole history; <i>30 days</i> prunes older lines from this node's copy, keeping the newest older line as the chain's floor so what remains still verifies. <b>Relay carriage</b> — whether this node's lines may travel through relay nodes to reach a member (default: allowed, under the same relay consent the Mesh page holds). A carrier can read what it carries — the room's About window says so plainly whenever carriage is on. Turning it off makes the room direct-only: an unreachable member simply waits for a direct road.</p></div>" },
+  { id: "seraph", title: "Seraph — the SIEM suite", related: ["threat-intelligence", "case-files", "mesh"], html:
+    "<div class='doc-sec'><h4>The watch floor</h4>" +
+  "<p><b>Seraph</b> (SIEM \u2192 Seraph) is Apex's SIEM suite \u2014 the watch floor (#153), named for the seraphim: the burning, watching order. She is a <b>configuration of Apex, not a fork</b>: any seat can take the <b>sensor</b> role, the <b>console</b> role, or both, set on the Seraph page itself, so the whole suite is manageable from DHD. A sensor watches <b>one network segment</b> \u2014 the one it is plugged into \u2014 and the dashboard states that vantage honestly, naming what this seat cannot see as <b>gaps</b>. More ground is more sensors. <b>PIA</b>, the Row's first physical sensor, registers here as the first remote sensor when she ships; the suite works whole without her.</p>" +
+  "<p><b>What a sensor sees.</b> Collection is <b>passive</b>: the segment's living inventory from ARP and DHCP leases, the seat's connection table (who talks to whom, when, how much \u2014 metadata, never payloads), its listening services, and its own auth logs. The one active act \u2014 a sweep \u2014 is not Seraph's to fire; it crosses the LOWC line in the open, like every active act in Apex.</p>" +
+  "<p><b>What she detects.</b> Watchlist matches (matched <b>on the sensor</b> \u2014 the list never leaves the machine; matches travel, it doesn't), a <b>new face</b> on the network, <b>beaconing</b> (calls landing on a metronome) and <b>impossible hours</b> (a sign-in inside the network's sleep window, yours to set), <b>failed sign-in bursts</b>, <b>scan patterns</b> seen from the receiving end, and a known host growing a <b>new listening service</b>. Every detection lands on the sensor's dashboard and in your tray <b>in Navi's voice</b> \u2014 she sends the alerts, not the system. From a detection you can <b>file a case</b> (the detection becomes the case's founding exhibit, hashed by the bridge at filing time) or dismiss it.</p>" +
+  "<p><b>How sensors report.</b> A remote sensor reports home over the <b>Mesh</b>, signed like every Mesh road; when the road is dark it <b>spools</b> its reports and drains them when the road lights \u2014 a sensor on a bad link loses nothing. The console's registry is the second lock on the door: a report files only from a registered, active sensor bound to the node that signed it. A client sensor is a <b>limited citizen</b>: its picture files under its own record and nothing else \u2014 admission is introduction, never transitive sight, and one client's evidence never surfaces in another's anything. Revoking a sensor is a <b>tombstone</b>: the record stays, marked, and a late report from it is refused by name.</p>" +
+  "<p><b>The sensor's page</b> carries its whole picture \u2014 timeline of detections, inventory, listeners, top talkers, the named gaps \u2014 with an <b>SSH tab</b> beside it: your own key, your own session, opened by hand each time; there is no standing session and the tab never rides the bridge's own door. <b>Retention</b> is yours to set (30 days on-box by default); open and filed detections never age out silently.</p></div>" },
   { id: "dossier", title: "The Dossier — the people-finding app", related: ["case-files", "vault", "threat-intelligence"], html:
     "<div class='doc-sec'><h4>One dossier, many doors</h4>" +
-  "<p><b>The Dossier</b> (Apex | Apps → The Dossier) is Apex's people-finding app (#260) — since v0.5.15e (#290), the <b>full kit</b>: ten tabs across the top — <b>Person, Username, Email, Phone, Photo, Courts, Business, License, Archive, Address</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link. A key the kit has seen before <b>opens the dossier that holds it</b>, from any door — one dossier, many doors, and the civil spine accretes on one record instead of scattering.</p>" +
+  "<p><b>The Dossier</b> (Casework → The Dossier) is Apex's people-finding app (#260) — since v0.5.15e (#290), the <b>full kit</b>: ten tabs across the top — <b>Person, Username, Email, Phone, Photo, Courts, Business, License, Archive, Address</b> — are keys into the <b>same dossier</b>: run any key and its findings land on the open dossier, rendered as markdown, and when two doors surface the same person, <b>merge</b> them — the merge is yours to make, and keys, sources and custody are kept. Every key, source, merge and case inclusion is stored on the dossier as a typed link. A key the kit has seen before <b>opens the dossier that holds it</b>, from any door — one dossier, many doors, and the civil spine accretes on one record instead of scattering.</p>" +
   "<p><b>The runs.</b> Every run is bridge-side, public, passive and keyless, and every result is cited to its source: the handle swept across public platforms by polite profile checks; an email's posture from its MX, SPF and DMARC records, plus breach <b>presence</b> only — credential content never enters the kit; a phone's facts from the number's own structure and public sources, with cited search pointers in its common formats; a held domain's facts from RDAP, DNS, certificate transparency and its TLS certificate. Absence is named plainly — <i>no public record found</i> — never dressed up, and a hit is a lead, never a conclusion.</p>" +
   "<p><b>The registry check</b> is the Person tab's anchor: it stands at the registries' own doors — the national NSOPW search and the state registry — and cites them; it does not mirror them, and a same-name hit is an unverified lead to disambiguate. When a record exists, its <b>own identifiers</b> — its listed aliases, a held domain — are what enrichment fans out from, so a name-collision guess never inherits a stranger's record. The Photo tab reads an image's EXIF metadata <b>fully locally</b> — nothing is uploaded anywhere, and no face recognition is performed, ever.</p>" +
   "<p><b>Cases, both ways.</b> Open an OSINT case from a dossier — the dossier stands as its subject — and file a dossier, or a single run's findings, into any case, with provenance on the face; case files hold case substance only. <b>Navi is the second door:</b> <span class='mono'>dossier: person &lt;name&gt;</span>, <span class='mono'>sweep the handle &lt;name&gt;</span>, <span class='mono'>look up &lt;email&gt;</span>, <span class='mono'>look up the number &lt;phone&gt;</span> — her runs land in the same history, and while a dossier is open she holds it as context.</p></div>" +
@@ -7195,7 +7205,7 @@ var DOC_PAGES = [
   { id: "guardian", title: "Guardian — protecting Navi's headroom", related: ["mesh", "settings", "troubleshooting"], html:
     "<div class='doc-sec'><h4>What the Guardian is</h4>" +
   "<p>The <b>Guardian</b> is Apex's system monitor: a quiet engine in the bridge that watches this machine's memory and Navi's own footprint, and protects the headroom she needs to answer well. A machine can have free RAM on paper and still starve her — another program balloons, a browser eats the reserve, a generation slows to a crawl — and the Guardian is the part of Apex that notices, keeps score, and acts before her replies pay for someone else's appetite.</p>" +
-  "<p>It lives <b>with the bridge</b>: always on while the bridge runs, <b>even headless</b> — a server install with no dashboard open is still guarded. Its face is the <b>Guardian page in Apex | Utilities</b>: the summary (pressure, free RAM against the reserve, Navi's footprint, whether she is generating now), the live watch of the machine's heaviest processes, what it has learned, its settings, and its action log. The page polls the bridge every few seconds while it is open and stops the moment you leave it.</p></div>" +
+  "<p>It lives <b>with the bridge</b>: always on while the bridge runs, <b>even headless</b> — a server install with no dashboard open is still guarded. Its face is the <b>Guardian page in Utilities</b>: the summary (pressure, free RAM against the reserve, Navi's footprint, whether she is generating now), the live watch of the machine's heaviest processes, what it has learned, its settings, and its action log. The page polls the bridge every few seconds while it is open and stops the moment you leave it.</p></div>" +
     "<div class='doc-sec'><h4>The ladder — watch, warn, throttle, kill</h4>" +
   "<p>The Guardian escalates one rung at a time, and only while the crowding lasts:</p><ol>" +
   "<li><b>Watch.</b> It samples the machine — free memory against the reserve you set, Navi's footprint, how long her generations are taking, and the heaviest processes — and keeps the watch table current. Watching costs nothing and accuses no one.</li>" +
@@ -7289,7 +7299,7 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Account sync — the Operator Badge pulls</h4>" +
   "<p>Import has a second door, made for the ordinary case: you worked on one machine and want <i>this</i> machine caught up. In <b>Settings → GitHub &amp; Backup</b>, the <b>Account sync</b> card slots your <b>Operator Badge</b>. The badge is a pointer, never a key — it says whose backup to pull; the GitHub sign-in remains the only thing that can unlock it, and signed out, the sync stops at its first step and fetches nothing. Slotting it pulls the latest backup and builds the same per-item preview Import builds, laid on a <b>live operation card in Chat</b>: Navi speaks before it and after it, nothing is generated while it runs, and <b>nothing is applied until you confirm on the card</b>. Her node keypair and Mesh certificate never ride a backup, so they can never ride a sync. Since Build 6 the badge itself also travels <b>as its own plain file</b> — <span class='mono'>cards/operator-badge.png</span> in the backup repo, exactly the card's bytes, no archive — so the card can be listed and fetched on its own, one card at a time, on the phone over DHD, without opening the whole backup; a restore takes the card from that file, byte for byte. The Mesh node keypair is never in any file a backup writes — the card is the operator's picture and profile, nothing of the node's keys. As of Build 13 the badge also slots <b>from a file</b> — on the Account sync card itself, and in Settings → Operator beside the minting controls — because a badge minted on one machine reaches another as a picture file; both slots feed the one badge state, and a file that is not an operator badge is refused in plain words. Pressing the sync button takes you to Chat at once, where the card runs, and a pull that has not answered in 45 seconds says so in plain words rather than leaving Settings spinning.</p></div>" +
     "<div class='doc-sec'><h4>Sync — One Navi. All the screens. (The Sync Update, v0.3.0e Build 1)</h4>" +
-  "<p>The badge round above is the deliberate ceremony; <b>Sync</b> is the everyday gesture it grew into. <b>Sync</b> sits in the menu's <b>Apex | Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so a conversation started at the desk is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it. Pulls also happen on their own: at <b>app start</b>, when a <b>DHD session starts</b>, when a <b>window opens</b> (the seat notes itself to the bridge, which refreshes the room for it — the desk was the one seat that never announced itself before this build), and on <b>Mesh contact</b>. Publishing was the button's act alone until v0.5.1e (#257) taught writes to push themselves — see <b>Fluid sync</b> below. There is still no polling daemon.</p>" +
+  "<p>The badge round above is the deliberate ceremony; <b>Sync</b> is the everyday gesture it grew into. <b>Sync</b> sits in the menu's <b>Utilities</b> group. It opens no page: one tap pops a small card and runs the whole round — <b>pull, converge, push</b> — so a conversation started at the desk is waiting on the phone over DHD, and the other way around. The card says only the essentials: the state (<i>Syncing…</i>, <i>Synced</i>, <i>Can't reach — held</i>, <i>Needs your eyes</i>), what moved, the route actually used — the <b>Mesh</b> whenever a paired machine's road is lit (named on the card, <i>Mesh — &lt;that machine&gt;</i>), the <b>backup repo</b> otherwise — and at most one action, <b>Retry</b>. A success lingers five seconds and dismisses itself; a held or <i>Needs your eyes</i> card stays until you deal with it. Pulls also happen on their own: at <b>app start</b>, when a <b>DHD session starts</b>, when a <b>window opens</b> (the seat notes itself to the bridge, which refreshes the room for it — the desk was the one seat that never announced itself before this build), and on <b>Mesh contact</b>. Publishing was the button's act alone until v0.5.1e (#257) taught writes to push themselves — see <b>Fluid sync</b> below. There is still no polling daemon.</p>" +
   "<p><b>Sync shows itself</b> (v0.4.10e, #254). The head of the status pane is the <b>sync bar</b>: at rest it reads <b>System Synced</b>; while any round runs — from the button, at app start, at a DHD session's start, on Mesh contact — it becomes a progress bar naming the phase the bridge is in (<b>fetch, merge, write</b>), with counts only where the bridge can measure them, and an honest indeterminate pulse where it can't. A round that stalls names its stall and the leg it is stuck on; a round that fails names its failure. When a round lands, the <b>receipt</b> hangs off the bar in plain terms — messages merged into the main thread, ghost threads folded, case/chat pairs made whole or the gaps named, deletions honored — or simply <i>nothing changed</i>. The durable copy is the sync record itself; the bar is its face. And when a round materially changed things — a fold, a pairing repaired, another machine's deletion honored — Navi announces it in the main chat herself, from that same record; a routine round stays quiet.</p>" +
   "<p>What rides is the whole living her, anchored to your <b>GitHub account</b> — the set's manifest names the account, and a set from a different account is refused by name at the door, on both transports, before anything is applied: different accounts are different people's work. The set: the <b>chat store</b>; <b>Case Files</b> whole; the <b>ChipDeck</b> as one unit — chips with their install record, RAG packs with theirs, and the cards that tie machines together (your own pairing card and one per paired peer, re-drawn fresh each round, and a gateway card for every fedinet you keep; a gateway card landing on a machine that doesn't keep that fedinet yet admits it — admission and introduction only, never trust); your <b>operator picture and badge</b>; her <b>memory entries</b>; and <b>her Soul and her memory book</b>. The Operator Badge keeps its crown jobs — recovery root, the acts that need the ceremony — but it is not the sync key anymore; the account is. Settings stay with the badge backup, as ever.</p>" +
   "<p>Convergence is the badge round's, widened: per chat, the newest copy wins; a pair that genuinely diverged parks <b>both</b> copies — the later one as a dated sibling — and only then does the card say <i>Needs your eyes</i>, naming the chat or case. Her two documents converge per document and are <b>never silently overwritten</b>: a side untouched since the last sync takes the other side's text; both changed, the newer text wins and the losing text is parked beside the document as a named <span class='mono'>.from-sync-</span> conflict copy for your eyes. Memory entries union <b>by fact</b> — each fact keeps the origin it was born with (by hand, from chat at your ask, her own call, a correction), and a correction replaces its fact's text rather than piling up beside it. <b>Forgetting is a tombstone too</b> (v0.5.1e, #256): forget an entry on any seat and the forget itself syncs — the entry leaves every seat and a stale copy cannot resurrect it. Your name, picture and badge are single values: the latest change wins. <b>Deletions travel as tombstones</b>: delete a chat, a case, or a note on one machine and the deletion itself syncs — and since v0.4.10e (#253) a chat's tombstone is a fact at any timestamp: the thread is gone from every seat and stays gone, however new a late-syncing copy claims to be; a deleted conversation does not come back. (Cases and notes keep the older courtesy: work genuinely newer than their deletion survives.) A case's chat deletes <b>through its case</b> — deleting the case takes its chat with it, and the Chats tab offers no bare delete for a case chat. <b>The main thread is one thread on every machine</b> (v0.4.10e, #251): a main arriving from another seat <b>merges into yours by message</b> — each line once, in order — instead of landing beside it as another thread, and ghost mains left by older rounds fold into it once, receipted in the sync record. New threads are born only two ways: you start one, or a case does. And <b>a case and its chat travel together</b> (v0.4.10e, #252): a case chat whose case cannot land does not list as a case chat at all — it folds away, and the gap is named in the sync record. One exception is absolute: <b>the main chat cannot be deleted</b> — not from the Chats tab, not through sync; <span class='mono'>/clear</span> or <span class='mono'>/cls</span> empties it. The one law that does not bend: backups already taken are snapshots and are never reached into — a tombstone governs live machines, not history. Failures are named in the usual discipline: offline is <i>held</i> and retried at the next trigger, a spent rate limit is named with its wait, a refused credential is named as auth, a foreign account is named as the account it belongs to.</p>" +
@@ -8340,14 +8350,14 @@ function navGroupWrap(gid) {
 }
 // The menu (0.1.9e Build 4; Build 6, #106; Build 14, #160):
 // Chat pinned; a break; then the groups in the settled order —
-// Apex | Navi, Apex | Apps, Apex | Network — each a section of
+// Navi, Casework, Network — each a section of
 // header, children, and its OWN break as the section's last
 // element, so the divider travels with the group and sits
 // directly beneath its last visible row in every state (a
 // standalone sibling used to be stranded a full group-height
 // below a collapsed header, because the collapsed children
 // stayed in the flow); and at the foot, low by the version
-// line, the Apex | Utilities drop-up over the version line —
+// line, the Utilities drop-up over the version line —
 // the group seated low opens UPWARD, its children stacked
 // above its header (#160 settles both the order and that
 // direction; group contents are unchanged).
@@ -8375,6 +8385,11 @@ navApps.appendChild(navGroupWrap("apps"));
 var navBrk4 = document.createElement("div"); navBrk4.className = "nav-break"; navBrk4.setAttribute("aria-hidden", "true"); navApps.appendChild(navBrk4);
 navMenu.appendChild(navApps);
 navMenu.appendChild(navSys);
+var navSiem = document.createElement("div"); navSiem.className = "nav-group-sec"; navSiem.id = "nav-sec-siem";
+navSiem.appendChild(navGroupHeader("siem"));
+navSiem.appendChild(navGroupWrap("siem"));
+var navBrk5 = document.createElement("div"); navBrk5.className = "nav-break"; navBrk5.setAttribute("aria-hidden", "true"); navSiem.appendChild(navBrk5);
+navMenu.appendChild(navSiem);
 var navUtil = document.createElement("div"); navUtil.className = "nav-util"; navUtil.id = "nav-util";
 navUtil.appendChild(navGroupWrap("utilities"));
 navUtil.appendChild(navGroupHeader("utilities"));
@@ -8386,7 +8401,7 @@ navMenu.appendChild(navUtil);
 // "DHD" child (the Node child is a shortcut entry to the same
 // view and never carries the active state — Build 4's honest
 // choice, noted in the build report).
-var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation", FediChat: "nav-child-network-FediChat", Dossier: "nav-child-apps-The Dossier" };
+var NAV_ACTIVE_IDS = { Chat: "nav-Chat", Chips: "nav-child-navi-Chips", ChipDeck: "nav-child-navi-ChipDeck", RAG: "nav-child-navi-RAG", CaseFiles: "nav-child-apps-Case Files", ThreatIntel: "nav-child-apps-The Wire", Vault: "nav-child-apps-Vault", GitHub: "nav-child-utilities-GitHub", Docs: "nav-child-utilities-Docs", Settings: "nav-child-utilities-Settings", Guardian: "nav-child-utilities-Guardian", Mesh: "nav-child-network-Mesh", DHD: "nav-child-network-DHD", Federation: "nav-child-network-Federation", FediChat: "nav-child-network-FediChat", Dossier: "nav-child-apps-The Dossier", Seraph: "nav-child-siem-Seraph" };
 function syncNav() {
   var want = NAV_ACTIVE_IDS[view] || "";
   // Build 4 (#216): selection is SINGULAR. Home and The Wire
@@ -8398,7 +8413,7 @@ function syncNav() {
   // disentangled the two selected states.)
   if (view === "ThreatIntel") want = (intelTab === "home") ? "nav-Home" : "nav-child-apps-The Wire";
   else if (view === "CTFBoard") want = "nav-child-apps-The Wire";
-  ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-FediChat", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-apps-The Dossier", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
+  ["nav-Home", "nav-Chat", "nav-child-network-Federation", "nav-child-network-FediChat", "nav-child-network-Mesh", "nav-child-network-DHD", "nav-child-navi-Chips", "nav-child-navi-ChipDeck", "nav-child-navi-RAG", "nav-child-apps-Case Files", "nav-child-apps-The Wire", "nav-child-apps-Vault", "nav-child-apps-The Dossier", "nav-child-siem-Seraph", "nav-child-utilities-Settings", "nav-child-utilities-GitHub", "nav-child-utilities-Docs", "nav-child-utilities-Guardian"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.className = el.className.replace(/\bon\b/g, "").replace(/\s+/g, " ").trim();
     if (el && id === want) el.className = (el.className ? el.className + " " : "") + "on";
@@ -8408,7 +8423,7 @@ function syncNav() {
   // painted on both seats of Home.
   var railHomeEl = document.getElementById("rail-home");
   if (railHomeEl) railHomeEl.classList.toggle("on", want === "nav-Home");
-  ["network", "navi", "apps", "utilities"].forEach(function (gid) {
+  ["network", "navi", "apps", "siem", "utilities"].forEach(function (gid) {
     var wrap = document.getElementById("nav-children-" + gid);
     if (wrap) {
       var closed = !navGroupsOpen[gid];
@@ -9482,7 +9497,7 @@ function fedConfirmHtml(fedId) {
     "<div class='row' style='margin-top:6px'><input class='grow' id='fed-confirm-in' type='text' placeholder='" + esc(fedConfirm.label) + "' aria-label='Type the confirm words'><button class='act' data-fed-confirm-go='1' style='min-height:44px'>Confirm</button><button class='ghost' data-fed-confirm-cancel='1' style='min-height:44px'>Cancel</button></div></div>";
 }
 // -- The Dossier (v0.5.6e, #260): one dossier, many doors --
-// Apex | Apps -> The Dossier, the people-finding app. Tabs
+// Casework -> The Dossier, the people-finding app. Tabs
 // across the top — Person / Username / Email / Phone /
 // Photo — are keys into the SAME dossier object; the bridge
 // runs the lookups (public, passive, keyless; every result
@@ -9503,6 +9518,202 @@ var DZ_TABS = [["person", "Person"], ["username", "Username"], ["email", "Email"
 // v0.5.15e (#290): the query builder's composed plan —
 // shown in the open, fired only on the confirm press.
 var dzPlan = null;
+
+// SIEM -> Seraph, the SIEM suite (#335; the floor, #153).
+// Round one is standard Apex, manageable whole from DHD: the
+// seat's role, the registry, per-sensor dashboards and the SSH
+// tab all live on this one view. State rides GET
+// /api/seraph/state; every act rides POST /api/seraph/act.
+var srState = null, srFetching = false, srSensor = "", srTab = "dash";
+var srMsg = "", srMsgOk = true, srSshTimer = null, srSshSince = 0, srSshChat = "";
+function srGlyph(size) {
+  return "<svg aria-hidden='true' width='" + size + "' height='" + size + "' viewBox='0 0 48 48'><path fill='#e9a13b' d='M11 35.5C6.2 30.6 4.4 23.8 6.1 16.4c1.3 2.8 3 4.7 5.3 5.9-1-3.1-1.1-6.4-.4-9.8 2.5 4.2 4.2 10.4 4.6 17z'/><path fill='#e9a13b' transform='translate(48 0) scale(-1 1)' d='M11 35.5C6.2 30.6 4.4 23.8 6.1 16.4c1.3 2.8 3 4.7 5.3 5.9-1-3.1-1.1-6.4-.4-9.8 2.5 4.2 4.2 10.4 4.6 17z'/><circle cx='24' cy='24' r='14.5' fill='none' stroke='#14b8a6' stroke-width='4'/><circle cx='24' cy='24' r='8.6' fill='none' stroke='#14b8a6' stroke-width='3.6'/><path fill='#e9a13b' d='M24 17.2c2.3 3.4 4.4 5.5 4.4 8.4a4.4 4.4 0 1 1-8.8 0c0-2.9 2.1-5 4.4-8.4z'/></svg>";
+}
+function srCeremonial(size) {
+  // The winged eye — Seraph's ceremonial mark, for full-size
+  // surfaces only (sensor page heroes, the sensor edition's
+  // splash when it comes). Six wings, one eye, gold on teal.
+  var w = "";
+  [-1, 1].forEach(function (s) {
+    [0, 1, 2].forEach(function (i) {
+      var a = -38 + i * 30;
+      w += "<path fill='#14b8a6' opacity='" + (0.95 - i * 0.22) + "' transform='translate(60 40) scale(" + s + " 1) rotate(" + a + ")' d='M6 -4C20 -14 34 -16 44 -12C36 -4 22 0 8 2Z'/>";
+    });
+  });
+  return "<svg aria-hidden='true' width='" + size + "' height='" + Math.round(size * 0.66) + "' viewBox='0 0 120 80'>" + w +
+    "<path fill='none' stroke='#e9a13b' stroke-width='3.4' d='M22 40C34 20 46 12 60 12s26 8 38 28c-12 20-24 28-38 28S34 60 22 40Z'/>" +
+    "<circle cx='60' cy='40' r='12.5' fill='#e9a13b'/><circle cx='60' cy='40' r='5.6' fill='#0b0f14'/></svg>";
+}
+function srWhen(ts) { return ts ? new Date(ts * 1000).toLocaleString() : "never"; }
+function refreshSeraph(rerender) {
+  if (CONFIG.backend !== "live" || srFetching) return;
+  srFetching = true;
+  fetch("/api/seraph/state")
+    .then(function (r) { return r.json(); })
+    .then(function (j) { srFetching = false; if (j && j.ok) srState = j; if (rerender !== false && view === "Seraph") render(); })
+    .catch(function () { srFetching = false; });
+}
+function seraphAct(action, body, done) {
+  if (CONFIG.backend !== "live") { srMsg = "Seraph runs through the live bridge."; srMsgOk = false; render(); return; }
+  var payload = { action: action };
+  Object.keys(body || {}).forEach(function (k) { payload[k] = body[k]; });
+  fetch("/api/seraph/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok === false) { srMsg = j.error || "The bridge did not answer that act."; srMsgOk = false; }
+      else { srMsg = ""; if (done) done(j); }
+      refreshSeraph(true);
+    })
+    .catch(function () { srMsg = "The bridge did not answer that act."; srMsgOk = false; if (view === "Seraph") render(); });
+}
+function seraphHtml() {
+  var h = "<div id='seraph-root'>";
+  h += "<div class='row' style='align-items:center;gap:10px'>" + srGlyph(34) + "<h3 style='margin:0'>Seraph · the watch floor</h3></div>";
+  h += "<p style='color:var(--dim)'>The SIEM suite: sensors watching their segments, detections in Navi's voice, evidence that files itself into cases. A sensor sees the network it is plugged into — no more, and it says so.</p>";
+  if (srMsg) h += "<p style='color:" + (srMsgOk ? "var(--cy)" : "#f57c7c") + "'>" + esc(srMsg) + "</p>";
+  if (CONFIG.backend !== "live") { h += "<div class='card'>Seraph runs through the live bridge — switch the backend to Live in Settings. The shape below is the suite's.</div></div>"; return h; }
+  if (!srState) { if (!srFetching) refreshSeraph(true); h += "<div class='card'>Calling the watch floor…</div></div>"; return h; }
+  if (srSensor) { h += srSensorHtml(); h += "</div>"; return h; }
+  var st = srState.settings || {};
+  // This seat.
+  h += "<div class='card'><b>This seat</b> <span style='color:var(--dim);font-size:12px'>— Seraph is a configuration of Apex: this seat's role is yours to set.</span>";
+  h += "<div class='row' style='margin-top:8px;flex-wrap:wrap;gap:8px'><label>Role <select id='sr-role' aria-label='This seat's Seraph role'><option value='console'" + (st.role === "console" ? " selected" : "") + ">Console — watch other sensors</option><option value='sensor'" + (st.role === "sensor" ? " selected" : "") + ">Sensor — watch this segment</option><option value='both'" + (st.role === "both" ? " selected" : "") + ">Both</option></select></label>";
+  h += "<label>Retention (days) <input id='sr-ret' type='number' min='1' max='365' value='" + esc(String(st.retentionDays || 30)) + "' style='width:70px' aria-label='Retention in days'></label>";
+  h += "<label>Sleep window <input id='sr-sleep1' type='text' value='" + esc(st.sleepStart || "01:00") + "' style='width:58px' aria-label='Sleep window start'> – <input id='sr-sleep2' type='text' value='" + esc(st.sleepEnd || "05:00") + "' style='width:58px' aria-label='Sleep window end'></label>";
+  h += "<label>Console node id <input id='sr-console' type='text' value='" + esc(st.consoleNode || "") + "' placeholder='(reports stay home)' style='width:170px' aria-label='Console node id for reports'></label></div>";
+  h += "<div class='row' style='margin-top:8px;gap:8px'><button class='act' id='sr-role-save'>Save seat</button>" + (st.role !== "console" ? "<button class='ghost' id='sr-collect'>Collect now</button>" : "") + "<button class='ghost' id='sr-refresh'>Refresh</button></div></div>";
+  // Sensors.
+  h += "<div class='card'><b>Sensors</b> <span style='color:var(--dim);font-size:12px'>— registered here, each watching its own segment. PIA registers as the first remote sensor when she ships.</span>";
+  var sensors = srState.sensors || [];
+  if (!sensors.length) h += "<p style='color:var(--dim)'>No sensors yet. Give this seat the sensor role above, or register a remote sensor below.</p>";
+  sensors.forEach(function (s) {
+    var snap = s.lastSnapshot;
+    h += "<div class='card' style='margin-top:8px'><div class='row' style='gap:8px;align-items:center'><b class='grow'>" + esc(s.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(s.kind) + (s.state === "revoked" ? " · REVOKED" : "") + "</span></div>";
+    h += "<div style='color:var(--dim);font-size:12px'>Last seen " + srWhen(s.lastSeen) + (snap ? " · " + snap.assets + " hosts · " + snap.listeners + " listeners" : " · no picture yet") + (s.openDetections ? " · <b style='color:#f5b544'>" + s.openDetections + " open detection(s)</b>" : "") + (s.vantage ? "<br>Vantage: " + esc(s.vantage) : "") + "</div>";
+    h += "<div class='row' style='margin-top:6px;gap:8px'><button class='act' data-sropen='" + esc(s.id) + "'>Open</button>" + (s.state !== "revoked" && s.kind !== "self" ? "<button class='ghost' data-srrevoke='" + esc(s.id) + "'>Revoke</button>" : "") + "</div></div>";
+  });
+  h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:8px'><input id='sr-reg-name' type='text' placeholder='Sensor name — e.g. PIA · Branch office' aria-label='Sensor name'><input id='sr-reg-addr' type='text' placeholder='Address (for SSH)' aria-label='Sensor address'><input id='sr-reg-user' type='text' placeholder='SSH user' aria-label='SSH user'><input id='sr-reg-node' type='text' placeholder='Mesh node id' aria-label='Mesh node id'><input id='sr-reg-vantage' type='text' placeholder='Vantage — the segment it watches' aria-label='Sensor vantage'></div><button class='ghost' id='sr-register' style='margin-top:8px'>Register sensor</button></div>";
+  // Watchlist.
+  var wl = srState.watchlist || [];
+  h += "<div class='card'><b>Watchlist</b> <span style='color:var(--dim);font-size:12px'>— matched on the sensor itself; the list never leaves this machine (the Wire's declared list matches too). Only matches travel.</span><div style='margin-top:6px'>" +
+    (wl.length ? wl.map(function (t) { return "<span class='mono' style='margin-right:10px'>" + esc(t) + " <button class='ghost' data-srwlremove='" + esc(t) + "' aria-label='Remove " + esc(t) + "'>×</button></span>"; }).join("") : "<span style='color:var(--dim)'>Nothing watched yet.</span>") +
+    "</div><div class='row' style='margin-top:8px;gap:8px'><input id='sr-wl-add' type='text' placeholder='IP or name to watch' aria-label='Watchlist term'><button class='ghost' id='sr-wl-addbtn'>Watch it</button></div></div>";
+  // Detections.
+  h += srDetectionsHtml((srState.detections || []), "");
+  h += "</div>";
+  return h;
+}
+function srDetectionsHtml(dets, sensorId) {
+  var names = {};
+  (srState.sensors || []).forEach(function (s) { names[s.id] = s.name; });
+  var list = dets.filter(function (d) { return !sensorId || d.sensorId === sensorId; });
+  var h = "<div class='card'><b>Detections</b>";
+  if (!list.length) { h += "<p style='color:var(--dim)'>Nothing yet — the floor is quiet.</p></div>"; return h; }
+  list.slice(0, 50).forEach(function (d) {
+    h += "<div class='card' style='margin-top:8px'><div class='row' style='gap:8px'><b class='grow'>" + esc(d.title) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(d.state) + "</span></div>";
+    h += "<div style='color:var(--dim);font-size:12px'>" + esc(names[d.sensorId] || d.sensorId) + " · " + srWhen(d.ts) + " · " + esc(d.kind) + "</div>";
+    h += "<p style='margin:6px 0'>" + esc(d.detail) + "</p>";
+    if (d.state === "open") h += "<div class='row' style='gap:8px'><button class='act' data-srfile='" + esc(d.id) + "'>File as case</button><button class='ghost' data-srdismiss='" + esc(d.id) + "'>Dismiss</button></div>";
+    if (d.state === "filed" && d.caseSlug) h += "<div style='color:var(--dim);font-size:12px'>Filed as case <span class='mono'>" + esc(d.caseSlug) + "</span></div>";
+    h += "</div>";
+  });
+  h += "</div>";
+  return h;
+}
+function srSensorHtml() {
+  var s = null;
+  (srState.sensors || []).forEach(function (x) { if (x.id === srSensor) s = x; });
+  if (!s) { srSensor = ""; return "<div class='card'>That sensor is gone. <button class='ghost' id='sr-back'>Back</button></div>"; }
+  var h = "<div class='row' style='gap:10px;align-items:center'><button class='ghost' id='sr-back'>← Sensors</button>" + srCeremonial(64) + "<div><b>" + esc(s.name) + "</b><div style='color:var(--dim);font-size:12px'>" + esc(s.kind) + " · last seen " + srWhen(s.lastSeen) + (s.state === "revoked" ? " · REVOKED (tombstone)" : "") + "</div></div></div>";
+  h += "<div class='tabbar' role='tablist' aria-label='Sensor sections' style='margin:10px 0'><button class='" + (srTab === "dash" ? "act" : "ghost") + "' data-srtab='dash'>Dashboard</button><button class='" + (srTab === "ssh" ? "act" : "ghost") + "' data-srtab='ssh'>SSH</button></div>";
+  if (srTab === "ssh") { h += srSshHtml(s); return h; }
+  var snap = s.lastSnapshot;
+  if (!snap) { h += "<div class='card'>No picture yet — this sensor has not reported. When it collects, its segment appears here.</div>"; return h; }
+  h += "<div class='card'><b>The picture</b> <span style='color:var(--dim);font-size:12px'>as of " + srWhen(snap.ts) + "</span><div class='row' style='gap:16px;margin-top:6px;flex-wrap:wrap'><span><b>" + snap.assets + "</b> hosts</span><span><b>" + snap.conns + "</b> connections</span><span><b>" + snap.listeners + "</b> listeners</span></div>";
+  if (snap.gaps && snap.gaps.length) h += "<p style='color:#f5b544;font-size:12px'>Vantage gaps: " + snap.gaps.map(esc).join("; ") + "</p>";
+  if (snap.remotes && snap.remotes.length) { h += "<p style='color:var(--dim);font-size:12px'>Top talkers: " + snap.remotes.slice(0, 8).map(function (r) { return esc(r.ip) + ":" + r.port + " (" + r.count + ")"; }).join(" · ") + "</p>"; }
+  h += "</div>";
+  var inv = snap.assetList || [];
+  h += "<div class='card'><b>Inventory</b>" + (inv.length ? inv.map(function (a) { return "<div class='row' style='gap:8px;font-size:13px'><span class='grow'>" + esc(a.name || a.ip) + "</span><span class='mono' style='color:var(--dim)'>" + esc(a.ip) + "</span><span class='mono' style='color:var(--dim)'>" + esc(a.mac) + "</span></div>"; }).join("") : "<p style='color:var(--dim)'>No hosts in the last picture.</p>") + "</div>";
+  var lis = snap.listenerList || [];
+  h += "<div class='card'><b>Listening services</b>" + (lis.length ? lis.map(function (l) { return "<div class='mono' style='font-size:13px'>" + esc(l.ip) + ":" + l.port + "/" + esc(l.proto) + "</div>"; }).join("") : "<p style='color:var(--dim)'>None seen.</p>") + "</div>";
+  h += srDetectionsHtml((srState.detections || []), s.id);
+  return h;
+}
+function srSshHtml(s) {
+  var h = "<div class='card'><b>SSH — " + esc(s.name) + "</b><p style='color:var(--dim);font-size:13px'>Your own key, your own session, opened by hand. Seraph keeps no standing session and stores no credential; the session runs in this seat's shell machinery, and closing the tab ends it.</p>";
+  if (s.kind === "self") { h += "<p>This sensor is this seat itself — its shell is the one in Chat's CLI mode.</p></div>"; return h; }
+  if (!s.address) { h += "<p>No address on this sensor's record — register one to open a session.</p></div>"; return h; }
+  h += "<div class='row' style='gap:8px'><button class='act' id='sr-ssh-open'>Open SSH session</button><button class='ghost' id='sr-ssh-close'>Close</button></div>";
+  h += "<pre id='sr-term' class='mono' style='margin-top:10px;background:#0b0f14;color:#c9e8e2;border-radius:8px;padding:10px;min-height:220px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap'></pre>";
+  h += "<div class='row' style='gap:8px;margin-top:8px'><input class='grow mono' id='sr-ssh-line' type='text' placeholder='Type a line, Enter sends it' aria-label='SSH input line'><button class='ghost' id='sr-ssh-send'>Send</button></div></div>";
+  return h;
+}
+function srPollSsh() {
+  if (view !== "Seraph" || srTab !== "ssh" || !srSshChat) return;
+  fetch("/api/shell/session/state?chatId=" + encodeURIComponent(srSshChat) + "&since=" + srSshSince)
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var term = document.getElementById("sr-term");
+      if (term && j) {
+        if (typeof j.seq === "number") srSshSince = j.seq;
+        (j.events || []).forEach(function (e) {
+          var t = (e && (e.data || e.text)) || "";
+          if (t) term.textContent += t;
+        });
+        term.scrollTop = term.scrollHeight;
+        if (j.ended) term.textContent += "\n[session ended" + (j.closeReason ? ": " + j.closeReason : "") + "]\n";
+      }
+      if (view === "Seraph" && srTab === "ssh" && srSshChat && !(j && j.ended)) srSshTimer = setTimeout(srPollSsh, 1200);
+    })
+    .catch(function () { if (view === "Seraph" && srTab === "ssh") srSshTimer = setTimeout(srPollSsh, 2500); });
+}
+function bindSeraph() {
+  function on(id, ev, fn) { var el = document.getElementById(id); if (el) el.addEventListener(ev, fn); }
+  on("sr-refresh", "click", function () { refreshSeraph(true); });
+  on("sr-role-save", "click", function () {
+    seraphAct("role", { role: document.getElementById("sr-role").value, retentionDays: document.getElementById("sr-ret").value, sleepStart: document.getElementById("sr-sleep1").value, sleepEnd: document.getElementById("sr-sleep2").value, consoleNode: document.getElementById("sr-console").value });
+  });
+  on("sr-collect", "click", function () { seraphAct("collect", {}); });
+  on("sr-register", "click", function () {
+    seraphAct("register", { name: document.getElementById("sr-reg-name").value, address: document.getElementById("sr-reg-addr").value, sshUser: document.getElementById("sr-reg-user").value, nodeId: document.getElementById("sr-reg-node").value, vantage: document.getElementById("sr-reg-vantage").value });
+  });
+  on("sr-wl-addbtn", "click", function () { seraphAct("watchlist", { term: document.getElementById("sr-wl-add").value }); });
+  on("sr-back", "click", function () { srSensor = ""; srTab = "dash"; render(); });
+  document.querySelectorAll("[data-sropen]").forEach(function (b) { b.addEventListener("click", function () { srSensor = b.getAttribute("data-sropen"); srTab = "dash"; render(); }); });
+  document.querySelectorAll("[data-srrevoke]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("revoke", { id: b.getAttribute("data-srrevoke") }); }); });
+  document.querySelectorAll("[data-srfile]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("detection", { id: b.getAttribute("data-srfile"), act: "file" }); }); });
+  document.querySelectorAll("[data-srdismiss]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("detection", { id: b.getAttribute("data-srdismiss"), act: "dismiss" }); }); });
+  document.querySelectorAll("[data-srwlremove]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("watchlist", { term: b.getAttribute("data-srwlremove"), remove: true }); }); });
+  document.querySelectorAll("[data-srtab]").forEach(function (b) { b.addEventListener("click", function () { srTab = b.getAttribute("data-srtab"); if (srTab !== "ssh" && srSshTimer) { clearTimeout(srSshTimer); srSshTimer = null; } render(); }); });
+  on("sr-ssh-open", "click", function () {
+    var s = null; (srState.sensors || []).forEach(function (x) { if (x.id === srSensor) s = x; });
+    if (!s) return;
+    srSshChat = "seraph-ssh-" + s.id; srSshSince = 0;
+    fetch("/api/shell/session/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat, cols: 100, rows: 30 }) })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        var cmd = "ssh -o StrictHostKeyChecking=accept-new " + (s.sshUser ? s.sshUser + "@" : "") + s.address + "\n";
+        return fetch("/api/shell/session/input", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat, text: cmd }) });
+      })
+      .then(function () { var term = document.getElementById("sr-term"); if (term) term.textContent = ""; srPollSsh(); })
+      .catch(function () { srMsg = "The SSH session would not open."; srMsgOk = false; render(); });
+  });
+  on("sr-ssh-close", "click", function () {
+    if (srSshTimer) { clearTimeout(srSshTimer); srSshTimer = null; }
+    if (srSshChat) fetch("/api/shell/session/close", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat }) }).catch(function () {});
+    srSshChat = "";
+  });
+  function srSendLine() {
+    var inp = document.getElementById("sr-ssh-line");
+    if (!inp || !srSshChat) return;
+    var text = inp.value + "\n"; inp.value = "";
+    fetch("/api/shell/session/input", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat, text: text }) }).catch(function () {});
+  }
+  on("sr-ssh-send", "click", srSendLine);
+  var line = document.getElementById("sr-ssh-line");
+  if (line) line.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); srSendLine(); } });
+}
 function refreshDossier(rerender) {
   if (CONFIG.backend !== "live" || dzFetching) return;
   dzFetching = true;
@@ -11777,7 +11988,7 @@ function updaterFallbackHtml() {
     "<span style='color:var(--dim)'>The installer keeps everything that's yours — your chips, knowledge packs and their indexes, the model file, Soul and Memory, her voice, and your GitHub settings — and Apex restarts into the new version when it finishes.</span></div>";
 }
 // --- Quick Sync card (0.2.0e Build 3, #176) -------------------------
-// The Sync control in Apex | Utilities opens nothing: it pops this
+// The Sync control in Utilities opens nothing: it pops this
 // card and runs the round (pull + converge + push over the backup
 // repo, on the Operator identity). Essentials only — the state,
 // what moved, the route actually used, at most one action. A
@@ -13483,7 +13694,7 @@ function githubSettingsHtml() {
   // truth, and a refusal stands on this card, switch unmoved.
   if (CONFIG.backend === "live" && syncChoiceState === null && !syncChoiceFetching) fetchSyncChoice();
   var scOn = syncChoiceState !== false;
-  h += "<div class='card'><h3>The Sync button — Send or Receive</h3><p style='color:var(--dim)'>The <b>Sync</b> control in Apex | Utilities, with this on, offers a choice when you press it: <b>Send a sync</b> (publish this seat now, pull nothing) or <b>Receive a sync</b> (pull the converged set now, publish nothing) — a manual override, so a sync happens when you say, not when the cadence gets to it. Turn it off and a press runs the full round at once, as it always did. The automatic rounds — app start, DHD sessions, Mesh contact, push-on-write — never consult this setting.</p>";
+  h += "<div class='card'><h3>The Sync button — Send or Receive</h3><p style='color:var(--dim)'>The <b>Sync</b> control in Utilities, with this on, offers a choice when you press it: <b>Send a sync</b> (publish this seat now, pull nothing) or <b>Receive a sync</b> (pull the converged set now, publish nothing) — a manual override, so a sync happens when you say, not when the cadence gets to it. Turn it off and a press runs the full round at once, as it always did. The automatic rounds — app start, DHD sessions, Mesh contact, push-on-write — never consult this setting.</p>";
   h += "<div style='display:flex;align-items:center;gap:8px;margin-top:8px'><button class='switch' id='gh-sync-choice' role='switch' aria-checked='" + (scOn ? "true" : "false") + "' aria-label='Sync button offers Send or Receive'><span class='knob'></span></button><span><b>" + (scOn ? "On — a press offers Send / Receive" : "Off — a press runs the full round") + "</b></span></div>";
   if (syncChoiceMsg) h += "<p style='color:var(--am);font-size:12px;margin-top:6px'>" + esc(syncChoiceMsg) + "</p>";
   h += "</div>";
@@ -14219,6 +14430,8 @@ function render() {
     h += federationHtml();
   } else if (view === "FediChat") {
     h += fedichatHtml();
+  } else if (view === "Seraph") {
+    h += seraphHtml();
   } else if (view === "Dossier") {
     h += dossierHtml();
   } else if (view === "RAG") {
@@ -14492,6 +14705,7 @@ function render() {
     if (n && n.parentNode !== document.body) document.body.appendChild(n);
   });
   if (document.getElementById("vault-sheet")) bindVaultSheet();
+  if (document.getElementById("seraph-root")) bindSeraph();
   // Replay the view-entrance motion on every render so switching
   // views (and tabs) glides instead of snapping.
   mainEl.classList.remove("view-in");

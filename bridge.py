@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.7"
+SHIPPED_VERSION = "0.6.8"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.39"
+BRIDGE_BUILD = "2026-11-19.40"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 39
+SHIPPED_BUILD_SEQ = 40
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -12247,6 +12247,9 @@ class MeshHandler(BaseHTTPRequestHandler):
             self._send(code, payload)
         elif self.path.split("?")[0] == "/mesh/sync/exchange":
             code, payload = mesh_handle_sync_exchange(self, self._body())
+            self._send(code, payload)
+        elif self.path.split("?")[0] == "/mesh/seraph-report":
+            code, payload = mesh_handle_seraph_report(self, self._body())
             self._send(code, payload)
         elif self.path.split("?")[0] == "/mesh/borrow":
             code, payload = mesh_handle_borrow(self, self._body())
@@ -35925,6 +35928,1021 @@ def badge_sync_dismiss(op_id):
 # silent empty watch.
 
 PULSE_PATH = os.path.join(ROOT, "config", "pulse.json")
+
+
+# --- Seraph — the SIEM suite (v0.6.8e, #335; the floor, #153) --
+# Seraph is a configuration of Apex, not a fork: any seat can
+# take the sensor role, the console role, or both. The engine
+# below is seraph.py inlined into the bridge — the package's
+# manifest is a fixed contract (#193), so the suite rides the
+# bridge like Pulse and Fleet do; the standalone module remains
+# the design source in the goal workspace.
+#
+# Doctrine carried in the code: passive by default (collection
+# reads what the seat can already see — the one active act, a
+# sweep, crosses the LOWC line elsewhere); the unit of sight is
+# the segment, and every snapshot names its gaps; the watchlist
+# never leaves the machine (matching happens on the sensor,
+# matches travel — #314); a client sensor is a limited citizen
+# whose picture files under its own record and nothing else;
+# retention is operator-set and revocation is a tombstone.
+SERAPH_ROOT = os.path.join(ROOT, "config")
+
+SERAPH_DETECTIONS_CAP = 500
+SERAPH_SAMPLES_CAP = 720          # connection samples kept per sensor
+SERAPH_DEDUPE_WINDOW = 6 * 3600   # same sensor+kind+key stays quiet
+SERAPH_AUTH_WINDOW = 600          # auth-burst window, seconds
+SERAPH_AUTH_BURST_MIN = 6
+SERAPH_SCAN_PORTS_MIN = 8
+SERAPH_BEACON_MIN_SAMPLES = 5
+SERAPH_BEACON_MIN_SPAN = 1200     # seconds of history before beacon math
+SERAPH_BEACON_CV_MAX = 0.30
+
+
+def seraph_now():
+    return int(time.time())
+
+
+def seraph_new_id(prefix):
+    return prefix + "-" + uuid.uuid4().hex[:12]
+
+
+# ----------------------------------------------------------------
+# The store: one registry file, one data directory per sensor.
+# root is the install's config directory (bridge passes it).
+
+def seraph_store_path(root):
+    return os.path.join(root, "seraph.json")
+
+
+def seraph_sensor_dir(root, sid):
+    return os.path.join(root, "seraph", sid)
+
+
+def seraph_atomic_write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def seraph_store_load(root):
+    try:
+        with open(seraph_store_path(root), encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {"sensors": {}, "detections": [], "watchlist": []}
+    if not isinstance(data.get("sensors"), dict):
+        data["sensors"] = {}
+    if not isinstance(data.get("detections"), list):
+        data["detections"] = []
+    if not isinstance(data.get("watchlist"), list):
+        data["watchlist"] = []
+    return data
+
+
+def seraph_store_save(root, store):
+    seraph_atomic_write(seraph_store_path(root),
+                  json.dumps(store, indent=1, sort_keys=True))
+
+
+def seraph_state_load(root, sid):
+    path = os.path.join(seraph_sensor_dir(root, sid), "state.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {"inventory": {}, "listeners": [], "samples": [],
+                "lastFired": {}, "lastSnapshot": None}
+    for key, default in (("inventory", {}), ("listeners", []),
+                         ("samples", []), ("lastFired", {}),
+                         ("lastSnapshot", None)):
+        if key not in data:
+            data[key] = default
+    return data
+
+
+def seraph_state_save(root, sid, state):
+    seraph_atomic_write(os.path.join(seraph_sensor_dir(root, sid), "state.json"),
+                  json.dumps(state, indent=1, sort_keys=True))
+
+
+# ----------------------------------------------------------------
+# The registry. A sensor record: who it is, where it lives, what
+# state it stands in. Revocation is a tombstone: the record stays,
+# marked, so a late report from a revoked sensor is refused by
+# name instead of resurrecting it.
+
+def seraph_register_sensor(root, name, kind="remote", address="", ssh_user="",
+                    node_id="", vantage="", console_node=""):
+    store = seraph_store_load(root)
+    sid = seraph_new_id("sensor")
+    rec = {
+        "id": sid,
+        "name": str(name or "Unnamed sensor")[:80],
+        "kind": kind if kind in ("self", "remote") else "remote",
+        "address": str(address or "")[:120],
+        "sshUser": str(ssh_user or "")[:60],
+        "nodeId": str(node_id or "")[:80],
+        "consoleNode": str(console_node or "")[:80],
+        "vantage": str(vantage or "")[:200],
+        "state": "active",
+        "added": seraph_now(),
+        "lastSeen": 0,
+        "revokedAt": 0,
+    }
+    store["sensors"][sid] = rec
+    seraph_store_save(root, store)
+    return rec
+
+
+def seraph_find_by_node(store, node_id):
+    for rec in store["sensors"].values():
+        if rec.get("nodeId") and rec["nodeId"] == node_id:
+            return rec
+    return None
+
+
+def seraph_revoke_sensor(root, sid):
+    store = seraph_store_load(root)
+    rec = store["sensors"].get(sid)
+    if rec is None:
+        return None
+    rec["state"] = "revoked"
+    rec["revokedAt"] = seraph_now()
+    seraph_store_save(root, store)
+    return rec
+
+
+def seraph_touch_sensor(root, sid, ts=None):
+    store = seraph_store_load(root)
+    rec = store["sensors"].get(sid)
+    if rec is not None:
+        rec["lastSeen"] = int(ts or seraph_now())
+        seraph_store_save(root, store)
+    return rec
+
+
+# ----------------------------------------------------------------
+# Collection. Parsers first (pure, benched), live readers second.
+
+def seraph_parse_arp(text):
+    """Linux /proc/net/arp -> [{ip, mac, device}]."""
+    out = []
+    for line in (text or "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 6 and parts[3] != "00:00:00:00:00:00":
+            out.append({"ip": parts[0], "mac": parts[3].lower(),
+                        "device": parts[5], "name": ""})
+    return out
+
+
+def seraph_hex_ip(hexs):
+    try:
+        raw = bytes.fromhex(hexs)
+    except Exception:
+        return ""
+    if len(raw) == 4:
+        return ".".join(str(b) for b in raw[::-1])
+    if len(raw) == 16:
+        # /proc writes IPv6 as four little-endian 32-bit words.
+        words = [raw[i:i + 4][::-1] for i in range(0, 16, 4)]
+        raw = b"".join(words)
+        import ipaddress
+        return str(ipaddress.IPv6Address(raw))
+    return ""
+
+
+def seraph_parse_conns(text, proto="tcp"):
+    """/proc/net/{tcp,tcp6,udp,udp6} -> connection rows."""
+    out = []
+    for line in (text or "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            lip, lport = parts[1].rsplit(":", 1)
+            rip, rport = parts[2].rsplit(":", 1)
+            out.append({
+                "proto": proto,
+                "localIp": seraph_hex_ip(lip), "localPort": int(lport, 16),
+                "remoteIp": seraph_hex_ip(rip), "remotePort": int(rport, 16),
+                "state": parts[3],
+            })
+        except Exception:
+            continue
+    return out
+
+
+SERAPH_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+SERAPH_AUTH_RE = re.compile(
+    r"^(\w{3})\s+(\d+)\s+(\d{2}):(\d{2}):(\d{2})\s+\S+\s+sshd\[\d+\]:\s+"
+    r"(Failed|Accepted) password for (?:invalid user )?(\S+) from "
+    r"(\d+\.\d+\.\d+\.\d+)")
+
+
+def seraph_parse_auth(lines, now=None):
+    """sshd syslog lines -> [{ts, kind, user, src}]."""
+    now = now or seraph_now()
+    out = []
+    lt = time.localtime(now)
+    for line in lines or []:
+        m = SERAPH_AUTH_RE.match(line or "")
+        if not m:
+            continue
+        mon = SERAPH_MONTHS.get(m.group(1))
+        if mon is None:
+            continue
+        year = lt.tm_year - (1 if mon > lt.tm_mon else 0)
+        try:
+            ts = int(time.mktime((year, mon, int(m.group(2)),
+                                  int(m.group(3)), int(m.group(4)),
+                                  int(m.group(5)), 0, 0, -1)))
+        except Exception:
+            continue
+        out.append({"ts": ts,
+                    "kind": "fail" if m.group(6) == "Failed" else "success",
+                    "user": m.group(7), "src": m.group(8)})
+    return out
+
+
+def seraph_parse_leases(text):
+    """dnsmasq-style leases -> [{ip, mac, name}] (best effort)."""
+    out = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[2]):
+            out.append({"ip": parts[2], "mac": parts[1].lower(),
+                        "device": "", "name": parts[3]})
+    return out
+
+
+def seraph_read_file(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def seraph_collect(readers=None):
+    """One collection pass -> a snapshot. `readers` may inject
+    fixture text per source ({"arp":..., "tcp":..., "auth":...,
+    "leases":...}); absent a reader, the live file is read. What
+    a source cannot give is named in the snapshot's gaps — the
+    vantage statement is part of the data, not a footnote."""
+    readers = readers or {}
+
+    def src(key, path):
+        if key in readers:
+            v = readers[key]
+            return (v or ""), v is not None
+        if not os.path.exists(path):
+            return "", False
+        return seraph_read_file(path), True
+
+    gaps = []
+    arp_text, ok = src("arp", "/proc/net/arp")
+    if not ok:
+        gaps.append("no ARP table readable — passive inventory is blind")
+    assets = seraph_parse_arp(arp_text)
+    leases_text, lok = src("leases", "/var/lib/misc/dnsmasq.leases")
+    if lok:
+        by_mac = {a["mac"]: a for a in assets}
+        for lease in seraph_parse_leases(leases_text):
+            if lease["mac"] in by_mac:
+                if lease["name"] and lease["name"] != "*":
+                    by_mac[lease["mac"]]["name"] = lease["name"]
+            else:
+                assets.append(lease)
+    conns = []
+    for key, proto in (("tcp", "tcp"), ("tcp6", "tcp6"),
+                       ("udp", "udp"), ("udp6", "udp6")):
+        text, _ok = src(key, "/proc/net/" + key)
+        conns.extend(seraph_parse_conns(text, proto))
+    if not conns:
+        gaps.append("no connection table readable — flow picture is blind")
+    auth_text, aok = src("auth", "/var/log/auth.log")
+    if not aok:
+        auth_text, aok = src("auth", "/var/log/secure")
+    auth = seraph_parse_auth(auth_text.splitlines()[-2000:]) if aok else []
+    if not aok:
+        gaps.append("no auth log readable — sign-in picture is blind")
+    listeners = sorted({(c["localIp"], c["localPort"], c["proto"])
+                        for c in conns if c["state"] == "0A"})
+    remotes = {}
+    for c in conns:
+        if c["state"] == "01" and c["remoteIp"] not in ("", "0.0.0.0", "::"):
+            key = (c["remoteIp"], c["remotePort"])
+            remotes[key] = remotes.get(key, 0) + 1
+    return {
+        "ts": seraph_now(),
+        "assets": assets,
+        "conns": conns,
+        "listeners": [{"ip": ip, "port": p, "proto": pr}
+                      for ip, p, pr in listeners],
+        "remotes": [{"ip": ip, "port": p, "count": n}
+                    for (ip, p), n in sorted(remotes.items())],
+        "auth": auth,
+        "gaps": gaps,
+    }
+
+
+# ----------------------------------------------------------------
+# Detection. Pure over (state, snapshot, settings): the same
+# inputs always give the same detections, which is what makes
+# the floor benchable and its alerts trustworthy.
+
+def seraph_fired(state, key, now):
+    last = state["lastFired"].get(key, 0)
+    if now - last < SERAPH_DEDUPE_WINDOW:
+        return True
+    state["lastFired"][key] = now
+    return False
+
+
+def seraph_det(sid, kind, key, title, detail):
+    return {"id": seraph_new_id("det"), "sensorId": sid, "kind": kind,
+            "key": key, "title": title, "detail": detail,
+            "ts": seraph_now(), "state": "open", "caseSlug": ""}
+
+
+def seraph_in_sleep(ts, sleep_start, sleep_end):
+    lt = time.localtime(ts)
+    minutes = lt.tm_hour * 60 + lt.tm_min
+    try:
+        sh, sm = (int(x) for x in sleep_start.split(":"))
+        eh, em = (int(x) for x in sleep_end.split(":"))
+    except Exception:
+        return False
+    start, end = sh * 60 + sm, eh * 60 + em
+    if start <= end:
+        return start <= minutes < end
+    return minutes >= start or minutes < end
+
+
+def seraph_detect(state, snapshot, settings, watchlist):
+    """Run the v1 detection set over one snapshot. Mutates state
+    (inventory, listeners, samples, lastFired) — the caller saves.
+    Returns the new detections."""
+    sid = settings.get("sensorId") or ""
+    now = snapshot["ts"]
+    out = []
+    terms = [str(t or "").strip().lower() for t in (watchlist or [])]
+    terms = [t for t in terms if t]
+
+    # Watchlist matching — done HERE, on the sensor. The list is
+    # an input to this function and is never written into any
+    # snapshot, envelope or detection: matches travel, it doesn't.
+    seen_values = set()
+    for a in snapshot["assets"]:
+        seen_values.add(a["ip"].lower())
+        if a.get("name"):
+            seen_values.add(a["name"].lower())
+    for r in snapshot["remotes"]:
+        seen_values.add(r["ip"].lower())
+    for term in terms:
+        if term in seen_values and not seraph_fired(state, "watch:" + term, now):
+            out.append(seraph_det(sid, "watchlist", term,
+                            "Watchlist match: " + term,
+                            "A watched value (" + term + ") is present "
+                            "on this segment or in its current traffic."))
+
+    # New face on the network.
+    inventory = state["inventory"]
+    for a in snapshot["assets"]:
+        if a["mac"] not in inventory:
+            inventory[a["mac"]] = {"ip": a["ip"], "name": a.get("name", ""),
+                                   "firstSeen": now, "lastSeen": now}
+            if not seraph_fired(state, "face:" + a["mac"], now):
+                out.append(seraph_det(
+                    sid, "new-face", a["mac"],
+                    "New face on the network: " + (a.get("name") or a["ip"]),
+                    (a.get("name") or "An unnamed host") + " (" + a["ip"]
+                    + ", " + a["mac"] + ") is on the segment and was "
+                    "never in this sensor's inventory."))
+        else:
+            inventory[a["mac"]]["lastSeen"] = now
+            inventory[a["mac"]]["ip"] = a["ip"]
+
+    # Samples for beacon math: established outbound endpoints.
+    for r in snapshot["remotes"]:
+        state["samples"].append({"ts": now, "ip": r["ip"],
+                                 "port": r["port"]})
+    state["samples"] = state["samples"][-SERAPH_SAMPLES_CAP:]
+    by_endpoint = {}
+    for s in state["samples"]:
+        by_endpoint.setdefault((s["ip"], s["port"]), []).append(s["ts"])
+    for (ip, port), stamps in by_endpoint.items():
+        if len(stamps) < SERAPH_BEACON_MIN_SAMPLES:
+            continue
+        stamps = sorted(stamps)
+        if stamps[-1] - stamps[0] < SERAPH_BEACON_MIN_SPAN:
+            continue
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a > 0]
+        if len(gaps) < SERAPH_BEACON_MIN_SAMPLES - 1:
+            continue
+        mean = sum(gaps) / len(gaps)
+        if mean <= 0:
+            continue
+        var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
+        cv = (var ** 0.5) / mean
+        key = "beacon:" + ip + ":" + str(port)
+        if cv < SERAPH_BEACON_CV_MAX and not seraph_fired(state, key, now):
+            out.append(seraph_det(
+                sid, "beacon", key,
+                "Beaconing: " + ip + ":" + str(port),
+                "Calls to " + ip + ":" + str(port) + " land on a "
+                "metronome — about every " + str(int(mean)) + "s, "
+                + str(len(stamps)) + " times in the window. Regular "
+                "intervals are how implants phone home."))
+
+    # Impossible hours: a successful sign-in inside the sleep window.
+    for ev in snapshot["auth"]:
+        if ev["kind"] == "success" and seraph_in_sleep(
+                ev["ts"], settings.get("sleepStart", "01:00"),
+                settings.get("sleepEnd", "05:00")):
+            key = "hours:" + ev["src"] + ":" + ev["user"]
+            if not seraph_fired(state, key, now):
+                out.append(seraph_det(
+                    sid, "impossible-hours", key,
+                    "Sign-in at an impossible hour: " + ev["user"],
+                    ev["user"] + " signed in from " + ev["src"] + " at "
+                    + time.strftime("%H:%M", time.localtime(ev["ts"]))
+                    + " — inside this network's sleep window."))
+
+    # Auth burst: one source, many failures, short window.
+    fails = {}
+    for ev in snapshot["auth"]:
+        if ev["kind"] == "fail":
+            fails.setdefault(ev["src"], []).append(ev["ts"])
+    for src_ip, stamps in fails.items():
+        stamps = sorted(stamps)
+        hot = any(stamps[i + SERAPH_AUTH_BURST_MIN - 1] - stamps[i] <= SERAPH_AUTH_WINDOW
+                  for i in range(len(stamps) - SERAPH_AUTH_BURST_MIN + 1)) \
+            if len(stamps) >= SERAPH_AUTH_BURST_MIN else False
+        key = "burst:" + src_ip
+        if hot and not seraph_fired(state, key, now):
+            out.append(seraph_det(
+                sid, "auth-burst", key,
+                "Failed sign-in burst from " + src_ip,
+                str(len(stamps)) + " failed sign-ins from " + src_ip
+                + " inside " + str(SERAPH_AUTH_WINDOW // 60) + " minutes — "
+                "someone is trying doors."))
+
+    # Scan pattern: one source knocking on many ports (SYN_RECV).
+    knocks = {}
+    for c in snapshot["conns"]:
+        if c["state"] == "03":
+            knocks.setdefault(c["remoteIp"], set()).add(c["localPort"])
+    for src_ip, ports in knocks.items():
+        key = "scan:" + src_ip
+        if len(ports) >= SERAPH_SCAN_PORTS_MIN and not seraph_fired(state, key, now):
+            out.append(seraph_det(
+                sid, "scan", key,
+                "Scan pattern from " + src_ip,
+                src_ip + " has half-open knocks on " + str(len(ports))
+                + " distinct ports — someone is mapping this segment "
+                "from the receiving end."))
+
+    # New listening service on a known host.
+    current = {(l["ip"], l["port"], l["proto"])
+               for l in snapshot["listeners"]}
+    known = {(l["ip"], l["port"], l["proto"]) for l in state["listeners"]}
+    for ip, port, proto in sorted(current - known):
+        key = "listen:" + ip + ":" + str(port) + ":" + proto
+        if not seraph_fired(state, key, now):
+            out.append(seraph_det(
+                sid, "new-listener", key,
+                "New listening service: " + str(port) + "/" + proto,
+                ip + " is newly listening on " + str(port) + "/" + proto
+                + " — a surface this sensor has not seen before."))
+    state["listeners"] = [{"ip": ip, "port": p, "proto": pr}
+                          for ip, p, pr in sorted(current)]
+    state["lastSnapshot"] = {
+        "ts": now, "assets": len(snapshot["assets"]),
+        "conns": len(snapshot["conns"]),
+        "listeners": len(snapshot["listeners"]),
+        "remotes": snapshot["remotes"][:20], "gaps": snapshot["gaps"],
+        "assetList": snapshot["assets"][:200],
+        "listenerList": snapshot["listeners"],
+    }
+    return out
+
+
+SERAPH_VOICE = {
+    "watchlist": "A name on the watchlist just surfaced on {name}'s "
+                 "network — {detail}",
+    "new-face": "New face on {name}'s network — {detail}",
+    "beacon": "Something on {name}'s network is keeping time — {detail}",
+    "impossible-hours": "A sign-in at an hour when {name}'s network "
+                        "should be asleep — {detail}",
+    "auth-burst": "Someone is rattling doors on {name}'s network — "
+                  "{detail}",
+    "scan": "Someone is mapping {name}'s network from the inside — "
+            "{detail}",
+    "new-listener": "A new door opened on {name}'s network — {detail}",
+}
+
+
+def seraph_detection_voice(det, sensor_name):
+    """The alert in Navi's voice (#319's discipline: she sends
+    the alerts, not the system). One line, her flare, the fact."""
+    template = SERAPH_VOICE.get(det.get("kind"), "{detail}")
+    return template.format(name=sensor_name or "the sensor",
+                           detail=det.get("detail") or det.get("title")
+                           or "")
+
+
+# ----------------------------------------------------------------
+# Reporting. An envelope is one sensor's picture, whole: the
+# snapshot summary and the detections it raised. The sensor
+# spools it when the road home is dark; the console files it
+# under that sensor and nothing else.
+
+def seraph_make_envelope(sensor_rec, snapshot, detections):
+    return {
+        "v": 1,
+        "sensorId": sensor_rec["id"],
+        "nodeId": sensor_rec.get("nodeId", ""),
+        "name": sensor_rec.get("name", ""),
+        "ts": snapshot["ts"],
+        "snapshot": {
+            "assets": snapshot["assets"], "remotes": snapshot["remotes"],
+            "listeners": snapshot["listeners"], "gaps": snapshot["gaps"],
+            "connCount": len(snapshot["conns"]),
+        },
+        "detections": detections,
+    }
+
+
+def seraph_envelope_digest(env):
+    blob = json.dumps(env, sort_keys=True).encode()
+    return hashlib.sha256(blob).hexdigest()
+
+
+def seraph_spool_write(root, env):
+    name = str(env["ts"]) + "-" + seraph_envelope_digest(env)[:12] + ".json"
+    path = os.path.join(root, "seraph", "spool", name)
+    seraph_atomic_write(path, json.dumps(env, indent=1, sort_keys=True))
+    return name
+
+
+def seraph_spool_list(root):
+    path = os.path.join(root, "seraph", "spool")
+    try:
+        return sorted(os.listdir(path))
+    except Exception:
+        return []
+
+
+def seraph_spool_read(root, name):
+    try:
+        with open(os.path.join(root, "seraph", "spool", name),
+                  encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def seraph_spool_drop(root, name):
+    try:
+        os.remove(os.path.join(root, "seraph", "spool", name))
+    except Exception:
+        pass
+
+
+def seraph_intake(root, env, sender_node):
+    """File a report envelope under its sensor. Returns
+    (ok, note). Refusals are by name: unknown sensor, revoked
+    sensor, a node claiming a sensor that is not its own."""
+    if not isinstance(env, dict) or env.get("v") != 1:
+        return False, "bad-envelope"
+    store = seraph_store_load(root)
+    rec = store["sensors"].get(str(env.get("sensorId") or ""))
+    if rec is None:
+        return False, "unknown-sensor"
+    if rec["state"] == "revoked":
+        return False, "sensor-revoked"
+    if rec.get("nodeId") and rec["nodeId"] != sender_node:
+        return False, "sensor-node-mismatch"
+    state = seraph_state_load(root, rec["id"])
+    snap = env.get("snapshot") or {}
+    state["lastSnapshot"] = {
+        "ts": env.get("ts") or seraph_now(),
+        "assets": len(snap.get("assets") or []),
+        "conns": snap.get("connCount") or 0,
+        "listeners": len(snap.get("listeners") or []),
+        "remotes": (snap.get("remotes") or [])[:20],
+        "gaps": snap.get("gaps") or [],
+        "assetList": (snap.get("assets") or [])[:200],
+        "listenerList": snap.get("listeners") or [],
+    }
+    seraph_state_save(root, rec["id"], state)
+    known = {d["id"] for d in store["detections"]}
+    added = 0
+    for det in env.get("detections") or []:
+        if isinstance(det, dict) and det.get("id") not in known:
+            det["sensorId"] = rec["id"]
+            det.setdefault("state", "open")
+            det.setdefault("caseSlug", "")
+            store["detections"].append(det)
+            added += 1
+    store["detections"] = store["detections"][-SERAPH_DETECTIONS_CAP:]
+    rec["lastSeen"] = seraph_now()
+    seraph_store_save(root, store)
+    return True, "filed:" + str(added)
+
+
+# ----------------------------------------------------------------
+# Retention and the operator's picture.
+
+def seraph_prune(root, retention_days, now=None):
+    """Age out what the operator's retention says: samples past
+    the window, and dismissed detections past the window. Open
+    and filed detections never age out silently."""
+    now = now or seraph_now()
+    horizon = now - max(1, int(retention_days)) * 86400
+    store = seraph_store_load(root)
+    kept = [d for d in store["detections"]
+            if d.get("state") == "open" or d.get("ts", now) >= horizon]
+    changed = len(kept) != len(store["detections"])
+    store["detections"] = kept
+    if changed:
+        seraph_store_save(root, store)
+    for sid in store["sensors"]:
+        state = seraph_state_load(root, sid)
+        samples = [s for s in state["samples"] if s["ts"] >= horizon]
+        if len(samples) != len(state["samples"]):
+            state["samples"] = samples
+            seraph_state_save(root, sid, state)
+
+
+def seraph_public_state(root, settings):
+    """The console's picture, shaped for the page: registry,
+    per-sensor last picture, open detections first."""
+    store = seraph_store_load(root)
+    sensors = []
+    for rec in sorted(store["sensors"].values(),
+                      key=lambda r: r.get("added", 0)):
+        state = seraph_state_load(root, rec["id"])
+        entry = dict(rec)
+        entry["lastSnapshot"] = state.get("lastSnapshot")
+        entry["openDetections"] = sum(
+            1 for d in store["detections"]
+            if d["sensorId"] == rec["id"] and d["state"] == "open")
+        sensors.append(entry)
+    detections = sorted(store["detections"],
+                        key=lambda d: -d.get("ts", 0))
+    return {"ok": True, "settings": settings, "sensors": sensors,
+            "detections": detections[:200],
+            "watchlist": store.get("watchlist") or []}
+
+
+
+def seraph_settings(cfg):
+    # This seat's Seraph posture, from the config's "seraph"
+    # slice. Role defaults to console: the suite is present and
+    # manageable on every seat, and a seat starts watching its
+    # own segment only when the operator says so. Retention
+    # defaults to 30 days on-box; the sleep window is the
+    # network's own quiet hours, operator-set.
+    raw = {}
+    try:
+        s = (cfg or {}).get("seraph")
+        if isinstance(s, dict):
+            raw = s
+    except Exception:
+        raw = {}
+
+    def _int(key, default, lo, hi):
+        try:
+            v = int(raw.get(key))
+        except Exception:
+            return default
+        return max(lo, min(hi, v))
+
+    role = str(raw.get("role") or "console")
+    if role not in ("console", "sensor", "both"):
+        role = "console"
+    return {
+        "role": role,
+        "retentionDays": _int("retentionDays", 30, 1, 365),
+        "cycleSeconds": _int("cycleSeconds", 300, 60, 3600),
+        "sleepStart": str(raw.get("sleepStart") or "01:00")[:5],
+        "sleepEnd": str(raw.get("sleepEnd") or "05:00")[:5],
+        "consoleNode": str(raw.get("consoleNode") or "").strip(),
+    }
+
+
+def _seraph_settings_save(cfg, patch):
+    cur = seraph_settings(cfg)
+    cur.update(patch)
+    cfg["seraph"] = cur
+    save_config(cfg)
+    return cur
+
+
+def seraph_watchlist_terms():
+    # The watchlist Seraph matches against: the Wire's declared
+    # list (intel settings) plus any Seraph-local additions. The
+    # merged list is used on THIS machine only — never written
+    # into a snapshot, an envelope or a detection (#314).
+    terms = []
+    try:
+        st = INTEL.settings()
+        if isinstance(st, dict):
+            terms.extend(st.get("watchlist") or [])
+    except Exception:
+        pass
+    try:
+        terms.extend(seraph_store_load(SERAPH_ROOT).get("watchlist")
+                     or [])
+    except Exception:
+        pass
+    out, seen = [], set()
+    for t in terms:
+        t = str(t or "").strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out
+
+
+def _seraph_self_sensor(cfg):
+    # The seat's own sensor record, minted on first need: kind
+    # "self", bound to this node's Mesh identity, named for the
+    # machine. A shipped sensor's record (PIA first) is kind
+    # "remote", minted at the Row — same registry, same shape.
+    store = seraph_store_load(SERAPH_ROOT)
+    for rec in store["sensors"].values():
+        if rec.get("kind") == "self":
+            return rec
+    import socket as _socket
+    try:
+        host = _socket.gethostname() or "This seat"
+    except Exception:
+        host = "This seat"
+    return seraph_register_sensor(
+        SERAPH_ROOT, host + " (this seat)", kind="self",
+        address="this machine", ssh_user="",
+        node_id=mesh_node_id() or "",
+        vantage="the segment this seat is plugged into")
+
+
+def _seraph_send(env, console_node):
+    # One envelope home over the Mesh door. True only on the
+    # console's own filed answer — anything else (no peer, dark
+    # road, refusal) is a spool, never a shrug.
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    peer = None
+    for p in ms["borrow"]["peers"]:
+        if p["nodeId"] == console_node:
+            peer = p
+    if peer is None:
+        return False
+    rid = env["sensorId"] + "-" + str(env["ts"])
+    body = json.dumps({"requestId": rid, "report": env}).encode()
+    try:
+        code, raw = _mesh_request(peer, "POST", "/mesh/seraph-report",
+                                  body, rid, 30)
+        payload = json.loads(raw.decode() or "{}")
+    except Exception:
+        return False
+    return code == 200 and payload.get("ok") is True
+
+
+def _seraph_drain_spool(settings):
+    node = settings.get("consoleNode") or ""
+    if not node:
+        return
+    for name in seraph_spool_list(SERAPH_ROOT):
+        env = seraph_spool_read(SERAPH_ROOT, name)
+        if env is not None and _seraph_send(env, node):
+            seraph_spool_drop(SERAPH_ROOT, name)
+
+
+def seraph_cycle(reason="cadence"):
+    # One watch pass on this seat: collect, detect, file the
+    # detections, report home (or spool), prune to retention.
+    cfg = load_config()
+    settings = seraph_settings(cfg)
+    if settings["role"] not in ("sensor", "both"):
+        return {"ok": True, "skipped": "this seat is not a sensor"}
+    with _seraph_lock:
+        rec = _seraph_self_sensor(cfg)
+        snap = seraph_collect()
+        state = seraph_state_load(SERAPH_ROOT, rec["id"])
+        dets = seraph_detect(state, snap, {
+            "sensorId": rec["id"],
+            "sleepStart": settings["sleepStart"],
+            "sleepEnd": settings["sleepEnd"],
+        }, seraph_watchlist_terms())
+        seraph_state_save(SERAPH_ROOT, rec["id"], state)
+        store = seraph_store_load(SERAPH_ROOT)
+        known = {d["id"] for d in store["detections"]}
+        for d in dets:
+            if d["id"] not in known:
+                store["detections"].append(d)
+        store["detections"] = store["detections"][-SERAPH_DETECTIONS_CAP:]
+        seraph_store_save(SERAPH_ROOT, store)
+        seraph_touch_sensor(SERAPH_ROOT, rec["id"])
+        env = seraph_make_envelope(rec, snap, dets)
+        node = settings.get("consoleNode") or ""
+        sent = False
+        if node and node != (mesh_node_id() or ""):
+            sent = _seraph_send(env, node)
+            if not sent:
+                seraph_spool_write(SERAPH_ROOT, env)
+            else:
+                _seraph_drain_spool(settings)
+        seraph_prune(SERAPH_ROOT, settings["retentionDays"])
+        return {"ok": True, "sensor": rec["id"],
+                "detections": len(dets), "reported": sent,
+                "gaps": snap["gaps"]}
+
+
+def seraph_start():
+    # The watch loop, started in __main__ beside the pulse's:
+    # a first pass shortly after boot, then on the seat's own
+    # cycle. A console-only seat's loop simply idles — the role
+    # is re-read every pass, so a role flip needs no restart.
+    def loop():
+        time.sleep(90)
+        while True:
+            try:
+                seraph_cycle(reason="cadence")
+            except Exception:
+                pass
+            try:
+                secs = seraph_settings(load_config())["cycleSeconds"]
+            except Exception:
+                secs = 300
+            time.sleep(secs)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def mesh_handle_seraph_report(handler, body):
+    # POST /mesh/seraph-report — a sensor reporting home. The
+    # door is pairing-authenticated like the borrow door; the
+    # registry is the second lock: the envelope's sensor must be
+    # registered here, active, and bound to the authenticated
+    # node. A client sensor's picture files under its own record
+    # and nothing else — admission is never transitive sight.
+    try:
+        data = json.loads((body or b"").decode("utf-8", "replace"))
+    except Exception:
+        return 400, {"ok": False, "reason": "bad-request"}
+    if not isinstance(data, dict):
+        return 400, {"ok": False, "reason": "bad-request"}
+    cfg = load_config()
+    ms = mesh_settings(cfg)
+    if not ms["enabled"]:
+        return 200, {"ok": False, "reason": "mesh-off"}
+    peer = mesh_authenticate(handler, body,
+                             str(data.get("requestId") or ""))
+    if peer is None:
+        return 401, {"ok": False, "reason": "unauthorized"}
+    ok, note = seraph_intake(SERAPH_ROOT, data.get("report"),
+                             peer["nodeId"])
+    if not ok:
+        return 200, {"ok": False, "reason": note}
+    return 200, {"ok": True, "note": note}
+
+
+def _notif_wanted_seraph(cfg):
+    # Producer: Seraph's open detections — ONE record per
+    # detection, in Navi's voice (#319: she sends the alerts).
+    # The record retires when the detection leaves "open"
+    # (filed into a case, or dismissed by the operator).
+    try:
+        store = seraph_store_load(SERAPH_ROOT)
+    except Exception:
+        return []
+    names = {sid: rec.get("name") or "a sensor"
+             for sid, rec in store["sensors"].items()}
+    items = []
+    for d in store["detections"]:
+        if d.get("state") != "open":
+            continue
+        items.append({
+            "id": d["id"],
+            "kind": "seraph",
+            "title": d.get("title") or "Seraph detection",
+            "body": seraph_detection_voice(
+                d, names.get(d.get("sensorId"), "a sensor"))[:600],
+            "target": {"view": "Seraph", "sensor": d.get("sensorId")},
+            "count": 1,
+        })
+    return items
+
+
+def seraph_payload():
+    cfg = load_config()
+    return seraph_public_state(SERAPH_ROOT, seraph_settings(cfg))
+
+
+def seraph_act(action, data):
+    # The DHD acts behind /api/seraph/act — every one an
+    # operator act from the console's own door.
+    cfg = load_config()
+    if action == "role":
+        patch = {}
+        role = str(data.get("role") or "")
+        if role in ("console", "sensor", "both"):
+            patch["role"] = role
+        for key in ("retentionDays", "cycleSeconds"):
+            if data.get(key) is not None:
+                try:
+                    patch[key] = int(data[key])
+                except Exception:
+                    pass
+        for key in ("sleepStart", "sleepEnd", "consoleNode"):
+            if data.get(key) is not None:
+                patch[key] = str(data[key])[:80]
+        settings = _seraph_settings_save(cfg, patch)
+        if settings["role"] in ("sensor", "both"):
+            _seraph_self_sensor(cfg)
+        return {"ok": True, "settings": settings}
+    if action == "register":
+        rec = seraph_register_sensor(
+            SERAPH_ROOT, str(data.get("name") or ""),
+            kind="remote", address=str(data.get("address") or ""),
+            ssh_user=str(data.get("sshUser") or ""),
+            node_id=str(data.get("nodeId") or ""),
+            vantage=str(data.get("vantage") or ""))
+        return {"ok": True, "sensor": rec}
+    if action == "revoke":
+        rec = seraph_revoke_sensor(SERAPH_ROOT,
+                                   str(data.get("id") or ""))
+        if rec is None:
+            return {"ok": False, "error": "No such sensor."}
+        return {"ok": True, "sensor": rec}
+    if action == "watchlist":
+        store = seraph_store_load(SERAPH_ROOT)
+        term = str(data.get("term") or "").strip()
+        if data.get("remove"):
+            store["watchlist"] = [t for t in store["watchlist"]
+                                  if t.lower() != term.lower()]
+        elif term and term.lower() not in \
+                [t.lower() for t in store["watchlist"]]:
+            store["watchlist"].append(term)
+        seraph_store_save(SERAPH_ROOT, store)
+        return {"ok": True, "watchlist": store["watchlist"]}
+    if action == "collect":
+        return seraph_cycle(reason="operator")
+    if action == "detection":
+        return _seraph_detection_act(data)
+    return {"ok": False, "error": "Unknown Seraph act."}
+
+
+def _seraph_detection_act(data):
+    det_id = str(data.get("id") or "")
+    act = str(data.get("act") or "")
+    store = seraph_store_load(SERAPH_ROOT)
+    det = next((d for d in store["detections"] if d["id"] == det_id),
+               None)
+    if det is None:
+        return {"ok": False, "error": "No such detection."}
+    if act == "dismiss":
+        det["state"] = "dismissed"
+        seraph_store_save(SERAPH_ROOT, store)
+        return {"ok": True, "detection": det}
+    if act == "file":
+        # The #330 birth pattern: the detection becomes a case,
+        # its text riding as the summary with a custody hash of
+        # the detection record itself (#326's discipline: the
+        # exhibit is hashed by the bridge at filing time).
+        blob = json.dumps(det, sort_keys=True).encode()
+        digest = hashlib.sha256(blob).hexdigest()
+        detail, err = case_create(
+            "Seraph: " + (det.get("title") or "detection"), "", "", {
+                "type": "investigation", "tags": "seraph",
+                "summary": (det.get("detail") or "")
+                + "\n\nFiled from a Seraph detection (" + det["id"]
+                + ", kind " + (det.get("kind") or "") + ", sensor "
+                + (det.get("sensorId") or "") + "). Exhibit sha256: "
+                + digest})
+        if err:
+            return {"ok": False, "error": err}
+        det["state"] = "filed"
+        det["caseSlug"] = (detail or {}).get("slug") or ""
+        seraph_store_save(SERAPH_ROOT, store)
+        return {"ok": True, "detection": det,
+                "case": det["caseSlug"]}
+    return {"ok": False, "error": "Unknown detection act."}
+
+
+_seraph_lock = threading.Lock()
+
 PULSE_INTERVAL_SECONDS = 3 * 3600
 PULSE_GREETING_FRESH_SECONDS = 900
 PULSE_HITS_CAP = 60
@@ -39946,6 +40964,7 @@ def notifications_reconcile(cfg=None):
             ("sync-purge", lambda: _notif_wanted_purge()),
             ("fedichat", lambda: _notif_wanted_fedichat(cfg)),
             ("pulse", lambda: _notif_wanted_pulse(cfg)),
+            ("seraph", lambda: _notif_wanted_seraph(cfg)),
             ("reminder", lambda: _notif_wanted_day(cfg)),
             ("order", lambda: _notif_wanted_day(cfg)),
             ("push-dead", lambda: _notif_wanted_push_dead(cfg)),
@@ -41058,6 +42077,8 @@ class Handler(BaseHTTPRequestHandler):
             # rotation advances, a fresh pulse check folds in,
             # and the digest it speaks is marked greeted.
             self._send(200, greeting_payload(load_config()))
+        elif self.path.split("?")[0] == "/api/seraph/state":
+            self._send(200, seraph_payload())
         elif self.path.split("?")[0] == "/api/shell/session/state":
             # CLI Mode (Build 3): the session's events since the
             # page's last sequence number, plus the full-screen
@@ -42002,6 +43023,10 @@ class Handler(BaseHTTPRequestHandler):
                 ))
             except Exception as e:
                 self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
+        elif self.path == "/api/seraph/act":
+            data = self._body()
+            self._send(200, seraph_act(str(data.get("action") or ""),
+                                       data))
         elif self.path == "/api/shell/session/open":
             # CLI Mode (Build 3): open (or return) the chat's one
             # standing interactive session.
@@ -45556,6 +46581,7 @@ if __name__ == "__main__":
         CTF.start()
         BOUNTIES.start()
         pulse_start()
+        seraph_start()
         daybook_start()
     except Exception:
         pass
