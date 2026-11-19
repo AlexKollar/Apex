@@ -404,16 +404,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.2"
+SHIPPED_VERSION = "0.6.3"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-18.34"
+BRIDGE_BUILD = "2026-11-19.35"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 34
+SHIPPED_BUILD_SEQ = 35
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -24053,6 +24053,19 @@ def _chat_normalize(rec):
         clean_shelf = _shelf_clean_list(shelf)
         if clean_shelf:
             out["shelf"] = clean_shelf
+    # The clear epoch (v0.6.3e, #318): a main thread emptied by
+    # /clear or /cls carries the moment it was emptied and the
+    # seat that emptied it. The marker survives normalization —
+    # and therefore write-through and convergence — exactly
+    # like the case binding does; convergence honors it over
+    # any content stamped at or before it (see chat_write).
+    cleared = rec.get("clearedAt")
+    if isinstance(cleared, (int, float)) and not isinstance(cleared, bool) \
+            and cleared > 0:
+        out["clearedAt"] = cleared
+        by = rec.get("clearedBy")
+        if isinstance(by, str) and by.strip():
+            out["clearedBy"] = by.strip()[:80]
     return out
 
 
@@ -24088,10 +24101,67 @@ def _chat_path(cid):
     return os.path.join(CHATS_DIR, cid + ".json")
 
 
+def _chat_clear_filter(rec):
+    # The messages a record's clear epoch retires: lines
+    # stamped at or before the moment the thread was emptied.
+    # Post-clear lines stand; a line carrying no stamp is not
+    # timestamped content and the epoch does not govern it.
+    epoch = rec.get("clearedAt") if isinstance(rec, dict) else None
+    msgs = (rec or {}).get("messages") or []
+    if not isinstance(epoch, (int, float)) or isinstance(epoch, bool) \
+            or not epoch:
+        return list(msgs)
+    return [m for m in msgs
+            if not (isinstance(m, dict)
+                    and isinstance(m.get("ts"), (int, float))
+                    and not isinstance(m.get("ts"), bool)
+                    and m["ts"] <= epoch)]
+
+
+def _chat_seat_name():
+    # This seat's name for a clear marker: the Mesh node name
+    # when one is minted, the machine's hostname otherwise —
+    # the same fall-back the Mesh identity itself uses.
+    try:
+        name = mesh_settings(load_config())["nodeName"]
+        if name:
+            return str(name)[:80]
+    except Exception:
+        pass
+    return socket.gethostname()[:80]
+
+
 def chat_write(rec):
     rec = _chat_normalize(rec)
     if rec is None:
         return None
+    # v0.6.3e (#318): the clear epoch is enforced at the store
+    # door, so NO write path — write-through, convergence, the
+    # ghost fold, a restore — can land pre-clear content back
+    # into an emptied main thread. The epoch only ever advances:
+    # a stale window's copy, written without the marker (or with
+    # an older one), adopts the stored epoch and is filtered by
+    # it. When a write ADVANCES the epoch — a clear act landing
+    # at this bridge — the marker takes this seat's name unless
+    # the act already carries one.
+    if _chat_is_main_family(rec):
+        stored = None
+        try:
+            with open(_chat_path(rec["id"]), encoding="utf-8") as f:
+                stored = _chat_normalize(json.load(f))
+        except Exception:
+            stored = None
+        new_epoch = rec.get("clearedAt") or 0
+        old_epoch = (stored or {}).get("clearedAt") or 0
+        if old_epoch > new_epoch:
+            rec["clearedAt"] = old_epoch
+            if (stored or {}).get("clearedBy"):
+                rec["clearedBy"] = stored["clearedBy"]
+            new_epoch = old_epoch
+        if new_epoch:
+            if new_epoch > old_epoch and not rec.get("clearedBy"):
+                rec["clearedBy"] = _chat_seat_name()
+            rec["messages"] = _chat_clear_filter(rec)
     os.makedirs(CHATS_DIR, exist_ok=True)
     full = _chat_path(rec["id"])
     tmp = full + ".tmp"
@@ -24426,7 +24496,11 @@ def _chats_fold_main_ghosts():
     receipt = []
     cur = main
     for g in ghosts:
-        merged_msgs, added = _chat_merge_messages(cur.get("messages"), g.get("messages"))
+        # v0.6.3e (#318): a ghost's own clear epoch retires its
+        # pre-clear lines before the fold — the fold must never
+        # resurrect content any seat emptied. (The main's own
+        # epoch is enforced again at the write below.)
+        merged_msgs, added = _chat_merge_messages(cur.get("messages"), _chat_clear_filter(g))
         nxt = dict(cur)
         nxt["messages"] = merged_msgs
         nxt["updatedAt"] = max(cur.get("updatedAt") or 0, g.get("updatedAt") or 0)
@@ -24557,6 +24631,19 @@ def chats_converge(incoming, incoming_uploads=None):
                 nxt["messages"] = merged_msgs
                 nxt["updatedAt"] = max(cur_main.get("updatedAt") or 0,
                                        rec.get("updatedAt") or 0)
+                # v0.6.3e (#318): the clear epoch converges
+                # with the thread — the newer clear governs the
+                # merged record, whichever seat spoke it, and
+                # its pre-clear lines yield here (and again at
+                # the store door, where chat_write enforces it).
+                _epochs = [r.get("clearedAt") or 0 for r in (cur_main, rec)]
+                if max(_epochs) > 0:
+                    _winner = cur_main if _epochs[0] >= _epochs[1] else rec
+                    nxt["clearedAt"] = max(_epochs)
+                    if _winner.get("clearedBy"):
+                        nxt["clearedBy"] = _winner["clearedBy"]
+                    nxt["messages"] = _chat_clear_filter(nxt)
+                    summary["mainCleared"] = summary.get("mainCleared", 0) + 1
                 saved = chat_write(nxt)
                 if saved is not None:
                     local[MAIN_CHAT_ID] = saved
@@ -25376,6 +25463,52 @@ def _sync_chat_substance(chat):
     return len(msgs), hashlib.sha256(canon).hexdigest()
 
 
+def _sync_main_verdict(fetched):
+    # v0.6.3e (#318): the post-round substance check on the main
+    # thread. The converged main is a pure function of the two
+    # copies and the clear epoch: the union of both sides'
+    # messages, less whatever the newer epoch retires. After a
+    # round, this seat's main must BE that thread — same count,
+    # same digest (#262's measure). Anything else means the
+    # flagship thread disagrees with the set the round just
+    # converged, and the verdict must say so rather than print
+    # "converged" over it. Returns None when the arriving set
+    # holds no main to judge against, else
+    # {"ok": bool, "ours": n, "theirs": m}.
+    files = (fetched or {}).get("files") or {}
+    raw = files.get(SYNC_PREFIX + "chats.json")
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    remote_main = None
+    for c in (parsed.get("chats") or []) if isinstance(parsed, dict) else []:
+        rec = _chat_normalize(c)
+        if rec is not None and _chat_is_main_family(rec):
+            if str(rec["id"]) == MAIN_CHAT_ID or remote_main is None:
+                remote_main = rec
+    if remote_main is None:
+        return None
+    local_main = None
+    for c in chats_all():
+        if str(c.get("id")) == MAIN_CHAT_ID and not c.get("case"):
+            local_main = c
+            break
+    epoch = max((local_main or {}).get("clearedAt") or 0,
+                remote_main.get("clearedAt") or 0)
+    expected, _added = _chat_merge_messages(
+        (local_main or {}).get("messages"), remote_main.get("messages"))
+    if epoch:
+        expected = _chat_clear_filter(
+            {"clearedAt": epoch, "messages": expected})
+    ours = _sync_chat_substance(local_main or {})
+    want = _sync_chat_substance({"messages": expected})
+    return {"ok": ours == want, "ours": ours[0],
+            "theirs": len(remote_main.get("messages") or [])}
+
+
 def _sync_apply_pulse(fetched, summary):
     # v0.5.13e (#287): the pulse store converges like every
     # other citizen — watches by id (the newer updatedAt wins),
@@ -25579,9 +25712,19 @@ def sync_collect(cfg=None):
                             "sha": hashlib.sha256(files[SYNC_PREFIX + "daybook.json"]).hexdigest()}
         except Exception:
             daybook_meta = {}
+    # v0.6.3e (#318): the main thread's clear marker rides the
+    # manifest as well as the record, so a receiving seat can
+    # read the epoch off the set's face before it converges.
+    main_clear = {}
+    for c in export_chats:
+        if _chat_is_main_family(c) and c.get("clearedAt"):
+            main_clear = {"clearedAt": c["clearedAt"],
+                          "seat": c.get("clearedBy") or ""}
+            break
     manifest = {"format": SYNC_FORMAT, "app": "Apex",
                 "bridgeBuild": BRIDGE_BUILD, "syncedAt": _sync_now_iso(),
                 "account": account,
+                "mainClear": main_clear,
                 "chats": len(export_chats), "cases": len(index),
                 "deckFiles": len(deck_index), "docs": len(docs_index),
                 "chatDigests": chat_digests,
@@ -26140,6 +26283,14 @@ def sync_apply(cfg, fetched):
         _sync_state_save(_st2)
     except Exception:
         pass
+    # v0.6.3e (#318): the main thread's verdict, judged AFTER
+    # everything landed — the finish summary renames the round
+    # on a mismatch, so no road (repo, Mesh, pull, receive) can
+    # print a clean "converged" over a divergent main thread.
+    try:
+        summary["mainVerdict"] = _sync_main_verdict(fetched)
+    except Exception:
+        summary["mainVerdict"] = None
     return summary
 
 
@@ -26202,6 +26353,12 @@ def _sync_record_result(state, trigger, result):
         # v0.6.2e (#303): a directional round (Send / Receive)
         # names its direction on the durable receipt too.
         "direction": result.get("direction") or "",
+        # v0.6.3e (#317): a round the operator's choice stopped
+        # names the supersession on its record.
+        "preempted": bool(result.get("preempted")),
+        # v0.6.3e (#318): a renamed verdict carries the main
+        # thread's disagreement on the receipt too.
+        "mainThread": result.get("mainThread") or None,
         "material": bool(receipt.get("material")),
         "roundId": result.get("roundId") or "",
         # v0.5.1e (#257): the round's measured duration rides
@@ -26255,6 +26412,24 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         result["message"] = "Synced — the machines converged."
     else:
         result["message"] = "Synced — already in step."
+    # v0.6.3e (#318): the verdict honesty gate. When the main
+    # thread disagrees with the converged set after the round,
+    # the verdict is RENAMED — never a clean "converged", never
+    # a plain "Synced" — on this result, and therefore on the
+    # durable receipt and the Sync card's last-round line that
+    # read it back. The direction is named in counts: theirs is
+    # the arriving set's main, ours is this seat's.
+    _mv = summary.get("mainVerdict")
+    if isinstance(_mv, dict) and not _mv.get("ok"):
+        result["mainThread"] = {"ours": _mv.get("ours"),
+                                 "theirs": _mv.get("theirs")}
+        result["state"] = "partial"
+        result["message"] = (
+            "Mostly synced — the main thread disagrees (theirs "
+            + str(_mv.get("theirs")) + " messages, ours "
+            + str(_mv.get("ours")) + "). The rest of the set "
+            "converged; the main thread did not, and this round "
+            "will not call it converged.")
     # v0.4.10e (#254): the round's receipt, in the operator's
     # terms — what the sync bar hangs off the bar on landing
     # and what the #242 announcement is composed from. A round
@@ -26357,6 +26532,7 @@ def _sync_mesh_round(cfg, open_chat_id):
             continue
         if _mesh_sync_foreign_account(payload):
             continue
+        _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
         summary = sync_apply(cfg, {
             "files": theirs,
@@ -26413,6 +26589,7 @@ def _sync_mesh_pull(cfg):
             continue
         if _mesh_sync_foreign_account(payload):
             continue
+        _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
         summary = sync_apply(cfg, {
             "files": theirs,
@@ -26481,6 +26658,125 @@ _SYNC_PUSH = {"lock": threading.Lock(), "timer": None,
               "attempts": 0, "kinds": set()}
 _SYNC_PUSH_COALESCE = 1.25
 _SYNC_PUSH_RETRY = 3.0
+
+
+# -- Sync preemption (v0.6.3e, #317) ------------------------------
+# The override's missing half, named in the field: the operator
+# chose Send and the card answered "Held — the running round's
+# verdict is the one that counts." An operator's word does not
+# queue behind machinery. When a direction is chosen while a
+# round is in flight, the choice is NOTED here; the running
+# round reads the note at its next phase boundary (the phases
+# are already the round's own — fetch, merge, write) and stops
+# there, cleanly: rounds converge idempotently, so its partial
+# work stands, and its record names the supersession. The
+# chosen direction then runs at once. Machine triggers (push-
+# on-write, occasions) never note a preemption — the hold stays
+# theirs. A newer choice replaces an older one wholesale: the
+# newest direction is the one that runs, and a direction
+# superseded before it could run says so on its own receipt.
+
+
+class _SyncSuperseded(Exception):
+    # Raised inside a round at a phase boundary when a newer
+    # operator direction outranks it. Carries the phase it
+    # stopped at and the direction that replaced it.
+    def __init__(self, phase, direction):
+        super().__init__(phase)
+        self.phase = phase
+        self.direction = direction
+
+
+_SYNC_PREEMPT = {"lock": threading.Lock(), "seq": 0, "current": None,
+                 "doneSeq": 0, "doneDir": ""}
+
+
+def _sync_preempt_note(direction, trigger):
+    # The operator's choice, recorded. Returns its sequence —
+    # the round that runs it holds the sequence so only a NEWER
+    # choice can stop it in turn.
+    with _SYNC_PREEMPT["lock"]:
+        _SYNC_PREEMPT["seq"] += 1
+        seq = _SYNC_PREEMPT["seq"]
+        _SYNC_PREEMPT["current"] = {"seq": seq, "direction": direction,
+                                    "trigger": trigger}
+        return seq
+
+
+def _sync_preempt_checkpoint(phase, own_seq=0):
+    # A round's phase boundary: stop here when a newer operator
+    # direction stands noted. Legacy and machine rounds hold no
+    # sequence (0), so any noted choice stops them; a directional
+    # round is stopped only by a newer choice than its own.
+    cur = _SYNC_PREEMPT["current"]
+    if cur and cur["seq"] > (own_seq or 0):
+        raise _SyncSuperseded(phase, cur["direction"])
+
+
+def _sync_preempt_clear(seq):
+    with _SYNC_PREEMPT["lock"]:
+        cur = _SYNC_PREEMPT["current"]
+        if cur and cur["seq"] == seq:
+            _SYNC_PREEMPT["current"] = None
+
+
+def _sync_superseded_result(direction, phase, own_direction=""):
+    # The stopped round's verdict — on its return, its durable
+    # record, and the card that reads them back. It names who
+    # outranked it and where it stopped; the work it landed
+    # before the boundary stands, and says so.
+    named = {"send": "Send", "receive": "Receive"}.get(direction, "")
+    if own_direction and own_direction != direction:
+        message = ("Overridden — a newer choice ("
+                   + (named or "a directional round")
+                   + ") replaced this "
+                   + {"send": "Send", "receive": "Receive"}.get(
+                       own_direction, "round")
+                   + " at the " + phase + " boundary before it "
+                     "finished. Work it had already landed stands.")
+    else:
+        message = ("Overridden — this round stopped at the "
+                   + phase + " boundary: the operator's "
+                   + (named or "directional round")
+                   + " runs instead. Work it had already landed "
+                     "stands; nothing was raced.")
+    return {"ok": False, "state": "superseded", "preempted": True,
+            "phase": phase, "route": "Backup repo",
+            "message": message}
+
+
+def _sync_preempt_acquire(direction, trigger):
+    # A directional round's door (v0.6.3e, #317): note the
+    # choice FIRST (the note is the signal the running round
+    # reads at its next boundary), then take the round lock —
+    # at once when it stands free, or as soon as the stopped
+    # (or finished) round releases it. Returns (seq, None) with
+    # the lock held, or (seq, result) when a NEWER choice
+    # superseded this one while it waited: the newest direction
+    # is the one that runs, and this one names its replacement.
+    seq = _sync_preempt_note(direction, trigger)
+    if _SYNC_LOCK.acquire(False):
+        with _SYNC_PREEMPT["lock"]:
+            if seq > _SYNC_PREEMPT["doneSeq"]:
+                _SYNC_PREEMPT["doneSeq"] = seq
+                _SYNC_PREEMPT["doneDir"] = direction
+        return seq, None
+    _SYNC_LOCK.acquire()
+    with _SYNC_PREEMPT["lock"]:
+        cur = _SYNC_PREEMPT["current"]
+        newer = cur["direction"] if cur and cur["seq"] > seq else None
+        dead = newer is not None or seq < _SYNC_PREEMPT["doneSeq"]
+        if not dead:
+            _SYNC_PREEMPT["doneSeq"] = seq
+            _SYNC_PREEMPT["doneDir"] = direction
+    if dead:
+        _SYNC_LOCK.release()
+        out = _sync_superseded_result(
+            newer or _SYNC_PREEMPT["doneDir"] or direction,
+            "the queue", direction)
+        out["direction"] = direction
+        return seq, out
+    return seq, None
 
 
 def sync_note_write(kind=""):
@@ -26608,8 +26904,10 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
             out["durationMs"] = int((time.time() - _round_t0) * 1000)
             _sync_fail_record(trigger, out)
             return out
+        _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
         summary = sync_apply(cfg, fetched)
+        _sync_preempt_checkpoint("write")
         got = _sync_repo(cfg)
         if got[0] is None:
             out = {"ok": False, "route": "Backup repo"}
@@ -26659,6 +26957,15 @@ def sync_round(cfg, trigger="button", open_chat_id=""):
         state["lastRoute"] = "Backup repo"
         _sync_state_save(state)
         return result
+    except _SyncSuperseded as e:
+        # v0.6.3e (#317): the operator's choice outranked this
+        # round at a phase boundary. The stopped round records
+        # its own supersession; the direction runs behind it.
+        out = _sync_superseded_result(e.direction, e.phase)
+        out["roundId"] = round_id
+        out["durationMs"] = int((time.time() - _round_t0) * 1000)
+        _sync_fail_record(trigger, out)
+        return out
     finally:
         _sync_progress_set("done")
         _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
@@ -26707,6 +27014,7 @@ def sync_pull_round(cfg, trigger):
             _sync_record_result(state, trigger, {"state": fail.get("state") or "held",
                                                  "message": fail.get("error") or ""})
             return None
+        _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
         summary = sync_apply(cfg, fetched)
         result = _sync_finish_summary(summary, 0, "", set())
@@ -26715,6 +27023,15 @@ def sync_pull_round(cfg, trigger):
         state = _sync_state_load()
         _sync_record_result(state, trigger, result)
         return result
+    except _SyncSuperseded as e:
+        # v0.6.3e (#317): even a quiet trigger pull yields to
+        # the operator's choice — and names it on the record,
+        # though the pull itself stays popup-quiet as ever.
+        out = _sync_superseded_result(e.direction, e.phase)
+        out["roundId"] = round_id
+        out["durationMs"] = int((time.time() - _round_t0) * 1000)
+        _sync_fail_record(trigger, out)
+        return out
     except Exception:
         return None
     finally:
@@ -26847,12 +27164,13 @@ def sync_send_round(cfg, trigger="button", open_chat_id=""):
     # The receipt names what went up: files written on the repo
     # road; on the Mesh road, the set carried to the named peer.
     # A seat with nothing new to publish says so plainly.
-    if not _SYNC_LOCK.acquire(False):
-        return {"ok": False, "state": "held", "kind": "busy",
-                "direction": "send", "route": "Backup repo",
-                "error": "A sync round is already running — this "
-                         "Send is held, and the running round's "
-                         "verdict is the one that counts."}
+    # v0.6.3e (#317): a Send never queues behind a round in
+    # flight — the choice preempts it (see _sync_preempt_acquire).
+    _seq, _pre = _sync_preempt_acquire("send", trigger)
+    if _pre is not None:
+        _pre["roundId"] = uuid.uuid4().hex[:12]
+        _sync_fail_record(trigger, _pre)
+        return _pre
     round_id = uuid.uuid4().hex[:12]
     if _SYNC_ROUND["depth"] == 0:
         _SYNC_ROUND["thread"] = threading.get_ident()
@@ -26861,6 +27179,7 @@ def sync_send_round(cfg, trigger="button", open_chat_id=""):
     _sync_progress_set("write", trigger, round_id)
     try:
         files, manifest, _index = sync_collect()
+        _sync_preempt_checkpoint("write", _seq)
         route, _none = _sync_send_mesh(cfg, files, manifest)
         if route is not None:
             result = {"ok": True, "state": "synced", "direction": "send",
@@ -26921,6 +27240,7 @@ def sync_send_round(cfg, trigger="button", open_chat_id=""):
             state["lastRoute"] = "Backup repo"
             _sync_state_save(state)
             return result
+        _sync_preempt_checkpoint("write", _seq)
         written, fail = _sync_push(cfg, base, auth["token"], files,
                                    fetched["files"])
         if fail:
@@ -26946,7 +27266,17 @@ def sync_send_round(cfg, trigger="button", open_chat_id=""):
         state["lastRoute"] = "Backup repo"
         _sync_state_save(state)
         return result
+    except _SyncSuperseded as e:
+        # v0.6.3e (#317): a newer operator choice replaced this
+        # Send mid-flight; it stops at the boundary and says so.
+        out = _sync_superseded_result(e.direction, e.phase, "send")
+        out["direction"] = "send"
+        out["roundId"] = round_id
+        out["durationMs"] = int((time.time() - _t0) * 1000)
+        _sync_fail_record(trigger, out)
+        return out
     finally:
+        _sync_preempt_clear(_seq)
         _sync_progress_set("done")
         _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
         if _SYNC_ROUND["depth"] == 0:
@@ -26959,12 +27289,13 @@ def sync_receive_round(cfg, trigger="button"):
     # pull's machinery with the button's spoken verdict. The
     # receipt names what came down (the finish summary's own
     # counts); a round where nothing new arrived says so.
-    if not _SYNC_LOCK.acquire(False):
-        return {"ok": False, "state": "held", "kind": "busy",
-                "direction": "receive", "route": "Backup repo",
-                "error": "A sync round is already running — this "
-                         "Receive is held, and the running round's "
-                         "verdict is the one that counts."}
+    # v0.6.3e (#317): like Send, a Receive preempts a round in
+    # flight rather than queueing behind it.
+    _seq, _pre = _sync_preempt_acquire("receive", trigger)
+    if _pre is not None:
+        _pre["roundId"] = uuid.uuid4().hex[:12]
+        _sync_fail_record(trigger, _pre)
+        return _pre
     round_id = uuid.uuid4().hex[:12]
     if _SYNC_ROUND["depth"] == 0:
         _SYNC_ROUND["thread"] = threading.get_ident()
@@ -26997,6 +27328,7 @@ def sync_receive_round(cfg, trigger="button"):
                 out["durationMs"] = int((time.time() - _t0) * 1000)
                 _sync_fail_record(trigger, out)
                 return out
+            _sync_preempt_checkpoint("merge", _seq)
             _sync_progress_set("merge")
             summary = sync_apply(cfg, fetched)
             result = _sync_finish_summary(summary, 0, "", set())
@@ -27019,7 +27351,17 @@ def sync_receive_round(cfg, trigger="button"):
         state["lastRoute"] = result["route"]
         _sync_state_save(state)
         return result
+    except _SyncSuperseded as e:
+        # v0.6.3e (#317): a newer operator choice replaced this
+        # Receive mid-flight; it stops at the boundary.
+        out = _sync_superseded_result(e.direction, e.phase, "receive")
+        out["direction"] = "receive"
+        out["roundId"] = round_id
+        out["durationMs"] = int((time.time() - _t0) * 1000)
+        _sync_fail_record(trigger, out)
+        return out
     finally:
+        _sync_preempt_clear(_seq)
         _sync_progress_set("done")
         _SYNC_ROUND["depth"] = max(0, _SYNC_ROUND["depth"] - 1)
         if _SYNC_ROUND["depth"] == 0:
@@ -36949,7 +37291,7 @@ self.addEventListener("push", function (event) {
   }
   var opts = { body: data.body || "", tag: data.tag || undefined,
                data: { url: data.url || "/" } };
-  event.waitUntil(registration.showNotification(data.title || "Apex — needs your eyes", opts));
+  event.waitUntil(registration.showNotification(data.title || "Navi — needs your eyes", opts));
 });
 self.addEventListener("notificationclick", function (event) {
   event.notification.close();
@@ -37052,11 +37394,23 @@ def _notif_clean(raw):
     if not isinstance(count, int) or isinstance(count, bool):
         count = None
     push = raw.get("push") if isinstance(raw.get("push"), dict) else None
+    # v0.6.3e (#319): the plain factual record rides beside the
+    # voiced summary (the record's title/body since this build).
+    # A record stored by an older build has no fact — its own
+    # title/body ARE the fact, and the next reconcile voices it.
+    fact = raw.get("fact") if isinstance(raw.get("fact"), dict) else None
+    if fact is not None:
+        fact = {"title": str(fact.get("title") or "")[:200],
+                "body": str(fact.get("body") or "")[:600]}
+    else:
+        fact = {"title": str(raw.get("title") or "")[:200],
+                "body": str(raw.get("body") or "")[:600]}
     return {
         "id": rid,
         "kind": kind,
         "title": str(raw.get("title") or "")[:200],
         "body": str(raw.get("body") or "")[:600],
+        "fact": fact,
         "target": dict(target),
         "created": created,
         "read": raw.get("read") is True,
@@ -37308,11 +37662,120 @@ def _notif_wanted_fedichat(cfg):
     return items
 
 
+# -- Her voice on the alert path (v0.6.3e, #319) -------------------
+# Ruled on the #272 field proof: the lock screen read "Reminder
+# / from Apex / this is a test" — the machinery announcing
+# itself, in the product's name. Alex: "It should be Navi
+# sending the alerts. Not Apex. With Navi's own flare to them."
+# So the tray record's SUMMARY — the title and body the bell
+# shows and the push payload mirrors verbatim (#272 parity,
+# unchanged) — is composed in her voice: her name leads the
+# title, and a written flare line per producer class wraps the
+# fact. The fact itself is never edited: reminder text, times,
+# names and counts ride inside the body exactly as the producer
+# stated them, and the plain factual record stays on the tray
+# record's own "fact" — the detail keeps the structured truth,
+# the summary is the voice. The banks are written lines, chosen
+# deterministically (the #288/#304 pattern — the record's class
+# and count draw the line; the same draw always lands the same
+# line, consecutive counts never repeat it) — NO model call on
+# the alert path. Borrowed and federation-served alerts are
+# announced by the LOCAL Navi: composition happens here, at
+# record birth on this seat, whoever's machinery woke her.
+
+NAVI_VOICE_TITLES = {
+    "reminder": "Navi — Reminder",
+    "order": "Navi — Standing order",
+    "pulse": "Navi — Pulse",
+    "fedichat": "Navi — FediChat",
+    "sync": "Navi — Sync",
+    "update": "Navi — Update",
+    "fed-knock": "Navi — Federation",
+    "door-device": "Navi — At the door",
+    "case-review": "Navi — Case Files",
+    "push-device": "Navi — Phone door",
+}
+
+NAVI_VOICE_LINES = {
+    "reminder": ["On your feet — ",
+                 "Time's up — ",
+                 "Ring ring — "],
+    "order": ["Done while you weren't looking — ",
+              "Your standing order, handled — ",
+              "Ran it, as ordered — "],
+    "pulse": ["Something moved — ",
+              "Fresh off the wire — ",
+              "Your watch paid off — "],
+    "fedichat": ["The room's talking — ",
+                 "Word from the room — ",
+                 "Someone's at the table — "],
+    "sync": ["I tidied the room — ",
+             "Across your machines — ",
+             "Housekeeping, done — "],
+    "update": ["A present for you — ",
+               "Fresh iron on the bench — ",
+               "Something new, staged and waiting — "],
+    "fed-knock": ["Knock knock — ",
+                  "Someone at the gate — ",
+                  "A knock worth hearing — "],
+    "door-device": ["At the door — ",
+                    "Company — ",
+                    "Someone's waiting — "],
+    "case-review": ["For your eyes — ",
+                    "The case file stirs — ",
+                    "Homework, of a kind — "],
+    "push-device": ["A door went quiet — ",
+                    "One phone's gone dark — ",
+                    "Door trouble — "],
+    "_fallback": ["A word — ",
+                  "Heads up — ",
+                  "From my desk — "],
+}
+
+
+def notif_compose_summary(kind, fact_title, fact_body, count=None,
+                          seed=""):
+    # One record's summary in her voice: (title, body). The
+    # title leads with her name; the body is one flare line
+    # from the class's bank wrapped around the fact, verbatim —
+    # the fact is the producer's own body text, untouched. The
+    # draw is a stable hash of the class and the record's seed,
+    # walked by the count: the same class + count always draws
+    # the same line, and consecutive counts draw different
+    # lines (the bank walks, never repeats a neighbor).
+    kind = str(kind or "")
+    title = NAVI_VOICE_TITLES.get(kind, "Navi")
+    lines = NAVI_VOICE_LINES.get(kind) or NAVI_VOICE_LINES["_fallback"]
+    n = count if isinstance(count, int) and not isinstance(count, bool) \
+        and count > 0 else 1
+    draw = int(hashlib.sha256(
+        (kind + "|" + str(seed)).encode("utf-8")).hexdigest()[:8], 16)
+    fact_body = str(fact_body or "")
+    # The fact rides whole: where the producer's title carries
+    # substance its body lacks (a room's name, a case's name, a
+    # version), the title leads the body — verbatim, as stated —
+    # so the summary never knows less than the fact did. Pure
+    # labels ("Reminder", "A standing order ran") add nothing
+    # and stay in the detail.
+    generic = {"Reminder", "A standing order ran",
+               "Sync changed things here",
+               "A device is asking to pair",
+               "A phone stopped answering"}
+    lead = ""
+    ft = str(fact_title or "")
+    if ft and ft not in generic and ft not in fact_body:
+        lead = ft + " — "
+    body = lines[(draw + n) % len(lines)] + lead + fact_body
+    return title[:200], body[:600]
+
+
 def _notif_announce_line(rec):
     # Navi's line, composed FROM THE RECORD (deterministic
     # templates per kind — no model call): her voice, warm and
-    # factual, naming the act that waits. The record's own title
-    # and body are the substance; the framing is hers.
+    # factual, naming the act that waits. The substance is the
+    # record's FACT (v0.6.3e, #319: the summary is already her
+    # voice; the announcement frames the plain fact, so the
+    # room never hears the flare twice).
     framing = {
         "fed-knock": "Knock knock — ",
         "door-device": "At the door — ",
@@ -37322,7 +37785,9 @@ def _notif_announce_line(rec):
         "fedichat": "FediChat — ",
         "pulse": "Pulse — ",
     }.get(rec.get("kind"), "A word — ")
-    line = framing + str(rec.get("title") or "") + ": " + str(rec.get("body") or "")
+    fact = rec.get("fact") if isinstance(rec.get("fact"), dict) else {}
+    line = framing + str(fact.get("title") or rec.get("title") or "") \
+        + ": " + str(fact.get("body") or rec.get("body") or "")
     if rec.get("kind") == "fed-knock":
         line += " It waits on your word in Federation."
     return line
@@ -37384,6 +37849,9 @@ def _notif_payload_from_records(records):
         "body": r["body"], "target": r["target"],
         "created": r["created"], "read": r["read"], "count": r["count"],
         "push": r.get("push"),
+        # v0.6.3e (#319): the plain factual record, for the
+        # panel's detail — the summary above is the voice.
+        "fact": r.get("fact"),
     } for r in records]
     # Unread first, then newest first — the bell's order.
     items.sort(key=lambda it: (it["read"], -(it["created"] or 0)))
@@ -37447,33 +37915,46 @@ def notifications_reconcile(cfg=None):
         now = time.time()
         for wid, item in wanted.items():
             rec = by_id.get(wid)
+            # v0.6.3e (#319): the producer's item is the FACT;
+            # the record's title/body are the summary in Navi's
+            # voice, composed from it at birth and re-composed
+            # whenever the fact moves (a count climbing draws
+            # the class bank's next line). The push payload
+            # mirrors the summary verbatim, as it always has.
+            fact = {"title": str(item.get("title") or "")[:200],
+                    "body": str(item.get("body") or "")[:600]}
+            item_count = (item.get("count")
+                          if isinstance(item.get("count"), int)
+                          and not isinstance(item.get("count"), bool)
+                          else None)
+            title, body = notif_compose_summary(
+                str(item.get("kind") or ""), fact["title"], fact["body"],
+                count=item_count, seed=wid)
             if rec is None:
                 rec = {
                     "id": wid,
                     "kind": str(item.get("kind") or ""),
-                    "title": str(item.get("title") or "")[:200],
-                    "body": str(item.get("body") or "")[:600],
+                    "title": title,
+                    "body": body,
+                    "fact": fact,
                     "target": (dict(item["target"])
                                if isinstance(item.get("target"), dict) else {}),
                     "created": now,
                     "read": False,
                     "announced": False,
-                    "count": (item.get("count")
-                              if isinstance(item.get("count"), int)
-                              and not isinstance(item.get("count"), bool)
-                              else None),
+                    "count": item_count,
                 }
                 records.append(rec)
                 by_id[wid] = rec
                 born.append(rec)
                 changed = True
             else:
-                title = str(item.get("title") or "")[:200]
-                body = str(item.get("body") or "")[:600]
                 target = (dict(item["target"])
                           if isinstance(item.get("target"), dict) else {})
-                if (rec["title"] != title or rec["body"] != body
+                if (rec.get("fact") != fact or rec["title"] != title
+                        or rec["body"] != body
                         or rec["target"] != target):
+                    rec["fact"] = fact
                     rec["title"], rec["body"], rec["target"] = title, body, target
                     changed = True
                 new_count = item.get("count")
