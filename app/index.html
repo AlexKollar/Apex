@@ -612,6 +612,9 @@
   .shell-badge.navi { color:var(--cy); border-color:var(--cy); }
   .shell-badge.op { color:var(--dim); }
   .shell-note { color:var(--dim); font-size:12px; font-style:italic; margin:2px 0; }
+  .shell-cred-note { color:var(--dim); font-size:11px; font-style:italic; }
+  .modelstate { display:flex; gap:9px; align-items:flex-start; margin:10px 0; padding:10px 12px; border:1px solid var(--line, #2a3644); border-left:3px solid #f5b544; border-radius:8px; color:var(--dim); font-size:13px; }
+  .modelstate-dot { flex:none; width:8px; height:8px; border-radius:50%; background:#f5b544; margin-top:5px; animation:gate-pulse 2.2s ease-in-out infinite; }
   .shellhead { display:flex; gap:8px; align-items:center; flex-wrap:wrap; border:1px solid var(--line); border-radius:6px; padding:8px; margin:0 0 8px; background:var(--panel2); }
   .shellhead button { min-height:44px; }
   .shellhead .shell-close { margin-left:auto; }
@@ -2081,7 +2084,7 @@ var statusHidden = true;
 // starts stopped ("Disconnected. Click to Connect."); only a successful
 // connect probe flips it to running. While stopped, chat is a plain
 // command line.
-var llama = { status: "stopped", endpoint: "http://localhost:8080", error: null };
+var llama = { status: "stopped", endpoint: "http://localhost:8080", error: null, modelState: "unreachable" };
 // Sudo mode (Build 3, #209): NO password lives in this page at
 // all. Arming happens in Settings \u2192 System \u2014 a masked prompt
 // whose value rides exactly one /api/sudo/arm request into the
@@ -2368,8 +2371,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-19.41";
-var SHIPPED_BUILD_SEQ = 41;
+var BRIDGE_BUILD = "2026-11-20.42";
+var SHIPPED_BUILD_SEQ = 42;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2844,6 +2847,7 @@ function ghImportApply() {
   });
 }
 var naviThinking = false;    // typing indicator while a reply is in flight
+var modelStateNotice = null; // v0.6.10e (#278): the named model state (warming / unreachable / backend-error) shown as a system notice in the thread — never a message, never persisted; clears when readiness returns
 var chatFocusWanted = false; // a chat send asked for the composer to take focus back
 var studioDraft = null;      // {file|null, name, description, code, output, files, active, folds, snapshot} in the editor
 var docsPage = "getting-started";  // the Documentation wiki's open page
@@ -5610,11 +5614,25 @@ function execChatHtml(x) {
    the chat like exec blocks), and a full-screen program renders
    on the grid the bridge keeps \u2014 desktop pane only; a phone
    gets the streamed record and a note naming the difference. */
-var shellUi = { chatId: null, live: false, ended: false, altScreen: false, screen: null, seq: 0, timer: null, fetching: false };
+var shellUi = { chatId: null, live: false, ended: false, altScreen: false, screen: null, seq: 0, timer: null, fetching: false, credPending: false };
+function modelStateNoticeHtml() {
+  // v0.6.10e (#278): the named model state, rendered as itself —
+  // a system notice in the chat surface, distinct from a Navi
+  // message and from the red backend-error form. The bridge's
+  // own words ride when it sent them; otherwise the state's
+  // standing sentence speaks.
+  var t;
+  if (modelStateNotice.note) t = modelStateNotice.note;
+  else if (modelStateNotice.state === "warming") t = "Navi is warming up — her model is still loading on this machine. Give her a moment, then ask again.";
+  else if (modelStateNotice.state === "backend-error") t = "Something between this page and her answer broke the reply — if the failure was the bridge's, it is logged in the bridge's own record. Your ask wasn't answered; try again.";
+  else t = "Navi's model isn't answering — the llamafile server doesn't appear to be running on this machine. Commands still work; check the server, then ask again.";
+  return "<div class='modelstate' role='status'><span class='modelstate-dot'></span><span>" + esc(t) + "</span></div>";
+}
 function shellEventsHtml(events) {
   var h = "<div class='shellrec mono'>";
   (events || []).forEach(function (e) {
-    if (e.kind === "in") h += "<div class='shell-in'><span class='shell-badge " + (e.author === "navi" ? "navi" : "op") + "'>" + (e.author === "navi" ? "NAVI" : "OPERATOR") + "</span> " + esc(e.text) + "</div>";
+    if (e.kind === "in" && e.cred) h += "<div class='shell-in shell-cred'><span class='shell-badge " + (e.author === "navi" ? "navi" : "op") + "'>" + (e.author === "navi" ? "NAVI" : "OPERATOR") + "</span> " + esc(e.text) + " <span class='shell-cred-note'>password — fed to the prompt, never recorded</span></div>";
+    else if (e.kind === "in") h += "<div class='shell-in'><span class='shell-badge " + (e.author === "navi" ? "navi" : "op") + "'>" + (e.author === "navi" ? "NAVI" : "OPERATOR") + "</span> " + esc(e.text) + "</div>";
     else if (e.kind === "out") h += "<pre class='shell-out'>" + esc(e.text) + "</pre>";
     else h += "<div class='shell-note'>" + esc(e.text) + "</div>";
   });
@@ -5663,15 +5681,17 @@ function shellPoll() {
       var hadLive = shellUi.live;
       var wasAlt = shellUi.altScreen;
       var wasLive = shellUi.live;
+      var wasCred = shellUi.credPending;
       shellUi.live = !!st.live; shellUi.ended = !!st.ended;
       shellUi.altScreen = !!st.altScreen; shellUi.screen = st.screen || null;
+      shellUi.credPending = !!st.credPending;
       if (typeof st.seq === "number") shellUi.seq = st.seq;
       if (st.events && st.events.length) shellFoldEvents(st.events, shellUi.ended);
       if (hadLive && !st.live && !st.ended) {
         shellFoldEvents([{ kind: "note", author: null, text: "the session ended when the bridge restarted \u2014 the shell is gone; nothing was carried over" }], true);
         shellUi.ended = true;
       }
-      if (wasAlt !== shellUi.altScreen || wasLive !== shellUi.live) { render(); return; }
+      if (wasAlt !== shellUi.altScreen || wasLive !== shellUi.live || wasCred !== shellUi.credPending) { render(); return; }
       if (shellUi.altScreen && shellUi.screen) {
         var pre = document.getElementById("shell-screen");
         if (pre) pre.textContent = shellUi.screen.join("\n");
@@ -5768,6 +5788,7 @@ function sendLineToShellSession(text) {
   var deliver = function () {
     shellPost("/api/shell/session/input", { chatId: String(activeChatId), text: line + "\n" }).then(function (j) {
       if (j && j.ok === false) shellNoteInThread("The line was not typed into the session \u2014 " + (j.error || "no live session") + " It was not run anywhere else.");
+      if (j && j.cred) { try { cliHistoryForget(line); } catch (e) {} }
       shellPoll();
     }).catch(function () {
       shellNoteInThread("The line could not reach the shell session \u2014 the bridge could not be reached. It was not run anywhere else.");
@@ -5864,6 +5885,16 @@ function cliHistoryAppend(line) {
   var v = String(line || "").trim(); if (!v) return;
   var a = cliHistoryStore(); if (!a) return;
   a.push(v); if (a.length > 200) a = a.slice(a.length - 200);
+  try { localStorage.setItem("navi.cliHistory", JSON.stringify(a)); } catch (e) {}
+}
+function cliHistoryForget(line) {
+  // v0.6.10e (#220): a line the bridge consumed as a credential
+  // comes back out of the composer history — it was never a
+  // command, and the history is a record like any other.
+  var v = String(line || "").trim(); if (!v) return;
+  var a = cliHistoryStore(); if (!a) return;
+  var i = a.lastIndexOf(v); if (i < 0) return;
+  a.splice(i, 1);
   try { localStorage.setItem("navi.cliHistory", JSON.stringify(a)); } catch (e) {}
 }
 function expandHistoryRefs(line, history) {
@@ -7959,8 +7990,29 @@ function liveChat(text, speak) {
   });
   var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId };
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "bridge error"); return j; }); })
-    .then(function (j) { vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, refPulls: j.refPulls || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; });
+    .then(function (r) { return r.text().then(function (t) {
+      // v0.6.10e (#278): the answer is read as text and parsed
+      // under guard. Whatever stands between this page and the
+      // model — a restarting bridge, the DHD door, a loading
+      // server — a body that is not JSON is a STATE, never a
+      // parse error wearing a reply's clothes: the named state
+      // is the bridge's own, carried on the answer when there is
+      // one and otherwise the last state the status poll knew.
+      // The raw parse string is unreachable UI.
+      var j = null;
+      try { j = JSON.parse(t); } catch (e) { j = null; }
+      if (!j) return { modelState: llama.modelState === "warming" ? "warming" : (llama.modelState === "ready" ? "backend-error" : "unreachable") };
+      if (j.modelState) return { modelState: j.modelState, modelStateNote: j.modelStateNote || null };
+      if (!r.ok) { var err = new Error(j.error || "bridge error"); err.bridgeError = true; throw err; }
+      return j;
+    }); })
+    .then(function (j) { if (j.modelState) return j; vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, refPulls: j.refPulls || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; })
+    .catch(function (e) {
+      if (e && e.bridgeError) throw e;
+      // The fetch itself failed — nothing answered at all. The
+      // same named state, from the last state the poll knew.
+      return { modelState: llama.modelState === "warming" ? "warming" : "unreachable" };
+    });
 }
 function isDhdChatIntent(text) {
   return /\bdhd\b/i.test(text || "") && /\b(turn on|turn off|switch on|switch off|enable|disable|start|stop|activate|set up|setup|open)\b/i.test(text || "") && !/^\s*(how|what|why|explain)\b/i.test(text || "");
@@ -9664,6 +9716,11 @@ function srPollSsh() {
         term.scrollTop = term.scrollHeight;
         if (j.ended) term.textContent += "\n[session ended" + (j.closeReason ? ": " + j.closeReason : "") + "]\n";
       }
+      // v0.6.10e (#220): the SSH line masks while a password
+      // prompt stands in the session — the bridge record holds
+      // only the mask; the field's echo agrees.
+      var sshLine = document.getElementById("sr-ssh-line");
+      if (sshLine && j) sshLine.type = j.credPending ? "password" : "text";
       if (view === "Seraph" && srTab === "ssh" && srSshChat && !(j && j.ended)) srSshTimer = setTimeout(srPollSsh, 1200);
     })
     .catch(function () { if (view === "Seraph" && srTab === "ssh") srSshTimer = setTimeout(srPollSsh, 2500); });
@@ -13076,6 +13133,14 @@ function renderFederationStatus(live) {
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
+  // v0.6.10e (#278): the readiness state's own name, from the
+  // bridge's health machinery — the page's last-known state for
+  // naming an unparseable chat answer, and the notice's clear
+  // signal: when the poll says ready, the notice's work is done.
+  if (CONFIG.backend === "live" && live && live.modelState) {
+    llama.modelState = live.modelState;
+    if (live.modelState === "ready") modelStateNotice = null;
+  }
   // The Updater line (owner's spec): directly under Navi's
   // status, bracketed by the column's separators, and nothing
   // else — one line that flips state. Green "Up to date" when a
@@ -14221,6 +14286,7 @@ function render() {
       h += "</div></div></div>";
     });
     if (naviThinking) h += "<div class='msg' aria-live='polite'><div class='msg-row'>" + msgAvatarHtml({ who: "NAVI" }) + "<div class='msg-body'><div class='who'>Navi</div><div><span class='tdots'><i></i><i></i><i></i></span> <span style='color:var(--dim);font-size:12px'>thinking…</span></div></div></div></div>";
+    if (modelStateNotice) h += modelStateNoticeHtml();
     h += "</div>";
     // No pill rows above the composer at all (0.1.9e, issue
     // #97): the quick-action suggestions went first, and now the
@@ -14260,7 +14326,7 @@ function render() {
     // one pill, three roads, its face rendered from the
     // bridge's stored route for this chat (routePillHtml).
     var meshLocalBtn = routePillHtml();
-    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='text' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-newcase' aria-label='Start a new case from this chat' title='New case — Navi swipes this conversation into a case'>" + caseSvg() + "<span class='call-label'>New case</span></button>" : "") + "<button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "<button class='ghost' id='chat-tools' aria-label='Chat tools' title='Chat tools' aria-haspopup='true' aria-expanded='" + (chatToolsOpen ? "true" : "false") + "'>☰</button></div>" + toolsMenuHtml() +
+    h += "<div class='row'><span class='grow ac-wrap" + (chatMode === "cli" ? " cli-mode" : "") + "'><input id='chat-in' type='" + ((chatMode === "cli" && shellUi.credPending) ? "password" : "text") + "' placeholder='" + chatPlaceholder() + "' aria-label='Chat message'></span>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-newcase' aria-label='Start a new case from this chat' title='New case — Navi swipes this conversation into a case'>" + caseSvg() + "<span class='call-label'>New case</span></button>" : "") + "<button class='ghost' id='chat-upload' aria-label='Attach a picture or a text file to this chat' title='Attach a file'>" + uploadSvg() + "</button><input id='chat-file' type='file' accept='image/*,.txt,.md,.json,.csv,.log,.py,.js,.ts,.sh,text/*' style='display:none' aria-label='Choose a file to attach'>" + (CONFIG.backend === "live" ? "<button class='ghost' id='chat-mic' data-ptt='chat' aria-label='Push to talk: click to start talking, click again to send it to Navi' title='Push to talk'>" + micSvg() + "</button>" : "") + (!call && !callStarting ? "<button class='ghost' id='chat-call' aria-label='Call Navi — start a voice call here in the chat'>" + phoneSvg() + "<span class='call-label'>Call</span></button>" : "") + "<button class='ghost' id='chat-tools' aria-label='Chat tools' title='Chat tools' aria-haspopup='true' aria-expanded='" + (chatToolsOpen ? "true" : "false") + "'>☰</button></div>" + toolsMenuHtml() +
     (call ? "<div class='modehint' id='chat-hint'><span>On a call — Enter sends what you type to the call. Attachments wait until the call ends.</span>" + clearChatBtn + "</div>"
       : cliMode ? "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to run.</span>" + meshLocalBtn + clearChatBtn + "</div>"
       : "<div class='modehint' id='chat-hint'><span class='modegroup' role='group' aria-label='Composer mode'><button type='button' data-mode='cli' aria-pressed='false' aria-label='CLI mode — press once to latch: lines type into this chat's shell session until switched'>CLI</button><button type='button' data-mode='navi' aria-pressed='true' aria-label='Navi mode — press once to latch: lines go to Navi until switched'>Navi</button></span><span class='press-hint'>| Press enter to send.</span>" + meshLocalBtn + clearChatBtn + "</div>") + "</div>";
@@ -14808,7 +14874,7 @@ function sendChat(text) {
     // route to /api/chat even while the model is disconnected, so
     // command-line mode cannot swallow the request as a shell line.
     naviThinking = true; render();
-    liveChat(text).then(function (r) { naviThinking = false; messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null, ts: Date.now() }); persist(); render(); })
+    liveChat(text).then(function (r) { naviThinking = false; if (r && r.modelState) { modelStateNotice = { state: r.modelState, note: r.modelStateNote || null }; render(); return; } messages.push({ who: "NAVI", text: r.text, exec: r.exec, sources: r.sources || null, operation: r.operation || null, ts: Date.now() }); persist(); render(); })
       .catch(function () { naviThinking = false; messages.push({ who: "NAVI", text: "The bridge could not be reached to run that DHD operation.", exec: null, ts: Date.now() }); persist(); render(); });
     return;
   }
@@ -14837,6 +14903,7 @@ function sendChat(text) {
   naviThinking = true; render();
   var done = function (r) {
     naviThinking = false;
+    modelStateNotice = null; // a real answer landed — readiness is proven, the notice's work is done
     // A CLI-routed line files as a bare terminal block — the raw
     // output, no model framing around it.
     if (r.mode === "cli" || r.mode === "command-line") messages.push({ who: "SHELL", text: "", exec: r.exec, ts: Date.now() });
@@ -14868,7 +14935,15 @@ function sendChat(text) {
     }
     persist(); render(); if (CONFIG.backend !== "live" && CONFIG.speakReplies && r.text) mockSpeak(r.text);
   };
-  if (CONFIG.backend === "live") liveChat(text, CONFIG.speakReplies).then(done).catch(function (e) { done({ text: "Live backend error: " + e.message + (bridgeStale ? " — the bridge answering on port " + BRIDGE_PORT + " is an older build than this dashboard (see BRIDGE OUT OF DATE in the status column): fully quit the app and relaunch it so the current bridge takes over." : " — is bridge.py and the llamafile server running?"), exec: null }); });
+  if (CONFIG.backend === "live") liveChat(text, CONFIG.speakReplies).then(function (r) {
+    // v0.6.10e (#278): a named model state renders as itself —
+    // a system notice in the thread, not a Navi message, and
+    // never the red error form. It is not pushed into messages:
+    // it is not part of the conversation, and it must never be
+    // saved or synced as if she had spoken.
+    if (r && r.modelState) { naviThinking = false; modelStateNotice = { state: r.modelState, note: r.modelStateNote || null }; render(); return; }
+    done(r);
+  }).catch(function (e) { done({ text: "Live backend error: " + e.message + (bridgeStale ? " — the bridge answering on port " + BRIDGE_PORT + " is an older build than this dashboard (see BRIDGE OUT OF DATE in the status column): fully quit the app and relaunch it so the current bridge takes over." : " — is bridge.py and the llamafile server running?"), exec: null }); });
   else setTimeout(function () { var mr = mockChat(text); if (!mr.exec && !mr.memorySaves && !mr.memoryRefused) { var cap = jsMemoryCapture(text); if (cap) { mr.memorySaves = cap.saves; mr.memoryRefused = cap.refused; } } done(mr); }, 450);
 }
 function wire() {

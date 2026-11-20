@@ -363,6 +363,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -404,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.9"
+SHIPPED_VERSION = "0.6.10"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-19.41"
+BRIDGE_BUILD = "2026-11-20.42"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 41
+SHIPPED_BUILD_SEQ = 42
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -1757,8 +1758,31 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
                     continue
                 out_headers[k] = v
             self._send_raw(resp.status, data, resp.getheader("Content-Type") or "application/octet-stream", extra=out_headers)
-        except Exception:
-            self._send_raw(502, "Apex is not answering behind the DHD door right now.", "text/plain")
+        except Exception as e:
+            if self.path.split("?")[0].startswith("/api/"):
+                # v0.6.10e (#278): an API answer is JSON even when
+                # the bridge behind the door cannot be reached —
+                # the page must never be handed a text body it can
+                # only fail to parse. A door timeout is named as
+                # itself (the bridge may still be working behind
+                # the door); a refused or absent bridge is the
+                # unreachable state, in the chat route's own form.
+                if isinstance(e, (TimeoutError, socket.timeout)):
+                    self._send_raw(502, json.dumps({
+                        "error": "the DHD door waited for the "
+                                 "bridge and it did not answer in "
+                                 "time — the request may still be "
+                                 "running behind the door"}),
+                        "application/json")
+                else:
+                    self._send_raw(502, json.dumps({
+                        "error": "Apex is not answering behind "
+                                 "the DHD door right now.",
+                        "mode": "model-state",
+                        "modelState": "unreachable"}),
+                        "application/json")
+            else:
+                self._send_raw(502, "Apex is not answering behind the DHD door right now.", "text/plain")
         finally:
             try:
                 conn.close()
@@ -13587,6 +13611,28 @@ def _key_display(text):
     return "".join(out)
 
 
+# -- Credential prompts in shell sessions (v0.6.10e, #220) -----------
+# A password prompt on a session's screen makes the next input a
+# credential, not a message. The strict forms — sudo's own, the
+# "user@host's password:" family, the bare "Password:" — are
+# recognized on the unterminated tail of the session's output and
+# arm mask-and-feed: the line reaches the pty and nothing else —
+# the record keeps only a mask marker. Any other password-shaped
+# prompt arms the refusal instead: the line is not carried, the
+# prompt is cancelled, and the record names the masked
+# Settings → System arming route. A line of ordinary output that
+# merely MENTIONS a password is newline-terminated and never arms
+# either path — the prompt must be the live, unanswered tail.
+_CRED_STRICT_RES = (
+    re.compile(r"\[sudo\] password for [^:\n]+:\s*$"),
+    re.compile(r"^[^:\n]{1,64}'s password:\s*$", re.IGNORECASE),
+    re.compile(r"^\s*password:\s*$", re.IGNORECASE),
+)
+_CRED_BROAD_RE = re.compile(r"(password|passphrase|passcode)",
+                            re.IGNORECASE)
+_CRED_MASK = "••••••••"
+
+
 class ShellSession:
     """One chat's standing terminal. See the section header."""
 
@@ -13603,6 +13649,8 @@ class ShellSession:
         self._pending = ""
         self._pending_at = 0.0
         self._tail = ""
+        self._cred = None        # None | "strict" | "broad" (#220)
+        self.last_input_cred = False
         self._was_alt = False
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         master, slave = pty.openpty()
@@ -13635,12 +13683,17 @@ class ShellSession:
         self._reader.start()
 
     # -- events ---------------------------------------------------
-    def _emit(self, kind, author, text):
+    def _emit(self, kind, author, text, cred=False):
         with self.lock:
             self.seq += 1
-            self.events.append({
-                "seq": self.seq, "kind": kind, "author": author,
-                "text": text, "ts": int(time.time())})
+            ev = {"seq": self.seq, "kind": kind, "author": author,
+                  "text": text, "ts": int(time.time())}
+            if cred:
+                # The credential marker: the record shows a line
+                # was given to a password prompt, and nothing of
+                # what it was (#220).
+                ev["cred"] = True
+            self.events.append(ev)
             if len(self.events) > 400:
                 del self.events[:len(self.events) - 400]
 
@@ -13765,10 +13818,100 @@ class ShellSession:
                        " — the session is closed")
             _shell_session_died(self)
 
+    # -- credential prompts (#220) ------------------------------------
+    def _refresh_cred(self):
+        # Is a password prompt the live tail of this session's
+        # output? Flush first, so the reading is of what is on
+        # screen NOW, then read the unterminated last line. The
+        # strict forms arm mask-and-feed; any other
+        # password-shaped prompt arms the refusal. Returns the
+        # armed tier (None when no prompt is live).
+        self._flush_pending(force=True)
+        tail = self._tail or ""
+        line = tail.rsplit("\n", 1)[-1].rstrip("\r") if tail else ""
+        armed = None
+        if line and len(line) <= 200:
+            for rx in _CRED_STRICT_RES:
+                if rx.search(line):
+                    armed = "strict"
+                    break
+            if armed is None and _CRED_BROAD_RE.search(line) \
+                    and line.rstrip().endswith((":", "?")):
+                armed = "broad"
+        self._cred = armed
+        return armed
+
     # -- input path ---------------------------------------------------
     def input(self, text, author, raw=False):
         if not self.alive:
             return False
+        self.last_input_cred = False
+        # v0.6.10e (#220, patch slice): a password prompt on
+        # screen makes the next input a credential, not a
+        # message. It is fed to the pty only and kept out of the
+        # session record — and therefore out of the saved chat
+        # and sync, which are built from this record — by every
+        # path below.
+        self._refresh_cred()
+        if self._cred and "\x03" in text:
+            # Cancelling the prompt itself: feed the interrupt,
+            # arm nothing, record nothing.
+            self._cred = None
+            try:
+                os.write(self.master, text.encode("utf-8",
+                                                  "replace"))
+            except OSError:
+                return False
+            self.last_input_at = time.time()
+            return True
+        if self._cred == "broad" or (self._cred and author == "navi"):
+            # The refusal path. An unrecognized prompt form is
+            # not carried at all, and a line of Navi's is never a
+            # credential: the prompt is cancelled (^C), the line
+            # goes nowhere, and the record names the masked
+            # arming route instead of the secret.
+            self._cred = None
+            try:
+                os.write(self.master, b"\x03")
+            except OSError:
+                pass
+            self.last_input_at = time.time()
+            if author == "navi":
+                self._emit(
+                    "note", None,
+                    "a password prompt is on screen in this "
+                    "session, and I don't type passwords — a line "
+                    "of mine must never be one. The prompt was "
+                    "cancelled. Arm sudo in Settings → System "
+                    "(the password is masked there and never "
+                    "recorded) and the shell can use it without a "
+                    "prompt here.")
+            else:
+                self._emit(
+                    "note", None,
+                    "that prompt asks for a password in a form I "
+                    "don't recognize, so I didn't carry the line "
+                    "— it wasn't typed, and it isn't in this "
+                    "record. The prompt was cancelled. For sudo, "
+                    "arm it in Settings → System instead: the "
+                    "password is masked there and never recorded.")
+            return True
+        if self._cred == "strict":
+            # Mask-and-feed: the pty gets the line; the record
+            # gets only the mask. Raw key bursts are fed and
+            # never recorded at all — the mask lands once, when
+            # the line completes.
+            try:
+                os.write(self.master, text.encode("utf-8",
+                                                  "replace"))
+            except OSError:
+                return False
+            self.last_input_at = time.time()
+            self.last_input_cred = True
+            if not raw or "\r" in text or "\n" in text:
+                self._cred = None
+                self._emit("in", author, _CRED_MASK, cred=True)
+            return True
         try:
             os.write(self.master, text.encode("utf-8", "replace"))
         except OSError:
@@ -13885,6 +14028,7 @@ def shell_session_state(chat_id, since=0):
     key = str(chat_id)
     sess = _shell_sessions.get(key)
     if sess is not None and sess.alive:
+        sess._refresh_cred()
         with sess.lock:
             alt = sess.grid.in_alt
             screen = sess.grid.lines() if alt else None
@@ -13896,6 +14040,9 @@ def shell_session_state(chat_id, since=0):
             "cursor": cursor, "seq": seq,
             "events": sess.events_since(since),
             "idleFor": int(time.time() - sess.last_input_at),
+            # v0.6.10e (#220): a password prompt is live — the
+            # page masks the composer's echo while it stands.
+            "credPending": sess._cred is not None,
         }
     tomb = _shell_tombstones.get(key)
     if tomb is not None:
@@ -23372,6 +23519,149 @@ def llamafile_alive(endpoint):
 _llamafile_proc = None
 
 
+# -- Model readiness (v0.6.10e, #278/#336 patch slice) --------------
+# The chat route used to learn the model server was not ready by
+# failing against it — and the failure's shape (a dead socket, an
+# HTML page, a non-JSON body) became the operator's "reply". The
+# bridge already knows better: it health-polls the server. These
+# helpers give that knowledge three honest names — ready, warming,
+# unreachable — and the chat route and the status poll both read
+# them, so readiness is known BEFORE a generation is attempted,
+# never inferred from its wreckage.
+
+_MODEL_STATE = {"at": 0.0, "state": "unreachable", "endpoint": ""}
+
+
+class ModelNotReadyError(RuntimeError):
+    # The model server did not produce an answer: it is loading,
+    # or it is not there. A RuntimeError subclass, so every
+    # existing caller of llamafile_chat keeps its behavior; the
+    # chat route reads .state and answers with the named-state
+    # payload instead of an error string. The message is the
+    # honest sentence for any other surface that shows it.
+    def __init__(self, state):
+        self.state = state if state in ("warming", "unreachable",
+                                        "backend-error") \
+            else "warming"
+        super().__init__(
+            "navi.llamafile is still loading her model — she is "
+            "warming up; ask again in a moment"
+            if self.state == "warming" else
+            "the model server answered in a shape that was not "
+            "an answer"
+            if self.state == "backend-error" else
+            "navi.llamafile is not answering — the model server "
+            "does not appear to be running")
+
+
+def _llamafile_process_present():
+    # A llamafile process on this machine, whether or not this
+    # bridge spawned it — on a systemd seat the service owns the
+    # process, and the load window before the port binds is
+    # exactly the window this has to see. /proc cmdline scan, the
+    # same source the Guardian reads.
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(os.path.join("/proc", pid, "cmdline"),
+                          "rb") as f:
+                    if b"llamafile" in f.read():
+                        return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def _probe_model_state(endpoint):
+    # One readiness probe, three honest answers. "ready": the
+    # model API lists a model. "warming": the server is present —
+    # answering HTTP in any form, or alive as a process — but the
+    # model API is not answering yet (the load window: on the
+    # field seat it ran past three minutes). "unreachable":
+    # nothing is there at all.
+    base = str(endpoint or "").rstrip("/")
+    if base:
+        try:
+            with urllib.request.urlopen(base + "/models",
+                                        timeout=2) as resp:
+                data = json.loads(resp.read().decode("utf-8",
+                                                     "replace"))
+            if isinstance(data, dict) and data.get("data"):
+                return "ready"
+            return "warming"
+        except urllib.error.HTTPError:
+            # An HTTP answer of any kind — a loading server's 503
+            # is the expected shape — is presence, not absence.
+            return "warming"
+        except Exception:
+            pass
+        if llamafile_alive(endpoint):
+            return "warming"
+    proc = globals().get("_llamafile_proc")
+    if proc is not None and proc.poll() is None:
+        return "warming"
+    if _llamafile_process_present():
+        return "warming"
+    return "unreachable"
+
+
+def model_readiness(endpoint):
+    # The bridge's own knowledge of the model server's state,
+    # shared by the chat route and the status poll behind a short
+    # cache, so neither discovers unreadiness by failing and the
+    # probes stay cheaper than the poll cadence that reads them.
+    now = time.time()
+    if _MODEL_STATE["endpoint"] == endpoint \
+            and now - _MODEL_STATE["at"] < 3.0:
+        return _MODEL_STATE["state"]
+    state = _probe_model_state(endpoint)
+    _MODEL_STATE.update({"at": now, "state": state,
+                         "endpoint": endpoint})
+    return state
+
+
+def _not_ready_from_probe(endpoint):
+    # The state to name when an upstream exchange produced no
+    # answer: the probe's own word — except that a probe saying
+    # "ready" beside an answer that was not an answer means the
+    # failure is in the exchange itself, and its name is
+    # backend-error.
+    st = model_readiness(endpoint)
+    return "backend-error" if st == "ready" else st
+
+
+def model_state_payload(state):
+    # The chat route's named-state answer: a 200 the page renders
+    # as a system notice — never a model reply, never an error
+    # string. The post-Apply face reads the same: a relaunched
+    # bridge whose model is still loading says "warming" until
+    # the first real round-trip proves otherwise.
+    if state == "warming":
+        note = ("Navi is warming up — her model is still loading "
+                "on this machine. Give her a moment, then ask "
+                "again.")
+    elif state == "backend-error":
+        note = ("The model server answered in a shape that was "
+                "not an answer — the exchange failed, not the "
+                "model. Your ask wasn't answered; try again.")
+    else:
+        state = "unreachable"
+        note = ("Navi's model isn't answering — the llamafile "
+                "server doesn't appear to be running on this "
+                "machine. Commands still work; check the server, "
+                "then ask again.")
+    return {"reply": None, "exec": None, "mode": "model-state",
+            "modelState": state,
+            "llamafile": "warming" if state == "warming"
+            else "running" if state == "backend-error"
+            else "stopped",
+            "modelStateNote": note}
+
+
 def llamafile_port(endpoint):
     try:
         port = urllib.parse.urlparse(endpoint).port
@@ -24179,6 +24469,12 @@ def _llamafile_chat_impl(messages, endpoint, model):
     try:
         with urllib.request.urlopen(req, timeout=CHAT_TIMEOUT) as resp:
             data = json.loads(resp.read().decode())
+    except ValueError:
+        # v0.6.10e (#278): a 200 whose body is not JSON is not an
+        # answer — the server (or something answering for it) sent
+        # a page, not a completion. Name the state; never hand
+        # the operator a parse error dressed as a reply.
+        raise ModelNotReadyError(_not_ready_from_probe(endpoint))
     except urllib.error.HTTPError as e:
         # Surface the server's own words — a bare "HTTP Error 400"
         # hides the reason it actually gave.
@@ -24186,6 +24482,12 @@ def _llamafile_chat_impl(messages, endpoint, model):
             detail = e.read().decode(errors="replace").strip()
         except Exception:
             detail = ""
+        if e.code == 503 or detail.startswith("<"):
+            # v0.6.10e (#278): a loading server's 503, or an HTML
+            # page standing where an API answer belongs, is not a
+            # rejection — the model simply is not ready, and the
+            # page is never passed through as the error's text.
+            raise ModelNotReadyError(_not_ready_from_probe(endpoint))
         raise RuntimeError(
             "the llamafile server rejected the chat request (HTTP "
             + str(e.code) + ")" + ((": " + detail) if detail else "")
@@ -24212,10 +24514,18 @@ def _llamafile_chat_impl(messages, endpoint, model):
                 "machine right now. Sending the message again "
                 "is safe."
             )
-        raise RuntimeError(
-            "could not reach navi.llamafile at " + endpoint + ": "
-            + str(reason)
-        )
+        # v0.6.10e (#278): unreachable is a named state, not an
+        # error string — the chat route renders it as itself.
+        raise ModelNotReadyError("unreachable")
+    except (http.client.HTTPException, ConnectionError):
+        # v0.6.10e (#278): the server dropped the exchange
+        # mid-flight (RemoteDisconnected and its kin arrive
+        # unwrapped, past every handler above). The state is
+        # the same: unreachable, named — never the raw string.
+        raise ModelNotReadyError("unreachable")
+    if not isinstance(data, dict):
+        # Valid JSON in the wrong shape is still not an answer.
+        raise ModelNotReadyError(_not_ready_from_probe(endpoint))
     # #187: the server's own account of the generation rides
     # home for the vitals record (llama.cpp servers report
     # timings — predicted_n/predicted_ms/prompt_ms — and the
@@ -24227,7 +24537,12 @@ def _llamafile_chat_impl(messages, endpoint, model):
         "timings": data.get("timings"),
         "usage": data.get("usage"),
     })
-    content = data["choices"][0]["message"]["content"]
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except Exception:
+        # A completion-shaped reply with no completion in it:
+        # the upstream did not really answer. Name the state.
+        raise ModelNotReadyError(_not_ready_from_probe(endpoint))
     if not (content or "").strip():
         # An empty reply renders as silence in the thread — the
         # same "she is not chatting" symptom by another road. Name
@@ -41777,6 +42092,12 @@ class Handler(BaseHTTPRequestHandler):
                 "model": "navi",
                 "llamafile_endpoint": endpoint,
                 "llamafile_reachable": alive,
+                # v0.6.10e (#278): the readiness state's own name
+                # rides the same poll — the page's last-known state
+                # comes from the bridge's health machinery, so a
+                # chat answer that cannot be parsed is named from
+                # knowledge, not guessed from wreckage.
+                "modelState": model_readiness(endpoint),
                 "publicServer": public_state_payload(cfg, self._client_is_loopback()),
                 # Build 15 (#161): the running case, read true —
                 # the status column shows which case is open the
@@ -42271,1168 +42592,38 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "not found"})
 
-    def do_POST(self):
-        cfg = load_config()
-        if self.path.split("?")[0] == "/__gate":
-            # The gate page's form: a remote visitor proving the
-            # code. Since Build 2 (#173) the code knocks rather
-            # than opens: the registry decides — a session with the
-            # device's OWN 30-day token (the bootstrap first device,
-            # or a trusted device renewing), or a PENDING device
-            # and its waiting room, approved from a trusted session
-            # in Settings -> System -> Door. Failure serves the
-            # gate page again with the reason, and nothing else.
-            # v0.6.7e (#313, leg 1): this door is throttled
-            # like the DHD door — the same dhd_throttle_*
-            # helpers and constants, keyed on the socket peer.
-            # (Legs 2 and 3 are NOT in this build: the
-            # first-device bootstrap is #173 doctrine awaiting
-            # Alex's ruling, and proxy-aware client IPs are a
-            # design item of their own.)
-            _gate_ip = ""
+    def _chat_route(self, cfg):
+        # v0.6.10e (#278/#336, patch slice): the chat route's
+        # boundary. Whatever fails inside the route — a producer,
+        # a store, the send itself — the failure is logged as
+        # itself in the bridge's record (the traceback prints to
+        # the bridge's own log) and the answer is the JSON state
+        # form, never a dead socket, never an HTML page, never a
+        # body the page can only fail to parse. The named state
+        # for a failure inside the route is backend-error; the
+        # model-readiness states are answered inside the route.
+        try:
+            self._chat_route_body(cfg)
+        except Exception:
+            traceback.print_exc()
             try:
-                _gate_ip = str(self.client_address[0] or "")
-            except Exception:
-                _gate_ip = ""
-            _gfails, _glock = dhd_throttle_state(_gate_ip)
-            if _glock > time.time():
-                self._send(
-                    429,
-                    gate_page_html(
-                        "Too many wrong codes - this door is locked.",
-                        lock_seconds=int(_glock - time.time()),
-                        approval_mode=bool(door_approved_devices(cfg)),
-                    ).encode(),
-                    "text/html; charset=utf-8",
-                )
-                return
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
-            form = urllib.parse.parse_qs(raw)
-            given = (form.get("code") or [""])[0].strip().upper()
-            dev_name = (form.get("device_name") or [""])[0].strip()
-            want = public_settings(cfg)["access_code"]
-            if want and given == want.upper():
-                dhd_throttle_clear(_gate_ip)
-                action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
-                if action == "session":
-                    self.send_response(303)
-                    self.send_header("Location", "/")
-                    self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                else:
-                    self._send(200, gate_pending_html(dev["id"], dev["name"], door="node").encode(), "text/html; charset=utf-8")
-            else:
-                _gfails = dhd_throttle_fail(_gate_ip)
-                if _gfails >= DHD_LOCKOUT_FAILS:
-                    self._send(
-                        429,
-                        gate_page_html(
-                            "Too many wrong codes - this door is now locked.",
-                            lock_seconds=DHD_LOCKOUT_SECONDS,
-                            approval_mode=bool(door_approved_devices(cfg)),
-                        ).encode(),
-                        "text/html; charset=utf-8",
-                    )
-                    return
-                time.sleep(min(2 ** (_gfails - 1), 8))
-                self._send(
-                    200,
-                    gate_page_html(
-                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again.",
-                        attempts_remaining=max(0, DHD_LOCKOUT_FAILS - _gfails),
-                        approval_mode=bool(door_approved_devices(cfg)),
-                    ).encode(),
-                    "text/html; charset=utf-8",
-                )
-            return
-        # Build .86: /mesh/borrow is not served on this surface
-        # (see do_GET) — the dedicated Mesh port is the only
-        # lender door.
-        if self._public_gate_blocks():
-            self._send(403, {"error": "access code required"})
-            return
-        if self.path.split("?")[0] == "/mesh/lend/stop":
-            # Instant-off (R4): a LOCAL dashboard action only. It
-            # is never served on the DHD-forwarded surface — a
-            # request the proxy carried in is refused here even
-            # with a valid dashboard session, and no node signature
-            # can reach it either (this route is behind the gate,
-            # not the signature check).
-            if (self.headers.get("X-Apex-Via") or "") == "dhd":
-                self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
-                return
-            self._send(200, {"ok": True, "mesh": mesh_stop_lending((self.headers.get("X-Apex-Via") or "") == "dhd")})
-            return
-        if self.path == "/api/guardian/settings":
-            # Guardian (Build 14, #156): the Utilities face's save.
-            # Whitelisted keys only, merged into the config's
-            # guardian block (the dhd_save / mesh-settings idiom);
-            # the engine reads settings fresh every tick, so the
-            # save is live on the next sample. The answer is the
-            # new state, so the face renders what is actually true.
-            data = self._body()
-            block = cfg.get("guardian") if isinstance(cfg.get("guardian"), dict) else {}
-            block = dict(block)
-            if isinstance(data.get("enabled"), bool):
-                block["enabled"] = data["enabled"]
-            if isinstance(data.get("killEnabled"), bool):
-                block["killEnabled"] = data["killEnabled"]
-            for _gk in ("reserveMb", "slowGenSeconds", "cpuCapPercent", "warnAfterSeconds", "killGraceSeconds"):
-                try:
-                    block[_gk] = int(data[_gk])
-                except Exception:
-                    pass
-            try:
-                block["sampleSeconds"] = float(data["sampleSeconds"])
+                self._send(500, {
+                    "error": "the chat route hit an internal "
+                             "failure before it could answer — "
+                             "the bridge logged the traceback in "
+                             "its own record",
+                    "mode": "model-state",
+                    "modelState": "backend-error",
+                    "modelStateNote":
+                        "Something inside the chat route failed — "
+                        "the bridge logged it in its own record. "
+                        "Your ask wasn't answered; try again.",
+                })
             except Exception:
                 pass
-            if isinstance(data.get("expendable"), list):
-                block["expendable"] = [str(x).strip() for x in data["expendable"] if str(x).strip()]
-            cfg["guardian"] = block
-            save_config(cfg)
-            if block.get("enabled") is not False:
-                try:
-                    GUARDIAN.start()
-                except Exception:
-                    pass
-            self._send(200, {"ok": True, "state": GUARDIAN.state()})
-            return
-        if self.path in ("/api/boot/arm", "/api/boot/disarm"):
-            # Arm at boot (Build 14, #159): a LOCAL dashboard
-            # action only — it rewrites this machine's boot
-            # behavior, so it is never served through the DHD
-            # door, the same refusal as Stop-lending above.
-            if (self.headers.get("X-Apex-Via") or "") == "dhd":
-                self._send(403, {"ok": False, "error": "Arming at boot is a local action — it is not available through the DHD door."})
-                return
-            self._send(200, boot_set_armed(self.path == "/api/boot/arm"))
-            return
-        if self.path == "/api/mesh/settings":
-            # The Settings → System Mesh card's save. Persists the
-            # block, sets identity up on first enable, and starts
-            # or stops the dedicated Mesh door to match. Q1: lending
-            # may be turned ON only in person — a save arriving
-            # through the DHD proxy surface is refused for that one
-            # change; turning anything OFF is allowed from anywhere
-            # the operator is signed in.
-            data = self._body()
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            lend = block.get("lend") if isinstance(block.get("lend"), dict) else {}
-            lend = dict(lend)
-            was_enabled = block.get("enabled") is True
-            was_lending = lend.get("enabled") is True
-            want_lending = bool(data.get("lendEnabled")) if "lendEnabled" in data else was_lending
-            if want_lending and not was_lending and (self.headers.get("X-Apex-Via") or "") == "dhd":
-                self._send(200, {"ok": False, "error": "Lending can only be turned on from this machine's own dashboard, in person — not through the DHD door. Turning it off works from anywhere."})
-                return
-            if "enabled" in data:
-                block["enabled"] = bool(data.get("enabled"))
-            if "nodeName" in data:
-                block["nodeName"] = str(data.get("nodeName") or "")[:80]
-            # Build 4 (#154): the operator-declared public
-            # endpoint. Typed, never harvested; canonicalized to
-            # host:port here, and a value that is not a host:port
-            # refuses the whole save in words rather than landing
-            # as junk on the card.
-            if "publicEndpoint" in data:
-                _ep_err = _mesh_endpoint_error(data.get("publicEndpoint"))
-                if _ep_err:
-                    self._send(200, {"ok": False, "error": _ep_err})
-                    return
-                block["publicEndpoint"] = _mesh_endpoint_clean(data.get("publicEndpoint"))
-            if isinstance(data.get("listenPorts"), list):
-                block["listenPorts"] = _mesh_listen_ports(
-                    data["listenPorts"], block.get("port", 8765))
-            if "borrowEnabled" in data:
-                borrow["enabled"] = bool(data.get("borrowEnabled"))
-            if "graceMs" in data:
-                borrow["graceMs"] = max(0, min(30000, _mesh_int(data.get("graceMs"), 2000)))
-            if "lendEnabled" in data:
-                lend["enabled"] = want_lending
-            # Build 7 (#87, Fix F): the lending caps are operator
-            # settings on the lending machine — share of each hour
-            # (1–100%), borrowed generations an hour and per peer
-            # an hour (1–10000 each). They persist in the lend
-            # block and take effect on the next admission decision
-            # and the next card/capability report, because both
-            # read mesh_settings(load_config()) fresh — no bridge
-            # restart. The shipped defaults (25 / 20 / 10) are
-            # only the fallbacks for a missing or unparseable
-            # value, here and in mesh_settings.
-            if "maxSharePercent" in data:
-                lend["maxSharePercent"] = max(1, min(100, _mesh_int(data.get("maxSharePercent"), 25)))
-            if "maxGenerationsPerHour" in data:
-                lend["maxGenerationsPerHour"] = max(1, min(10000, _mesh_int(data.get("maxGenerationsPerHour"), 20)))
-            if "perPeerPerHour" in data:
-                lend["perPeerPerHour"] = max(1, min(10000, _mesh_int(data.get("perPeerPerHour"), 10)))
-            # Build 7 (Fix F2): the idle-only override rides the
-            # same save. Admission already reads lend["idleOnly"]
-            # on every request, so the flip is live at once; the
-            # shipped default stays ON (a lender serves only
-            # after idleAfterSeconds of quiet) until the operator
-            # turns it off here.
-            if "idleOnly" in data:
-                lend["idleOnly"] = bool(data.get("idleOnly"))
-            if "ledgerInBackup" in data:
-                block["ledgerInBackup"] = bool(data.get("ledgerInBackup"))
-            block["borrow"] = borrow
-            block["lend"] = lend
-            cfg["mesh"] = block
-            if block.get("enabled") is True and not was_enabled:
-                # Build 7 (#87): a node whose name was never set
-                # sits "Unnamed" in every roster — at enable time,
-                # a blank name takes the machine's hostname as its
-                # default, persisted with this save. A name the
-                # operator typed is never overwritten.
-                if not str(block.get("nodeName") or "").strip():
-                    block["nodeName"] = socket.gethostname()[:80]
-                _ok, _err = mesh_ensure_identity(cfg)
-                if not _ok:
-                    self._send(200, {"ok": False, "error": _err})
-                    return
-                _ok, _err = mesh_ensure_cert()
-                if not _ok:
-                    self._send(200, {"ok": False, "error": _err})
-                    return
-                # Pick up the nodeId identity setup recorded — but
-                # identity saves the config only when it writes a
-                # NEW nodeId, so on a re-enable (identity already on
-                # disk) the file still holds the pre-save block, and
-                # reloading it wholesale would resurrect that block
-                # and silently drop this save's change while still
-                # answering ok: the master switch stayed off under
-                # a "Saved." (field report, 0.1.8e Build 2 — the
-                # first enable worked precisely because identity's
-                # first write carried the change with it). The
-                # operator's block is the change being saved; the
-                # saved config contributes only the nodeId it holds.
-                _saved = load_config().get("mesh")
-                if isinstance(_saved, dict) and _saved.get("nodeId"):
-                    block["nodeId"] = _saved["nodeId"]
-                cfg["mesh"] = block
-            save_config(cfg)
-            if block.get("enabled") is True:
-                mesh_start_listener()
-                mesh_tunnel_sync()
-                if not was_enabled:
-                    # Build 7 (#87): enabling Mesh checks every
-                    # paired peer at once, not at the health
-                    # cadence's leisure.
-                    mesh_probe_peers_soon()
-            else:
-                mesh_stop_listener()
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config(), (self.headers.get("X-Apex-Via") or "") == "dhd")})
-            return
-        # Build 9 (#90): POST /api/mesh/peers — the paste-a-text-
-        # card import — is REMOVED. Pairing is the PNG picture
-        # only (the /api/mesh/peers/png route below); a request
-        # to the retired path falls through to this handler's
-        # not-found answer. Peers paired earlier are stored
-        # records in config and are untouched by the removal.
-        if self.path == "/api/mesh/health":
-            # 0.2.0e Build 1 (#143): the operator-triggered Mesh
-            # health check \u2014 the two decisive reads of the
-            # field diagnosis, run by the product itself. It
-            # changes no pairing, pin, or routing state; it only
-            # reports. The probes inside it are the short-timeout
-            # kind, so the answer lands in seconds.
-            self._send(200, {"ok": True, "health": mesh_health_check(cfg)})
-            return
-        if self.path == "/api/mesh/peers/png":
-            # Add a peer from a PNG picture card (Build 7, spec
-            # section 13). The dashboard sends the picture's bytes
-            # base64'd — from the file-upload control or a drag-
-            # and-drop, both through the one client importer — and
-            # the payload inside the picture goes through the same
-            # card validation and the same add every pairing
-            # passes: one parser, one pairing, the identical
-            # peer record.
-            # A picture with no readable payload, or a damaged
-            # one, is refused with its specific reason — never a
-            # silent no-op.
-            data = self._body()
-            raw = None
-            try:
-                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
-            except Exception:
-                raw = None
-            if not raw:
-                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
-                return
-            if len(raw) > 8 * 1024 * 1024:
-                self._send(200, {"ok": False, "error": "That file is far larger than a Mesh card picture — the cards are small PNGs. Check you picked the card file, and try again."})
-                return
-            peer, png_err = parse_mesh_card_png(raw)
-            if peer is None:
-                self._send(200, {"ok": False, "error": png_err})
-                return
-            aerr = mesh_add_peer(cfg, peer)
-            if aerr:
-                self._send(200, {"ok": False, "error": aerr})
-                return
-            # Build 6 (#143 ask 3): the pairing the first-run
-            # certificate notice accompanied has landed — the
-            # notice has been seen with a pin, and is not shown
-            # again on this machine.
-            mesh_mark_cert_notice(cfg)
-            mesh_probe_peers_soon()
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/mesh/peers/remove":
-            data = self._body()
-            target = str(data.get("nodeId") or "")
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
-            borrow["peers"] = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == target)]
-            block["borrow"] = borrow
-            cfg["mesh"] = block
-            save_config(cfg)
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/mesh/peers/repair":
-            # Build 6 (#143): the health check's heal, in place —
-            # strip the dead-end addresses from one peer's stored
-            # record. The pairing, its pin, its tunnel route and
-            # its history are kept; the condition is strict (every
-            # address a dead end) and the refusal is a sentence.
-            data = self._body()
-            ok_r, sentence_r = mesh_repair_peer_record(
-                cfg, str(data.get("nodeId") or ""))
-            if ok_r:
-                mesh_probe_peers_soon()
-            self._send(200, {"ok": ok_r,
-                             "message" if ok_r else "error": sentence_r,
-                             "mesh": mesh_status_payload(load_config()),
-                             "health": mesh_health_check(load_config())})
-            return
-        if self.path == "/api/mesh/peers/can-borrow":
-            # The borrow-side toggle for one paired peer (Build 7,
-            # #87): whether THIS machine borrows from that peer.
-            # It no longer gates the peer's inbound requests —
-            # pairing is that side's consent (mesh_authenticate).
-            data = self._body()
-            target = str(data.get("nodeId") or "")
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
-            new_peers = []
-            for p in peers:
-                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
-                    p = dict(p)
-                    p["canBorrow"] = bool(data.get("canBorrow"))
-                new_peers.append(p)
-            borrow["peers"] = new_peers
-            block["borrow"] = borrow
-            cfg["mesh"] = block
-            save_config(cfg)
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/mesh/peers/relay":
-            # 0.2.0e Build 7 (#154): one relay consent tick. The
-            # three kinds name whose consent the tick is, and the
-            # tick is stored on the record of the peer it names
-            # first (see _mesh_peer): carryTo = "this peer may
-            # carry MY envelopes to <other>", acceptFrom = "this
-            # peer may carry envelopes TO ME from <other>",
-            # willCarryTo = "I will carry THIS peer's envelopes
-            # to <other>". All three are consent, so the doctrine
-            # is the lending doctrine: granting is an in-person
-            # act on this machine's own dashboard — a request
-            # through the DHD door may UNtick (revoking works
-            # from anywhere) but never tick on.
-            data = self._body()
-            target = str(data.get("nodeId") or "")
-            other = str(data.get("other") or "")
-            kind = str(data.get("kind") or "")
-            field = {"carryTo": "relayCarryTo",
-                     "acceptFrom": "relayAcceptFrom",
-                     "willCarryTo": "relayWillCarryTo"}.get(kind)
-            if field is None or not target or not other or other == target:
-                self._send(200, {"ok": False, "error": "That relay consent change does not name a carrier, another machine, and which consent it is."})
-                return
-            want = bool(data.get("on"))
-            if want and (self.headers.get("X-Apex-Via") or "") == "dhd":
-                self._send(200, {"ok": False, "error": "Relay consent is given at this machine, in person — this view is through the DHD door, so the tick cannot be set from here. Unticking works from anywhere."})
-                return
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
-            known = {str(p.get("nodeId") or "") for p in peers if isinstance(p, dict)}
-            if target not in known or other not in known:
-                self._send(200, {"ok": False, "error": "That machine is not paired here."})
-                return
-            new_peers = []
-            for p in peers:
-                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
-                    p = dict(p)
-                    cur = [str(v) for v in (p.get(field) or []) if str(v)]
-                    if want and other not in cur:
-                        cur.append(other)
-                    if not want:
-                        cur = [v for v in cur if v != other]
-                    p[field] = cur
-                new_peers.append(p)
-            borrow["peers"] = new_peers
-            block["borrow"] = borrow
-            cfg["mesh"] = block
-            save_config(cfg)
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/mesh/peers/tunnel":
-            # Build 4 (#178): one peer's managed backup route —
-            # ordinary borrower-side config (it points THIS
-            # machine's ssh at the peer's SSH door; it changes
-            # no consent on the peer). The supervisor reconciles
-            # as soon as the save lands.
-            data = self._body()
-            target = str(data.get("nodeId") or "")
-            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
-            block = dict(block)
-            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
-            borrow = dict(borrow)
-            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
-            found = None
-            new_peers = []
-            for p in peers:
-                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
-                    p = dict(p)
-                    tun = dict(p.get("tunnel") or {})
-                    if "enabled" in data:
-                        tun["enabled"] = bool(data.get("enabled"))
-                    if "sshHost" in data:
-                        tun["sshHost"] = str(data.get("sshHost") or "").strip()[:255]
-                    if "sshUser" in data:
-                        tun["sshUser"] = str(data.get("sshUser") or "").strip()[:64]
-                    if "sshPort" in data:
-                        tun["sshPort"] = max(1, min(65535, _mesh_int(data.get("sshPort"), 227)))
-                    p["tunnel"] = tun
-                    found = tun
-                new_peers.append(p)
-            if found is None:
-                self._send(200, {"ok": False, "error": "That machine is not paired here."})
-                return
-            if found.get("enabled") and (not found.get("sshHost") or not found.get("sshUser")):
-                self._send(200, {"ok": False, "error": "The backup route needs that machine's SSH host and user before it can be turned on — fill both in and save again."})
-                return
-            borrow["peers"] = new_peers
-            block["borrow"] = borrow
-            cfg["mesh"] = block
-            save_config(cfg)
-            mesh_tunnel_sync()
-            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/federation":
-            # 0.2.0e Build 8 (#154): the Federation page's acts —
-            # fedinets, gateway cards, trust toggles and ticks,
-            # founding, caps, the Badge enrollment, the audit
-            # log's state. The tiering lives in federation_act:
-            # read + revoke ride any door; manage acts through
-            # DHD need the Badge step-up; crown acts need the
-            # full ceremony at every door. DHD manages only THIS
-            # node's federation posture — the acts all read and
-            # write this node's own config, so no door can flip
-            # another operator's switches.
-            data = self._body()
-            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
-            self._send(200, federation_act(data, via_dhd))
-        if self.path == "/api/fedichat":
-            # FediChat (v0.5.3e, #267): read + post are the
-            # operator's own speech (not a crown act) — the
-            # trusted-device session governs via DHD, exactly
-            # like the federation reads above.
-            data = self._body()
-            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
-            self._send(200, fedichat_act(data, via_dhd))
-            return
-        if self.path == "/api/dossier":
-            # The Dossier (v0.5.6e, #260): the operator's own
-            # people-finding work on their own node — via DHD
-            # it rides the trusted-device session like the
-            # FediChat door, no Badge step-up.
-            data = self._body()
-            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
-            self._send(200, dossier_act(data, via_dhd))
-            return
-        if self.path == "/api/mesh/peers/tunnel-authorize":
-            # Build 4 (#178) made this act in-person-only, the
-            # lending doctrine of its day. The crown-acts ruling
-            # (Alex, 2026-11-13 20:56 EST) amended the door while
-            # keeping its property — a stolen session must not
-            # quietly grant trust: authorizing a tunnel key is a
-            # CROWN ACT. Through DHD it runs under the full
-            # ceremony (the trusted-device session the door
-            # itself provides + the Operator Badge step-up + the
-            # named-action confirm + an audit entry); at the desk
-            # it needs the same named confirm + audit, the Badge
-            # being the door's addition. REVOKING stays open
-            # through every door — revocation is never gated —
-            # and audits too. The act itself is unchanged:
-            # authorizing writes a forwarding-only line for the
-            # peer's tunnel key into this operator's
-            # ~/.ssh/authorized_keys; revoking removes it.
-            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
-            data = self._body()
-            target = str(data.get("nodeId") or "")
-            action = "revoke" if str(data.get("action") or "") == "revoke" else "authorize"
-            ms_now = mesh_settings(cfg)
-            peer = next((p for p in ms_now["borrow"]["peers"] if p["nodeId"] == target), None)
-            if peer is None:
-                self._send(200, {"ok": False, "error": "That machine is not paired here."})
-                return
-            if not (peer.get("tunnelPublicKey") or ""):
-                self._send(200, {"ok": False, "error": "That machine's card carries no tunnel key — it was minted before the managed backup route, or by an older build. Re-share its card from its Mesh page and pair it again, and the key arrives with the card."})
-                return
-            if action == "authorize":
-                ok_c, err_c = _fed_crown_ok(cfg, via_dhd, data,
-                                            _fed_confirm_tunnel(peer["name"]))
-                if not ok_c:
-                    self._send(200, {"ok": False, "error": err_c})
-                    return
-            ok, sentence = mesh_tunnel_authorize(peer["tunnelPublicKey"], target, action, ms_now["port"])
-            if ok:
-                federation_audit(
-                    "tunnel-" + action, "",
-                    ("Authorized " if action == "authorize" else "Revoked ")
-                    + peer["name"] + "'s tunnel key"
-                    + (" under the crown ceremony." if action == "authorize"
-                       else " — revocation, open through every door."),
-                    "dhd" if via_dhd else "desk")
-            self._send(200, {"ok": ok, "message": sentence, "mesh": mesh_status_payload(load_config())})
-            return
-        if self.path == "/api/settings/updater-channel":
-            # The Updater's channel switch (build .83): persist
-            # the operator's Stable / Edge choice in the config's
-            # updater block. Checks and the apply path both read
-            # it from there, so the choice survives restarts and
-            # a remote (DHD) session flips the same switch.
-            data = self._body()
-            chan = data.get("channel")
-            if chan not in ("stable", "edge"):
-                self._send(200, {"ok": False, "error": "The channel must be 'stable' or 'edge'."})
-                return
-            block = cfg.get("updater") if isinstance(cfg.get("updater"), dict) else {}
-            block = dict(block)
-            block["channel"] = chan
-            # Build 2: this save is the operator's own act, so it
-            # stamps the choice as explicit — the stamp is what
-            # separates a chosen channel from one the config
-            # merely inherited (see updater_channel_explicit).
-            block["channelExplicit"] = True
-            cfg["updater"] = block
-            save_config(cfg)
-            self._send(200, {"ok": True, "channel": chan, "channelExplicit": True})
-            return
-        if self.path == "/api/settings/sync-choice":
-            # The sync override's setting (v0.6.2e, #303):
-            # persist the operator's choice in the config's sync
-            # block. The answer carries the value that now
-            # stands, so the Settings switch renders the stored
-            # truth — and a failed save answers with its refusal,
-            # the switch unmoved.
-            data = self._body()
-            want = data.get("choiceOnPress")
-            if not isinstance(want, bool):
-                self._send(200, {"ok": False, "error": "The choice must be true or false."})
-                return
-            stood = sync_set_choice(want, load_config())
-            if stood is None:
-                self._send(200, {"ok": False, "error": "The choice could not be saved — the config did not take the write, so the setting stands as it was."})
-                return
-            self._send(200, {"ok": True, "choiceOnPress": stood})
-            return
-        if self.path == "/api/settings/public":
-            # The Local server toggle itself (build .61 — one
-            # action): persist the choice in the config block AND
-            # restart this bridge so the choice takes effect. The
-            # restart rides the exit-75 handshake: the request is
-            # recorded in the block, the response goes out, and this
-            # process exits 75 — the launcher's supervisor relaunches
-            # it, and the new bridge binds per the saved choice and
-            # verifies its own bind against it. The running bridge
-            # never hot-swaps its bind. Flipping to the state already
-            # live needs no restart and confirms on the spot.
-            data = self._body()
-            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
-            block = dict(block)
-            block["enabled"] = bool(data.get("enabled"))
-            cfg["public_server"] = block
-            ensure_access_code(cfg)
-            save_config(cfg)
-            want_public = bool(data.get("enabled"))
-            live_public = ACTIVE_BIND_HOST == "0.0.0.0"
-            if want_public == live_public:
-                set_public_restart(cfg, "confirmed", "", "The bridge that answers already runs this choice — no restart was needed.")
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-            else:
-                set_public_restart(cfg, "restarting", "restart", "Restarting the bridge…")
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-                schedule_bridge_restart()
-        elif self.path == "/api/dhd/toggle":
-            # The DHD master switch (build .74) — one click: the
-            # choice is saved and the whole ladder runs in this
-            # process (certificate, proxy, self-check) with no
-            # bridge restart, because the proxy is threads, not the
-            # bridge's own bind. The one exception: if the Local
-            # server currently binds this bridge publicly, DHD mode
-            # requires the bridge on loopback only, so enabling
-            # records the choice and rides the exit-75 supervisor
-            # restart — the relaunched bridge binds loopback and
-            # brings the proxy up in main(). A failed step names
-            # itself and leaves the previous state untouched.
-            data = self._body()
-            want = bool(data.get("enabled"))
-            if not want:
-                dhd_save(cfg, {"enabled": False})
-                ensure_access_code(cfg)
-                cfg = load_config()
-                dhd_stop_proxy()
-                DHD_STATE["last_error"] = ""
-                self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
-            else:
-                # Enabling is an operation: the page and chat
-                # render the same persisted step card while the
-                # bridge runs prerequisites, certificate, proxy,
-                # and reachability — no model work is involved.
-                _op_id = dhd_start_enable_operation("page", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
-                self._send(200, {"ok": True, "operationId": _op_id, "operation": op_snapshot(_op_id), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/dhd/install":
-            # The safety-net install action: install the named
-            # missing prerequisites (or every missing installable
-            # one) through the detected distro family's package
-            # step, then release any DHD enable operation waiting
-            # on them so it continues automatically. An install
-            # failure returns the step's exact manual commands.
-            data = self._body()
-            _pieces = data.get("pieces") if isinstance(data.get("pieces"), list) else None
-            _result = dhd_install_prereqs(_pieces, str(data.get("sudo_password") or data.get("sudoPassword") or ""))
-            _failed = [r for r in _result["results"] if not r["ok"]]
-            if _failed:
-                _commands = []
-                for r in _failed:
-                    _commands.extend(r.get("commands") or [])
-                _detail = " ".join(r.get("detail", "") for r in _failed)
-                _dhd_release_waiting_ops(False, _detail, _commands)
-                self._send(200, {"ok": False, "install": _result, "commands": _commands, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
-            else:
-                _dhd_release_waiting_ops(True, "Prerequisites installed.")
-                _op_id = None
-                _cfg_now = load_config()
-                if dhd_settings(_cfg_now)["enabled"] and not DHD_STATE.get("running"):
-                    _op_id = dhd_start_enable_operation("install", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
-                self._send(200, {"ok": True, "install": _result, "operationId": _op_id, "operation": op_snapshot(_op_id) if _op_id else op_latest("dhd-enable"), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/dhd/domain":
-            # The optional custom domain: free-form, saved in the
-            # dhd block so it survives restarts and updates. When
-            # DHD is live, saving a domain starts the certificate
-            # step in the background (ACME can take a few seconds);
-            # the door keeps answering on the current certificate
-            # meanwhile and the state reads certificate-pending
-            # until the real one is installed.
-            data = self._body()
-            domain = str(data.get("domain") or "").strip().lower()
-            domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
-            dhd_save(cfg, {"domain": domain})
-            cfg = load_config()
-            if domain and dhd_settings(cfg)["enabled"] and DHD_STATE["running"]:
-                threading.Thread(target=lambda: dhd_bring_up(load_config()), daemon=True).start()
-            self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
-        elif self.path == "/api/dhd/cert":
-            # The certificate step on its own: obtain (or renew)
-            # the saved domain's certificate now, via the built-in
-            # ACME client, and reload the proxy with it.
-            cfg_now = load_config()
-            ds_now = dhd_settings(cfg_now)
-            if not ds_now["domain"]:
-                self._send(200, {"ok": False, "error": "No domain is saved yet - add one first.", "dhd": dhd_state_payload(cfg_now, self._client_is_loopback())})
-            else:
-                ok = dhd_bring_up(cfg_now)
-                self._send(200, {"ok": ok, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/settings/public/restart":
-            # The row's Restart bridge control: the retry/fallback
-            # for a saved choice that is not live (a failed restart,
-            # or a pending state left by an older build). Same flow
-            # as the toggle: record the request, exit 75, let the
-            # supervisor relaunch, and let the new bridge verify.
-            cfg_now = load_config()
-            if not public_state_payload(cfg_now, True)["pending"]:
-                self._send(200, {"ok": True, "publicServer": public_state_payload(cfg_now, self._client_is_loopback())})
-            else:
-                set_public_restart(cfg_now, "restarting", "restart", "Restarting the bridge…")
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-                schedule_bridge_restart()
-        elif self.path == "/api/settings/public/regenerate":
-            # A fresh code. The shared-code cookie stops matching
-            # at once, and no new knock can use the old code —
-            # but a device already approved keeps its OWN token
-            # (Build 2): trusted devices are revoked one by one in
-            # the Door list, not by changing the code under them.
-            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
-            block = dict(block)
-            block["access_code"] = generate_access_code()
-            if "enabled" not in block:
-                block["enabled"] = False
-            cfg["public_server"] = block
-            save_config(cfg)
-            self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/settings/public/devices/approve":
-            # Trusted-device approval (Build 2, #173): a pending
-            # device gets its own token and 30 days. Served to any
-            # session that is itself inside the door (loopback or
-            # gate-accepted — the gate above has already judged);
-            # a waiting device's poll picks the approval up.
-            data = self._body()
-            dev = door_approve(load_config(), str(data.get("id") or ""))
-            if dev is None:
-                self._send(200, {"ok": False, "error": "That device is not waiting anymore — its knock may have expired.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-            else:
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/settings/public/devices/deny":
-            data = self._body()
-            if door_deny(load_config(), str(data.get("id") or "")):
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-            else:
-                self._send(200, {"ok": False, "error": "That device is not waiting anymore.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/settings/public/devices/revoke":
-            # Per-device revoke: the record goes, and with it the
-            # token — that device is at the gate on its next knock,
-            # and no one else's session notices.
-            data = self._body()
-            if door_revoke(load_config(), str(data.get("id") or "")):
-                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-            else:
-                self._send(200, {"ok": False, "error": "That device is not in the list.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
-        elif self.path == "/api/shell":
-            data = self._body()
-            try:
-                self._send(200, run_shell(
-                    str(data.get("command", "")),
-                    sudo=bool(data.get("sudo")),
-                    sudo_password=str(data.get("sudo_password") or ""),
-                ))
-            except Exception as e:
-                self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
-        elif self.path == "/api/seraph/act":
-            data = self._body()
-            self._send(200, seraph_act(str(data.get("action") or ""),
-                                       data))
-        elif self.path == "/api/shell/session/open":
-            # CLI Mode (Build 3): open (or return) the chat's one
-            # standing interactive session.
-            data = self._body()
-            sess = shell_session_open(str(data.get("chatId") or "main"),
-                                      data.get("cols") or 80,
-                                      data.get("rows") or 24)
-            self._send(200, shell_session_state(sess.chat_id, 0))
-        elif self.path == "/api/shell/session/input":
-            data = self._body()
-            ok = shell_session_input(str(data.get("chatId") or "main"),
-                                     str(data.get("text") or ""),
-                                     "operator",
-                                     raw=bool(data.get("raw")))
-            if ok:
-                self._send(200, {"ok": True})
-            else:
-                self._send(200, {"ok": False, "error": "No live shell session for this chat — open one first."})
-        elif self.path == "/api/shell/session/close":
-            data = self._body()
-            chat_id = str(data.get("chatId") or "main")
-            shell_session_close(chat_id)
-            self._send(200, shell_session_state(chat_id, 0))
-        elif self.path == "/api/shell/session/resize":
-            data = self._body()
-            sess = shell_session_get(str(data.get("chatId") or "main"))
-            if sess is not None:
-                sess.resize(data.get("cols") or 80, data.get("rows") or 24)
-            self._send(200, {"ok": sess is not None})
-        elif self.path == "/api/update/apply":
-            # Starts the end-to-end apply: the worker downloads,
-            # verifies (gzip-tolerant), and stages the release
-            # package under updates/<tag>/package, then a detached
-            # helper runs the staged installer and relaunches the
-            # app. Progress and outcome are read back through
-            # GET /api/update/result.
-            self._send(200, update_apply_payload(cfg))
-        elif self.path == "/api/downloads/save":
-            # The dashboard's download-save flow (build .48): the
-            # bytes behind a download click inside the desktop shell
-            # (chip .png, export ZIP), written into the operator's
-            # Downloads folder under a sanitized name — the shell's
-            # webview cannot save files the way a browser does.
-            self._send(200, save_download_payload(self._body()))
-        elif self.path == "/api/sudo/arm":
-            # Sudo mode (Build 3): the operator arms it from
-            # Settings. The password rides this one request into
-            # "sudo -v" and is forgotten — never stored, logged or
-            # synced. The reply carries the fresh state so the
-            # card can show exactly what the bridge holds (the
-            # switch gate's three-way contract).
-            data = self._body()
-            password = str(data.get("password") or "")
-            if not password:
-                self._send(200, {"ok": False, "error": "Enter the sudo password to arm sudo mode.", "sudo": sudo_state()})
-            else:
-                ok, err = sudo_arm(password)
-                if ok:
-                    self._send(200, {"ok": True, "sudo": sudo_state()})
-                else:
-                    self._send(200, {"ok": False, "error": "sudo mode was not armed: " + str(err), "sudo": sudo_state()})
-        elif self.path == "/api/sudo/disarm":
-            # Instant and total: the flag flips and the timestamp
-            # dies with it (sudo_disarm runs sudo -k).
-            self._send(200, {"ok": True, "sudo": sudo_disarm()})
-        elif self.path == "/api/hardware/redetect":
-            # Re-run profiling on the real machine and store it:
-            # detected hardware, derived settings, reasoning, and
-            # the log lines (also appended to hardware-profile.log).
-            detected = detect_hardware()
-            settings, tier, tier_label, reasoning = derive_hardware_settings(detected)
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            profile = {"detected": detected, "settings": settings, "autoSettings": settings,
-                       "source": "auto", "tier": tier, "tierLabel": tier_label,
-                       "reasoning": reasoning, "detectedAt": now,
-                       "installLog": [f"[hardware] {now} — re-detect from Settings",
-                                      f"[hardware] CPU: {detected['cpuModel']} — {detected['cpuCores']} logical cores",
-                                      f"[hardware] RAM: {detected['totalRamGB']} GiB",
-                                      f"[hardware] GPU: {detected['gpuName'] or 'none'} ({detected['gpuKind']})"] + [f"[hardware] → {r}" for r in reasoning]}
-            save_hardware_profile(profile)
-            self._send(200, {"ok": True, "profile": hardware_profile_view(load_config())})
-        elif self.path == "/api/hardware/override":
-            data = self._body()
-            current = load_config().get("hardware_profile") or {}
-            detected = current.get("detected") or detect_hardware()
-            def _clamp(v, lo, hi, fallback):
-                try:
-                    return max(lo, min(hi, int(v)))
-                except Exception:
-                    return fallback
-            auto = current.get("autoSettings") or current.get("settings") or {}
-            settings = {
-                "threads": _clamp(data.get("threads"), 1, 32, int(auto.get("threads") or 4)),
-                "ctxSize": _clamp(data.get("ctxSize"), 512, 65536, int(auto.get("ctxSize") or 4096)),
-                "batchSize": _clamp(data.get("batchSize"), 32, 4096, int(auto.get("batchSize") or 512)),
-                "gpuLayers": _clamp(data.get("gpuLayers"), 0, 99, int(auto.get("gpuLayers") or 0)),
-            }
-            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            profile = {"detected": detected, "settings": settings,
-                       "autoSettings": auto if auto else settings, "source": "manual",
-                       "tier": current.get("tier", "fluid"), "tierLabel": current.get("tierLabel", ""),
-                       "reasoning": current.get("reasoning") or [], "detectedAt": current.get("detectedAt") or now,
-                       "installLog": [f"[hardware] {now} — manual override in Settings: threads {settings['threads']}, ctx {settings['ctxSize']}, batch {settings['batchSize']}, gpu layers {settings['gpuLayers']}"]}
-            save_hardware_profile(profile)
-            self._send(200, {"ok": True, "profile": hardware_profile_view(load_config())})
-        elif self.path == "/api/persona":
-            data = self._body()
-            os.makedirs(os.path.dirname(SOUL_PATH), exist_ok=True)
-            if isinstance(data.get("soul"), str):
-                with open(SOUL_PATH, "w") as f:
-                    f.write(data["soul"])
-            if isinstance(data.get("memory"), str):
-                with open(MEMORY_PATH, "w") as f:
-                    f.write(data["memory"])
-            self._send(200, {"ok": True})
-        elif self.path == "/api/llamafile/connect":
-            endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
-            alive = llamafile_alive(endpoint)
-            started = False
-            error = None
-            if not alive:
-                if cfg.get("startup", "on-ui-launch") == "on-boot":
-                    # Boot mode: the system service owns the server.
-                    # The bridge probes and reports; it never spawns
-                    # a second copy behind the service's back.
-                    error = ("No answer from navi.llamafile at " + endpoint +
-                             " — this install starts the server at system boot, "
-                             "so the boot service should be running it; check that service.")
-                else:
-                    # App-load mode: connecting means starting the
-                    # server, not just probing for it.
-                    alive, error = start_llamafile(cfg, endpoint)
-                    started = alive
-            self._send(200, {
-                "ok": alive,
-                "status": "running" if alive else "stopped",
-                "endpoint": endpoint,
-                "started": started,
-                "error": None if alive else error,
-            })
-        elif self.path == "/api/voice/mic-report":
-            # Build 6 (#6, telemetry half): a window reports its
-            # own mic reading (granted / refused / no recording
-            # API) each time push-to-talk is attempted in it. The
-            # report is logged in words and kept for /api/voice —
-            # the app-window capture question (#6) has been open
-            # since 2026-11-07 for want of exactly this reading
-            # existing somewhere durable.
-            data = self._body()
-            st = str(data.get("state") or "")
-            if st not in ("ok", "refused", "unavailable", "unknown"):
-                self._send(200, {"ok": False, "error": "unknown mic state"})
-            else:
-                _MIC_REPORT["state"] = st
-                _MIC_REPORT["at"] = int(time.time())
-                print("Navi voice: a window reports its own mic as "
-                      + {"ok": "granted", "refused": "refused",
-                         "unavailable": "no recording API",
-                         "unknown": "not tested"}[st]
-                      + " (push-to-talk attempt).", flush=True)
-                self._send(200, {"ok": True})
-        elif self.path == "/api/voice/warmup":
-            # The dashboard fires this when the Voice view opens:
-            # load the speech engines then — while the operator is
-            # looking at the voice panel — instead of inside Call,
-            # where the load would stall the pickup, and never at
-            # bridge boot, because on a small machine the models are
-            # real RAM that chat shouldn't pay for uninvited. The
-            # loaders cache in _voice_cache and never evict, so once
-            # warm she stays warm for the life of the bridge.
-            vc = voice_config(cfg)
-            warmed = []
-            errors = {}
-            if not vc["enabled"]:
-                errors["voice"] = "Voice is turned off."
-            else:
-                try:
-                    _stt_model(vc)
-                    warmed.append("stt")
-                except Exception as e:
-                    errors["stt"] = str(e)
-                # Build 6 (#221): warming also proves the decode
-                # path — the model can load perfectly over a
-                # decoder that cannot decode (the av drift), and
-                # the warmup answer must not call that warm.
-                if "stt" not in errors:
-                    dec_ok, dec_exc = _voice_decode_probe()
-                    if dec_ok:
-                        warmed.append("decode")
-                    else:
-                        errors["decode"] = _decode_detail(dec_exc)
-                try:
-                    if vc["tts_engine"] == "kokoro":
-                        # v0.4.1e (#229): warmup runs the CUDA
-                        # EXECUTION probe beside the decode probe,
-                        # before the pipeline is built on its
-                        # verdict — a fallen-back verdict is a
-                        # working state with a named reason, not
-                        # a warmup error.
-                        _voice_cuda_probe()
-                        _kokoro_pipeline(vc)
-                    else:
-                        _piper_load(vc)
-                    warmed.append("tts")
-                except Exception as e:
-                    errors["tts"] = str(e)
-            self._send(200, {"ok": not errors, "warmed": warmed, "errors": errors})
-        elif self.path == "/api/voice/settings":
-            # The Voice tab's settings, saved into navi.config.json.
-            data = self._body()
-            patch = {}
-            if isinstance(data.get("enabled"), bool):
-                patch["enabled"] = data["enabled"]
-            if data.get("stt_model") in ("tiny.en", "base.en", "small.en"):
-                patch["stt_model"] = data["stt_model"]
-            if data.get("tts_engine") in ("kokoro", "piper"):
-                patch["tts_engine"] = data["tts_engine"]
-            if isinstance(data.get("tts_voice"), str) and data["tts_voice"].strip():
-                patch["tts_voice"] = data["tts_voice"].strip()[:60]
-            for key in ("rate", "pitch"):
-                try:
-                    val = float(data.get(key))
-                    if 0.5 <= val <= 2.0:
-                        patch[key] = val
-                except (TypeError, ValueError):
-                    pass
-            cur = save_voice_config(patch)
-            self._send(200, {"ok": True, "config": cur})
-        elif self.path == "/api/voice/test":
-            # "Hear her voice": synthesize one line and hand the WAV
-            # to the dashboard to play. Honest failure when the
-            # engine isn't installed — never a placeholder tone.
-            data = self._body()
-            vc = voice_config(cfg)
-            line = str(data.get("text") or "").strip() or (
-                "Hey — it's me, Navi. This is my voice, running entirely "
-                "on your machine. Call me any time."
-            )
-            try:
-                wav = synthesize_wav(line, vc)
-                self._send(200, {
-                    "ok": True,
-                    "audio_b64": base64.b64encode(wav).decode(),
-                    "mime": "audio/wav",
-                })
-            except VoiceUnavailable as e:
-                self._send(200, {"ok": False, "error": str(e)})
-            except Exception as e:
-                self._send(200, {"ok": False, "error": "Speech failed: " + str(e)})
-        elif self.path == "/api/voice/tts":
-            # One line of hers in, the spoken WAV out — the call
-            # panel plays her replies sentence by sentence.
-            data = self._body()
-            vc = voice_config(cfg)
-            try:
-                wav = synthesize_wav(str(data.get("text") or ""), vc)
-                self._send(200, {
-                    "ok": True,
-                    "audio_b64": base64.b64encode(wav).decode(),
-                    "mime": "audio/wav",
-                })
-            except VoiceUnavailable as e:
-                self._send(200, {"ok": False, "error": str(e)})
-            except Exception as e:
-                self._send(200, {"ok": False, "error": "Speech failed: " + str(e)})
-        elif self.path == "/api/voice/stt":
-            # One push-to-talk clip in (base64; webm from the
-            # browser's recorder, wav also fine — the decoder sniffs
-            # the real format), its transcript out.
-            data = self._body()
-            vc = voice_config(cfg)
-            if not vc["enabled"]:
-                self._send(200, {"ok": False, "error": "Voice is turned off — enable it in the Voice tab."})
-            else:
-                try:
-                    audio = base64.b64decode(str(data.get("audio_b64") or ""))
-                except Exception:
-                    audio = b""
-                try:
-                    text = transcribe_audio(audio, vc)
-                    self._send(200, {"ok": True, "text": text})
-                except VoiceUnavailable as e:
-                    self._send(200, {"ok": False, "error": str(e)})
-                except Exception as e:
-                    self._send(200, {"ok": False, "error": "Transcription failed: " + str(e)})
-        elif self.path == "/api/voice/call/start":
-            # Opens the call record. The turns themselves travel
-            # over /api/chat (same brain as typed chat) and are
-            # recorded here, one by one, as they happen.
-            vc = voice_config(cfg)
-            if not vc["enabled"]:
-                self._send(200, {"ok": False, "error": "Voice is turned off — enable it in the Voice tab."})
-            else:
-                state = load_voice_state()
-                if not state.get("call"):
-                    state["call"] = {
-                        "id": str(int(time.time() * 1000)),
-                        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                        "turns": [],
-                    }
-                    save_voice_state(state)
-                self._send(200, {"ok": True, "call": state["call"]})
-        elif self.path == "/api/voice/call/turn":
-            data = self._body()
-            state = load_voice_state()
-            call = state.get("call")
-            if not call:
-                self._send(200, {"ok": False, "error": "No call in progress."})
-            else:
-                turn = {
-                    "who": "navi" if data.get("who") == "navi" else "you",
-                    "text": str(data.get("text") or "")[:4000],
-                    # Issue #116: when this turn was spoken (epoch
-                    # seconds), so the transcript can carry the same
-                    # timestamps the chat thread wears.
-                    "ts": int(time.time()),
-                }
-                ex = data.get("exec")
-                if isinstance(ex, dict):
-                    turn["exec"] = {
-                        "command": str(ex.get("command") or "")[:500],
-                        "output": str(ex.get("output") or "")[:4000],
-                    }
-                call.setdefault("turns", []).append(turn)
-                state["call"] = call
-                save_voice_state(state)
-                self._send(200, {"ok": True})
-        elif self.path == "/api/voice/call/end":
-            # The finished call joins the permanent record:
-            # voice/calls.json, newest last; the dashboard files
-            # the turns into the conversation itself.
-            state = load_voice_state()
-            call = state.get("call")
-            if not call:
-                self._send(200, {"ok": True, "call": None})
-            else:
-                call["ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-                calls = load_voice_calls()
-                calls.append(call)
-                os.makedirs(VOICE_DIR, exist_ok=True)
-                with open(VOICE_CALLS_PATH, "w") as f:
-                    json.dump(calls, f)
-                state["call"] = None
-                save_voice_state(state)
-                self._send(200, {"ok": True, "call": call})
-        elif self.path == "/api/notifications/read":
-            # v0.4.7e (#242): the bell's write — {"ids": [...]} or
-            # {"all": true} marks records read; unknown ids are
-            # ignored, not errors. The answer is the fresh payload.
-            data = self._body()
-            self._send(200, notifications_mark_read(
-                data.get("ids"), data.get("all") is True, cfg))
-        elif self.path == "/api/push/subscribe":
-            # v0.5.14e (#272): a phone subscribes to this
-            # node's tray. The bridge validates the
-            # subscription's keys before anything is stored;
-            # a refusal is named and nothing is held.
-            # v0.6.7e (#332): the caller's door-device identity
-            # rides along when its token speaks for it, so the
-            # record keys on the device, not the endpoint.
-            data = self._body()
-            _pdev = ""
-            try:
-                _pok, _pdev_rec, _pleg = door_gate_acceptance(
-                    cfg, door_cookie_value(self.headers.get("Cookie")))
-                if _pok and _pdev_rec is not None:
-                    _pdev = str(_pdev_rec.get("id") or "")
-            except Exception:
-                _pdev = ""
-            view, err = push_subscribe(data, cfg, device=_pdev)
-            if err:
-                self._send(200, {"ok": False, "error": err})
-            else:
-                self._send(200, {"ok": True, "subscription": view})
-        elif self.path == "/api/push/remove":
-            # v0.6.7e (#332): remove one subscription record
-            # by id — from any seat. That record stops ringing;
-            # the tray and every other record are untouched.
-            data = self._body()
-            self._send(200, push_remove_record(data.get("id"), cfg))
-        elif self.path == "/api/push/unsubscribe":
-            # v0.5.14e (#272): this device stops ringing. The
-            # tray is untouched; only the door comes down.
-            data = self._body()
-            self._send(200, push_unsubscribe(data, cfg))
-        elif self.path == "/api/chat/route":
-            # v0.4.1e (#228): a route flip, validated against the
-            # access the operator actually has (chat_route_set).
-            # The answer carries the route the bridge stored; a
-            # refusal carries its reason word and its sentence,
-            # and the store is untouched — the pill degrades on
-            # its own face, never a silent snap-back.
-            data = self._body()
-            _cid = str(data.get("chatId") or "")[:80]
-            if not _cid:
-                self._send(200, {"ok": False, "reason": "no-chat",
-                                 "error": "That flip named no chat."})
-                return
-            _ans, _ref = chat_route_set(cfg, _cid, data.get("route"))
-            if _ref is not None:
-                self._send(200, {"ok": False, "reason": _ref[0],
-                                 "error": _ref[1],
-                                 "route": chat_route_get(_cid)})
-            else:
-                self._send(200, _ans)
-        elif self.path == "/api/chat":
+
+    def _chat_route_body(self, cfg):
+
             data = self._body()
             messages = data.get("messages", [])
             # Sliding history: only the most recent exchanges ride
@@ -44393,10 +43584,27 @@ class Handler(BaseHTTPRequestHandler):
                     # Pairwise borrows are never preempted; local
                     # work simply takes the next slot for them.
                     mesh_preempt_borrowed()
+                    # v0.6.10e (#278/#336, patch slice): the route
+                    # KNOWS the model's readiness from the bridge's
+                    # own probes before it asks — a loading or
+                    # absent server is a named state in proper
+                    # JSON, never a dead call discovered downstream
+                    # as a parse error on the page.
+                    _mstate = model_readiness(endpoint)
+                    if _mstate != "ready":
+                        self._send(200, model_state_payload(_mstate))
+                        return
                     with MESH_LOCK:
                         MESH_STATE["local_gen"] += 1
                     try:
                         reply = llamafile_chat(messages, endpoint, model)
+                    except ModelNotReadyError as _mnr:
+                        # The probe said ready and the call still
+                        # found no answer — the server went away
+                        # mid-turn, or answered in a page's shape.
+                        # The state is the answer.
+                        self._send(200, model_state_payload(_mnr.state))
+                        return
                     finally:
                         with MESH_LOCK:
                             MESH_STATE["local_gen"] = max(0, MESH_STATE["local_gen"] - 1)
@@ -44566,6 +43774,1178 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, payload)
             except Exception as e:
                 self._send(502, {"error": str(e), "exec": exec_block})
+
+    def do_POST(self):
+        cfg = load_config()
+        if self.path.split("?")[0] == "/__gate":
+            # The gate page's form: a remote visitor proving the
+            # code. Since Build 2 (#173) the code knocks rather
+            # than opens: the registry decides — a session with the
+            # device's OWN 30-day token (the bootstrap first device,
+            # or a trusted device renewing), or a PENDING device
+            # and its waiting room, approved from a trusted session
+            # in Settings -> System -> Door. Failure serves the
+            # gate page again with the reason, and nothing else.
+            # v0.6.7e (#313, leg 1): this door is throttled
+            # like the DHD door — the same dhd_throttle_*
+            # helpers and constants, keyed on the socket peer.
+            # (Legs 2 and 3 are NOT in this build: the
+            # first-device bootstrap is #173 doctrine awaiting
+            # Alex's ruling, and proxy-aware client IPs are a
+            # design item of their own.)
+            _gate_ip = ""
+            try:
+                _gate_ip = str(self.client_address[0] or "")
+            except Exception:
+                _gate_ip = ""
+            _gfails, _glock = dhd_throttle_state(_gate_ip)
+            if _glock > time.time():
+                self._send(
+                    429,
+                    gate_page_html(
+                        "Too many wrong codes - this door is locked.",
+                        lock_seconds=int(_glock - time.time()),
+                        approval_mode=bool(door_approved_devices(cfg)),
+                    ).encode(),
+                    "text/html; charset=utf-8",
+                )
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+            form = urllib.parse.parse_qs(raw)
+            given = (form.get("code") or [""])[0].strip().upper()
+            dev_name = (form.get("device_name") or [""])[0].strip()
+            want = public_settings(cfg)["access_code"]
+            if want and given == want.upper():
+                dhd_throttle_clear(_gate_ip)
+                action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
+                if action == "session":
+                    self.send_response(303)
+                    self.send_header("Location", "/")
+                    self.send_header("Set-Cookie", door_cookie_header(dev["token"]))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                else:
+                    self._send(200, gate_pending_html(dev["id"], dev["name"], door="node").encode(), "text/html; charset=utf-8")
+            else:
+                _gfails = dhd_throttle_fail(_gate_ip)
+                if _gfails >= DHD_LOCKOUT_FAILS:
+                    self._send(
+                        429,
+                        gate_page_html(
+                            "Too many wrong codes - this door is now locked.",
+                            lock_seconds=DHD_LOCKOUT_SECONDS,
+                            approval_mode=bool(door_approved_devices(cfg)),
+                        ).encode(),
+                        "text/html; charset=utf-8",
+                    )
+                    return
+                time.sleep(min(2 ** (_gfails - 1), 8))
+                self._send(
+                    200,
+                    gate_page_html(
+                        "That code did not open the door - check the code on the DHD page of the machine Apex runs on, and try again.",
+                        attempts_remaining=max(0, DHD_LOCKOUT_FAILS - _gfails),
+                        approval_mode=bool(door_approved_devices(cfg)),
+                    ).encode(),
+                    "text/html; charset=utf-8",
+                )
+            return
+        # Build .86: /mesh/borrow is not served on this surface
+        # (see do_GET) — the dedicated Mesh port is the only
+        # lender door.
+        if self._public_gate_blocks():
+            self._send(403, {"error": "access code required"})
+            return
+        if self.path.split("?")[0] == "/mesh/lend/stop":
+            # Instant-off (R4): a LOCAL dashboard action only. It
+            # is never served on the DHD-forwarded surface — a
+            # request the proxy carried in is refused here even
+            # with a valid dashboard session, and no node signature
+            # can reach it either (this route is behind the gate,
+            # not the signature check).
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(403, {"ok": False, "error": "Stop lending now is a local action — it is not available through the DHD door."})
+                return
+            self._send(200, {"ok": True, "mesh": mesh_stop_lending((self.headers.get("X-Apex-Via") or "") == "dhd")})
+            return
+        if self.path == "/api/guardian/settings":
+            # Guardian (Build 14, #156): the Utilities face's save.
+            # Whitelisted keys only, merged into the config's
+            # guardian block (the dhd_save / mesh-settings idiom);
+            # the engine reads settings fresh every tick, so the
+            # save is live on the next sample. The answer is the
+            # new state, so the face renders what is actually true.
+            data = self._body()
+            block = cfg.get("guardian") if isinstance(cfg.get("guardian"), dict) else {}
+            block = dict(block)
+            if isinstance(data.get("enabled"), bool):
+                block["enabled"] = data["enabled"]
+            if isinstance(data.get("killEnabled"), bool):
+                block["killEnabled"] = data["killEnabled"]
+            for _gk in ("reserveMb", "slowGenSeconds", "cpuCapPercent", "warnAfterSeconds", "killGraceSeconds"):
+                try:
+                    block[_gk] = int(data[_gk])
+                except Exception:
+                    pass
+            try:
+                block["sampleSeconds"] = float(data["sampleSeconds"])
+            except Exception:
+                pass
+            if isinstance(data.get("expendable"), list):
+                block["expendable"] = [str(x).strip() for x in data["expendable"] if str(x).strip()]
+            cfg["guardian"] = block
+            save_config(cfg)
+            if block.get("enabled") is not False:
+                try:
+                    GUARDIAN.start()
+                except Exception:
+                    pass
+            self._send(200, {"ok": True, "state": GUARDIAN.state()})
+            return
+        if self.path in ("/api/boot/arm", "/api/boot/disarm"):
+            # Arm at boot (Build 14, #159): a LOCAL dashboard
+            # action only — it rewrites this machine's boot
+            # behavior, so it is never served through the DHD
+            # door, the same refusal as Stop-lending above.
+            if (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(403, {"ok": False, "error": "Arming at boot is a local action — it is not available through the DHD door."})
+                return
+            self._send(200, boot_set_armed(self.path == "/api/boot/arm"))
+            return
+        if self.path == "/api/mesh/settings":
+            # The Settings → System Mesh card's save. Persists the
+            # block, sets identity up on first enable, and starts
+            # or stops the dedicated Mesh door to match. Q1: lending
+            # may be turned ON only in person — a save arriving
+            # through the DHD proxy surface is refused for that one
+            # change; turning anything OFF is allowed from anywhere
+            # the operator is signed in.
+            data = self._body()
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            lend = block.get("lend") if isinstance(block.get("lend"), dict) else {}
+            lend = dict(lend)
+            was_enabled = block.get("enabled") is True
+            was_lending = lend.get("enabled") is True
+            want_lending = bool(data.get("lendEnabled")) if "lendEnabled" in data else was_lending
+            if want_lending and not was_lending and (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(200, {"ok": False, "error": "Lending can only be turned on from this machine's own dashboard, in person — not through the DHD door. Turning it off works from anywhere."})
+                return
+            if "enabled" in data:
+                block["enabled"] = bool(data.get("enabled"))
+            if "nodeName" in data:
+                block["nodeName"] = str(data.get("nodeName") or "")[:80]
+            # Build 4 (#154): the operator-declared public
+            # endpoint. Typed, never harvested; canonicalized to
+            # host:port here, and a value that is not a host:port
+            # refuses the whole save in words rather than landing
+            # as junk on the card.
+            if "publicEndpoint" in data:
+                _ep_err = _mesh_endpoint_error(data.get("publicEndpoint"))
+                if _ep_err:
+                    self._send(200, {"ok": False, "error": _ep_err})
+                    return
+                block["publicEndpoint"] = _mesh_endpoint_clean(data.get("publicEndpoint"))
+            if isinstance(data.get("listenPorts"), list):
+                block["listenPorts"] = _mesh_listen_ports(
+                    data["listenPorts"], block.get("port", 8765))
+            if "borrowEnabled" in data:
+                borrow["enabled"] = bool(data.get("borrowEnabled"))
+            if "graceMs" in data:
+                borrow["graceMs"] = max(0, min(30000, _mesh_int(data.get("graceMs"), 2000)))
+            if "lendEnabled" in data:
+                lend["enabled"] = want_lending
+            # Build 7 (#87, Fix F): the lending caps are operator
+            # settings on the lending machine — share of each hour
+            # (1–100%), borrowed generations an hour and per peer
+            # an hour (1–10000 each). They persist in the lend
+            # block and take effect on the next admission decision
+            # and the next card/capability report, because both
+            # read mesh_settings(load_config()) fresh — no bridge
+            # restart. The shipped defaults (25 / 20 / 10) are
+            # only the fallbacks for a missing or unparseable
+            # value, here and in mesh_settings.
+            if "maxSharePercent" in data:
+                lend["maxSharePercent"] = max(1, min(100, _mesh_int(data.get("maxSharePercent"), 25)))
+            if "maxGenerationsPerHour" in data:
+                lend["maxGenerationsPerHour"] = max(1, min(10000, _mesh_int(data.get("maxGenerationsPerHour"), 20)))
+            if "perPeerPerHour" in data:
+                lend["perPeerPerHour"] = max(1, min(10000, _mesh_int(data.get("perPeerPerHour"), 10)))
+            # Build 7 (Fix F2): the idle-only override rides the
+            # same save. Admission already reads lend["idleOnly"]
+            # on every request, so the flip is live at once; the
+            # shipped default stays ON (a lender serves only
+            # after idleAfterSeconds of quiet) until the operator
+            # turns it off here.
+            if "idleOnly" in data:
+                lend["idleOnly"] = bool(data.get("idleOnly"))
+            if "ledgerInBackup" in data:
+                block["ledgerInBackup"] = bool(data.get("ledgerInBackup"))
+            block["borrow"] = borrow
+            block["lend"] = lend
+            cfg["mesh"] = block
+            if block.get("enabled") is True and not was_enabled:
+                # Build 7 (#87): a node whose name was never set
+                # sits "Unnamed" in every roster — at enable time,
+                # a blank name takes the machine's hostname as its
+                # default, persisted with this save. A name the
+                # operator typed is never overwritten.
+                if not str(block.get("nodeName") or "").strip():
+                    block["nodeName"] = socket.gethostname()[:80]
+                _ok, _err = mesh_ensure_identity(cfg)
+                if not _ok:
+                    self._send(200, {"ok": False, "error": _err})
+                    return
+                _ok, _err = mesh_ensure_cert()
+                if not _ok:
+                    self._send(200, {"ok": False, "error": _err})
+                    return
+                # Pick up the nodeId identity setup recorded — but
+                # identity saves the config only when it writes a
+                # NEW nodeId, so on a re-enable (identity already on
+                # disk) the file still holds the pre-save block, and
+                # reloading it wholesale would resurrect that block
+                # and silently drop this save's change while still
+                # answering ok: the master switch stayed off under
+                # a "Saved." (field report, 0.1.8e Build 2 — the
+                # first enable worked precisely because identity's
+                # first write carried the change with it). The
+                # operator's block is the change being saved; the
+                # saved config contributes only the nodeId it holds.
+                _saved = load_config().get("mesh")
+                if isinstance(_saved, dict) and _saved.get("nodeId"):
+                    block["nodeId"] = _saved["nodeId"]
+                cfg["mesh"] = block
+            save_config(cfg)
+            if block.get("enabled") is True:
+                mesh_start_listener()
+                mesh_tunnel_sync()
+                if not was_enabled:
+                    # Build 7 (#87): enabling Mesh checks every
+                    # paired peer at once, not at the health
+                    # cadence's leisure.
+                    mesh_probe_peers_soon()
+            else:
+                mesh_stop_listener()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config(), (self.headers.get("X-Apex-Via") or "") == "dhd")})
+            return
+        # Build 9 (#90): POST /api/mesh/peers — the paste-a-text-
+        # card import — is REMOVED. Pairing is the PNG picture
+        # only (the /api/mesh/peers/png route below); a request
+        # to the retired path falls through to this handler's
+        # not-found answer. Peers paired earlier are stored
+        # records in config and are untouched by the removal.
+        if self.path == "/api/mesh/health":
+            # 0.2.0e Build 1 (#143): the operator-triggered Mesh
+            # health check \u2014 the two decisive reads of the
+            # field diagnosis, run by the product itself. It
+            # changes no pairing, pin, or routing state; it only
+            # reports. The probes inside it are the short-timeout
+            # kind, so the answer lands in seconds.
+            self._send(200, {"ok": True, "health": mesh_health_check(cfg)})
+            return
+        if self.path == "/api/mesh/peers/png":
+            # Add a peer from a PNG picture card (Build 7, spec
+            # section 13). The dashboard sends the picture's bytes
+            # base64'd — from the file-upload control or a drag-
+            # and-drop, both through the one client importer — and
+            # the payload inside the picture goes through the same
+            # card validation and the same add every pairing
+            # passes: one parser, one pairing, the identical
+            # peer record.
+            # A picture with no readable payload, or a damaged
+            # one, is refused with its specific reason — never a
+            # silent no-op.
+            data = self._body()
+            raw = None
+            try:
+                raw = base64.b64decode(str(data.get("png") or ""), validate=True)
+            except Exception:
+                raw = None
+            if not raw:
+                self._send(200, {"ok": False, "error": "That upload did not arrive as a picture — try the upload again."})
+                return
+            if len(raw) > 8 * 1024 * 1024:
+                self._send(200, {"ok": False, "error": "That file is far larger than a Mesh card picture — the cards are small PNGs. Check you picked the card file, and try again."})
+                return
+            peer, png_err = parse_mesh_card_png(raw)
+            if peer is None:
+                self._send(200, {"ok": False, "error": png_err})
+                return
+            aerr = mesh_add_peer(cfg, peer)
+            if aerr:
+                self._send(200, {"ok": False, "error": aerr})
+                return
+            # Build 6 (#143 ask 3): the pairing the first-run
+            # certificate notice accompanied has landed — the
+            # notice has been seen with a pin, and is not shown
+            # again on this machine.
+            mesh_mark_cert_notice(cfg)
+            mesh_probe_peers_soon()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/remove":
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            borrow["peers"] = [p for p in peers if not (isinstance(p, dict) and str(p.get("nodeId") or "") == target)]
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/repair":
+            # Build 6 (#143): the health check's heal, in place —
+            # strip the dead-end addresses from one peer's stored
+            # record. The pairing, its pin, its tunnel route and
+            # its history are kept; the condition is strict (every
+            # address a dead end) and the refusal is a sentence.
+            data = self._body()
+            ok_r, sentence_r = mesh_repair_peer_record(
+                cfg, str(data.get("nodeId") or ""))
+            if ok_r:
+                mesh_probe_peers_soon()
+            self._send(200, {"ok": ok_r,
+                             "message" if ok_r else "error": sentence_r,
+                             "mesh": mesh_status_payload(load_config()),
+                             "health": mesh_health_check(load_config())})
+            return
+        if self.path == "/api/mesh/peers/can-borrow":
+            # The borrow-side toggle for one paired peer (Build 7,
+            # #87): whether THIS machine borrows from that peer.
+            # It no longer gates the peer's inbound requests —
+            # pairing is that side's consent (mesh_authenticate).
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    p["canBorrow"] = bool(data.get("canBorrow"))
+                new_peers.append(p)
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/relay":
+            # 0.2.0e Build 7 (#154): one relay consent tick. The
+            # three kinds name whose consent the tick is, and the
+            # tick is stored on the record of the peer it names
+            # first (see _mesh_peer): carryTo = "this peer may
+            # carry MY envelopes to <other>", acceptFrom = "this
+            # peer may carry envelopes TO ME from <other>",
+            # willCarryTo = "I will carry THIS peer's envelopes
+            # to <other>". All three are consent, so the doctrine
+            # is the lending doctrine: granting is an in-person
+            # act on this machine's own dashboard — a request
+            # through the DHD door may UNtick (revoking works
+            # from anywhere) but never tick on.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            other = str(data.get("other") or "")
+            kind = str(data.get("kind") or "")
+            field = {"carryTo": "relayCarryTo",
+                     "acceptFrom": "relayAcceptFrom",
+                     "willCarryTo": "relayWillCarryTo"}.get(kind)
+            if field is None or not target or not other or other == target:
+                self._send(200, {"ok": False, "error": "That relay consent change does not name a carrier, another machine, and which consent it is."})
+                return
+            want = bool(data.get("on"))
+            if want and (self.headers.get("X-Apex-Via") or "") == "dhd":
+                self._send(200, {"ok": False, "error": "Relay consent is given at this machine, in person — this view is through the DHD door, so the tick cannot be set from here. Unticking works from anywhere."})
+                return
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            known = {str(p.get("nodeId") or "") for p in peers if isinstance(p, dict)}
+            if target not in known or other not in known:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    cur = [str(v) for v in (p.get(field) or []) if str(v)]
+                    if want and other not in cur:
+                        cur.append(other)
+                    if not want:
+                        cur = [v for v in cur if v != other]
+                    p[field] = cur
+                new_peers.append(p)
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/mesh/peers/tunnel":
+            # Build 4 (#178): one peer's managed backup route —
+            # ordinary borrower-side config (it points THIS
+            # machine's ssh at the peer's SSH door; it changes
+            # no consent on the peer). The supervisor reconciles
+            # as soon as the save lands.
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            block = cfg.get("mesh") if isinstance(cfg.get("mesh"), dict) else {}
+            block = dict(block)
+            borrow = block.get("borrow") if isinstance(block.get("borrow"), dict) else {}
+            borrow = dict(borrow)
+            peers = borrow.get("peers") if isinstance(borrow.get("peers"), list) else []
+            found = None
+            new_peers = []
+            for p in peers:
+                if isinstance(p, dict) and str(p.get("nodeId") or "") == target:
+                    p = dict(p)
+                    tun = dict(p.get("tunnel") or {})
+                    if "enabled" in data:
+                        tun["enabled"] = bool(data.get("enabled"))
+                    if "sshHost" in data:
+                        tun["sshHost"] = str(data.get("sshHost") or "").strip()[:255]
+                    if "sshUser" in data:
+                        tun["sshUser"] = str(data.get("sshUser") or "").strip()[:64]
+                    if "sshPort" in data:
+                        tun["sshPort"] = max(1, min(65535, _mesh_int(data.get("sshPort"), 227)))
+                    p["tunnel"] = tun
+                    found = tun
+                new_peers.append(p)
+            if found is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if found.get("enabled") and (not found.get("sshHost") or not found.get("sshUser")):
+                self._send(200, {"ok": False, "error": "The backup route needs that machine's SSH host and user before it can be turned on — fill both in and save again."})
+                return
+            borrow["peers"] = new_peers
+            block["borrow"] = borrow
+            cfg["mesh"] = block
+            save_config(cfg)
+            mesh_tunnel_sync()
+            self._send(200, {"ok": True, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/federation":
+            # 0.2.0e Build 8 (#154): the Federation page's acts —
+            # fedinets, gateway cards, trust toggles and ticks,
+            # founding, caps, the Badge enrollment, the audit
+            # log's state. The tiering lives in federation_act:
+            # read + revoke ride any door; manage acts through
+            # DHD need the Badge step-up; crown acts need the
+            # full ceremony at every door. DHD manages only THIS
+            # node's federation posture — the acts all read and
+            # write this node's own config, so no door can flip
+            # another operator's switches.
+            data = self._body()
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            self._send(200, federation_act(data, via_dhd))
+        if self.path == "/api/fedichat":
+            # FediChat (v0.5.3e, #267): read + post are the
+            # operator's own speech (not a crown act) — the
+            # trusted-device session governs via DHD, exactly
+            # like the federation reads above.
+            data = self._body()
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            self._send(200, fedichat_act(data, via_dhd))
+            return
+        if self.path == "/api/dossier":
+            # The Dossier (v0.5.6e, #260): the operator's own
+            # people-finding work on their own node — via DHD
+            # it rides the trusted-device session like the
+            # FediChat door, no Badge step-up.
+            data = self._body()
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            self._send(200, dossier_act(data, via_dhd))
+            return
+        if self.path == "/api/mesh/peers/tunnel-authorize":
+            # Build 4 (#178) made this act in-person-only, the
+            # lending doctrine of its day. The crown-acts ruling
+            # (Alex, 2026-11-13 20:56 EST) amended the door while
+            # keeping its property — a stolen session must not
+            # quietly grant trust: authorizing a tunnel key is a
+            # CROWN ACT. Through DHD it runs under the full
+            # ceremony (the trusted-device session the door
+            # itself provides + the Operator Badge step-up + the
+            # named-action confirm + an audit entry); at the desk
+            # it needs the same named confirm + audit, the Badge
+            # being the door's addition. REVOKING stays open
+            # through every door — revocation is never gated —
+            # and audits too. The act itself is unchanged:
+            # authorizing writes a forwarding-only line for the
+            # peer's tunnel key into this operator's
+            # ~/.ssh/authorized_keys; revoking removes it.
+            via_dhd = (self.headers.get("X-Apex-Via") or "") == "dhd"
+            data = self._body()
+            target = str(data.get("nodeId") or "")
+            action = "revoke" if str(data.get("action") or "") == "revoke" else "authorize"
+            ms_now = mesh_settings(cfg)
+            peer = next((p for p in ms_now["borrow"]["peers"] if p["nodeId"] == target), None)
+            if peer is None:
+                self._send(200, {"ok": False, "error": "That machine is not paired here."})
+                return
+            if not (peer.get("tunnelPublicKey") or ""):
+                self._send(200, {"ok": False, "error": "That machine's card carries no tunnel key — it was minted before the managed backup route, or by an older build. Re-share its card from its Mesh page and pair it again, and the key arrives with the card."})
+                return
+            if action == "authorize":
+                ok_c, err_c = _fed_crown_ok(cfg, via_dhd, data,
+                                            _fed_confirm_tunnel(peer["name"]))
+                if not ok_c:
+                    self._send(200, {"ok": False, "error": err_c})
+                    return
+            ok, sentence = mesh_tunnel_authorize(peer["tunnelPublicKey"], target, action, ms_now["port"])
+            if ok:
+                federation_audit(
+                    "tunnel-" + action, "",
+                    ("Authorized " if action == "authorize" else "Revoked ")
+                    + peer["name"] + "'s tunnel key"
+                    + (" under the crown ceremony." if action == "authorize"
+                       else " — revocation, open through every door."),
+                    "dhd" if via_dhd else "desk")
+            self._send(200, {"ok": ok, "message": sentence, "mesh": mesh_status_payload(load_config())})
+            return
+        if self.path == "/api/settings/updater-channel":
+            # The Updater's channel switch (build .83): persist
+            # the operator's Stable / Edge choice in the config's
+            # updater block. Checks and the apply path both read
+            # it from there, so the choice survives restarts and
+            # a remote (DHD) session flips the same switch.
+            data = self._body()
+            chan = data.get("channel")
+            if chan not in ("stable", "edge"):
+                self._send(200, {"ok": False, "error": "The channel must be 'stable' or 'edge'."})
+                return
+            block = cfg.get("updater") if isinstance(cfg.get("updater"), dict) else {}
+            block = dict(block)
+            block["channel"] = chan
+            # Build 2: this save is the operator's own act, so it
+            # stamps the choice as explicit — the stamp is what
+            # separates a chosen channel from one the config
+            # merely inherited (see updater_channel_explicit).
+            block["channelExplicit"] = True
+            cfg["updater"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "channel": chan, "channelExplicit": True})
+            return
+        if self.path == "/api/settings/sync-choice":
+            # The sync override's setting (v0.6.2e, #303):
+            # persist the operator's choice in the config's sync
+            # block. The answer carries the value that now
+            # stands, so the Settings switch renders the stored
+            # truth — and a failed save answers with its refusal,
+            # the switch unmoved.
+            data = self._body()
+            want = data.get("choiceOnPress")
+            if not isinstance(want, bool):
+                self._send(200, {"ok": False, "error": "The choice must be true or false."})
+                return
+            stood = sync_set_choice(want, load_config())
+            if stood is None:
+                self._send(200, {"ok": False, "error": "The choice could not be saved — the config did not take the write, so the setting stands as it was."})
+                return
+            self._send(200, {"ok": True, "choiceOnPress": stood})
+            return
+        if self.path == "/api/settings/public":
+            # The Local server toggle itself (build .61 — one
+            # action): persist the choice in the config block AND
+            # restart this bridge so the choice takes effect. The
+            # restart rides the exit-75 handshake: the request is
+            # recorded in the block, the response goes out, and this
+            # process exits 75 — the launcher's supervisor relaunches
+            # it, and the new bridge binds per the saved choice and
+            # verifies its own bind against it. The running bridge
+            # never hot-swaps its bind. Flipping to the state already
+            # live needs no restart and confirms on the spot.
+            data = self._body()
+            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+            block = dict(block)
+            block["enabled"] = bool(data.get("enabled"))
+            cfg["public_server"] = block
+            ensure_access_code(cfg)
+            save_config(cfg)
+            want_public = bool(data.get("enabled"))
+            live_public = ACTIVE_BIND_HOST == "0.0.0.0"
+            if want_public == live_public:
+                set_public_restart(cfg, "confirmed", "", "The bridge that answers already runs this choice — no restart was needed.")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                set_public_restart(cfg, "restarting", "restart", "Restarting the bridge…")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+                schedule_bridge_restart()
+        elif self.path == "/api/dhd/toggle":
+            # The DHD master switch (build .74) — one click: the
+            # choice is saved and the whole ladder runs in this
+            # process (certificate, proxy, self-check) with no
+            # bridge restart, because the proxy is threads, not the
+            # bridge's own bind. The one exception: if the Local
+            # server currently binds this bridge publicly, DHD mode
+            # requires the bridge on loopback only, so enabling
+            # records the choice and rides the exit-75 supervisor
+            # restart — the relaunched bridge binds loopback and
+            # brings the proxy up in main(). A failed step names
+            # itself and leaves the previous state untouched.
+            data = self._body()
+            want = bool(data.get("enabled"))
+            if not want:
+                dhd_save(cfg, {"enabled": False})
+                ensure_access_code(cfg)
+                cfg = load_config()
+                dhd_stop_proxy()
+                DHD_STATE["last_error"] = ""
+                self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
+            else:
+                # Enabling is an operation: the page and chat
+                # render the same persisted step card while the
+                # bridge runs prerequisites, certificate, proxy,
+                # and reachability — no model work is involved.
+                _op_id = dhd_start_enable_operation("page", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+                self._send(200, {"ok": True, "operationId": _op_id, "operation": op_snapshot(_op_id), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/dhd/install":
+            # The safety-net install action: install the named
+            # missing prerequisites (or every missing installable
+            # one) through the detected distro family's package
+            # step, then release any DHD enable operation waiting
+            # on them so it continues automatically. An install
+            # failure returns the step's exact manual commands.
+            data = self._body()
+            _pieces = data.get("pieces") if isinstance(data.get("pieces"), list) else None
+            _result = dhd_install_prereqs(_pieces, str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+            _failed = [r for r in _result["results"] if not r["ok"]]
+            if _failed:
+                _commands = []
+                for r in _failed:
+                    _commands.extend(r.get("commands") or [])
+                _detail = " ".join(r.get("detail", "") for r in _failed)
+                _dhd_release_waiting_ops(False, _detail, _commands)
+                self._send(200, {"ok": False, "install": _result, "commands": _commands, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                _dhd_release_waiting_ops(True, "Prerequisites installed.")
+                _op_id = None
+                _cfg_now = load_config()
+                if dhd_settings(_cfg_now)["enabled"] and not DHD_STATE.get("running"):
+                    _op_id = dhd_start_enable_operation("install", str(data.get("sudo_password") or data.get("sudoPassword") or ""))
+                self._send(200, {"ok": True, "install": _result, "operationId": _op_id, "operation": op_snapshot(_op_id) if _op_id else op_latest("dhd-enable"), "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/dhd/domain":
+            # The optional custom domain: free-form, saved in the
+            # dhd block so it survives restarts and updates. When
+            # DHD is live, saving a domain starts the certificate
+            # step in the background (ACME can take a few seconds);
+            # the door keeps answering on the current certificate
+            # meanwhile and the state reads certificate-pending
+            # until the real one is installed.
+            data = self._body()
+            domain = str(data.get("domain") or "").strip().lower()
+            domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+            dhd_save(cfg, {"domain": domain})
+            cfg = load_config()
+            if domain and dhd_settings(cfg)["enabled"] and DHD_STATE["running"]:
+                threading.Thread(target=lambda: dhd_bring_up(load_config()), daemon=True).start()
+            self._send(200, {"ok": True, "dhd": dhd_state_payload(cfg, self._client_is_loopback())})
+        elif self.path == "/api/dhd/cert":
+            # The certificate step on its own: obtain (or renew)
+            # the saved domain's certificate now, via the built-in
+            # ACME client, and reload the proxy with it.
+            cfg_now = load_config()
+            ds_now = dhd_settings(cfg_now)
+            if not ds_now["domain"]:
+                self._send(200, {"ok": False, "error": "No domain is saved yet - add one first.", "dhd": dhd_state_payload(cfg_now, self._client_is_loopback())})
+            else:
+                ok = dhd_bring_up(cfg_now)
+                self._send(200, {"ok": ok, "dhd": dhd_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/restart":
+            # The row's Restart bridge control: the retry/fallback
+            # for a saved choice that is not live (a failed restart,
+            # or a pending state left by an older build). Same flow
+            # as the toggle: record the request, exit 75, let the
+            # supervisor relaunch, and let the new bridge verify.
+            cfg_now = load_config()
+            if not public_state_payload(cfg_now, True)["pending"]:
+                self._send(200, {"ok": True, "publicServer": public_state_payload(cfg_now, self._client_is_loopback())})
+            else:
+                set_public_restart(cfg_now, "restarting", "restart", "Restarting the bridge…")
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+                schedule_bridge_restart()
+        elif self.path == "/api/settings/public/regenerate":
+            # A fresh code. The shared-code cookie stops matching
+            # at once, and no new knock can use the old code —
+            # but a device already approved keeps its OWN token
+            # (Build 2): trusted devices are revoked one by one in
+            # the Door list, not by changing the code under them.
+            block = cfg.get("public_server") if isinstance(cfg.get("public_server"), dict) else {}
+            block = dict(block)
+            block["access_code"] = generate_access_code()
+            if "enabled" not in block:
+                block["enabled"] = False
+            cfg["public_server"] = block
+            save_config(cfg)
+            self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/approve":
+            # Trusted-device approval (Build 2, #173): a pending
+            # device gets its own token and 30 days. Served to any
+            # session that is itself inside the door (loopback or
+            # gate-accepted — the gate above has already judged);
+            # a waiting device's poll picks the approval up.
+            data = self._body()
+            dev = door_approve(load_config(), str(data.get("id") or ""))
+            if dev is None:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore — its knock may have expired.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/deny":
+            data = self._body()
+            if door_deny(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not waiting anymore.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/settings/public/devices/revoke":
+            # Per-device revoke: the record goes, and with it the
+            # token — that device is at the gate on its next knock,
+            # and no one else's session notices.
+            data = self._body()
+            if door_revoke(load_config(), str(data.get("id") or "")):
+                self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            else:
+                self._send(200, {"ok": False, "error": "That device is not in the list.", "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+        elif self.path == "/api/shell":
+            data = self._body()
+            try:
+                self._send(200, run_shell(
+                    str(data.get("command", "")),
+                    sudo=bool(data.get("sudo")),
+                    sudo_password=str(data.get("sudo_password") or ""),
+                ))
+            except Exception as e:
+                self._send(200, {"command": data.get("command", ""), "output": str(e), "exit_code": 1})
+        elif self.path == "/api/seraph/act":
+            data = self._body()
+            self._send(200, seraph_act(str(data.get("action") or ""),
+                                       data))
+        elif self.path == "/api/shell/session/open":
+            # CLI Mode (Build 3): open (or return) the chat's one
+            # standing interactive session.
+            data = self._body()
+            sess = shell_session_open(str(data.get("chatId") or "main"),
+                                      data.get("cols") or 80,
+                                      data.get("rows") or 24)
+            self._send(200, shell_session_state(sess.chat_id, 0))
+        elif self.path == "/api/shell/session/input":
+            data = self._body()
+            ok = shell_session_input(str(data.get("chatId") or "main"),
+                                     str(data.get("text") or ""),
+                                     "operator",
+                                     raw=bool(data.get("raw")))
+            if ok:
+                # v0.6.10e (#220): cred tells the page the line was
+                # consumed as a credential, so it can keep the
+                # line out of its own records (the composer
+                # history) the way the bridge kept it out of the
+                # session record.
+                _sess = shell_session_get(str(data.get("chatId") or "main"))
+                self._send(200, {"ok": True,
+                                 "cred": bool(_sess is not None
+                                              and _sess.last_input_cred)})
+            else:
+                self._send(200, {"ok": False, "error": "No live shell session for this chat — open one first."})
+        elif self.path == "/api/shell/session/close":
+            data = self._body()
+            chat_id = str(data.get("chatId") or "main")
+            shell_session_close(chat_id)
+            self._send(200, shell_session_state(chat_id, 0))
+        elif self.path == "/api/shell/session/resize":
+            data = self._body()
+            sess = shell_session_get(str(data.get("chatId") or "main"))
+            if sess is not None:
+                sess.resize(data.get("cols") or 80, data.get("rows") or 24)
+            self._send(200, {"ok": sess is not None})
+        elif self.path == "/api/update/apply":
+            # Starts the end-to-end apply: the worker downloads,
+            # verifies (gzip-tolerant), and stages the release
+            # package under updates/<tag>/package, then a detached
+            # helper runs the staged installer and relaunches the
+            # app. Progress and outcome are read back through
+            # GET /api/update/result.
+            self._send(200, update_apply_payload(cfg))
+        elif self.path == "/api/downloads/save":
+            # The dashboard's download-save flow (build .48): the
+            # bytes behind a download click inside the desktop shell
+            # (chip .png, export ZIP), written into the operator's
+            # Downloads folder under a sanitized name — the shell's
+            # webview cannot save files the way a browser does.
+            self._send(200, save_download_payload(self._body()))
+        elif self.path == "/api/sudo/arm":
+            # Sudo mode (Build 3): the operator arms it from
+            # Settings. The password rides this one request into
+            # "sudo -v" and is forgotten — never stored, logged or
+            # synced. The reply carries the fresh state so the
+            # card can show exactly what the bridge holds (the
+            # switch gate's three-way contract).
+            data = self._body()
+            password = str(data.get("password") or "")
+            if not password:
+                self._send(200, {"ok": False, "error": "Enter the sudo password to arm sudo mode.", "sudo": sudo_state()})
+            else:
+                ok, err = sudo_arm(password)
+                if ok:
+                    self._send(200, {"ok": True, "sudo": sudo_state()})
+                else:
+                    self._send(200, {"ok": False, "error": "sudo mode was not armed: " + str(err), "sudo": sudo_state()})
+        elif self.path == "/api/sudo/disarm":
+            # Instant and total: the flag flips and the timestamp
+            # dies with it (sudo_disarm runs sudo -k).
+            self._send(200, {"ok": True, "sudo": sudo_disarm()})
+        elif self.path == "/api/hardware/redetect":
+            # Re-run profiling on the real machine and store it:
+            # detected hardware, derived settings, reasoning, and
+            # the log lines (also appended to hardware-profile.log).
+            detected = detect_hardware()
+            settings, tier, tier_label, reasoning = derive_hardware_settings(detected)
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            profile = {"detected": detected, "settings": settings, "autoSettings": settings,
+                       "source": "auto", "tier": tier, "tierLabel": tier_label,
+                       "reasoning": reasoning, "detectedAt": now,
+                       "installLog": [f"[hardware] {now} — re-detect from Settings",
+                                      f"[hardware] CPU: {detected['cpuModel']} — {detected['cpuCores']} logical cores",
+                                      f"[hardware] RAM: {detected['totalRamGB']} GiB",
+                                      f"[hardware] GPU: {detected['gpuName'] or 'none'} ({detected['gpuKind']})"] + [f"[hardware] → {r}" for r in reasoning]}
+            save_hardware_profile(profile)
+            self._send(200, {"ok": True, "profile": hardware_profile_view(load_config())})
+        elif self.path == "/api/hardware/override":
+            data = self._body()
+            current = load_config().get("hardware_profile") or {}
+            detected = current.get("detected") or detect_hardware()
+            def _clamp(v, lo, hi, fallback):
+                try:
+                    return max(lo, min(hi, int(v)))
+                except Exception:
+                    return fallback
+            auto = current.get("autoSettings") or current.get("settings") or {}
+            settings = {
+                "threads": _clamp(data.get("threads"), 1, 32, int(auto.get("threads") or 4)),
+                "ctxSize": _clamp(data.get("ctxSize"), 512, 65536, int(auto.get("ctxSize") or 4096)),
+                "batchSize": _clamp(data.get("batchSize"), 32, 4096, int(auto.get("batchSize") or 512)),
+                "gpuLayers": _clamp(data.get("gpuLayers"), 0, 99, int(auto.get("gpuLayers") or 0)),
+            }
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            profile = {"detected": detected, "settings": settings,
+                       "autoSettings": auto if auto else settings, "source": "manual",
+                       "tier": current.get("tier", "fluid"), "tierLabel": current.get("tierLabel", ""),
+                       "reasoning": current.get("reasoning") or [], "detectedAt": current.get("detectedAt") or now,
+                       "installLog": [f"[hardware] {now} — manual override in Settings: threads {settings['threads']}, ctx {settings['ctxSize']}, batch {settings['batchSize']}, gpu layers {settings['gpuLayers']}"]}
+            save_hardware_profile(profile)
+            self._send(200, {"ok": True, "profile": hardware_profile_view(load_config())})
+        elif self.path == "/api/persona":
+            data = self._body()
+            os.makedirs(os.path.dirname(SOUL_PATH), exist_ok=True)
+            if isinstance(data.get("soul"), str):
+                with open(SOUL_PATH, "w") as f:
+                    f.write(data["soul"])
+            if isinstance(data.get("memory"), str):
+                with open(MEMORY_PATH, "w") as f:
+                    f.write(data["memory"])
+            self._send(200, {"ok": True})
+        elif self.path == "/api/llamafile/connect":
+            endpoint = cfg.get("live", {}).get("llamafile_endpoint", "http://localhost:8080/v1")
+            alive = llamafile_alive(endpoint)
+            started = False
+            error = None
+            if not alive:
+                if cfg.get("startup", "on-ui-launch") == "on-boot":
+                    # Boot mode: the system service owns the server.
+                    # The bridge probes and reports; it never spawns
+                    # a second copy behind the service's back.
+                    error = ("No answer from navi.llamafile at " + endpoint +
+                             " — this install starts the server at system boot, "
+                             "so the boot service should be running it; check that service.")
+                else:
+                    # App-load mode: connecting means starting the
+                    # server, not just probing for it.
+                    alive, error = start_llamafile(cfg, endpoint)
+                    started = alive
+            self._send(200, {
+                "ok": alive,
+                "status": "running" if alive else "stopped",
+                "endpoint": endpoint,
+                "started": started,
+                "error": None if alive else error,
+            })
+        elif self.path == "/api/voice/mic-report":
+            # Build 6 (#6, telemetry half): a window reports its
+            # own mic reading (granted / refused / no recording
+            # API) each time push-to-talk is attempted in it. The
+            # report is logged in words and kept for /api/voice —
+            # the app-window capture question (#6) has been open
+            # since 2026-11-07 for want of exactly this reading
+            # existing somewhere durable.
+            data = self._body()
+            st = str(data.get("state") or "")
+            if st not in ("ok", "refused", "unavailable", "unknown"):
+                self._send(200, {"ok": False, "error": "unknown mic state"})
+            else:
+                _MIC_REPORT["state"] = st
+                _MIC_REPORT["at"] = int(time.time())
+                print("Navi voice: a window reports its own mic as "
+                      + {"ok": "granted", "refused": "refused",
+                         "unavailable": "no recording API",
+                         "unknown": "not tested"}[st]
+                      + " (push-to-talk attempt).", flush=True)
+                self._send(200, {"ok": True})
+        elif self.path == "/api/voice/warmup":
+            # The dashboard fires this when the Voice view opens:
+            # load the speech engines then — while the operator is
+            # looking at the voice panel — instead of inside Call,
+            # where the load would stall the pickup, and never at
+            # bridge boot, because on a small machine the models are
+            # real RAM that chat shouldn't pay for uninvited. The
+            # loaders cache in _voice_cache and never evict, so once
+            # warm she stays warm for the life of the bridge.
+            vc = voice_config(cfg)
+            warmed = []
+            errors = {}
+            if not vc["enabled"]:
+                errors["voice"] = "Voice is turned off."
+            else:
+                try:
+                    _stt_model(vc)
+                    warmed.append("stt")
+                except Exception as e:
+                    errors["stt"] = str(e)
+                # Build 6 (#221): warming also proves the decode
+                # path — the model can load perfectly over a
+                # decoder that cannot decode (the av drift), and
+                # the warmup answer must not call that warm.
+                if "stt" not in errors:
+                    dec_ok, dec_exc = _voice_decode_probe()
+                    if dec_ok:
+                        warmed.append("decode")
+                    else:
+                        errors["decode"] = _decode_detail(dec_exc)
+                try:
+                    if vc["tts_engine"] == "kokoro":
+                        # v0.4.1e (#229): warmup runs the CUDA
+                        # EXECUTION probe beside the decode probe,
+                        # before the pipeline is built on its
+                        # verdict — a fallen-back verdict is a
+                        # working state with a named reason, not
+                        # a warmup error.
+                        _voice_cuda_probe()
+                        _kokoro_pipeline(vc)
+                    else:
+                        _piper_load(vc)
+                    warmed.append("tts")
+                except Exception as e:
+                    errors["tts"] = str(e)
+            self._send(200, {"ok": not errors, "warmed": warmed, "errors": errors})
+        elif self.path == "/api/voice/settings":
+            # The Voice tab's settings, saved into navi.config.json.
+            data = self._body()
+            patch = {}
+            if isinstance(data.get("enabled"), bool):
+                patch["enabled"] = data["enabled"]
+            if data.get("stt_model") in ("tiny.en", "base.en", "small.en"):
+                patch["stt_model"] = data["stt_model"]
+            if data.get("tts_engine") in ("kokoro", "piper"):
+                patch["tts_engine"] = data["tts_engine"]
+            if isinstance(data.get("tts_voice"), str) and data["tts_voice"].strip():
+                patch["tts_voice"] = data["tts_voice"].strip()[:60]
+            for key in ("rate", "pitch"):
+                try:
+                    val = float(data.get(key))
+                    if 0.5 <= val <= 2.0:
+                        patch[key] = val
+                except (TypeError, ValueError):
+                    pass
+            cur = save_voice_config(patch)
+            self._send(200, {"ok": True, "config": cur})
+        elif self.path == "/api/voice/test":
+            # "Hear her voice": synthesize one line and hand the WAV
+            # to the dashboard to play. Honest failure when the
+            # engine isn't installed — never a placeholder tone.
+            data = self._body()
+            vc = voice_config(cfg)
+            line = str(data.get("text") or "").strip() or (
+                "Hey — it's me, Navi. This is my voice, running entirely "
+                "on your machine. Call me any time."
+            )
+            try:
+                wav = synthesize_wav(line, vc)
+                self._send(200, {
+                    "ok": True,
+                    "audio_b64": base64.b64encode(wav).decode(),
+                    "mime": "audio/wav",
+                })
+            except VoiceUnavailable as e:
+                self._send(200, {"ok": False, "error": str(e)})
+            except Exception as e:
+                self._send(200, {"ok": False, "error": "Speech failed: " + str(e)})
+        elif self.path == "/api/voice/tts":
+            # One line of hers in, the spoken WAV out — the call
+            # panel plays her replies sentence by sentence.
+            data = self._body()
+            vc = voice_config(cfg)
+            try:
+                wav = synthesize_wav(str(data.get("text") or ""), vc)
+                self._send(200, {
+                    "ok": True,
+                    "audio_b64": base64.b64encode(wav).decode(),
+                    "mime": "audio/wav",
+                })
+            except VoiceUnavailable as e:
+                self._send(200, {"ok": False, "error": str(e)})
+            except Exception as e:
+                self._send(200, {"ok": False, "error": "Speech failed: " + str(e)})
+        elif self.path == "/api/voice/stt":
+            # One push-to-talk clip in (base64; webm from the
+            # browser's recorder, wav also fine — the decoder sniffs
+            # the real format), its transcript out.
+            data = self._body()
+            vc = voice_config(cfg)
+            if not vc["enabled"]:
+                self._send(200, {"ok": False, "error": "Voice is turned off — enable it in the Voice tab."})
+            else:
+                try:
+                    audio = base64.b64decode(str(data.get("audio_b64") or ""))
+                except Exception:
+                    audio = b""
+                try:
+                    text = transcribe_audio(audio, vc)
+                    self._send(200, {"ok": True, "text": text})
+                except VoiceUnavailable as e:
+                    self._send(200, {"ok": False, "error": str(e)})
+                except Exception as e:
+                    self._send(200, {"ok": False, "error": "Transcription failed: " + str(e)})
+        elif self.path == "/api/voice/call/start":
+            # Opens the call record. The turns themselves travel
+            # over /api/chat (same brain as typed chat) and are
+            # recorded here, one by one, as they happen.
+            vc = voice_config(cfg)
+            if not vc["enabled"]:
+                self._send(200, {"ok": False, "error": "Voice is turned off — enable it in the Voice tab."})
+            else:
+                state = load_voice_state()
+                if not state.get("call"):
+                    state["call"] = {
+                        "id": str(int(time.time() * 1000)),
+                        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "turns": [],
+                    }
+                    save_voice_state(state)
+                self._send(200, {"ok": True, "call": state["call"]})
+        elif self.path == "/api/voice/call/turn":
+            data = self._body()
+            state = load_voice_state()
+            call = state.get("call")
+            if not call:
+                self._send(200, {"ok": False, "error": "No call in progress."})
+            else:
+                turn = {
+                    "who": "navi" if data.get("who") == "navi" else "you",
+                    "text": str(data.get("text") or "")[:4000],
+                    # Issue #116: when this turn was spoken (epoch
+                    # seconds), so the transcript can carry the same
+                    # timestamps the chat thread wears.
+                    "ts": int(time.time()),
+                }
+                ex = data.get("exec")
+                if isinstance(ex, dict):
+                    turn["exec"] = {
+                        "command": str(ex.get("command") or "")[:500],
+                        "output": str(ex.get("output") or "")[:4000],
+                    }
+                call.setdefault("turns", []).append(turn)
+                state["call"] = call
+                save_voice_state(state)
+                self._send(200, {"ok": True})
+        elif self.path == "/api/voice/call/end":
+            # The finished call joins the permanent record:
+            # voice/calls.json, newest last; the dashboard files
+            # the turns into the conversation itself.
+            state = load_voice_state()
+            call = state.get("call")
+            if not call:
+                self._send(200, {"ok": True, "call": None})
+            else:
+                call["ended_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                calls = load_voice_calls()
+                calls.append(call)
+                os.makedirs(VOICE_DIR, exist_ok=True)
+                with open(VOICE_CALLS_PATH, "w") as f:
+                    json.dump(calls, f)
+                state["call"] = None
+                save_voice_state(state)
+                self._send(200, {"ok": True, "call": call})
+        elif self.path == "/api/notifications/read":
+            # v0.4.7e (#242): the bell's write — {"ids": [...]} or
+            # {"all": true} marks records read; unknown ids are
+            # ignored, not errors. The answer is the fresh payload.
+            data = self._body()
+            self._send(200, notifications_mark_read(
+                data.get("ids"), data.get("all") is True, cfg))
+        elif self.path == "/api/push/subscribe":
+            # v0.5.14e (#272): a phone subscribes to this
+            # node's tray. The bridge validates the
+            # subscription's keys before anything is stored;
+            # a refusal is named and nothing is held.
+            # v0.6.7e (#332): the caller's door-device identity
+            # rides along when its token speaks for it, so the
+            # record keys on the device, not the endpoint.
+            data = self._body()
+            _pdev = ""
+            try:
+                _pok, _pdev_rec, _pleg = door_gate_acceptance(
+                    cfg, door_cookie_value(self.headers.get("Cookie")))
+                if _pok and _pdev_rec is not None:
+                    _pdev = str(_pdev_rec.get("id") or "")
+            except Exception:
+                _pdev = ""
+            view, err = push_subscribe(data, cfg, device=_pdev)
+            if err:
+                self._send(200, {"ok": False, "error": err})
+            else:
+                self._send(200, {"ok": True, "subscription": view})
+        elif self.path == "/api/push/remove":
+            # v0.6.7e (#332): remove one subscription record
+            # by id — from any seat. That record stops ringing;
+            # the tray and every other record are untouched.
+            data = self._body()
+            self._send(200, push_remove_record(data.get("id"), cfg))
+        elif self.path == "/api/push/unsubscribe":
+            # v0.5.14e (#272): this device stops ringing. The
+            # tray is untouched; only the door comes down.
+            data = self._body()
+            self._send(200, push_unsubscribe(data, cfg))
+        elif self.path == "/api/chat/route":
+            # v0.4.1e (#228): a route flip, validated against the
+            # access the operator actually has (chat_route_set).
+            # The answer carries the route the bridge stored; a
+            # refusal carries its reason word and its sentence,
+            # and the store is untouched — the pill degrades on
+            # its own face, never a silent snap-back.
+            data = self._body()
+            _cid = str(data.get("chatId") or "")[:80]
+            if not _cid:
+                self._send(200, {"ok": False, "reason": "no-chat",
+                                 "error": "That flip named no chat."})
+                return
+            _ans, _ref = chat_route_set(cfg, _cid, data.get("route"))
+            if _ref is not None:
+                self._send(200, {"ok": False, "reason": _ref[0],
+                                 "error": _ref[1],
+                                 "route": chat_route_get(_cid)})
+            else:
+                self._send(200, _ans)
+        elif self.path == "/api/chat":
+            self._chat_route(cfg)
         elif self.path == "/api/chips/run":
             # Run one loaded chip by name/slug (Chips tab Run buttons,
             # same machinery chat invocations use).
