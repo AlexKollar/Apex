@@ -1652,19 +1652,14 @@ if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   # The stage starts from the OLD tree, so update staging the
   # updater left behind never rides into the new version.
   rm -rf "$STAGE_DIR/updates"
-  # v0.6.7e (#306, the cheap leg): the updater's EVIDENCE —
-  # each apply stage's trace, install and relaunch logs and
-  # job records under updates/ — is carried across the swap
-  # like the config above, so a successful Apply stops
-  # deleting the record of itself (the apply trace is the
-  # #208 acceptance evidence; the helper appends to it by
-  # path after the swap, so the chain continues on the
-  # carried file). Package PAYLOADS do not ride: the helper
-  # restores the live apply's staged package itself, and a
-  # spent apply's payload is bulk, not evidence. The full
-  # relocation of the stage home out of the tree remains
-  # #306's open half.
-  [ -d "$FOUNDATION_SRC/updates" ] && (cd "$FOUNDATION_SRC/updates" && tar --exclude='*/package' --exclude='*.zip' --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/updates" && cd "$STAGE_DIR/updates" && tar --no-same-owner -xf -) 2>/dev/null || true
+  # v0.6.11e (#306-full): the updater's stage and its evidence
+  # live OUTSIDE the tree now — .apex-apply-stage/<tag> beside
+  # the install home, ground this swap never renames — so the
+  # v0.6.7e cheap leg (tar-carrying updates/ evidence across
+  # the swap) is retired: evidence no longer crosses the swap
+  # because evidence is never under it. A legacy in-tree
+  # updates/ folder is simply left behind with the parked
+  # tree, exactly where its own apply left it.
 elif [ -n "$IS_UPDATE" ]; then
   echo "    fresh install: keeping the llamafile, chips, packs, the Vault, DHD and Mesh homes,"
   echo "    chats, config and the voice venv — everything else is rebuilt from the package"
@@ -1996,6 +1991,58 @@ if [ -n "$IS_UPDATE" ] && [ -z "$FRESH" ]; then
   [ -d "$FOUNDATION_SRC/chips" ] && (cd "$FOUNDATION_SRC/chips" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/chips" && cd "$STAGE_DIR/chips" && tar --no-same-owner -xf -) 2>/dev/null || true
   [ -d "$FOUNDATION_SRC/rag-packs" ] && (cd "$FOUNDATION_SRC/rag-packs" && tar --exclude='*/__pycache__' --exclude='*.pyc' -cf - .) | (mkdir -p "$STAGE_DIR/rag-packs" && cd "$STAGE_DIR/rag-packs" && tar --no-same-owner -xf -) 2>/dev/null || true
   [ -f "$FOUNDATION_SRC/voice/calls.json" ] && cp "$FOUNDATION_SRC/voice/calls.json" "$STAGE_DIR/voice/calls.json" 2>/dev/null || true
+fi
+
+# --- The rollback point's config archive (#307) ----------------
+# Immediately before promotion, the live tree's config/ is
+# tarred into the updater's home outside the tree
+# (.apex-apply-stage/archive/<from>-to-<to>/), with a
+# rollback.json record beside it. The tree point itself is
+# .apex-prev, retained at the end of this install (below);
+# the archive is the config half of the same point — the
+# tool for the bad-migration case, where the new build's own
+# code rewrote operator state after landing. Custody material
+# is never restored from this archive without the newest
+# state's copy being held out first — that discipline lives
+# in the rollback executor (apply-helper.py --rollback).
+# Archives are kept for the last three Applies.
+APPLY_STAGE_HOME="$PARENT_DIR/.apex-apply-stage"
+RB_ARCHIVE_DIR=""
+RB_FROM_BUILD=""
+RB_FROM_SEQ=""
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/bridge.py" ] && [ -d "$INSTALL_DIR/config" ]; then
+  RB_FROM_BUILD="$(sed -n 's/^BRIDGE_BUILD = "\(.*\)"$/\1/p' "$INSTALL_DIR/bridge.py" 2>/dev/null | head -n 1)"
+  RB_FROM_SEQ="$(sed -n 's/^SHIPPED_BUILD_SEQ = \([0-9]*\)$/\1/p' "$INSTALL_DIR/bridge.py" 2>/dev/null | head -n 1)"
+  _rb_to_seq="$(sed -n 's/^SHIPPED_BUILD_SEQ = \([0-9]*\)$/\1/p' "$SRC_DIR/bridge.py" 2>/dev/null | head -n 1)"
+  RB_ARCHIVE_DIR="$APPLY_STAGE_HOME/archive/${RB_FROM_BUILD:-unknown}-to-${TREE_STAMP:-unknown}"
+  mkdir -p "$RB_ARCHIVE_DIR" 2>/dev/null || RB_ARCHIVE_DIR=""
+  if [ -n "$RB_ARCHIVE_DIR" ]; then
+    if (cd "$INSTALL_DIR" && tar --exclude='config/*/__pycache__' --exclude='*.pyc' -cf "$RB_ARCHIVE_DIR/config.tar" config) 2>/dev/null; then
+      python3 - "$RB_ARCHIVE_DIR/rollback.json" "$RB_FROM_BUILD" "$RB_FROM_SEQ" "$TREE_STAMP" "$_rb_to_seq" "$RB_ARCHIVE_DIR/config.tar" "$PREV_DIR" <<'PY' || true
+import json, os, sys, time
+rec = {
+    "fromBuild": sys.argv[2], "fromSeq": int(sys.argv[3]) if sys.argv[3].isdigit() else None,
+    "toBuild": sys.argv[4], "toSeq": int(sys.argv[5]) if sys.argv[5].isdigit() else None,
+    "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "archive": sys.argv[6], "prevDir": sys.argv[7],
+    "diskFreeBytes": None, "pointKept": None, "pointReason": "",
+}
+try:
+    st = os.statvfs(os.path.dirname(sys.argv[6]))
+    rec["diskFreeBytes"] = st.f_bavail * st.f_frsize
+except Exception:
+    pass
+with open(sys.argv[1], "w") as f:
+    json.dump(rec, f, indent=1)
+PY
+      echo "    rollback archive: the live config is kept at $RB_ARCHIVE_DIR/config.tar"
+    else
+      echo "    note: the rollback config archive could not be written — the install continues without one" >&2
+      RB_ARCHIVE_DIR=""
+    fi
+    # Prune to the last three archives, by mtime.
+    ls -dt "$APPLY_STAGE_HOME/archive"/*/ 2>/dev/null | tail -n +4 | while read -r _old; do rm -rf "$_old"; done
+  fi
 fi
 
 echo "==> Promoting the staged tree — one act"
@@ -2929,8 +2976,57 @@ if [ -n "$HEADLESS" ]; then _hl_json="true"; fi
 printf '{"operator": "%s", "at": "%s", "build": "%s", "version": "%s", "selfCheck": "passed", "headless": %s, "headlessSource": "%s"}\n' \
   "$OPERATOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TREE_STAMP" "$(cat "$INSTALL_DIR/VERSION")" "$_hl_json" "$HEADLESS_SOURCE" \
   > "$INSTALL_DIR/.apex-install-record"
+# --- The rollback point's disk guard (#307) --------------------
+# The previous tree is RETAINED as this build's rollback
+# point (the deletion that used to stand here is gone). The
+# point costs the volume a second tree; if the free space
+# cannot carry it, the Apply still stands — a rollback point
+# is insurance, not a gate — but the point is retired now
+# and the record says so by name, here and in rollback.json.
+# Silence would be the #311 sin in a new place.
+RB_KEPT=""
+RB_REASON=""
+if [ -d "$PREV_DIR" ]; then
+  _rb_need="$(du -sb --exclude=navi.llamafile "$PREV_DIR" 2>/dev/null | cut -f1)"
+  _rb_free="$(df -B1 --output=avail "$PARENT_DIR" 2>/dev/null | tail -n 1 | tr -d ' ')"
+  case "$_rb_need" in ''|*[!0-9]*) _rb_need="";; esac
+  case "$_rb_free" in ''|*[!0-9]*) _rb_free="";; esac
+  if [ -n "$_rb_need" ] && [ -n "$_rb_free" ] && [ "$_rb_free" -lt "$_rb_need" ]; then
+    RB_KEPT="0"
+    RB_REASON="the volume has $_rb_free bytes free and the retained tree needs $_rb_need — the rollback point was retired rather than kept"
+    rm -rf "$PREV_DIR" 2>/dev/null || true
+    if [ -d "$PREV_DIR" ]; then
+      mv "$PREV_DIR" "$PARENT_DIR/.apex-prev-kept-$(date +%s)" 2>/dev/null || true
+      RB_REASON="$RB_REASON (the tree itself would not delete and was moved aside, named, instead)"
+    fi
+  else
+    RB_KEPT="1"
+  fi
+  if [ -n "$RB_ARCHIVE_DIR" ] && [ -f "$RB_ARCHIVE_DIR/rollback.json" ]; then
+    APEX_RB_KEPT="$RB_KEPT" APEX_RB_REASON="$RB_REASON" APEX_RB_FREE="$_rb_free" python3 - "$RB_ARCHIVE_DIR/rollback.json" <<'PY' || true
+import json, os, sys
+try:
+    with open(sys.argv[1]) as f:
+        rec = json.load(f)
+    rec["pointKept"] = os.environ.get("APEX_RB_KEPT") == "1"
+    rec["pointReason"] = os.environ.get("APEX_RB_REASON") or ""
+    # The guard's own measurement supersedes the archive-time
+    # one: this file's diskFreeBytes is the reading the keep /
+    # retire decision was actually made on.
+    try:
+        rec["diskFreeBytes"] = int(os.environ.get("APEX_RB_FREE") or "")
+    except Exception:
+        pass
+    with open(sys.argv[1], "w") as f:
+        json.dump(rec, f, indent=1)
+except Exception:
+    pass
+PY
+  fi
+fi
+export APEX_RB_KEPT="$RB_KEPT" APEX_RB_REASON="$RB_REASON" APEX_RB_ARCHIVE="$RB_ARCHIVE_DIR" APEX_RB_PREV="$PREV_DIR"
 python3 - "$INSTALL_DIR/.apex-install-record" "$INSTALL_DIR/config/install-self-check.json" $AUDIT_CASUALTY_LIST <<'PY' || true
-import json, sys
+import json, os, sys
 rec_path, sc_path = sys.argv[1], sys.argv[2]
 casualties = [p for p in sys.argv[3:] if p]
 try:
@@ -2940,6 +3036,13 @@ except Exception:
     raise SystemExit(0)
 if casualties:
     rec["notCarried"] = casualties
+if os.environ.get("APEX_RB_KEPT"):
+    rec["rollbackPoint"] = {
+        "kept": os.environ.get("APEX_RB_KEPT") == "1",
+        "reason": os.environ.get("APEX_RB_REASON") or "",
+        "prevDir": os.environ.get("APEX_RB_PREV") or "",
+        "archive": (os.environ.get("APEX_RB_ARCHIVE") or ""),
+    }
 try:
     with open(sc_path) as f:
         sc = json.load(f)
@@ -2953,17 +3056,17 @@ except Exception:
 with open(rec_path, "w") as f:
     json.dump(rec, f)
 PY
-# The previous tree retires only after the new one is verified.
-# Best-effort by design: if it holds files this operator cannot
-# delete (root-owned leftovers of a past sudo repair, incident
-# 16), the install still stands — the kept tree is named, with
-# the one command that removes it.
-rm -rf "$PREV_DIR" 2>/dev/null || true
+# The previous tree is this build's ROLLBACK POINT (#307): it
+# is retained, not retired — it retires at the next successful
+# install, at that install's promotion step. If the disk guard
+# above could not afford it, the guard already retired it and
+# said why in the record; what stands here is the kept case
+# (and the accident case: a tree that would not delete at the
+# NEXT promotion is moved aside and named there — this
+# installer never reaches for sudo over the operator's tree).
 if [ -d "$PREV_DIR" ]; then
-  echo "NOTE: the previous install is kept at $PREV_DIR" >&2
-  echo "      It holds files not owned by $OPERATOR (a past sudo repair leaves exactly this), so this" >&2
-  echo "      operator cannot delete it. The new install is complete without it. Remove it with:" >&2
-  echo "        sudo rm -rf $PREV_DIR" >&2
+  echo "    rollback point: the previous install is kept at $PREV_DIR — if this build misbehaves,"
+  echo "    roll back with:  python3 \"$INSTALL_DIR/apply-helper.py\" --rollback  (add --with-config to also restore the pre-update config)"
 fi
 
 echo ""

@@ -405,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.10"
+SHIPPED_VERSION = "0.6.11"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-20.42"
+BRIDGE_BUILD = "2026-11-20.44"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 42
+SHIPPED_BUILD_SEQ = 44
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -460,11 +460,27 @@ DEFAULT_PERSONA = (
 
 
 def load_config():
-    try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {
+    # v0.6.11e (#339): a torn read must never become a reset.
+    # The config is the most-written file in the system (door
+    # touches, settings saves, sync stamps); a reader that
+    # catches the file mid-write from an older build's
+    # non-atomic save used to fall back to the defaults dict
+    # below — and any save of THAT dict permanently wiped
+    # every non-default key (the Seraph role among them: the
+    # flip "didn't stay"). save_config is atomic now, and a
+    # failed parse retries once before the fallback is
+    # believed, so the defaults answer only for a genuinely
+    # absent or corrupt file.
+    for _attempt in (1, 2):
+        try:
+            with open(CONFIG_PATH) as f:
+                return json.load(f)
+        except Exception:
+            if _attempt == 1:
+                time.sleep(0.05)
+                continue
+            break
+    return {
             "live": {"llamafile_endpoint": "http://localhost:8080/v1"},
             # Navi Mesh defaults (see the Mesh section below): an
             # absent mesh block reads as exactly this — master off,
@@ -491,10 +507,17 @@ def load_config():
 
 
 def save_config(cfg):
+    # v0.6.11e (#339): atomic — write-then-rename, the same
+    # pattern _atomic_write uses for the seat state. A reader
+    # (load_config runs on nearly every request) must never
+    # catch this file half-written: a torn read is how a
+    # settings flip could be silently reset (see load_config).
     try:
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, "w") as f:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(cfg, f, indent=2)
+        os.replace(tmp, CONFIG_PATH)
         return True
     except Exception:
         return False
@@ -606,12 +629,14 @@ def public_token(code):
 # carries a per-device revoke, so one lost phone stops meaning
 # "change the code and re-let everyone in".
 #
-# Bootstrap: while NO device is approved yet, the first device to
-# present the code approves ITSELF and receives its token on the
-# spot — a single-operator house is never locked out of its own
-# door waiting for an approver who does not exist yet. From the
-# first approval on, the shared-code cookie stops being accepted:
-# every device stands in the registry under its own name.
+# The first device (v0.6.11e, #313 leg 2, ruling B): while NO
+# device is approved yet, the first device to present the code
+# becomes a PENDING device like every other, and is confirmed
+# on the machine itself — from its own dashboard over loopback,
+# or a shell act on the box. A network-door code alone never
+# mints a device, and the shared-code cookie is not accepted
+# either: every session stands in the registry under its own
+# name, from the very first one.
 #
 # The registry lives in the public_server block of the config,
 # beside the code it grew from. Session tokens are random, are
@@ -677,17 +702,18 @@ def door_cookie_value(cookie_header):
 
 
 def door_gate_acceptance(cfg, cookie_value):
-    # (accepted, device, legacy): a registered device token speaks
-    # for itself; the shared-code cookie is honored only while no
-    # device has ever been approved (pre-registry houses, and the
-    # bootstrap moment itself).
+    # (accepted, device, legacy): a registered device token
+    # speaks for itself — and, since v0.6.11e (#313 leg 2,
+    # ruling B), it is the ONLY voice. The shared-code
+    # cookie was honored while no device had ever been
+    # approved; that made the code alone, in stored form,
+    # an opening — the same bootstrap the ruling retires.
+    # A pre-registry house's next visit now knocks like any
+    # other and is confirmed on the machine itself.
     if cookie_value:
         dev = door_device_for_token(cfg, cookie_value)
         if dev is not None:
             return True, dev, False
-        code = public_settings(cfg)["access_code"]
-        if code and not door_approved_devices(cfg) and secrets.compare_digest(cookie_value, public_token(code)):
-            return True, None, True
     return False, None, False
 
 
@@ -724,19 +750,6 @@ def _door_new_device(name, user_agent, status):
     }
 
 
-def door_create_approved(cfg, name, user_agent):
-    # The bootstrap act: mint an approved device with its own
-    # token, on the strength of the code alone.
-    devices = _door_prune(door_devices(cfg))
-    dev = _door_new_device(name, user_agent, "approved")
-    dev["token"] = secrets.token_urlsafe(32)
-    dev["approved_at"] = dev["created_at"]
-    dev["expires_at"] = dev["created_at"] + DOOR_DEVICE_TTL_SECONDS
-    devices.append(dev)
-    _door_save_devices(cfg, devices)
-    return dev
-
-
 def door_register_pending(cfg, name, user_agent):
     devices = _door_prune(door_devices(cfg))
     dev = _door_new_device(name, user_agent, "pending")
@@ -748,14 +761,20 @@ def door_register_pending(cfg, name, user_agent):
 def door_gate_outcome(cfg, name, user_agent, cookie_value):
     # The gate POST's decision, shared by both doors (the DHD
     # proxy and the bridge's own public bind): ("session", device)
-    # when the visitor leaves with a token — a renewal, or the
-    # bootstrap — and ("pending", device) when the device must
-    # wait for an approval.
+    # when the visitor already holds a device token (a renewal),
+    # and ("pending", device) for every correct-code knock —
+    # INCLUDING THE FIRST. v0.6.11e (#313 leg 2, ruling B,
+    # Alex 2026-11-20): the first device is confirmed on the
+    # machine itself — from its own dashboard over loopback,
+    # or a shell act on the box — never by a network-door
+    # code alone. The pre-ruling bootstrap (the first code
+    # minting an approved device on its own strength) is
+    # retired; a one-operator house confirms its first phone
+    # at the machine, once, and every later device is
+    # approved from any trusted session as before.
     ok, dev, _legacy = door_gate_acceptance(cfg, cookie_value)
     if ok and dev is not None:
         return "session", dev
-    if not door_approved_devices(cfg):
-        return "session", door_create_approved(cfg, name, user_agent)
     return "pending", door_register_pending(cfg, name, user_agent)
 
 
@@ -956,6 +975,9 @@ def public_state_payload(cfg, for_loopback):
         # DHD is the flow this list exists for.
         "devices": devices,
         "pendingDevices": sum(1 for d in devices if d["status"] == "pending"),
+        # v0.6.11e (#313 leg 3): the trusted-proxy list the
+        # doors read forwarded headers from.
+        "trustedProxies": trusted_proxies(cfg),
     }
 
 
@@ -1080,7 +1102,8 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
     # door outright, it knocks. approval_mode says trusted devices
     # already exist, so a correct code here makes this device a
     # PENDING one that waits for an approval; without it, this is
-    # the bootstrap — the first device trusts itself with the code.
+    # the FIRST device — it waits too, for a confirmation on the
+    # machine itself (v0.6.11e, #313 leg 2, ruling B).
     is_dhd = door == "dhd"
     if not name:
         if is_dhd:
@@ -1152,14 +1175,15 @@ def gate_page_html(error="", door="node", name="", attempts_remaining=None, lock
             if approval_mode
             else "Type the access code - you will find it on the DHD page, on the machine Apex runs on. "
             "Then name this device - the name is how it appears in the trusted-device list. "
-            "The first device at this door trusts itself with the code; every device after it "
-            "waits for an approval from one that is already in."
+            "This is the first device at this door, and it waits like every other: confirm it "
+            "on the machine itself, in Settings - System - Door there. A code typed at a "
+            "network door never lets a device in on its own - not even the first."
         )
         + "</p>"
         + (
             # 0.2.0e Build 7: a container node's one rescue line.
             # While no device has ever been approved (the
-            # bootstrap shape above), a container operator who
+            # no-devices-yet shape above), a container operator who
             # missed the first-boot output is told where the code
             # lives. It reveals nothing — the code itself is never
             # on this page — and it renders ONLY in a container
@@ -1228,7 +1252,7 @@ def gate_pending_html(device_id, device_name, door="node"):
         + door_line
         + "</p>"
         "<p class='hint'>This device - <b>" + _gate_escape(device_name or "Unnamed device") + "</b> - is waiting at the door.</p>"
-        "<p class='hint'>On a device that is already trusted, open <b>Settings - System - Door</b> and approve it. "
+        "<p class='hint'>On the machine Apex runs on - or on a device that is already trusted - open <b>Settings - System - Door</b> and approve it. "
         "This page checks on its own and walks through the moment it is approved. "
         "The wait lasts 30 minutes; after that, knock again.</p>"
         "<p class='meta' id='wait-status' role='status'>Waiting for approval…</p>"
@@ -1604,8 +1628,9 @@ def dhd_gate_page(handler):
     # disabled with the remaining lockout time. The throttle itself
     # is unchanged; this only shows what it already knows. Build 2
     # adds the approval_mode fact: whether any trusted device
-    # exists yet decides if a correct code here bootstraps or
-    # knocks.
+    # exists yet decides which waiting words a correct code
+    # here gets — every code knocks (v0.6.11e, ruling B); the
+    # first device is confirmed on the machine itself.
     ip = handler._client_ip()
     fails, lock_until = dhd_throttle_state(ip)
     host = handler.headers.get("Host") or ""
@@ -1627,6 +1652,60 @@ def dhd_gate_page(handler):
             approval_mode=approval,
         )
     return gate_page_html("", door="dhd", name=host, approval_mode=approval)
+
+
+def trusted_proxies(cfg):
+    # v0.6.11e (#313 leg 3): the addresses whose forwarded
+    # headers a door may believe — the config's
+    # trustedProxies list, exact address strings. Empty
+    # (the default) trusts NO headers: every door judges
+    # the socket peer, byte-for-byte the behavior Apex has
+    # always had. A non-empty list IS the enable; there is
+    # no separate toggle to disagree with it.
+    raw = (cfg or {}).get("trustedProxies")
+    if not isinstance(raw, list):
+        return []
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
+def client_ip(handler, cfg):
+    # The address a door judges: the socket peer, unless
+    # the peer is a trusted proxy — then the visitor it
+    # speaks for. The walk reads X-Forwarded-For
+    # right-to-left (nearest hop first), skipping trusted
+    # hops; the first untrusted hop is the visitor. When
+    # every hop is trusted (or no chain was sent), the
+    # single-hop headers speak, in the order
+    # CF-Connecting-IP, then X-Real-IP, then the peer
+    # itself. An untrusted peer's headers are ignored
+    # entirely — a spoofed chain changes nothing.
+    try:
+        peer = str(handler.client_address[0] or "")
+    except Exception:
+        peer = ""
+    if not peer:
+        return ""
+    trusted = trusted_proxies(cfg)
+    if peer not in trusted:
+        return peer
+    headers = getattr(handler, "headers", None)
+
+    def hdr(name):
+        try:
+            return str(headers.get(name) or "").strip() if headers else ""
+        except Exception:
+            return ""
+
+    xff = hdr("X-Forwarded-For")
+    if xff:
+        for hop in reversed([h.strip() for h in xff.split(",") if h.strip()]):
+            if hop not in trusted:
+                return hop
+    for name in ("CF-Connecting-IP", "X-Real-IP"):
+        v = hdr(name)
+        if v:
+            return v
+    return peer
 
 
 def dhd_throttle_state(ip):
@@ -1682,15 +1761,16 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
                 pass
 
     def _client_ip(self):
-        try:
-            return str(self.client_address[0] or "")
-        except Exception:
-            return ""
+        # v0.6.11e (#313 leg 3): the shared helper — the
+        # socket peer, or the visitor a trusted proxy
+        # speaks for.
+        return client_ip(self, load_config())
 
     def _accepted(self):
         # Build 2 (#173): acceptance is the device registry's word
-        # — a trusted device's own token, or (only while no device
-        # has ever been approved) the shared-code cookie. An
+        # — a trusted device's own token, and nothing else
+        # (v0.6.11e: the shared-code cookie's bootstrap voice is
+        # retired with the bootstrap itself). An
         # accepted device's last-seen and sliding renewal are
         # touched here, throttled inside door_touch_device.
         cfg = load_config()
@@ -1746,10 +1826,56 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
         headers["X-Forwarded-For"] = self._client_ip()
         headers["X-Forwarded-Proto"] = "https"
         headers["X-Apex-Via"] = "dhd"
-        conn = http.client.HTTPConnection("127.0.0.1", BRIDGE_PORT, timeout=60)
+        # v0.6.11e (#278): the chat path's clock is the chat
+        # clock, not the door's old 60-second one — a turn may
+        # compose for as long as the bridge's own CHAT_TIMEOUT
+        # allows, and a streamed turn's heartbeats keep this
+        # socket exercised the whole while. Every other path
+        # keeps the door's 60 seconds.
+        _is_chat = self.path.split("?")[0] == "/api/chat"
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", BRIDGE_PORT,
+            timeout=(CHAT_TIMEOUT + 120) if _is_chat else 60)
         try:
             conn.request(self.command, self.path, body=body, headers=headers)
             resp = conn.getresponse()
+            if _is_chat and (resp.getheader("Transfer-Encoding") or "").lower() == "chunked":
+                # A streamed chat answer: relay it as it
+                # arrives, frame by frame, re-chunked to the
+                # phone. If the phone goes away mid-relay the
+                # upstream connection closes with the relay —
+                # that is how the bridge's next heartbeat
+                # learns the client is gone and names it.
+                self.send_response(resp.status)
+                self.send_header("Content-Type",
+                                 resp.getheader("Content-Type")
+                                 or "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                try:
+                    while True:
+                        piece = resp.read1(65536)
+                        if not piece:
+                            if resp.isclosed():
+                                break
+                            time.sleep(0.05)
+                            continue
+                        self.wfile.write(
+                            ("%x\r\n" % len(piece)).encode()
+                            + piece + b"\r\n")
+                        self.wfile.flush()
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                try:
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+                return
             data = resp.read()
             out_headers = {}
             for k, v in resp.getheaders():
@@ -1812,7 +1938,7 @@ class DhdProxyHandler(BaseHTTPRequestHandler):
             dhd_throttle_clear(ip)
             # Build 2 (#173): a correct code knocks. The outcome
             # is the registry's: a session with the device's OWN
-            # token (the bootstrap, or a renewal), or a pending
+            # token (a renewal), or a pending
             # device and its waiting room.
             action, dev = door_gate_outcome(cfg, dev_name, self.headers.get("User-Agent"), door_cookie_value(self.headers.get("Cookie")))
             if action == "session":
@@ -4057,10 +4183,11 @@ def mesh_authenticate(handler, body, request_id):
     # the door's own handlers call this, so every call is a
     # knock at the Mesh door by construction.
     peer = _mesh_authenticate(handler, body, request_id)
-    try:
-        ip = handler.client_address[0] if handler.client_address else ""
-    except Exception:
-        ip = ""
+    # v0.6.11e (#313 leg 3): knocks and slate-clears key on
+    # the shared client_ip() — behind a trusted proxy the
+    # ledger names the visitor, not the proxy; with the
+    # default empty list it is the socket peer, as always.
+    ip = client_ip(handler, load_config())
     if ip:
         if peer is not None:
             mesh_door_success(ip)
@@ -10131,68 +10258,215 @@ def _mesh_send_prepared(peer, method, path, headers, body, timeout):
     # request a relay forwards is the asker's own, byte-identical
     # including its signature headers; the relay signs nothing of
     # its own onto it. Same dial semantics as _mesh_request
-    # (addresses in card order, fingerprint pinned from THIS
+    # (the dial's preference order, fingerprint pinned from THIS
     # machine's record for the destination, same error kinds).
     return _mesh_dial(peer, method, path, body, timeout, headers)
 
 
+# v0.6.11e (#309): the dial's connect phase is a race. The
+# per-address CONNECT budget — TCP + TLS + the pinned
+# fingerprint check, nothing more; once a road wins, the
+# caller's own timeout governs the request and the read,
+# exactly as it always has.
+MESH_CONNECT_BUDGET = 4.0
+# How far apart successive roads leave the gate, in
+# preference order: a healthy first road wins before the
+# second is even tried; a dead one costs a stagger, not a
+# timeout.
+MESH_DIAL_STAGGER = 0.3
+
+
+def _ipv4_private(ip):
+    # RFC1918 only (the dial order's notion of private).
+    parts = str(ip or "").split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        a, b = int(parts[0]), int(parts[1])
+    except Exception:
+        return False
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def _mesh_local_ipv4s():
+    # This machine's own IPv4 addresses, best-effort — the
+    # dial order's locality evidence. Never fatal.
+    out = set()
+    try:
+        ip = lan_ipv4()
+        if ip:
+            out.add(ip)
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            out.add(info[4][0])
+    except Exception:
+        pass
+    return out
+
+
+def _mesh_dial_order(peer):
+    # The preference order, computed at dial time; the
+    # stored record is never rewritten. The managed tunnel
+    # stays LAST unconditionally (#178 — the direct roads
+    # are always tried first). A peer with any address
+    # sharing an RFC1918 subnet (same /24) with one of this
+    # machine's own interfaces is LOCAL: the stored order
+    # stands, so a LAN peer is never hairpinned out to its
+    # public address. Otherwise public addresses go before
+    # private ones, stable within each class.
+    addrs = _mesh_effective_addresses(peer)
+    if len(addrs) <= 1:
+        return addrs
+    tunnel = _mesh_tunnel_entry(peer)
+    body = [a for a in addrs if a != tunnel] if tunnel else list(addrs)
+
+    def host_of(a):
+        h, _p = _mesh_addr_parts(a, peer["port"])
+        return h
+
+    locals4 = _mesh_local_ipv4s()
+
+    def is_local(a):
+        h = host_of(a)
+        if not _ipv4_private(h):
+            return False
+        hp = h.split(".")[:3]
+        return any(l.split(".")[:3] == hp and _ipv4_private(l) for l in locals4)
+
+    if any(is_local(a) for a in body):
+        ordered = body
+    else:
+        ordered = ([a for a in body if not _ipv4_private(host_of(a))]
+                   + [a for a in body if _ipv4_private(host_of(a))])
+    if tunnel and tunnel in addrs:
+        ordered = ordered + [tunnel]
+    return ordered
+
+
+def _mesh_connect_once(peer, address, budget):
+    # One connect attempt: TCP + TLS + the pinned
+    # fingerprint check inside `budget` seconds. Returns
+    # (conn, None) on a match — the connection then belongs
+    # to the caller, with NO request bytes sent — or
+    # (None, (kind, err, disp)) with kind one of
+    # fingerprint / tls / timeout / unreachable, the
+    # classification vocabulary the dial has always used.
+    host, eport = _mesh_addr_parts(address, peer["port"])
+    disp = host + ":" + str(eport)
+    conn = None
+    try:
+        ctx = ssl._create_unverified_context()
+        conn = http.client.HTTPSConnection(host, eport, timeout=budget, context=ctx)
+        conn.connect()
+        der = b""
+        try:
+            der = conn.sock.getpeercert(binary_form=True) or b""
+        except Exception:
+            der = b""
+        fp = hashlib.sha256(der).hexdigest() if der else ""
+        if peer["certFingerprint"] and fp != peer["certFingerprint"]:
+            conn.close()
+            return None, ("fingerprint", "fingerprint mismatch", disp)
+        return conn, None
+    except Exception as e:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+        if isinstance(e, ssl.SSLError):
+            kind = "tls"
+        elif isinstance(e, (socket.timeout, TimeoutError)):
+            kind = "timeout"
+        else:
+            kind = "unreachable"
+        return None, (kind, str(e), disp)
+
+
 def _mesh_dial(peer, method, path, body, timeout, headers):
-    # The shared dial: try the peer's addresses in card order,
-    # presenting `headers` verbatim. Returns (status, raw-body).
-    # Raises _MeshFpError when
-    # an address answered but none presented the pinned
-    # fingerprint, _MeshDropped when a connected request died
-    # mid-flight, _MeshTlsError when an address answered but the
-    # TLS handshake failed, _MeshTimeout when nothing answered in
-    # time, _MeshUnreachable when no address could be connected
-    # at all. (0.2.0e Build 1, #143: the failure kinds name their
-    # stage — the classification is reporting only; which error
-    # a caller acts on, and how, is unchanged.)
-    last_err = None
-    fp_err = None
-    tls_err = None
-    timeout_err = None
-    # Build 6 (#226): the dial remembers WHICH address each
-    # failure kind died at, and the classified exceptions carry
-    # it (mesh_kind / mesh_addr) — the federation sentences name
-    # the stage and the road instead of flattening every failure
-    # into "did not answer".
-    fp_addr = ""
-    tls_addr = ""
-    timeout_addr = ""
-    last_addr = ""
-    for address in _mesh_effective_addresses(peer):
-        # Build 4 (#143/#154): an entry may carry its own port
-        # (host:port); a bare host inherits the record's port.
-        # One helper parses both, here and in the health sweep.
-        host, eport = _mesh_addr_parts(address, peer["port"])
-        disp = host + ":" + str(eport)
-        last_addr = disp
-        conn = None
+    # The shared dial (v0.6.11e, #309 — the racing dial):
+    # the peer's addresses, in the preference order
+    # _mesh_dial_order computes, are CONNECTED in a
+    # staggered race (~300ms apart, each attempt bounded by
+    # the connect budget): the first connection that also
+    # matches the pinned fingerprint wins, and every loser
+    # is closed before any request bytes exist. From the
+    # win on, behavior is the dial's historical behavior
+    # byte-for-byte: the request rides the winner under the
+    # caller's timeout, and a failure after the send is a
+    # drop. When no road wins, the failure classification is
+    # the historical one — per-address kinds remembered,
+    # precedence fingerprint > TLS > timeout > unreachable,
+    # the classified exceptions carrying mesh_kind /
+    # mesh_addr (the last road, in preference order, that
+    # died of the winning kind) and mesh_roads (every road
+    # tried). Presents `headers` verbatim. Raises
+    # _MeshFpError / _MeshDropped / _MeshTlsError /
+    # _MeshTimeout / _MeshUnreachable as before (#143: the
+    # kinds name their stage; which error a caller acts on,
+    # and how, is unchanged).
+    addrs = _mesh_dial_order(peer)
+    roads = []
+    for a in addrs:
+        h, p = _mesh_addr_parts(a, peer["port"])
+        roads.append(h + ":" + str(p))
+    try:
+        budget = min(MESH_CONNECT_BUDGET, float(timeout))
+    except Exception:
+        budget = MESH_CONNECT_BUDGET
+    if budget <= 0:
+        budget = MESH_CONNECT_BUDGET
+    cond = threading.Condition()
+    state = {"winner": None, "win_disp": "", "results": {}, "done": 0}
+
+    def attempt(idx, address):
+        conn, err = _mesh_connect_once(peer, address, budget)
+        with cond:
+            if conn is not None and state["winner"] is None:
+                state["winner"] = conn
+                state["win_disp"] = roads[idx]
+            else:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                if err is not None:
+                    state["results"][idx] = err
+            state["done"] += 1
+            cond.notify_all()
+
+    threads = []
+    started = 0
+    with cond:
+        while True:
+            if state["winner"] is not None:
+                break
+            if started < len(addrs):
+                t = threading.Thread(target=attempt,
+                                     args=(started, addrs[started]),
+                                     daemon=True)
+                t.start()
+                threads.append(t)
+                started += 1
+                if started < len(addrs):
+                    cond.wait(timeout=MESH_DIAL_STAGGER)
+                    continue
+            if state["done"] >= started and started >= len(addrs):
+                break
+            cond.wait(timeout=0.25)
+    conn = state["winner"]
+    if conn is not None:
+        disp = state["win_disp"]
         sent = False
         try:
-            ctx = ssl._create_unverified_context()
-            conn = http.client.HTTPSConnection(host, eport, timeout=timeout, context=ctx)
-            conn.connect()
-            der = b""
             try:
-                der = conn.sock.getpeercert(binary_form=True) or b""
+                if conn.sock is not None:
+                    conn.sock.settimeout(timeout)
             except Exception:
-                der = b""
-            fp = hashlib.sha256(der).hexdigest() if der else ""
-            if peer["certFingerprint"] and fp != peer["certFingerprint"]:
-                conn.close()
-                # Build 7 (#87): a mismatch at ONE address no
-                # longer aborts the whole request. A card can
-                # carry several addresses and something else may
-                # be answering at the wrong one — record the
-                # mismatch and try the next address. _MeshFpError
-                # is raised only at the end, when no address both
-                # connected AND matched (see below).
-                fp_err = "fingerprint mismatch"
-                fp_addr = disp
-                last_err = _MeshFpError("fingerprint mismatch")
-                continue
+                pass
             conn.request(method, path, body=body, headers=headers)
             sent = True
             if path in ("/mesh/borrow", "/mesh/relay"):
@@ -10216,48 +10490,67 @@ def _mesh_dial(peer, method, path, body, timeout, headers):
             status = resp.status
             conn.close()
             return status, raw
-        except _MeshFpError:
-            raise
         except Exception as e:
             try:
-                if conn is not None:
-                    conn.close()
+                conn.close()
             except Exception:
                 pass
             if sent:
                 dropped = _MeshDropped(str(e))
                 dropped.mesh_kind = "dropped"
                 dropped.mesh_addr = disp
+                dropped.mesh_roads = roads
                 raise dropped
+            # The winner died between the fingerprint check
+            # and the send: that is its own road's failure,
+            # classified like any connect failure — and the
+            # race is not re-run (the send phase has always
+            # been single-road).
             if isinstance(e, ssl.SSLError):
-                tls_err = str(e)
-                tls_addr = disp
+                err = _MeshTlsError(str(e))
+                err.mesh_kind = "tls"
             elif isinstance(e, (socket.timeout, TimeoutError)):
-                timeout_err = str(e)
-                timeout_addr = disp
-            last_err = e
-            continue
-    # Build 7 (#87): something DID answer at one of the addresses
-    # but never with the pinned certificate — that is the honest,
-    # diagnosable failure, and it outranks a plain unreachable.
-    if fp_err is not None:
-        err = _MeshFpError(fp_err)
+                err = _MeshTimeout(str(e))
+                err.mesh_kind = "timeout"
+            else:
+                err = _MeshUnreachable(str(e))
+                err.mesh_kind = "unreachable"
+            err.mesh_addr = disp
+            err.mesh_roads = roads
+            raise err
+    # No road won: the historical classification, over the
+    # per-address results the race remembered.
+    by_kind = {}
+    for idx in sorted(state["results"]):
+        kind, msg, disp = state["results"][idx]
+        by_kind.setdefault(kind, []).append((msg, disp))
+    last_disp = roads[-1] if roads else ""
+    if "fingerprint" in by_kind:
+        msg, disp = by_kind["fingerprint"][-1]
+        err = _MeshFpError(msg)
         err.mesh_kind = "fingerprint"
-        err.mesh_addr = fp_addr
+        err.mesh_addr = disp
+        err.mesh_roads = roads
         raise err
-    if tls_err is not None:
-        err = _MeshTlsError(tls_err)
+    if "tls" in by_kind:
+        msg, disp = by_kind["tls"][-1]
+        err = _MeshTlsError(msg)
         err.mesh_kind = "tls"
-        err.mesh_addr = tls_addr
+        err.mesh_addr = disp
+        err.mesh_roads = roads
         raise err
-    if timeout_err is not None:
-        err = _MeshTimeout(timeout_err)
+    if "timeout" in by_kind:
+        msg, disp = by_kind["timeout"][-1]
+        err = _MeshTimeout(msg)
         err.mesh_kind = "timeout"
-        err.mesh_addr = timeout_addr
+        err.mesh_addr = disp
+        err.mesh_roads = roads
         raise err
-    err = _MeshUnreachable(str(last_err))
+    msg = by_kind.get("unreachable", [("", last_disp)])[-1][0]
+    err = _MeshUnreachable(msg)
     err.mesh_kind = "unreachable"
-    err.mesh_addr = last_addr
+    err.mesh_addr = last_disp
+    err.mesh_roads = roads
     raise err
 
 
@@ -10282,6 +10575,23 @@ def _mesh_failure_stage(exc):
                 kind = k
                 break
     addr = getattr(exc, "mesh_addr", "") or ""
+    # v0.6.11e (#309): when more than one road was tried, the
+    # sentence names the roads tried — a multi-road failure
+    # flattened into one road's name sent a live diagnosis
+    # down the wrong road. Single-road failures keep the
+    # historical wording exactly.
+    roads = getattr(exc, "mesh_roads", None) or []
+    if len(roads) > 1 and kind != "dropped":
+        joined = ", ".join(roads)
+        if kind == "timeout":
+            return "none of the roads tried (" + joined + ") answered in time"
+        if kind == "unreachable":
+            return "none of the roads tried (" + joined + ") could be connected to"
+        if kind == "tls":
+            return "the TLS handshake failed on the roads tried (" + joined + ")"
+        if kind == "fingerprint":
+            return ("no door on the roads tried (" + joined
+                    + ") presented the pinned certificate")
     if kind == "timeout":
         return ("the last road tried, " + addr + ", did not "
                 "answer in time") if addr else "nothing answered in time"
@@ -12191,6 +12501,20 @@ def mesh_handle_sync_exchange(handler, body):
     theirs = _mesh_sync_decode(data)
     if theirs is None:
         return 200, {"ok": False, "reason": "bad-set"}
+    # v0.6.11e (#337): the set itself is anchored too — the
+    # same defense in depth the pull road and both client
+    # legs already run. Admission proved the borrower's
+    # STATED account; this proves the SET it shipped is
+    # that account's. A set naming another account (or no
+    # account) is refused by name and nothing of it lands.
+    if _mesh_sync_foreign_account(data):
+        manifest = data.get("manifest") if isinstance(data.get("manifest"), dict) else {}
+        acct = str(manifest.get("account") or "")
+        reason = "different-operator" if acct else "operator-unknown"
+        mesh_ledger_append({"peer": peer["nodeId"], "direction": "sync",
+                            "outcome": "refused-" + reason})
+        return 200, {"ok": False, "reason": reason,
+                     "account": str((github_auth() or {}).get("login") or "")}
     if not _SYNC_LOCK.acquire(False):
         return 200, {"ok": False, "reason": "busy"}
     # v0.5.1e (#257): the lender's applies are sync-driven, not
@@ -15036,7 +15360,20 @@ def github_search_repositories(query):
 # this real apply path against a local stand-in instead of the
 # live release; it is unset in normal installs.
 
-UPDATES_DIR = os.path.join(ROOT, "updates")
+# v0.6.11e (#306-full): the updater's stage home moved out of
+# the tree it replaces — .apex-apply-stage/ beside the install
+# root, in the installer's own sibling idiom (.apex-stage,
+# .apex-prev), ground no swap ever renames. New stages are
+# only ever created here. The in-tree updates/ folder is the
+# LEGACY home: stages an older bridge created there still run
+# to completion (their job files carry absolute paths and the
+# helper takes every path from the job), and stage lookup
+# reads both homes for one chapter — the dual-read retires at
+# this chapter's graduation.
+APPLY_STAGE_HOME = os.path.join(
+    os.path.dirname(os.path.abspath(ROOT)), ".apex-apply-stage")
+UPDATES_DIR = APPLY_STAGE_HOME
+LEGACY_UPDATES_DIR = os.path.join(ROOT, "updates")
 UPDATE_RESULT_PATH = os.path.join(ROOT, "config", "update-result.json")
 
 
@@ -15514,6 +15851,68 @@ def _apply_watchdog(rec):
         return rec
 
 
+def _rollback_point_info():
+    # v0.6.11e (#307): the rollback point this install carries,
+    # read from disk — never asserted. The point is the parked
+    # previous tree (.apex-prev beside the install root, kept
+    # by the installer since this build) plus, when the
+    # installer could write one, its config archive in the
+    # stage home. Returns None when no point stands: a fresh
+    # install, or a point the disk guard retired (the install
+    # record says which, by name). The panel renders the
+    # rollback act only from this — no point on disk, no offer
+    # (the #318 standard).
+    prev = os.path.join(os.path.dirname(ROOT), ".apex-prev")
+    if not os.path.isfile(os.path.join(prev, "bridge.py")):
+        return None
+    info = {"prevDir": prev, "label": "", "stamp": "", "seq": None,
+            "archiveDir": "", "withConfigAvailable": False}
+    try:
+        with open(os.path.join(prev, "bridge.py"), "rb") as f:
+            head = f.read(200000)
+        m = re.search(rb'BRIDGE_BUILD = "([^"]+)"', head)
+        if m:
+            info["stamp"] = m.group(1).decode("utf-8", "replace")
+        m = re.search(rb"SHIPPED_BUILD_SEQ = ([0-9]+)", head)
+        if m:
+            info["seq"] = int(m.group(1))
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(prev, "VERSION")) as f:
+            raw = f.read().strip().splitlines()[0].strip()
+        parts = raw.split()
+        number = parts[0] if parts else ""
+        status = parts[1] if len(parts) > 1 else ""
+        label = "v" + number + (
+            "e" if status in ("edge", "alpha") else
+            "b" if status == "beta" else "")
+        info["label"] = label
+    except Exception:
+        pass
+    if info["stamp"]:
+        info["label"] = (
+            (info["label"] + " ") if info["label"] else "") \
+            + "(build " + info["stamp"] + ")"
+    arch_root = os.path.join(APPLY_STAGE_HOME, "archive")
+    try:
+        for name in sorted(os.listdir(arch_root)):
+            rec_path = os.path.join(arch_root, name, "rollback.json")
+            try:
+                with open(rec_path) as f:
+                    rec = json.load(f)
+            except Exception:
+                continue
+            if rec.get("fromSeq") == info["seq"] \
+                    and os.path.isfile(
+                        os.path.join(arch_root, name, "config.tar")):
+                info["archiveDir"] = os.path.join(arch_root, name)
+                info["withConfigAvailable"] = True
+    except Exception:
+        pass
+    return info
+
+
 def update_result_payload():
     # The apply's live record (config/update-result.json): the
     # step it is on while it runs, and afterwards either the
@@ -15532,7 +15931,7 @@ def update_result_payload():
             # every record passes through, so a record written by
             # the helper, by the bridge, or closed by the watchdog
             # all carry it. The staged folder's parent is the
-            # tag's folder under updates/, where the apply's two
+            # tag's folder in the stage home, where the apply's two
             # logs live: the installer's own output and the
             # helper's step log.
             staged = str(out.get("stagedDir") or "")
@@ -15541,10 +15940,21 @@ def update_result_payload():
                 out["diagnoseCommand"] = (
                     "cat " + os.path.join(tag_dir, "apply-install.log")
                     + "; cat " + os.path.join(tag_dir, "apply-trace.log"))
+            # #307: the rollback point rides every record read,
+            # so the panel's rollback act — and its failure
+            # surface's first remedy — are only ever as real as
+            # the point on disk.
+            point = _rollback_point_info()
+            if point:
+                out["rollbackPoint"] = point
             return out
     except Exception:
         pass
-    return {"ok": True, "state": "none"}
+    out = {"ok": True, "state": "none"}
+    point = _rollback_point_info()
+    if point:
+        out["rollbackPoint"] = point
+    return out
 
 
 def _unwrap_package(data):
@@ -15585,13 +15995,21 @@ def _unwrap_package(data):
 # update_result_payload above), not a patch on one suspect
 # line.
 APPLY_HELPER_PY = '''#!/usr/bin/env python3
-# Apex updater apply helper — written by bridge.py into
-# updates/<tag>/ and run detached (its own session), so it
-# outlives the bridge it replaces. It runs the staged installer
-# (never --fresh), relaunches the app through start.sh, and
-# records the outcome in config/update-result.json — the record
-# the Updater panel reads its confirmation (or its failure and
-# fallback) from. Stdlib only, like the bridge.
+# Apex updater apply helper — written by bridge.py into the
+# stage home (.apex-apply-stage/<tag>/ since v0.6.11e, #306-full;
+# updates/<tag>/ before it) and run detached (its own session),
+# so it outlives the bridge it replaces. It runs the staged
+# installer (never --fresh), relaunches the app through
+# start.sh, and records the outcome in
+# config/update-result.json — the record the Updater panel
+# reads its confirmation (or its failure and fallback) from.
+# Stdlib only, like the bridge.
+#
+# v0.6.11e: this file has a second mode — `--rollback`
+# (see rollback_main below): the executor that returns a seat
+# to the rollback point the installer now keeps (#307), and
+# the confirmation above gained its third leg — the serving
+# process's unit membership (#336).
 #
 # Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate caught it dying silently: the installer ran
@@ -15754,15 +16172,71 @@ def write_result(patch):
                   "attempt " + str(attempt) + ": " + str(e))
 
 
-def fail(step, error):
+def _rollback_point_info(root):
+    # v0.6.11e (#307): the rollback point standing for this
+    # install, read from disk (the parked previous tree beside
+    # the root) — the same discipline as the bridge's reader:
+    # no point on disk, no offer. Returns a small dict or None.
+    if not root:
+        return None
+    prev = os.path.join(
+        os.path.dirname(os.path.abspath(root)), ".apex-prev")
+    if not os.path.isfile(os.path.join(prev, "bridge.py")):
+        return None
+    label = ""
+    stamp = ""
+    try:
+        with open(os.path.join(prev, "bridge.py"), "rb") as f:
+            head = f.read(200000)
+        m = re.search(rb'BRIDGE_BUILD = "([^"]+)"', head)
+        if m:
+            stamp = m.group(1).decode("utf-8", "replace")
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(prev, "VERSION")) as f:
+            raw = f.read().strip().splitlines()[0].strip()
+        parts = raw.split()
+        number = parts[0] if parts else ""
+        status = parts[1] if len(parts) > 1 else ""
+        label = "v" + number + (
+            "e" if status in ("edge", "alpha") else
+            "b" if status == "beta" else "")
+    except Exception:
+        pass
+    if stamp:
+        label = ((label + " ") if label else "") \\
+            + "(build " + stamp + ")"
+    return {"prevDir": prev, "label": label, "stamp": stamp}
+
+
+def fail(step, error, extra=None):
     STATE["step"] = step
     job = STATE.get("job") or {}
-    write_result({
+    patch = {
         "state": "failed", "step": step, "error": error,
         "stagedDir": job.get("pkgDir", ""),
         "command": job.get("command", ""),
         "failedAt": _stamp(),
-    })
+    }
+    if isinstance(extra, dict):
+        patch.update(extra)
+    # #307: a failed or unconfirmed apply offers the rollback
+    # as its first remedy — but only as real as the record: the
+    # offer rides the record only when a point stands on disk.
+    try:
+        point = _rollback_point_info(job.get("root"))
+        if point:
+            patch["rollbackPoint"] = point
+            patch["rollbackOffer"] = (
+                "Or roll back to " + (point["label"] or "the "
+                "previous build") + " — the previous install is "
+                "kept beside this one, and the rollback act "
+                "(Updater panel, or: python3 apply-helper.py "
+                "--rollback) returns to it whole.")
+    except Exception:
+        pass
+    write_result(patch)
 
 
 def _heartbeat():
@@ -16100,6 +16574,43 @@ def _port_holder_pid(port):
     return None
 
 
+def _pid_cgroup(pid):
+    try:
+        with open("/proc/" + str(pid) + "/cgroup") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def _cgroup_names_unit(cgroup_text, unit="navi-bridge.service"):
+    # Pure shape check, split out so the bench can prove the
+    # parsing without a live systemd: a process belongs to the
+    # bridge's unit when its cgroup path names the unit (the
+    # user slice's app/unit subtree).
+    return bool(cgroup_text) and unit in cgroup_text
+
+
+def _serving_unit_state(port):
+    # v0.6.11e (#336): who is ACTUALLY serving the port, in
+    # unit terms? Returns (state, pid, desc):
+    #   "in-unit"  — the holder's cgroup names navi-bridge.service
+    #   "detached" — a holder exists and its cgroup does not
+    #   "unknown"  — no holder could be resolved
+    # The 2026-11-20 00:23 incident is the detached shape: an
+    # Apply-spawned bridge adopted by start.sh answered with
+    # the right build while its systemd unit stood down, and
+    # the old confirmation — which asked only WHAT answered,
+    # never WHO — certified the seat healthy.
+    pid = _port_holder_pid(port)
+    if pid is None:
+        return ("unknown", None, "")
+    if _cgroup_names_unit(_pid_cgroup(pid)):
+        return ("in-unit", pid, "process " + str(pid))
+    cmd = _pid_cmdline(pid)
+    return ("detached", pid,
+            "process " + str(pid) + ((" (" + cmd + ")") if cmd else ""))
+
+
 def _port_answers_expected(port, tgt_seq):
     # True when the bridge answering on the port already reports
     # the target identity — the case where a relaunch spawn
@@ -16303,6 +16814,25 @@ def _install_log_last_step(log_path):
     return "the installer's closing steps (its log names no step banner for the failure)"
 
 
+def _stage_outside_tree(job):
+    # v0.6.11e (#306-full): is this job's stage already in the
+    # stage home outside the tree (.apex-apply-stage/<tag>)?
+    # When it is, the holding copy and the stage-recovery
+    # machinery have nothing to do: the swap never renames the
+    # stage's ground, so no copy needs holding and no artifact
+    # needs rescuing — and the recovery's cleanup, which
+    # removes the holding folder, must never run, because for
+    # an outside stage the "holding folder" IS the stage.
+    # Legacy jobs (a stage an older bridge created under
+    # updates/<tag> inside the tree) return False and keep the
+    # full #237 treatment, unchanged.
+    pkg_dir = os.path.abspath(str(job.get("pkgDir") or ""))
+    root = os.path.abspath(str(job.get("root") or ""))
+    if not pkg_dir or not root:
+        return False
+    return not pkg_dir.startswith(root + os.sep)
+
+
 def _stage_holding_dir(job):
     # The apply's insurance folder: a sibling of the install
     # root, in the installer's own sibling idiom (.apex-stage,
@@ -16345,6 +16875,16 @@ def _recover_stage_artifacts(job, log_handle):
     # in-place migration) is left exactly as it lies.
     # Best-effort throughout: a rescue that fails is traced,
     # never fatal — the apply's verdict must not hinge on it.
+    if _stage_outside_tree(job):
+        # #306-full: the stage lives outside the tree — the
+        # swap never parked it, its logs and package stand
+        # where the job's paths name them, and there is no
+        # holding copy to clean up (the holding folder for
+        # this job is the stage itself). Nothing to rescue.
+        trace("stage-recovery-skipped",
+              "the stage lives outside the tree "
+              "(.apex-apply-stage) — its artifacts never left home")
+        return
     try:
         install_log = str(job.get("installLog") or "")
         if install_log and not os.path.isfile(install_log) \\
@@ -16397,6 +16937,35 @@ def _recover_stage_artifacts(job, log_handle):
                 trace("stage-recovery-missed",
                       "no surviving copy of the staged package "
                       "was found to restore to " + pkg_dir)
+        # v0.6.11e (#306-full, campaign-caught): the handoff
+        # verdict (#208's named record) is stage paperwork
+        # too. Before the stage home existed, install.sh's
+        # evidence carry brought it across the swap; the
+        # carry retired with the move, and this recovery —
+        # which knew the log and the package — never learned
+        # the verdict, so a swapped in-tree stage stranded it
+        # in the parked tree. Bring it home with the rest.
+        try:
+            _stage_dir = os.path.dirname(pkg_dir)
+            _live_verdict = os.path.join(
+                _stage_dir, "apply-handoff-verdict.json")
+            if _stage_dir and not os.path.isfile(_live_verdict):
+                _orig_root = os.path.abspath(
+                    str(job.get("root") or ""))
+                if _orig_root and os.path.abspath(
+                        _stage_dir).startswith(_orig_root + os.sep):
+                    _parked_verdict = os.path.join(
+                        os.path.dirname(_orig_root), ".apex-prev") \\
+                        + os.path.abspath(_live_verdict)[len(_orig_root):]
+                    if os.path.isfile(_parked_verdict):
+                        shutil.copyfile(_parked_verdict, _live_verdict)
+                        trace("stage-recovered",
+                              "the handoff verdict was brought "
+                              "home to " + _live_verdict
+                              + " — the swap had parked it with "
+                              "the previous tree")
+        except Exception:
+            pass
     except Exception as e:
         trace("stage-recovery-failed", str(e))
     # The holding copy has served either way; a finished
@@ -16452,19 +17021,28 @@ def main():
     # cleanup can never take, so _recover_stage_artifacts
     # can always put the manual fallback's folder back where
     # the fallback command points.
-    try:
-        _held = _stage_holding_dir(job)
-        if _held and os.path.isdir(pkg_dir):
-            _held_pkg = os.path.join(_held, "package")
-            if os.path.isdir(_held_pkg):
-                shutil.rmtree(_held_pkg, ignore_errors=True)
-            os.makedirs(_held, exist_ok=True)
-            shutil.copytree(pkg_dir, _held_pkg)
-            trace("stage-held",
-                  "the staged package is held at " + _held_pkg
-                  + " while the installer runs")
-    except Exception as e:
-        trace("stage-hold-failed", str(e))
+    if _stage_outside_tree(job):
+        # #306-full: the stage is already on ground the swap
+        # never renames — holding a copy of it would mean
+        # copying the stage onto itself. The stage is its own
+        # insurance now.
+        trace("stage-held",
+              "the stage lives outside the tree "
+              "(.apex-apply-stage) — no holding copy is needed")
+    else:
+        try:
+            _held = _stage_holding_dir(job)
+            if _held and os.path.isdir(pkg_dir):
+                _held_pkg = os.path.join(_held, "package")
+                if os.path.isdir(_held_pkg):
+                    shutil.rmtree(_held_pkg, ignore_errors=True)
+                os.makedirs(_held, exist_ok=True)
+                shutil.copytree(pkg_dir, _held_pkg)
+                trace("stage-held",
+                      "the staged package is held at " + _held_pkg
+                      + " while the installer runs")
+        except Exception as e:
+            trace("stage-hold-failed", str(e))
 
     # v0.3.0e Build 1 (#205): takeover mode. When the staged
     # package's bootstrap spawned this helper, it takes an apply
@@ -16645,6 +17223,21 @@ def main():
         _verdict_path = os.path.join(
             os.path.dirname(os.path.abspath(job_path)),
             "apply-handoff-verdict.json")
+        if not os.path.isfile(_verdict_path):
+            # v0.6.11e (#306-full): the installer's swap may
+            # have parked the stage (and the verdict in it)
+            # before this quote runs — the recovery below
+            # brings the file home, but the quote is read
+            # now, so read through the park when the live
+            # path is bare.
+            _vroot = os.path.abspath(str(job.get("root") or ""))
+            _vdir = os.path.dirname(os.path.abspath(job_path))
+            if _vroot and _vdir.startswith(_vroot + os.sep):
+                _parked_v = os.path.join(
+                    os.path.dirname(_vroot), ".apex-prev") \\
+                    + _verdict_path[len(_vroot):]
+                if os.path.isfile(_parked_v):
+                    _verdict_path = _parked_v
         with open(_verdict_path) as _vf:
             _verdict = json.load(_vf)
         trace("handoff-verdict",
@@ -16825,8 +17418,8 @@ def main():
             reason = why or ("it exited with code " + str(code))
             fail("install",
                  "Installing the update failed — " + reason + ". The "
-                 "installer's own output is in updates/" + job["tagDir"]
-                 + "/apply-install.log. Nothing is confirmed updated: "
+                 "installer's own output is in " + job["installLog"]
+                 + ". Nothing is confirmed updated: "
                  "the app is being relaunched as it lies, and the "
                  "staged package is still in place — the manual "
                  "fallback below finishes the job by hand.")
@@ -16970,10 +17563,46 @@ def main():
         and tuples_equal(version_tuple(after_number), target)
         and (tgt_seq is None or disk_seq is None
              or disk_seq == tgt_seq))
-    if live_ok and file_ok:
+    # v0.6.11e (#336): the third leg of confirmation — the
+    # seat is proven healthy only when the process SERVING the
+    # port is the seat's own bridge, inside its systemd unit,
+    # on seats where systemd owns the bridge (an on-boot
+    # install). A right-build answer from a detached process —
+    # the 2026-11-20 incident shape, a start.sh-adopted bridge
+    # standing outside the unit that reports it fine — is
+    # refused by name, never adopted. On seats systemd does
+    # not own, there is no unit to belong to and the leg does
+    # not stand.
+    unit_state = "not-applicable"
+    unit_desc = ""
+    if live_ok and _relaunch_systemd_owned(job):
+        unit_state, _unit_pid, unit_desc = _serving_unit_state(
+            job["port"])
+        trace("health-gate",
+              "serving process: " + unit_state
+              + ((" — " + unit_desc) if unit_desc else ""))
+    if live_ok and file_ok and unit_state == "detached":
+        fail("restart",
+             "The update installed and the expected build "
+             "answers, but the bridge answering on "
+             "http://localhost:" + str(job["port"]) + " is "
+             + unit_desc + " — it is NOT running inside its "
+             "systemd unit (navi-bridge.service), so the seat "
+             "is not proven healthy and the update is not "
+             "confirmed. A detached bridge is a finding, not a "
+             "relaunch: end that process and restart the unit "
+             "(systemctl --user restart navi-bridge.service), "
+             "then run the update again. The staged package is "
+             "still in place.",
+             {"healthGate": {"buildSeq": tgt_seq, "unit": unit_state}})
+    elif live_ok and file_ok:
         STATE["step"] = "done"
         write_result({
             "state": "done", "step": "done",
+            # #336: the confirmation's proof, on the record —
+            # the build it observed answering, and the serving
+            # process's unit state where a unit owns the bridge.
+            "healthGate": {"buildSeq": tgt_seq, "unit": unit_state},
             **({"tailFailure": tail_failure} if tail_failure else {}),
             "afterVersion": after_number,
             "afterStatus": after_status,
@@ -17035,6 +17664,484 @@ def main():
     STATE["stop_beat"] = True
 
 
+# ------------------------------------------------------------------
+# v0.6.11e (#307): the rollback executor — this helper's second
+# mode. `apply-helper.py --rollback [job.json] [--with-config]`
+# returns the seat to the rollback point the installer kept:
+# the parked previous tree (.apex-prev) becomes the install
+# again, and the tree it replaces is parked in its place —
+# kept, named, never deleted, so the act toggles: the same
+# command rolls forward again. It lives below the bridge on
+# purpose: a rollback whose only door is the (possibly broken)
+# new bridge fails exactly when it is needed. The bridge's
+# in-app act spawns this same mode detached with a job file;
+# the shell door runs the installed tree's copy bare, and the
+# job is synthesized from the seat itself.
+#
+# Config classes, per the design of record:
+#   * tree-only (default): the CURRENT config rides whole —
+#     installs never overwrite operator state, so a tree-only
+#     rollback loses nothing the install did; state the bad
+#     build damaged stays damaged, and the record says so.
+#   * --with-config: the pre-Apply config archive (written by
+#     the installer into .apex-apply-stage/archive/) is
+#     restored — with custody material HELD OUT from the
+#     newest state and re-carried: the Mesh node keypair, the
+#     door device registry, the Operator Badge enrollment,
+#     and account tokens. A rollback must never resurrect a
+#     device revoked under the bad build, nor strand one
+#     approved under it.
+# Every outcome lands in config/update-result.json as a
+# rollback record — receipted like an Apply, never a silent
+# filesystem act.
+# ------------------------------------------------------------------
+
+def _rollback_archive_for(stage_home, point_seq):
+    arch_root = os.path.join(stage_home, "archive")
+    best = None
+    try:
+        names = os.listdir(arch_root)
+    except Exception:
+        return None
+    for name in names:
+        rec_path = os.path.join(arch_root, name, "rollback.json")
+        tar_path = os.path.join(arch_root, name, "config.tar")
+        if not os.path.isfile(rec_path) or not os.path.isfile(tar_path):
+            continue
+        try:
+            with open(rec_path) as f:
+                rec = json.load(f)
+        except Exception:
+            continue
+        if rec.get("fromSeq") == point_seq:
+            if best is None or os.path.getmtime(rec_path) \\
+                    > os.path.getmtime(best[0]):
+                best = (rec_path, tar_path, rec)
+    if best is None:
+        return None
+    return {"recordPath": best[0], "tarPath": best[1], "record": best[2]}
+
+
+def _custody_holdout(current_cfg):
+    # The custody slice of a config dict, lifted from the
+    # NEWEST state before any archive restore overwrites it.
+    # Returns (held, names): the values to re-carry, and the
+    # human names of what was actually found and held.
+    held = {}
+    names = []
+    if not isinstance(current_cfg, dict):
+        return held, names
+    ps = current_cfg.get("public_server")
+    if isinstance(ps, dict) and isinstance(ps.get("devices"), list):
+        held["doorDevices"] = ps["devices"]
+        names.append("the door device registry")
+    fed = current_cfg.get("federation")
+    if isinstance(fed, dict) and fed.get("badgeSha256"):
+        held["badgeSha256"] = fed["badgeSha256"]
+        names.append("the Operator Badge enrollment")
+    tokens = {}
+    for key, val in current_cfg.items():
+        if "token" in str(key).lower() and val:
+            tokens[key] = val
+    if tokens:
+        held["tokens"] = tokens
+        names.append("account tokens")
+    return held, names
+
+
+def _custody_recarry(restored_cfg, held):
+    if not isinstance(restored_cfg, dict):
+        return restored_cfg
+    if "doorDevices" in held:
+        ps = restored_cfg.get("public_server")
+        ps = dict(ps) if isinstance(ps, dict) else {}
+        ps["devices"] = held["doorDevices"]
+        restored_cfg["public_server"] = ps
+    if "badgeSha256" in held:
+        fed = restored_cfg.get("federation")
+        fed = dict(fed) if isinstance(fed, dict) else {}
+        fed["badgeSha256"] = held["badgeSha256"]
+        restored_cfg["federation"] = fed
+    for key, val in (held.get("tokens") or {}).items():
+        restored_cfg[key] = val
+    return restored_cfg
+
+
+def rollback_main(job):
+    root = os.path.abspath(str(job.get("root") or ""))
+    parent = os.path.dirname(root)
+    stage_home = os.path.join(parent, ".apex-apply-stage")
+    prev = os.path.join(parent, ".apex-prev")
+    port = int(job.get("port") or 8675)
+    with_config = bool(job.get("withConfig"))
+    STATE["job"] = job
+    STATE["result_path"] = job.get("resultPath") or os.path.join(
+        root, "config", "update-result.json")
+    STATE["trace_path"] = job.get("traceLog") or os.path.join(
+        stage_home, "rollback-trace.log")
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _on_signal)
+        except Exception:
+            pass
+    trace("rollback-start",
+          "pid " + str(os.getpid()) + ", root " + root
+          + ", with-config " + str(with_config))
+
+    def rfail(error):
+        trace("rollback-failed", error)
+        write_result({
+            "state": "failed", "step": "rollback",
+            "error": error, "failedAt": _stamp(),
+            "rollback": {"withConfig": with_config},
+        })
+        print("rollback: FAILED — " + error)
+        return 1
+
+    point = _rollback_point_info(root)
+    if not point:
+        return rfail(
+            "There is no rollback point on this machine: no "
+            "previous install is kept at " + prev + ". A "
+            "rollback point is kept by the first update the "
+            "current installer's build completes — nothing "
+            "was changed.")
+    point_seq = read_installed_build_seq(prev)
+    current_seq = read_installed_build_seq(root)
+    archive = _rollback_archive_for(stage_home, point_seq)
+    if with_config and not archive:
+        return rfail(
+            "The rollback point at " + prev + " carries no "
+            "config archive for build " + str(point_seq)
+            + ", so there is no pre-update config to restore. "
+            "A tree-only rollback (without --with-config) is "
+            "still available — nothing was changed.")
+    write_result({
+        "state": "working", "step": "rollback",
+        "rollback": {
+            "fromSeq": current_seq, "toSeq": point_seq,
+            "toLabel": point.get("label") or "",
+            "withConfig": with_config,
+        },
+    })
+    print("rollback: returning this seat to "
+          + (point.get("label") or "the previous build")
+          + " (point at " + prev + ")")
+
+    # Stop the serving bridge — by its proven pid only, the
+    # same discipline as the apply's wedge clear. A foreign
+    # holder is named and never touched.
+    holder = _port_holder_pid(port)
+    if holder is not None:
+        cmd = _pid_cmdline(holder)
+        owned = ("bridge.py" in cmd) \\
+            and (_pid_cwd(holder) == os.path.realpath(root))
+        if not owned:
+            return rfail(
+                "The process holding port " + str(port)
+                + " (pid " + str(holder)
+                + ((", " + cmd) if cmd else "")
+                + ") is not this install's bridge, so it was "
+                "not touched and the rollback did not run. End "
+                "it yourself, then roll back again.")
+        if not _stop_proven_bridge(holder, port,
+                                    "process " + str(holder)):
+            return rfail(
+                "This install's bridge (pid " + str(holder)
+                + ") could not be stopped, so the rollback did "
+                "not run — nothing was changed.")
+    else:
+        found = _find_install_bridge(root)
+        if found is not None:
+            _stop_proven_bridge(found, port,
+                                "process " + str(found))
+
+    # Snapshot the current config BEFORE the exchange: it is
+    # the custody source either way, and the tree-only case's
+    # whole config.
+    work = os.path.join(stage_home, "rollback-work")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work, exist_ok=True)
+    current_cfg_dir = os.path.join(root, "config")
+    snapshot = os.path.join(work, "config-current")
+    if os.path.isdir(current_cfg_dir):
+        shutil.copytree(current_cfg_dir, snapshot)
+    current_cfg = {}
+    try:
+        with open(os.path.join(snapshot, "navi.config.json")) as f:
+            current_cfg = json.load(f)
+    except Exception:
+        current_cfg = {}
+    held, held_names = _custody_holdout(current_cfg)
+    if os.path.isdir(os.path.join(snapshot, "mesh")):
+        held_names.append("the Mesh node keypair")
+
+    # The exchange: three renames, each tree kept whole.
+    park = os.path.join(parent, ".apex-rollback-park")
+    if os.path.exists(park):
+        if os.path.isdir(root) and os.path.isdir(prev):
+            shutil.rmtree(park, ignore_errors=True)
+        else:
+            return rfail(
+                "A previous rollback's park still stands at "
+                + park + " and the tree state is not whole — "
+                "the rollback did not run. That folder is the "
+                "evidence; look there first.")
+    try:
+        os.rename(root, park)
+        os.rename(prev, root)
+        os.rename(park, prev)
+    except Exception as e:
+        # Best-effort restoration of the pre-exchange shape.
+        try:
+            if not os.path.isdir(root) and os.path.isdir(park):
+                os.rename(park, root)
+        except Exception:
+            pass
+        return rfail(
+            "The tree exchange failed (" + str(e) + ") — the "
+            "rollback did not complete. The trees stand as: "
+            "install " + str(os.path.isdir(root))
+            + ", park " + str(os.path.isdir(park))
+            + ", previous " + str(os.path.isdir(prev)) + ".")
+    trace("rollback-exchange",
+          "the point is installed; the replaced tree is parked "
+          "at " + prev + " as the new point")
+
+    # Config, per class.
+    config_source = ""
+    restored_cfg_dir = os.path.join(root, "config")
+    if with_config:
+        import tarfile
+        shutil.rmtree(restored_cfg_dir, ignore_errors=True)
+        os.makedirs(restored_cfg_dir, exist_ok=True)
+        with tarfile.open(archive["tarPath"]) as tf:
+            tf.extractall(root)
+        # Custody re-carry: the newest state's custody wins
+        # over the archive, by name.
+        snap_mesh = os.path.join(snapshot, "mesh")
+        if os.path.isdir(snap_mesh):
+            dest_mesh = os.path.join(restored_cfg_dir, "mesh")
+            shutil.rmtree(dest_mesh, ignore_errors=True)
+            shutil.copytree(snap_mesh, dest_mesh)
+        cfg_path = os.path.join(restored_cfg_dir, "navi.config.json")
+        try:
+            with open(cfg_path) as f:
+                restored_cfg = json.load(f)
+        except Exception:
+            restored_cfg = {}
+        restored_cfg = _custody_recarry(restored_cfg, held)
+        with open(cfg_path, "w") as f:
+            json.dump(restored_cfg, f, indent=1)
+        config_source = (
+            "the pre-update archive, with custody held out "
+            "from the newest state (" + ", ".join(held_names)
+            + ")" if held_names else
+            "the pre-update archive (no custody material "
+            "stood in the newest state to hold out)")
+    else:
+        shutil.rmtree(restored_cfg_dir, ignore_errors=True)
+        if os.path.isdir(snapshot):
+            shutil.copytree(snapshot, restored_cfg_dir)
+        config_source = (
+            "the current config, whole (tree-only rollback: "
+            "state this seat accumulated under the replaced "
+            "build rides — including anything it damaged; "
+            "that is what --with-config exists for)")
+    trace("rollback-config", config_source)
+
+    # Relaunch by the install's recorded startup mode — the
+    # #305 discipline: a boot seat's bridge belongs to its
+    # unit; a launch seat's to start.sh.
+    env = dict(os.environ)
+    env["NAVI_HOME"] = root
+    if job.get("startup") == "on-boot":
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "restart",
+                 "navi-bridge.service"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=60)
+            trace("rollback-relaunch",
+                  "systemd owns this install's bridge — "
+                  "navi-bridge.service was signalled to restart")
+        except Exception as e:
+            trace("rollback-relaunch",
+                  "the unit restart could not be signalled ("
+                  + str(e) + ") — confirmation judges what answers")
+    else:
+        log_path = os.path.join(stage_home, "rollback-relaunch.log")
+        try:
+            logf = open(log_path, "ab")
+            try:
+                subprocess.Popen(
+                    ["bash", os.path.join(root, "start.sh")],
+                    cwd=root, env=env, stdin=subprocess.DEVNULL,
+                    stdout=logf, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True)
+            finally:
+                logf.close()
+            trace("rollback-relaunch", "start.sh spawned")
+        except Exception as e:
+            return rfail(
+                "The trees were exchanged and the config "
+                "settled (" + config_source + "), but the "
+                "relaunch could not be started (" + str(e)
+                + ") — launch the app from its menu entry; the "
+                "rollback itself has landed.")
+    # Confirm the previous build answers.
+    answered = None
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:" + str(port) + "/api/status",
+                headers={"User-Agent": "navi-rollback"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                seen = json.loads(resp.read().decode("utf-8", "replace"))
+            if seen.get("app") == "Navi: Apex" \\
+                    and seen.get("buildSeq") == point_seq:
+                answered = seen
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    if answered is None:
+        return rfail(
+            "The trees were exchanged and the config settled ("
+            + config_source + "), but the previous build did "
+            "not answer on port " + str(port) + " within three "
+            "minutes, so the rollback is not confirmed. The "
+            "replaced build is kept at " + prev + " — running "
+            "this same command again rolls forward to it.")
+    write_result({
+        "state": "done", "step": "rollback",
+        "rollback": {
+            "fromSeq": current_seq, "toSeq": point_seq,
+            "toLabel": point.get("label") or "",
+            "withConfig": with_config,
+            "configSource": config_source,
+            "custodyHeldOut": held_names,
+        },
+        "afterLabel": point.get("label") or "",
+    })
+    trace("rollback-done",
+          "confirmed " + (point.get("label") or "")
+          + "; config: " + config_source)
+    print("rollback: confirmed — "
+          + (point.get("label") or "the previous build")
+          + " is answering. Config: " + config_source + ".")
+    print("rollback: to return to the build you just left, "
+          "run the same act from the tree now parked at "
+          + prev + " — python3 \\"" + os.path.join(
+              prev, "apply-helper.py") + "\\" --rollback — its "
+          "helper speaks for this seat.")
+    shutil.rmtree(work, ignore_errors=True)
+    return 0
+
+
+def _rollback_entry():
+    # The shell door: `apply-helper.py --rollback` run from the
+    # installed tree synthesizes its job from the seat itself
+    # (the bridge is a constant port by design — BRIDGE_PORT is
+    # never read from config — and the startup mode is the
+    # config's recorded choice). The bridge's in-app act passes
+    # a job file instead.
+    args = [a for a in sys.argv[1:] if a != "--rollback"]
+    with_config = "--with-config" in args
+    args = [a for a in args if a != "--with-config"]
+    seat = ""
+    if "--seat" in args:
+        i = args.index("--seat")
+        if i + 1 < len(args):
+            seat = args[i + 1]
+            args = args[:i] + args[i + 2:]
+    job = None
+    if args and os.path.isfile(args[0]):
+        with open(args[0]) as f:
+            job = json.load(f)
+        job["withConfig"] = bool(job.get("withConfig") or with_config)
+    if job is None:
+        root = os.path.dirname(os.path.abspath(__file__))
+        if seat:
+            root = os.path.abspath(seat)
+        elif os.path.basename(root) == ".apex-prev":
+            # Run from the parked point tree — the roll-forward
+            # door. The live tree this helper serves is its
+            # seat: the one non-hidden sibling carrying a
+            # bridge. (The rolled-back build's own helper may
+            # predate this mode entirely; the point's helper
+            # is the one that can speak.) Ambiguity is refused
+            # by name, with --seat as the explicit answer.
+            parent = os.path.dirname(root)
+            seats = []
+            try:
+                seats = [d for d in sorted(os.listdir(parent))
+                         if not d.startswith(".")
+                         and os.path.isfile(os.path.join(
+                             parent, d, "bridge.py"))]
+            except Exception:
+                seats = []
+            if len(seats) == 1:
+                root = os.path.join(parent, seats[0])
+            else:
+                print("rollback: FAILED — this helper stands "
+                      "in the rollback point itself, and the "
+                      "seat it belongs to is not unambiguous "
+                      "(siblings carrying a bridge: "
+                      + (", ".join(seats) or "none") + "). "
+                      "Name the seat: --seat <install dir>.",
+                      flush=True)
+                sys.exit(1)
+        startup = ""
+        try:
+            with open(os.path.join(
+                    root, "config", "navi.config.json")) as f:
+                startup = str(json.load(f).get("startup") or "")
+        except Exception:
+            startup = ""
+        job = {
+            "root": root,
+            "resultPath": os.path.join(
+                root, "config", "update-result.json"),
+            "port": 8675,
+            "startup": startup,
+            "withConfig": with_config,
+            "traceLog": os.path.join(
+                os.path.dirname(root), ".apex-apply-stage",
+                "rollback-trace.log"),
+        }
+    try:
+        sys.exit(rollback_main(job))
+    except SystemExit:
+        # The exit IS the verdict (0 = the rollback stands,
+        # 1 = it refused or failed with its reason printed).
+        # It must never be swallowed by the crash guard below
+        # and rewritten as a failure — a confirmed rollback
+        # that exits 1 would be reported as a failure by
+        # every caller watching the code.
+        raise
+    except BaseException as e:
+        tb = traceback.format_exc()
+        try:
+            print(tb, file=sys.stderr)
+            sys.stderr.flush()
+        except Exception:
+            pass
+        try:
+            STATE["job"] = job
+            STATE["result_path"] = job.get("resultPath")
+            write_result({
+                "state": "failed", "step": "rollback",
+                "error": ("The rollback failed: "
+                          + type(e).__name__ + ": " + str(e)),
+                "failedAt": _stamp(),
+            })
+        except Exception:
+            pass
+        sys.exit(1)
+
+
 def _guarded_main():
     # The top-level guard: any Python-level failure anywhere in
     # the apply — the job load, a record write, the relaunch,
@@ -17076,7 +18183,10 @@ def _guarded_main():
 
 
 if __name__ == "__main__":
-    _guarded_main()
+    if "--rollback" in sys.argv:
+        _rollback_entry()
+    else:
+        _guarded_main()
 '''
 
 
@@ -17228,6 +18338,34 @@ def _run_update_apply(cfg):
         record["assetName"] = asset["name"]
         tag_dir = re.sub(r"[^0-9A-Za-z._-]+", "-", tag) or "release"
         stage_root = os.path.join(UPDATES_DIR, tag_dir)
+        # #306-full: stage retention in the new home — the
+        # current Apply's stage plus the previous two, pruned
+        # here at Apply start. Traces are the #208 acceptance
+        # evidence, so the prune keeps the chain the scoring
+        # reads; it is by name and count in the record, never
+        # silent. The archive/ area is not a stage and is never
+        # pruned by this (it follows #307's last-three rule,
+        # kept by the installer).
+        try:
+            if os.path.isdir(APPLY_STAGE_HOME):
+                others = []
+                for name in os.listdir(APPLY_STAGE_HOME):
+                    full = os.path.join(APPLY_STAGE_HOME, name)
+                    if name in (tag_dir, "archive") \
+                            or not os.path.isdir(full):
+                        continue
+                    others.append((os.path.getmtime(full), name))
+                others.sort(reverse=True)
+                pruned = []
+                for _mt, name in others[2:]:
+                    shutil.rmtree(
+                        os.path.join(APPLY_STAGE_HOME, name),
+                        ignore_errors=True)
+                    pruned.append(name)
+                if pruned:
+                    record["stagePrune"] = pruned
+        except Exception:
+            pass
         pkg_dir = os.path.join(stage_root, "package")
         zip_path = os.path.join(stage_root, asset["name"])
         # The manual fallback carries the install's known answers
@@ -17282,6 +18420,22 @@ def _run_update_apply(cfg):
         _write_update_result(record)
         data = None
         from_disk = False
+        # #306-full dual-read: a package an older bridge staged
+        # in the LEGACY in-tree home is adopted into the new
+        # home when it is provably the offered bytes (the same
+        # size rule the read-back below applies) — an in-flight
+        # stage survives the move instead of being re-fetched
+        # or, worse, stranded.
+        if not os.path.isfile(zip_path):
+            legacy_zip = os.path.join(
+                LEGACY_UPDATES_DIR, tag_dir, asset["name"])
+            try:
+                if os.path.isfile(legacy_zip) and feed_size \
+                        and os.path.getsize(legacy_zip) == feed_size:
+                    os.makedirs(stage_root, exist_ok=True)
+                    shutil.copyfile(legacy_zip, zip_path)
+            except Exception:
+                pass
         if os.path.isfile(zip_path):
             try:
                 if feed_size and os.path.getsize(zip_path) == feed_size:
@@ -17395,8 +18549,9 @@ def _run_update_apply(cfg):
                          "package.")
                     return
             break
-        # Staging: the verified (unwrapped) zip lands beside the
-        # app and unpacks under updates/<tag>/package, as before.
+        # Staging: the verified (unwrapped) zip lands in the
+        # stage home beside the app and unpacks under
+        # .apex-apply-stage/<tag>/package (#306-full).
         record["step"] = "staging"
         _write_update_result(record)
         try:
@@ -17607,6 +18762,89 @@ def update_apply_payload(cfg=None):
         target=_run_update_apply, args=(cfg,), daemon=True)
     t.start()
     return {"ok": True, "started": True}
+
+
+def update_rollback_payload(cfg=None, with_config=False):
+    # v0.6.11e (#307): the in-app rollback act. The executor is
+    # the installed tree's own apply-helper.py in its --rollback
+    # mode, spawned detached with the same escape the apply
+    # helper gets (its own transient scope where systemd-run
+    # can give one — the rollback stops this bridge, so it must
+    # not live in this bridge's unit). The outcome lands in
+    # config/update-result.json as a rollback record, which the
+    # panel reads like any apply record. Refusals are by name:
+    # no point on disk, no act; an apply already working owns
+    # the updater until it finishes.
+    point = _rollback_point_info()
+    if not point:
+        return {"ok": False, "error": "There is no rollback "
+                "point on this machine — a rollback point is "
+                "kept by the first update this build's installer "
+                "completes, and none stands yet."}
+    if with_config and not point.get("withConfigAvailable"):
+        return {"ok": False, "error": "This rollback point "
+                "carries no config archive, so there is no "
+                "pre-update config to restore. A tree-only "
+                "rollback is still available."}
+    rec = update_result_payload()
+    helper_alive = False
+    if rec.get("state") == "working" and rec.get("helperPid"):
+        try:
+            helper_alive = pid_alive(int(rec["helperPid"]))
+        except Exception:
+            helper_alive = False
+    with _update_apply_lock:
+        if _update_apply_state["running"] or helper_alive:
+            return {"ok": False, "error": "An update is already "
+                    "being applied — the rollback waits until "
+                    "it finishes (or fails) on its own."}
+        _update_apply_state["running"] = True
+    try:
+        cfg_now = cfg if isinstance(cfg, dict) else load_config()
+        os.makedirs(APPLY_STAGE_HOME, exist_ok=True)
+        job = {
+            "root": ROOT,
+            "resultPath": UPDATE_RESULT_PATH,
+            "port": BRIDGE_PORT,
+            "startup": str(cfg_now.get("startup") or "on-ui-launch"),
+            "withConfig": bool(with_config),
+            "traceLog": os.path.join(
+                APPLY_STAGE_HOME, "rollback-trace.log"),
+        }
+        job_path = os.path.join(APPLY_STAGE_HOME, "rollback-job.json")
+        with open(job_path, "w") as f:
+            json.dump(job, f)
+        helper_path = os.path.join(ROOT, "apply-helper.py")
+        argv, spawn_mode, spawn_note = _apply_helper_spawn_argv(
+            helper_path, job_path, "rollback")
+        # The rollback mode flag rides between the helper and
+        # its job in every spawn shape (plain and scope alike).
+        argv.insert(argv.index(helper_path) + 1, "--rollback")
+        logf = open(os.path.join(
+            APPLY_STAGE_HOME, "rollback-helper.log"), "ab")
+        try:
+            proc = subprocess.Popen(
+                argv, cwd=APPLY_STAGE_HOME, stdin=subprocess.DEVNULL,
+                stdout=logf, stderr=subprocess.STDOUT,
+                start_new_session=True, close_fds=True)
+        finally:
+            logf.close()
+        _write_update_result({
+            "state": "working", "step": "rollback",
+            "startedAt": _now_iso(),
+            "rollback": {"toLabel": point.get("label") or "",
+                         "withConfig": bool(with_config),
+                         "spawn": spawn_mode},
+            "helperPid": proc.pid,
+            "traceLog": job["traceLog"],
+        })
+        return {"ok": True, "started": True,
+                "rollbackTo": point.get("label") or ""}
+    except Exception as e:
+        return {"ok": False, "error": "The rollback could not "
+                "be started: " + str(e)}
+    finally:
+        _update_apply_state["running"] = False
 
 
 def save_download_payload(data):
@@ -36354,15 +37592,22 @@ def seraph_state_save(root, sid, state):
 # name instead of resurrecting it.
 
 def seraph_register_sensor(root, name, kind="remote", address="", ssh_user="",
-                    node_id="", vantage="", console_node=""):
+                    node_id="", vantage="", console_node="", ssh_port=22):
     store = seraph_store_load(root)
     sid = seraph_new_id("sensor")
+    try:
+        ssh_port = int(ssh_port)
+    except Exception:
+        ssh_port = 22
+    if not (1 <= ssh_port <= 65535):
+        ssh_port = 22
     rec = {
         "id": sid,
         "name": str(name or "Unnamed sensor")[:80],
         "kind": kind if kind in ("self", "remote") else "remote",
         "address": str(address or "")[:120],
         "sshUser": str(ssh_user or "")[:60],
+        "sshPort": ssh_port,
         "nodeId": str(node_id or "")[:80],
         "consoleNode": str(console_node or "")[:80],
         "vantage": str(vantage or "")[:200],
@@ -36377,10 +37622,21 @@ def seraph_register_sensor(root, name, kind="remote", address="", ssh_user="",
 
 
 def seraph_find_by_node(store, node_id):
+    # v0.6.11e (#344): a node's ACTIVE record wins. After a
+    # revoke -> re-register of the same node (#341's world),
+    # two records can carry one nodeId; the revoked one must
+    # not shadow the live registration. When no active record
+    # stands, the first non-active one is returned so the
+    # caller can name its state (revoked / removed) instead
+    # of guessing.
+    fallback = None
     for rec in store["sensors"].values():
         if rec.get("nodeId") and rec["nodeId"] == node_id:
-            return rec
-    return None
+            if rec.get("state") == "active":
+                return rec
+            if fallback is None:
+                fallback = rec
+    return fallback
 
 
 def seraph_revoke_sensor(root, sid):
@@ -36392,6 +37648,53 @@ def seraph_revoke_sensor(root, sid):
     rec["revokedAt"] = seraph_now()
     seraph_store_save(root, store)
     return rec
+
+
+def seraph_remove_sensor(root, sid):
+    # v0.6.11e (#341): removal is its own act — distinct from
+    # revocation (a trust act: the record stays whole and
+    # reads revoked) and from the federation departure
+    # tombstone (#321: a different layer's vocabulary; the
+    # two must never alias). A sensor that never reported is
+    # deleted outright — record and state together, nothing
+    # left behind. A sensor that WAS trusted shrinks to a
+    # refusal stub: the registry keeps its id, name, node and
+    # last-seen, its state reads "removed", its detections
+    # stay in the store as its readable history, and its
+    # reports are refused at intake by that name. The seat's
+    # own sensor is never removable — it is the seat's own
+    # eyes, retired by the role, never by the registry.
+    # Returns (record, outcome): outcome is one of
+    # "missing", "self", "deleted", "stubbed".
+    store = seraph_store_load(root)
+    rec = store["sensors"].get(sid)
+    if rec is None:
+        return None, "missing"
+    if rec.get("kind") == "self":
+        return rec, "self"
+    reported = bool(rec.get("lastSeen")) or any(
+        d.get("sensorId") == sid for d in store["detections"])
+    if not reported:
+        del store["sensors"][sid]
+        seraph_store_save(root, store)
+        try:
+            shutil.rmtree(seraph_sensor_dir(root, sid),
+                          ignore_errors=True)
+        except Exception:
+            pass
+        return rec, "deleted"
+    stub = {"id": rec["id"],
+            "name": rec.get("name") or "a sensor",
+            "kind": rec.get("kind") or "remote",
+            "nodeId": rec.get("nodeId") or "",
+            "state": "removed",
+            "added": rec.get("added") or 0,
+            "lastSeen": rec.get("lastSeen") or 0,
+            "removedAt": seraph_now(),
+            "revokedAt": 0}
+    store["sensors"][sid] = stub
+    seraph_store_save(root, store)
+    return stub, "stubbed"
 
 
 def seraph_touch_sensor(root, sid, ts=None):
@@ -36841,13 +38144,40 @@ def seraph_intake(root, env, sender_node):
     if not isinstance(env, dict) or env.get("v") != 1:
         return False, "bad-envelope"
     store = seraph_store_load(root)
-    rec = store["sensors"].get(str(env.get("sensorId") or ""))
+    # v0.6.11e (#344): the registry's second lock is the NODE
+    # BINDING, as this function's contract always claimed —
+    # the reporting sensor is resolved by the AUTHENTICATED
+    # node, never by the envelope's sensorId. That id is
+    # minted in the sensor seat's OWN registry (its self
+    # record, on its own console), an id this console has
+    # never seen; keying the lookup on it refused every
+    # genuine remote report as unknown-sensor while the
+    # sensor spooled and retried forever — the field's
+    # "last seen never", then "No SIEM activity". The
+    # envelope's claims still have teeth: an envelope naming
+    # a different node than the authenticated sender, or a
+    # sensorId that belongs to another node's record here,
+    # is refused as a mismatch.
+    rec = seraph_find_by_node(store, sender_node)
     if rec is None:
         return False, "unknown-sensor"
     if rec["state"] == "revoked":
         return False, "sensor-revoked"
-    if rec.get("nodeId") and rec["nodeId"] != sender_node:
+    if rec["state"] == "removed":
+        return False, "sensor-removed"
+    if env.get("nodeId") and env["nodeId"] != sender_node:
         return False, "sensor-node-mismatch"
+    claimed = store["sensors"].get(str(env.get("sensorId") or ""))
+    if claimed is not None and claimed["id"] != rec["id"]:
+        return False, "sensor-node-mismatch"
+    if not env.get("nodeId"):
+        # No node binding asserted (the product's own
+        # envelope always asserts one): the sensorId is the
+        # only identity the envelope offers, and the legacy
+        # lock governs it — the claim must name the sender's
+        # own record, or the sensor it names is unknown here.
+        if claimed is None or claimed["id"] != rec["id"]:
+            return False, "unknown-sensor"
     state = seraph_state_load(root, rec["id"])
     snap = env.get("snapshot") or {}
     state["lastSnapshot"] = {
@@ -37013,9 +38343,16 @@ def _seraph_self_sensor(cfg):
 
 
 def _seraph_send(env, console_node):
-    # One envelope home over the Mesh door. True only on the
-    # console's own filed answer — anything else (no peer, dark
-    # road, refusal) is a spool, never a shrug.
+    # One envelope home over the Mesh door. Returns
+    # (filed, outcome): filed is True only on the console's
+    # own filed answer; outcome NAMES the hop's result either
+    # way (v0.6.11e, #344 — every hop of the report's road
+    # gets a named, logged outcome, so a dark remote leg is a
+    # finding with an address, not a silence): the console's
+    # filed note, the console's own refusal reason
+    # (unknown-sensor / sensor-revoked / sensor-removed /
+    # sensor-node-mismatch / mesh-off / unauthorized), or the
+    # road's own words (console-not-a-peer, unreachable).
     cfg = load_config()
     ms = mesh_settings(cfg)
     peer = None
@@ -37023,16 +38360,19 @@ def _seraph_send(env, console_node):
         if p["nodeId"] == console_node:
             peer = p
     if peer is None:
-        return False
+        return False, "console-not-a-peer"
     rid = env["sensorId"] + "-" + str(env["ts"])
     body = json.dumps({"requestId": rid, "report": env}).encode()
     try:
         code, raw = _mesh_request(peer, "POST", "/mesh/seraph-report",
                                   body, rid, 30)
         payload = json.loads(raw.decode() or "{}")
-    except Exception:
-        return False
-    return code == 200 and payload.get("ok") is True
+    except Exception as e:
+        return False, "unreachable:" + type(e).__name__
+    if code == 200 and payload.get("ok") is True:
+        return True, str(payload.get("note") or "filed")
+    return False, str(payload.get("reason")
+                      or ("http-" + str(code)))
 
 
 def _seraph_drain_spool(settings):
@@ -37041,8 +38381,28 @@ def _seraph_drain_spool(settings):
         return
     for name in seraph_spool_list(SERAPH_ROOT):
         env = seraph_spool_read(SERAPH_ROOT, name)
-        if env is not None and _seraph_send(env, node):
+        if env is not None and _seraph_send(env, node)[0]:
             seraph_spool_drop(SERAPH_ROOT, name)
+
+
+def seraph_note_report(root, sid, console_node, outcome):
+    # v0.6.11e (#344): the sensor's own record of its last
+    # report home — when, to which console, and the outcome
+    # by name. It rides the registry record, so the sensor's
+    # Seraph page (which reads the public state) can show the
+    # road's state instead of the operator guessing from a
+    # silent "last seen never" on the far side.
+    try:
+        store = seraph_store_load(root)
+        rec = store["sensors"].get(sid)
+        if rec is None:
+            return
+        rec["lastReportAt"] = seraph_now()
+        rec["lastReportConsole"] = console_node
+        rec["lastReportOutcome"] = outcome
+        seraph_store_save(root, store)
+    except Exception:
+        pass
 
 
 def seraph_cycle(reason="cadence"):
@@ -37073,15 +38433,26 @@ def seraph_cycle(reason="cadence"):
         env = seraph_make_envelope(rec, snap, dets)
         node = settings.get("consoleNode") or ""
         sent = False
+        outcome = ""
         if node and node != (mesh_node_id() or ""):
-            sent = _seraph_send(env, node)
+            sent, outcome = _seraph_send(env, node)
             if not sent:
                 seraph_spool_write(SERAPH_ROOT, env)
+                print("[seraph] report home refused/failed ("
+                      + outcome + ") — the envelope is spooled "
+                      "and will retry; console node " + node,
+                      flush=True)
             else:
                 _seraph_drain_spool(settings)
+            seraph_note_report(SERAPH_ROOT, rec["id"], node,
+                               outcome)
+        elif node:
+            seraph_note_report(SERAPH_ROOT, rec["id"], node,
+                               "console-is-this-seat")
         seraph_prune(SERAPH_ROOT, settings["retentionDays"])
         return {"ok": True, "sensor": rec["id"],
                 "detections": len(dets), "reported": sent,
+                "reportOutcome": outcome,
                 "gaps": snap["gaps"]}
 
 
@@ -37129,6 +38500,13 @@ def mesh_handle_seraph_report(handler, body):
     ok, note = seraph_intake(SERAPH_ROOT, data.get("report"),
                              peer["nodeId"])
     if not ok:
+        # v0.6.11e (#344): a refused report is named in the
+        # console's own record too — the failure point is
+        # logged at the hop that refused it, with its reason,
+        # so the console side of a dark leg can be read
+        # without the sensor's spool as the only witness.
+        print("[seraph] report refused (" + note + ") from "
+              "node " + str(peer["nodeId"]), flush=True)
         return 200, {"ok": False, "reason": note}
     return 200, {"ok": True, "note": note}
 
@@ -37193,7 +38571,30 @@ def seraph_act(action, data):
             kind="remote", address=str(data.get("address") or ""),
             ssh_user=str(data.get("sshUser") or ""),
             node_id=str(data.get("nodeId") or ""),
-            vantage=str(data.get("vantage") or ""))
+            vantage=str(data.get("vantage") or ""),
+            ssh_port=data.get("sshPort") or 22)
+        return {"ok": True, "sensor": rec}
+    if action == "sshport":
+        # v0.6.11e (#340): the sensor's SSH port is part of
+        # its record — persisted per sensor, used by the SSH
+        # tab's connect act. A record minted before the field
+        # existed behaves as 22 until this act says otherwise.
+        store = seraph_store_load(SERAPH_ROOT)
+        rec = store["sensors"].get(str(data.get("id") or ""))
+        if rec is None:
+            return {"ok": False, "error": "No such sensor."}
+        if rec.get("state") == "removed":
+            return {"ok": False, "error": "That sensor is removed."}
+        try:
+            port = int(data.get("sshPort"))
+        except Exception:
+            return {"ok": False,
+                    "error": "The port must be a number."}
+        if not (1 <= port <= 65535):
+            return {"ok": False,
+                    "error": "The port must be between 1 and 65535."}
+        rec["sshPort"] = port
+        seraph_store_save(SERAPH_ROOT, store)
         return {"ok": True, "sensor": rec}
     if action == "revoke":
         rec = seraph_revoke_sensor(SERAPH_ROOT,
@@ -37201,6 +38602,17 @@ def seraph_act(action, data):
         if rec is None:
             return {"ok": False, "error": "No such sensor."}
         return {"ok": True, "sensor": rec}
+    if action == "remove":
+        rec, outcome = seraph_remove_sensor(
+            SERAPH_ROOT, str(data.get("id") or ""))
+        if outcome == "missing":
+            return {"ok": False, "error": "No such sensor."}
+        if outcome == "self":
+            return {"ok": False,
+                    "error": "This seat's own sensor is not "
+                             "removable — it is retired by "
+                             "the role, not by the registry."}
+        return {"ok": True, "removed": outcome, "sensor": rec}
     if action == "watchlist":
         store = seraph_store_load(SERAPH_ROOT)
         term = str(data.get("term") or "").strip()
@@ -41889,8 +43301,9 @@ class Handler(BaseHTTPRequestHandler):
         # publicly (public mode was ON at launch). Loopback callers
         # are never gated. Everyone else is judged by the device
         # registry (Build 2, #173): a trusted device's own token
-        # opens; the shared-code cookie opens only while no device
-        # has ever been approved; everything else is blocked.
+        # opens; everything else is blocked (v0.6.11e: the
+        # shared-code cookie no longer opens, even at a fresh
+        # door — the first device is confirmed locally).
         if ACTIVE_BIND_HOST != "0.0.0.0":
             return False
         if self._client_is_loopback():
@@ -42602,8 +44015,36 @@ class Handler(BaseHTTPRequestHandler):
         # body the page can only fail to parse. The named state
         # for a failure inside the route is backend-error; the
         # model-readiness states are answered inside the route.
+        #
+        # v0.6.11e (#278, the delivery itself): a caller may ask
+        # for streamed delivery ("stream": true — the dashboard
+        # does). The route then answers in NDJSON frames over a
+        # chunked response: a first "working" frame goes out
+        # BEFORE the turn is composed and heartbeat frames
+        # follow while it composes, so the socket is exercised
+        # from the first second — a client that hangs up
+        # mid-generation is detected at the next heartbeat
+        # write and named in this log ([chat-delivery]), never
+        # discovered at the end as a failed write onto a dead
+        # socket. The turn's payload rides whole in the final
+        # frame, byte-identical to the unstreamed answer (the
+        # named model states and the print-first law ride
+        # unchanged); a stream that ends without a final frame
+        # is a delivery failure the page names as itself.
+        # Callers that do not ask (the Mesh borrow path among
+        # them) get today's single-JSON answer, untouched.
         try:
-            self._chat_route_body(cfg)
+            data = self._body()
+        except Exception:
+            data = {}
+        if isinstance(data, dict) and data.get("stream") is True:
+            self._chat_route_streamed(cfg, data)
+            return
+        self._chat_route_run(cfg, data)
+
+    def _chat_route_run(self, cfg, data):
+        try:
+            self._chat_route_body(cfg, data)
         except Exception:
             traceback.print_exc()
             try:
@@ -42622,9 +44063,116 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-    def _chat_route_body(self, cfg):
+    def _chat_route_streamed(self, cfg, data):
+        import threading as _th
+        state = {"dead": False, "closed": False, "sent": False}
+        lock = _th.Lock()
+        wfile = self.wfile
 
-            data = self._body()
+        def write_frame(obj):
+            line = (json.dumps(obj) + "\n").encode()
+            chunk = ("%x\r\n" % len(line)).encode() + line + b"\r\n"
+            with lock:
+                if state["closed"]:
+                    return False
+                try:
+                    wfile.write(chunk)
+                    wfile.flush()
+                    return True
+                except Exception as e:
+                    if not state["dead"]:
+                        state["dead"] = True
+                        print("[chat-delivery] the client went "
+                              "away during a streamed turn ("
+                              + type(e).__name__ + ") — the "
+                              "turn's answer will not be written "
+                              "onto a dead socket; the delivery "
+                              "failure is the outcome of record",
+                              flush=True)
+                    return False
+
+        def heartbeat():
+            while not state["closed"]:
+                time.sleep(5)
+                if state["closed"]:
+                    break
+                if not write_frame({"frame": "working"}):
+                    break
+
+        real_send = self._send
+
+        def capture_send(code, payload, ctype="application/json"):
+            if state["sent"]:
+                print("[chat-delivery] a streamed turn tried "
+                      "to send twice; the second send was "
+                      "captured and dropped", flush=True)
+                return
+            state["sent"] = True
+            if state["dead"]:
+                print("[chat-delivery] the turn composed but "
+                      "its client is gone — the answer was "
+                      "NOT delivered and is not recorded as "
+                      "sent", flush=True)
+            else:
+                write_frame({"frame": "final", "status": code,
+                             "payload": payload})
+            state["closed"] = True
+            try:
+                with lock:
+                    wfile.write(b"0\r\n\r\n")
+                    wfile.flush()
+            except Exception:
+                pass
+
+        try:
+            self.protocol_version = "HTTP/1.1"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Cache-Control",
+                             "no-store, no-cache, must-revalidate")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+        except Exception as e:
+            print("[chat-delivery] the streamed answer could "
+                  "not even open (" + type(e).__name__ + ") — "
+                  "the client is gone before the turn began",
+                  flush=True)
+            self.close_connection = True
+            return
+        write_frame({"frame": "working",
+                     "started": time.strftime(
+                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        hb = _th.Thread(target=heartbeat, daemon=True)
+        hb.start()
+        self._send = capture_send
+        try:
+            self._chat_route_run(cfg, data)
+        finally:
+            try:
+                del self._send
+            except Exception:
+                self._send = real_send
+            if not state["sent"]:
+                # A route path that returned without sending
+                # must not hang the client: the stream closes
+                # with the route boundary's own named state.
+                capture_send(500, {
+                    "error": "the chat route finished without "
+                             "composing an answer — the bridge "
+                             "logged the turn in its own record",
+                    "mode": "model-state",
+                    "modelState": "backend-error",
+                    "modelStateNote":
+                        "Something inside the chat route "
+                        "failed — the bridge logged it in its "
+                        "own record. Your ask wasn't answered; "
+                        "try again.",
+                })
+            state["closed"] = True
+            self.close_connection = True
+
+    def _chat_route_body(self, cfg, data):
+
             messages = data.get("messages", [])
             # Sliding history: only the most recent exchanges ride
             # to the model. Prefill is paid per token on CPU, so an
@@ -43788,16 +45336,12 @@ class Handler(BaseHTTPRequestHandler):
             # gate page again with the reason, and nothing else.
             # v0.6.7e (#313, leg 1): this door is throttled
             # like the DHD door — the same dhd_throttle_*
-            # helpers and constants, keyed on the socket peer.
-            # (Legs 2 and 3 are NOT in this build: the
-            # first-device bootstrap is #173 doctrine awaiting
-            # Alex's ruling, and proxy-aware client IPs are a
-            # design item of their own.)
-            _gate_ip = ""
-            try:
-                _gate_ip = str(self.client_address[0] or "")
-            except Exception:
-                _gate_ip = ""
+            # helpers and constants. v0.6.11e (#313, leg 3):
+            # the key is the shared client_ip() — the socket
+            # peer, or the visitor a trusted proxy speaks
+            # for; with the default empty trustedProxies the
+            # key is the peer, exactly as leg 1 left it.
+            _gate_ip = client_ip(self, cfg)
             _gfails, _glock = dhd_throttle_state(_gate_ip)
             if _glock > time.time():
                 self._send(
@@ -44356,6 +45900,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, {"ok": True, "choiceOnPress": stood})
             return
+        if self.path == "/api/settings/trusted-proxies":
+            # v0.6.11e (#313 leg 3): the trusted-proxy list.
+            # A non-empty list IS the enable — the doors read
+            # it on every request, so saving takes effect at
+            # once, with no restart and no second switch.
+            data = self._body()
+            raw = data.get("proxies")
+            if isinstance(raw, str):
+                raw = raw.replace(",", " ").split()
+            if not isinstance(raw, list):
+                raw = []
+            cfg["trustedProxies"] = [str(x).strip() for x in raw
+                                     if str(x).strip()][:32]
+            save_config(cfg)
+            self._send(200, {"ok": True,
+                             "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
+            return
         if self.path == "/api/settings/public":
             # The Local server toggle itself (build .61 — one
             # action): persist the choice in the config block AND
@@ -44477,8 +46038,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "publicServer": public_state_payload(load_config(), self._client_is_loopback())})
                 schedule_bridge_restart()
         elif self.path == "/api/settings/public/regenerate":
-            # A fresh code. The shared-code cookie stops matching
-            # at once, and no new knock can use the old code —
+            # A fresh code. No new knock can use the old code —
             # but a device already approved keeps its OWN token
             # (Build 2): trusted devices are revoked one by one in
             # the Door list, not by changing the code under them.
@@ -44576,6 +46136,15 @@ class Handler(BaseHTTPRequestHandler):
             # app. Progress and outcome are read back through
             # GET /api/update/result.
             self._send(200, update_apply_payload(cfg))
+        elif self.path == "/api/update/rollback":
+            # #307: roll back to the retained previous build —
+            # the same detached executor the shell door runs
+            # (apply-helper.py --rollback), spawned from here.
+            # The record it writes is read back through
+            # GET /api/update/result like any apply record.
+            data = self._body()
+            self._send(200, update_rollback_payload(
+                cfg, with_config=bool(data.get("withConfig"))))
         elif self.path == "/api/downloads/save":
             # The dashboard's download-save flow (build .48): the
             # bytes behind a download click inside the desktop shell

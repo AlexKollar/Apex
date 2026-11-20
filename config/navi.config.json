@@ -1,156 +1,156 @@
 {
-  "backend": "live",
-  "live": {
-    "llamafile_endpoint": "http://localhost:8080/v1",
-    "model_name": "navi"
+ "backend": "live",
+ "live": {
+  "llamafile_endpoint": "http://localhost:8080/v1",
+  "model_name": "navi"
+ },
+ "bridge": {
+  "host": "127.0.0.1",
+  "port": 8675
+ },
+ "public_server": {
+  "enabled": false,
+  "access_code": "T6BB-HS8Q"
+ },
+ "dhd": {
+  "enabled": false,
+  "domain": "",
+  "acme_directory": "https://acme-v02.api.letsencrypt.org/directory"
+ },
+ "mesh": {
+  "enabled": false,
+  "role": "both",
+  "nodeName": "",
+  "borrow": {
+   "enabled": true,
+   "graceMs": 2000,
+   "peers": []
   },
-  "bridge": {
-    "host": "127.0.0.1",
-    "port": 8675
+  "lend": {
+   "enabled": false,
+   "maxSharePercent": 25,
+   "maxGenerationsPerHour": 20,
+   "perPeerPerHour": 10,
+   "idleOnly": true,
+   "idleAfterSeconds": 60
   },
-  "public_server": {
-    "enabled": false,
-    "access_code": "T6BB-HS8Q"
+  "port": 8765,
+  "nodeId": "",
+  "ledger": true,
+  "ledgerInBackup": false,
+  "listenPorts": [
+   8765,
+   8443,
+   2475
+  ]
+ },
+ "startup": "on-ui-launch",
+ "install_dir": "",
+ "sudo_mode": false,
+ "threat_level": "Guarded",
+ "operator_name": "",
+ "installed_commands": [
+  "nmap",
+  "grep"
+ ],
+ "hardware_profile": {
+  "detected": {
+   "os": "linux",
+   "osLabel": "Linux (Pop!_OS / Ubuntu family)",
+   "cpuModel": "13th Gen Intel Core i5-1340P",
+   "cpuCores": 12,
+   "performanceCores": 4,
+   "totalRamGB": 9.4,
+   "gpuPresent": true,
+   "gpuName": "Intel Iris Xe Graphics",
+   "gpuKind": "integrated",
+   "gpuVramGB": null
   },
-  "dhd": {
-    "enabled": false,
-    "domain": "",
-    "acme_directory": "https://acme-v02.api.letsencrypt.org/directory"
+  "settings": {
+   "threads": 4,
+   "ctxSize": 4096,
+   "batchSize": 512,
+   "gpuLayers": 0
   },
-  "mesh": {
-    "enabled": false,
-    "role": "both",
-    "nodeName": "",
-    "borrow": {
-      "enabled": true,
-      "graceMs": 2000,
-      "peers": []
-    },
-    "lend": {
-      "enabled": false,
-      "maxSharePercent": 25,
-      "maxGenerationsPerHour": 20,
-      "perPeerPerHour": 10,
-      "idleOnly": true,
-      "idleAfterSeconds": 60
-    },
-    "port": 8765,
-    "nodeId": "",
-    "ledger": true,
-    "ledgerInBackup": false,
-    "listenPorts": [
-      8765,
-      8443,
-      2475
-    ]
+  "autoSettings": {
+   "threads": 4,
+   "ctxSize": 4096,
+   "batchSize": 512,
+   "gpuLayers": 0
   },
-  "startup": "on-ui-launch",
-  "install_dir": "",
-  "sudo_mode": false,
-  "threat_level": "Guarded",
-  "operator_name": "",
-  "installed_commands": [
-    "nmap",
-    "grep"
+  "source": "auto",
+  "tier": "fluid",
+  "tierLabel": "Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)",
+  "reasoning": [
+   "Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
+   "Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+   "Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
+   "GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
+   "Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."
   ],
-  "hardware_profile": {
-    "detected": {
-      "os": "linux",
-      "osLabel": "Linux (Pop!_OS / Ubuntu family)",
-      "cpuModel": "13th Gen Intel Core i5-1340P",
-      "cpuCores": 12,
-      "performanceCores": 4,
-      "totalRamGB": 9.4,
-      "gpuPresent": true,
-      "gpuName": "Intel Iris Xe Graphics",
-      "gpuKind": "integrated",
-      "gpuVramGB": null
-    },
-    "settings": {
-      "threads": 4,
-      "ctxSize": 4096,
-      "batchSize": 512,
-      "gpuLayers": 0
-    },
-    "autoSettings": {
-      "threads": 4,
-      "ctxSize": 4096,
-      "batchSize": 512,
-      "gpuLayers": 0
-    },
-    "source": "auto",
-    "tier": "fluid",
-    "tierLabel": "Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)",
-    "reasoning": [
-      "Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
-      "Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
-      "Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
-      "GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
-      "Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)."
-    ],
-    "installLog": [
-      "[hardware] 2026-11-07T00:00:00.000Z \u2014 profiling this machine (source: install / re-detect)",
-      "[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)",
-      "[hardware] CPU: 13th Gen Intel Core i5-1340P \u2014 12 logical cores, 4 performance",
-      "[hardware] RAM: 9.4 GiB total",
-      "[hardware] GPU: Intel Iris Xe Graphics (integrated)",
-      "[hardware] \u2192 Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
-      "[hardware] \u2192 Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
-      "[hardware] \u2192 Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
-      "[hardware] \u2192 GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
-      "[hardware] \u2192 Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).",
-      "[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"
-    ],
-    "detectedAt": "2026-11-07T00:00:00.000Z"
-  },
-  "runtime": {
-    "threads": 4,
-    "ctx_size": 4096,
-    "batch_size": 512,
-    "gpu_layers": 0,
-    "flags": "--ctx-size 4096 --threads 4 --batch-size 512"
-  },
-  "persona_files": [
-    "config/soul.md",
-    "config/memory.md"
+  "installLog": [
+   "[hardware] 2026-11-07T00:00:00.000Z \u2014 profiling this machine (source: install / re-detect)",
+   "[hardware] OS: Linux (Pop!_OS / Ubuntu family) (linux)",
+   "[hardware] CPU: 13th Gen Intel Core i5-1340P \u2014 12 logical cores, 4 performance",
+   "[hardware] RAM: 9.4 GiB total",
+   "[hardware] GPU: Intel Iris Xe Graphics (integrated)",
+   "[hardware] \u2192 Threads 4: matched to the 4 performance cores \u2014 efficiency cores are left for the OS and UI so generation stays fluid.",
+   "[hardware] \u2192 Context 4096: 9.4 GiB RAM \u2014 the proven fluid size for this class (Framework 13 baseline). Never scaled down below this on a machine that can hold it.",
+   "[hardware] \u2192 Batch 512: sized to RAM (9.4 GiB) \u2014 larger batches speed prompt processing, smaller ones protect low-memory machines.",
+   "[hardware] \u2192 GPU layers 0: integrated graphics (\"Intel Iris Xe Graphics\") share system RAM \u2014 CPU inference is the fluid path here; no offload.",
+   "[hardware] \u2192 Tier: Fluid \u2014 Framework-class baseline (proven on an i5-1340P / ~9.5 GiB).",
+   "[hardware] chosen: --ctx-size 4096 --threads 4 --batch-size 512 (written to config/navi.config.json hardware_profile + runtime; every launch path reads it from there)"
   ],
-  "voice": {
-    "enabled": true,
-    "stt": {
-      "engine": "faster-whisper",
-      "model": "small.en"
-    },
-    "tts": {
-      "engine": "kokoro",
-      "voice": "bf_isabella",
-      "rate": 1,
-      "pitch": 1
-    }
+  "detectedAt": "2026-11-07T00:00:00.000Z"
+ },
+ "runtime": {
+  "threads": 4,
+  "ctx_size": 4096,
+  "batch_size": 512,
+  "gpu_layers": 0,
+  "flags": "--ctx-size 4096 --threads 4 --batch-size 512"
+ },
+ "persona_files": [
+  "config/soul.md",
+  "config/memory.md"
+ ],
+ "voice": {
+  "enabled": true,
+  "stt": {
+   "engine": "faster-whisper",
+   "model": "small.en"
   },
-  "github": {
-    "client_id": "",
-    "backup_repo": "navi-backup",
-    "backup_private": true,
-    "backup_items": [
-      "soul",
-      "memory",
-      "settings",
-      "chips",
-      "rag",
-      "workflows",
-      "vault",
-      "mesh-cards",
-      "chats"
-    ],
-    "backup_interval_days": 1,
-    "last_backup_at": null,
-    "last_backup_result": "",
-    "last_import_at": null,
-    "last_import_result": ""
-  },
-  "version": "0.6.10",
-  "version_status": "edge",
-  "updater": {
-    "channel": "stable"
+  "tts": {
+   "engine": "kokoro",
+   "voice": "bf_isabella",
+   "rate": 1,
+   "pitch": 1
   }
+ },
+ "github": {
+  "client_id": "",
+  "backup_repo": "navi-backup",
+  "backup_private": true,
+  "backup_items": [
+   "soul",
+   "memory",
+   "settings",
+   "chips",
+   "rag",
+   "workflows",
+   "vault",
+   "mesh-cards",
+   "chats"
+  ],
+  "backup_interval_days": 1,
+  "last_backup_at": null,
+  "last_backup_result": "",
+  "last_import_at": null,
+  "last_import_result": ""
+ },
+ "version": "0.6.11",
+ "version_status": "edge",
+ "updater": {
+  "channel": "stable"
+ }
 }

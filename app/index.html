@@ -2371,8 +2371,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-20.42";
-var SHIPPED_BUILD_SEQ = 42;
+var BRIDGE_BUILD = "2026-11-20.44";
+var SHIPPED_BUILD_SEQ = 44;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2411,7 +2411,7 @@ var docs = [];
 // was reached). Nothing here is simulated: in Mock backend
 // mode no check runs at all (checks go through the live bridge),
 // and the view says so.
-var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", tailFailure: "", pollTimer: null, diagnoseCommand: "" };
+var updater = { state: "idle", channel: (typeof CONFIG !== "undefined" && CONFIG.updaterChannel) || "stable", latest: "", releaseName: "", releaseUrl: "", publishedAt: "", prerelease: false, buildSeq: null, currentBuildSeq: SHIPPED_BUILD_SEQ, bgTag: "", assetName: "", assetSize: 0, notes: "", notesSource: "", currentRelease: null, error: "", stageError: "", stagedDir: "", command: "", step: "", fromLabel: "", toLabel: "", applyError: "", tailFailure: "", pollTimer: null, diagnoseCommand: "", rollbackPoint: null, rollbackOffer: "" };
 // Whether the channel on screen is the operator's own pick
 // (Build 2): the bridge stamps a panel choice as explicit and
 // reports both the effective channel and the stamp on
@@ -5625,6 +5625,7 @@ function modelStateNoticeHtml() {
   if (modelStateNotice.note) t = modelStateNotice.note;
   else if (modelStateNotice.state === "warming") t = "Navi is warming up — her model is still loading on this machine. Give her a moment, then ask again.";
   else if (modelStateNotice.state === "backend-error") t = "Something between this page and her answer broke the reply — if the failure was the bridge's, it is logged in the bridge's own record. Your ask wasn't answered; try again.";
+  else if (modelStateNotice.state === "delivery-failed") t = "Her answer was still being delivered when the connection broke — nothing arrived, and nothing was saved as if it had. Ask again.";
   else t = "Navi's model isn't answering — the llamafile server doesn't appear to be running on this machine. Commands still work; check the server, then ask again.";
   return "<div class='modelstate' role='status'><span class='modelstate-dot'></span><span>" + esc(t) + "</span></div>";
 }
@@ -6959,7 +6960,7 @@ var DOC_PAGES = [
   "<p><b>A borrowed reply is inert (#315, #314).</b> A reply served by a Mesh lender is answered with, never acted on: it cannot reach your shell, its memory markers are held as proposals, its findings are not filed. What leaves for a lender is cleaned at the door — no marker teaching, no shell teaching — and the threat-intel watchlist never leaves this machine at all: not in the digest served to peers, not in a borrowed prompt, not in the GitHub backup.</p>" +
   "<p><b>Federation tells the truth (#311, #316).</b> Lending to new fedinet members defaults <b>off</b>, as the page always promised — the switch, the stored state and the reloaded page agree. The roster sync reports the roster's real version.</p>" +
   "<p><b>The gate door is throttled (#313).</b> The bridge's own access-code door locks after five wrong codes, like the DHD door — the wait is named, and the right code clears the count.</p>" +
-  "<p><b>The updater minds its manners (#305, #306, #308, #312).</b> On a systemd seat the apply lets the unit own the restart instead of spawning a process that polls it forever. Apply evidence — traces and logs under <span class='mono'>updates/</span> — survives the swap it records. The install markers record the stamp of the tree actually installed. A root shell is refused at another user's tree, by name; a migrated tree is never migrated twice; and the installer never advises ending another user's processes.</p>" +
+  "<p><b>The updater minds its manners (#305, #306, #308, #312).</b> On a systemd seat the apply lets the unit own the restart instead of spawning a process that polls it forever. Apply evidence — traces and logs in the updater's stage home beside the app (<span class='mono'>.apex-apply-stage/</span>), outside the tree the swap replaces — survives the swap it records, and a successful update now keeps the previous install beside it as a rollback point you can return to from this panel. The install markers record the stamp of the tree actually installed. A root shell is refused at another user's tree, by name; a migrated tree is never migrated twice; and the installer never advises ending another user's processes.</p>" +
   "<p><b>Case talk knows its watch (#331).</b> In a case's room, her facts state whether a Pulse watch stands attached — topic and last check — or that none does. She will not call a case monitored over nothing.</p>" +
   "<p><b>One phone, one record (#332).</b> Push subscriptions key on the phone itself, not the endpoint iOS keeps re-minting: re-subscribing replaces the phone's record, label carried. Settings shows when each record subscribed, and any record can be removed from any seat — that phone stops ringing; the tray is untouched.</p></div>" +
     "<div class='doc-sec'><h4>The case suite (v0.6.6e, #326–#330)</h4>" +
@@ -7072,16 +7073,16 @@ var DOC_PAGES = [
   "<p>Everything is Apex's own work, assembled and managed by Apex itself — no Tailscale, no tunnel or proxy service, no Certbot:</p><ul>" +
   "<li>A <b>reverse proxy Apex runs itself</b> listens on ports 80 and 443 and forwards to the bridge on <span class='mono'>127.0.0.1:" + BRIDGE_PORT + "</span>. In DHD mode the bridge never binds publicly — the proxy is the only public face.</li>" +
   "<li><b>TLS from the first click.</b> With no domain, Apex generates a <b>self-signed certificate</b> and the door opens on it. With a domain, Apex's <b>built-in ACME client</b> obtains a real Let's Encrypt certificate and renews it on its own.</li>" +
-  "<li>The <b>same access code</b> as the home-network door guards DHD — one code, both doors. Since Build 2 the code <b>knocks</b> rather than opens: a device presenting it names itself and waits for an approval (the first device approves itself), and each approved device holds its own 30-day session — the <i>Trusted devices</i> section below has the whole flow. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
+  "<li>The <b>same access code</b> as the home-network door guards DHD — one code, both doors. Since Build 2 the code <b>knocks</b> rather than opens: a device presenting it names itself and waits for an approval (the first device is confirmed on the machine itself), and each approved device holds its own 30-day session — the <i>Trusted devices</i> section below has the whole flow. Nothing is served through the proxy before the code, and the public door throttles wrong codes: they slow down, and five in a row lock the door for five minutes.</li></ul>" +
   "<p>DHD has its own page, reached from the menu's <b>Network</b> group (the Apex | Node controls live on this page), and the status column's <b>Servers</b> group shows it in the family order — Navi (the engine row, llamafile on port 8080), Apex | Node [local], Apex | Mesh, then Apex | DHD, each row with its own pulsing dot and its own dropdown of details. The Servers header itself collapses the whole group; shut, it still carries one dot per server, so a problem stays visible. The Apex | Node controls live on this same page, under the DHD options. Directly under Navi's status in the status column, bracketed by separators, sits the update line: a green <b>Up to date</b>, or a yellow <b>Update available</b> when a check found one — that one line is the whole entry.</p></div>" +
     "<div class='doc-sec'><h4>Turning it on — one click</h4>" +
   "<ol><li>Open the <b>DHD</b> page from the menu.</li>" +
   "<li>Flip the <b>master switch</b>. That is the click.</li>" +
   "<li>Apex does the rest in order: it generates the certificate, brings its proxy up on 80/443 in front of the bridge, and runs a local reachability check — the proxy must answer on 443 from this machine (answered on this machine; the local half only). The page then reports the live state, the LAN address under its own label, and the public address when there is one.</li>" +
-  "<li>Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the <b>access code</b> (shown on the DHD page, on this machine only) and name the device — the first device at the door lets itself in, and a device that knocks later waits on its own screen until you approve it from a trusted session — and you are in: a full session, Updater included. A remote session can run the one-click update end to end, exactly like sitting at the machine.</li></ol>" +
+  "<li>Once the public path is set up (router forwards in place, and your domain live if you use one), open the public address from anywhere, type the <b>access code</b> (shown on the DHD page, on this machine only) and name the device — the first device at the door waits to be confirmed on the machine itself, and every device after it waits on its own screen until you approve it from a trusted session — and you are in: a full session, Updater included. A remote session can run the one-click update end to end, exactly like sitting at the machine.</li></ol>" +
   "<p>If a step fails, the page names the step in plain words — the proxy could not take its ports, the certificate could not be prepared, the self-check did not answer — and the previous state is left completely untouched. Nothing ever half-opens. One Linux note: ports below 1024 are reserved, so if the proxy step names them, grant the bridge the low-port capability once (<span class='mono'>sudo setcap 'cap_net_bind_service=+ep'</span> on the python3 binary it runs with) and flip the switch again.</p></div>" +
     "<div class='doc-sec'><h4>Trusted devices — the code knocks (Build 2)</h4>" +
-  "<p><b>The flow.</b> A device that has never been let in opens either door, types the access code, and gives itself a name. If it is the <b>first device ever</b> at this door, it approves itself and walks in — this bootstrap is deliberate: a one-operator house must never be locked out of its own door waiting for an approver who does not exist yet. Every device after that becomes a <b>pending device</b>: its screen waits, and it appears under <b>Waiting at the door</b> in the Door list — in <b>Settings → System → Door</b> and on the <b>DHD page</b> — where any session that is already trusted can <b>Approve</b> or <b>Deny</b> it. Approval hands that device its own session token; the waiting page notices on its own and walks through. A wait lasts 30 minutes, then the knock expires and the device knocks again.</p>" +
+  "<p><b>The flow.</b> A device that has never been let in opens either door, types the access code, and gives itself a name. Every device — <b>including the first one ever</b> — becomes a <b>pending device</b>: the first device is confirmed <b>on the machine itself</b> (open Apex there; its own screen is never gated), because a network-door code alone must never let a device in (v0.6.11e, ruling B). Its screen waits, and it appears under <b>Waiting at the door</b> in the Door list — in <b>Settings → System → Door</b> and on the <b>DHD page</b> — where any session that is already trusted can <b>Approve</b> or <b>Deny</b> it. Approval hands that device its own session token; the waiting page notices on its own and walks through. A wait lasts 30 minutes, then the knock expires and the device knocks again.</p>" +
   "<p><b>The session.</b> An approved device's session is its own — not a hash of the shared code: a random token, a <b>30-day</b> life, and a sliding renewal: using the door while the session is valid renews it, so a device in daily use never hits its 30 days mid-shift. The Door list shows every trusted device with its name, first seen, last seen, and expiry.</p>" +
   "<p><b>Revoke and regenerate are different tools now.</b> <b>Revoke</b> removes one device: its token dies at once and it is back at the gate on its next knock — nobody else's session notices. <b>Regenerating the access code</b> stops new knocks with the old code (and retires the old shared-code cookie), but devices already approved keep their own tokens; revoke those one by one if you want them out. Before Build 2, changing the code was the only way to shut anyone out, and it shut everyone out; that is the problem per-device sessions exist to end.</p>" +
   "<p><b>What did not change.</b> The public door still throttles wrong codes (a progressive delay, five in a row locks it for five minutes). DHD still forces the bridge onto loopback — the proxy stays the only public face. And no remote session, trusted device or not, can turn Mesh lending on: lending is armed in person, from the lending machine's own dashboard, exactly as before.</p></div>" +
@@ -7224,7 +7225,7 @@ var DOC_PAGES = [
   "<p>Apex ships as a <b>Docker image</b>: a headless node in a container — the same bridge, the same Mesh door, the same DHD door, no desktop window. It is the easiest way to stand up a second (or a first) Mesh node: a homelab box, a NAS, a spare machine, a VPS. The image is free and AGPL, like the rest of Apex; there is no subscription anything. <b>No identity is ever baked into the image</b> — the node's Mesh keypair, its certificate, and its pairing card are minted on the machine that runs it, at first boot, inside the data volume. A shipped keypair would make every copy the same node, and one leak would be everyone's leak.</p>" +
   "<p><b>The model binary is not baked in either.</b> On first run the container downloads <span class='mono'>navi.llamafile</span> once — the installer's own pattern — and keeps it in the data volume, so the image stays small and the model persists across container replacements. One binary serves both architectures: the image is built for <b>amd64 and arm64</b>.</p></div>" +
     "<div class='doc-sec'><h4>Up in one breath — DHD first</h4>" +
-  "<p><span class='mono'>docker compose up</span>, then read the <b>first-boot output</b> (the container's logs): a boxed banner prints your node's <b>DHD access code</b>, once, next to the node's name and Mesh fingerprint. Then browse to <span class='mono'>https://&lt;this computer's address&gt;</span> — the DHD door, published on port <b>443</b> by the shipped compose file — type the code, name your device, and you are in: the first device at the door trusts itself with the code, and every device after it waits for an approval from one that is already trusted, exactly as on bare metal. <b>Write the code down or take a photo of the banner.</b> It is the only key to the DHD door; it is printed in the logs that one time only. The same banner is kept in a file named <span class='mono'>FIRST-BOOT.txt</span> in the data volume, for the operator who missed the scroll.</p>" +
+  "<p><span class='mono'>docker compose up</span>, then read the <b>first-boot output</b> (the container's logs): a boxed banner prints your node's <b>DHD access code</b>, once, next to the node's name and Mesh fingerprint. Then browse to <span class='mono'>https://&lt;this computer's address&gt;</span> — the DHD door, published on port <b>443</b> by the shipped compose file — type the code, name your device, and knock: the first device at the door is confirmed from the machine itself (the dashboard on the host, or a shell act on it), and every device after it waits for an approval from one that is already trusted, exactly as on bare metal. <b>Write the code down or take a photo of the banner.</b> It is the only key to the DHD door; it is printed in the logs that one time only. The same banner is kept in a file named <span class='mono'>FIRST-BOOT.txt</span> in the data volume, for the operator who missed the scroll.</p>" +
   "<p><b>The LAN-trust sentence, plainly:</b> in the container, DHD is <b>on from the first boot</b> — the door answers on your local network from the moment the node starts. That is the container's posture, chosen because a container has no desk to sit at; a bare-metal install keeps DHD off until its operator turns it on. On-by-default never means open: anyone on the network still needs the code to knock, and the trusted-device list in Settings — System — Door is the roster of who got in, each with its own token you can revoke.</p>" +
   "<p><b>If you lose the code</b>, it is a designed path, not a lockout — you need access to the computer the container runs on. Re-print the current code: <span class='mono'>docker exec &lt;container&gt; python3 /opt/navi-apex/bridge.py --dhd-code</span>. Or mint a new one (the old code stops knocking at once; devices already trusted keep their own tokens): <span class='mono'>docker exec &lt;container&gt; python3 /opt/navi-apex/bridge.py --dhd-code-reset</span>.</p></div>" +
     "<div class='doc-sec'><h4>Ports, volumes, and the card warning</h4>" +
@@ -7291,8 +7292,8 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Apex | Node — Apex on your phone or tablet</h4>" +
   "<p>The <b>DHD page</b> holds the <b>Apex | Node</b> [local] controls, under the DHD options — Settings' System tab keeps only a pointer to them. Apex | Node is <b>off by default</b>: off, Apex answers only this machine. Turn it on and she also serves her page to your <b>home network</b> — the same Apex, in a phone or tablet browser. The choice is saved in <span class='mono'>config/navi.config.json</span> with your other settings and kept across updates. Flipping the switch is the whole job: Apex <b>restarts her own bridge</b> so the choice takes effect — the row says <b>Restarting the bridge…</b> while it happens, then confirms the live state read from the bridge that actually answers: <b>On your network</b>, or <b>This machine only</b>. Turning it off is the same one flip in reverse. No relaunching the app yourself, no hunting for a process.</p>" +
   "<p>If a restart ever fails, the row says so in plain words: it names the step that failed (the old bridge would not stop, the new bridge did not answer, or the answering bridge's bind does not match your choice), states the state that is <b>actually live</b> — the old bridge keeps serving its old setting, untouched, until a new one is confirmed — and offers the fallbacks: press <b>Restart bridge</b> to try again, or quit Apex fully and relaunch. A restart never leaves a half-state behind.</p>" +
-  "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits knocks with the code and a name for itself: the first phone approves itself, and every phone after that waits in the Door list (Settings → System → Door, and the DHD page) until a trusted session approves it; an approved phone holds its own 30-day session, renewed while it stays in use. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: new knocks need the new code at once, while phones already approved keep their own sessions — the Door list revokes those one by one.</p>" +
-  "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can knock, and an approved device can use Apex in full — chat, the command line, and settings included. The code plus your approvals are the lock on that door — and the first device at a fresh door approves itself, so guard the code like the key it is. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
+  "<p>While the toggle is on, the row shows two things only someone sitting at this machine should see: the address to open on your phone — <span class='mono'>http://&lt;your machine's network address&gt;:8675</span>, as a button that copies it — and your <b>access code</b>. A phone that visits knocks with the code and a name for itself: the first phone is confirmed on this machine itself, and every phone after that waits in the Door list (Settings → System → Door, and the DHD page) until a trusted session approves it; an approved phone holds its own 30-day session, renewed while it stays in use. The code never applies on this machine itself. Press <b>Regenerate</b> for a new code: new knocks need the new code at once, while phones already approved keep their own sessions — the Door list revokes those one by one.</p>" +
+  "<p><b>The honest warning, in full:</b> anyone on the network who has the access code can knock, and an approved device can use Apex in full — chat, the command line, and settings included. The code plus your approvals are the lock on that door — and while a code alone can only knock — the first device at a fresh door is confirmed on the machine itself — an approved device is a full key, so guard the code like one. Share it like a house key, and turn the toggle off when you no longer want the door there.</p></div>" },
   { id: "github", title: "GitHub — the pulse, issues & backups", related: ["settings", "installing"], html:
     "<div class='doc-sec'><h4>The pulse — a peek into the project</h4>" +
   "<p>The <b>GitHub</b> item in the side menu is her window into the project itself: <span class='mono'>AlexKollar/Apex</span>, the repo this rebuild lives in (the original Navi she grew from stays at SaintsSec/Navi as the legacy archive). The section has four tabs:</p><ul>" +
@@ -7424,7 +7425,7 @@ var DOC_PAGES = [
   "<li><b>Bazzite</b> — Fedora-based but immutable, so it is its own case (below).</li></ul>" +
   "<p>Everything else — profiling your machine, the model download, what an update keeps, the startup choice — is the same on every family. On <b>Bazzite</b> the installer never layers packages onto the system with <span class='mono'>rpm-ostree</span> and never asks for a reboot: her window is built inside a Fedora <b>distrobox</b> when you have one, and when you don't, the window build is skipped — in plain words, during the install — and you get the complete core install: the bridge and the dashboard, which <span class='mono'>start.sh</span> opens in your browser. Create a Fedora distrobox later and re-run the installer to add the window. And if your distro isn't one the installer recognizes, it says so, guesses no package manager, installs everything it can user-space, and completes the core install just the same.</p>" +
   "<p><b>Installing from a git clone — or from GitHub's source zip</b> (the zip the green Code button offers, the one that unpacks to a folder like <span class='mono'>Apex-main</span>) <b>works too</b> — with two honest differences. <b>First, how you run it:</b> from a clone or a source zip, the way is <span class='mono'>bash install.sh</span> — and <span class='mono'>bash start.sh</span> when you start her from that source tree. Run it through bash because it needs no executable permission. Why, in plain words: the git tree does not preserve the scripts' executable permission, so every script that comes out of a clone or a source zip arrives without it, and a script without that permission cannot be run as <span class='mono'>./install.sh</span> until the permission is set — running it through bash skips that entirely, because bash reads the file itself. From the <b>release zip</b> it is the other way round: its scripts arrive executable, so <span class='mono'>./install.sh</span> is the instruction there. Release zip → <span class='mono'>./install.sh</span>; clone or GitHub source zip → <span class='mono'>bash install.sh</span>. If you try <span class='mono'>./install.sh</span> from a clone anyway, you will meet a baffling pair of errors — bash answers <i>Permission denied</i>, and <span class='mono'>sudo ./install.sh</span> answers <i>command not found</i>, which sounds like the file is not there at all. It is there; it just cannot be run that way. Use <span class='mono'>bash install.sh</span> and both errors go away. (If you prefer <span class='mono'>./install.sh</span>, you can set the permission yourself first — <span class='mono'>chmod +x install.sh start.sh run-llamafile.sh</span> — and then run it the usual way. That works too; bash is simply the shorter path, and the one these instructions lead with.) <b>Second, the icons:</b> the clone does not carry the binary icon files (the app icon, its <span class='mono'>.ico</span>/<span class='mono'>.icns</span> renditions, and her window's icon): those ship only inside the release zip. So a clone install runs without the custom icon — the installer says so in plain words while it installs, the app and its menu entry use a fallback icon, and her standalone window is not built, because it is built around that icon; she opens in your browser instead. Everything else about the install is exactly the same. The release zip remains the complete package.</p>" +
-  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked beside the app, under <span class='mono'>updates/</span>; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.6a → v0.1.7</b>, with the actual versions — and only when the install after the restart reads as what the update promised: the VERSION file's version — and, for a same-version build refresh, the build number the relaunched bridge reports and the one baked into the bridge on disk, since a refresh deliberately keeps the same version number. Before staging, the package itself is proven to be the build on offer: a package left beside the app by an earlier update is reused only when its size matches the offered package's, and the build number inside its bridge must match the release's, or it is fetched fresh. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's installer with <span class='mono'>bash install.sh</span> in a terminal. That command carries your startup and voice choices as flags (<span class='mono'>--startup</span> / <span class='mono'>--voice</span>), so the installer never has to ask a question — which is the whole point in a shell with no terminal to answer one, like her own CLI shell: there, an installer that asks dies at the first question (issue #75, field-proven on a staged update), while the flagged command runs straight through. The helper keeps a <b>step log</b> while it works — <span class='mono'>apply-trace.log</span> in the update's folder under <span class='mono'>updates/</span>, its path named on the apply record — timestamping every step it completes, with a heartbeat while it waits, so an interrupted apply shows exactly where it stopped; if the helper itself fails or is stopped, the record is closed as failed at that step with the reason in words, and if the helper is killed outright — the one death it cannot record itself — the bridge's <b>apply watchdog</b> closes the record the same way, quoting the step log's last line, instead of leaving it claiming to be installing forever. A relaunched bridge that never answers fails the record at the restarting step, naming the build that was expected and what was found instead. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
+  "<p><b>Updating is real, and it works like this.</b> The <b>Updater</b> tab (and one quiet automatic check each time she starts) asks GitHub for the project's latest release and compares its tag with her VERSION file. If a newer release exists, the single line under Navi's status in the status column flips to a yellow <b>Update available</b>. The Updater screen shows that release's <b>notes</b> right there — the words from its GitHub release page, or, when the release page carries none, the matching section of the project's CHANGELOG — so you can read what changed before you press the button. Press <b>Download &amp; install</b> and she does the whole job from that one click: the release package is downloaded, checked (it must be a real Apex package — and a package that arrives gzip-wrapped is unwrapped and accepted, not refused), and unpacked in the updater's stage home beside the app, under <span class='mono'>.apex-apply-stage/</span> — outside the tree it replaces; then a small helper that outlives the app runs that folder's installer — never with <span class='mono'>--fresh</span>, so everything that's yours is kept, exactly as the paragraph above promises — and relaunches her. While it works, the Updater names the step it is on: downloading, verifying, staging, installing, restarting. When she comes back, the Updater shows the confirmation in plain words — <b>Updated v0.1.6a → v0.1.7</b>, with the actual versions — and only when the install after the restart reads as what the update promised: the VERSION file's version — and, for a same-version build refresh, the build number the relaunched bridge reports and the one baked into the bridge on disk, since a refresh deliberately keeps the same version number. Before staging, the package itself is proven to be the build on offer: a package left beside the app by an earlier update is reused only when its size matches the offered package's, and the build number inside its bridge must match the release's, or it is fetched fresh. If any step fails, the Updater names the step and the reason, nothing is left half-applied that can be rolled back, and — once the package was staged — it shows the manual fallback as a fallback: the staged folder and the one command that finishes the job by hand, running that folder's installer with <span class='mono'>bash install.sh</span> in a terminal. That command carries your startup and voice choices as flags (<span class='mono'>--startup</span> / <span class='mono'>--voice</span>), so the installer never has to ask a question — which is the whole point in a shell with no terminal to answer one, like her own CLI shell: there, an installer that asks dies at the first question (issue #75, field-proven on a staged update), while the flagged command runs straight through. The helper keeps a <b>step log</b> while it works — <span class='mono'>apply-trace.log</span> in the update's folder in the stage home, its path named on the apply record — timestamping every step it completes, with a heartbeat while it waits, so an interrupted apply shows exactly where it stopped; if the helper itself fails or is stopped, the record is closed as failed at that step with the reason in words, and if the helper is killed outright — the one death it cannot record itself — the bridge's <b>apply watchdog</b> closes the record the same way, quoting the step log's last line, instead of leaving it claiming to be installing forever. A relaunched bridge that never answers fails the record at the restarting step, naming the build that was expected and what was found instead. And if a check cannot reach GitHub — no network, or GitHub's rate limit — the Updater says that, in those words, instead of pretending you are up to date.</p>" +
   "<p><b>An apply can no longer kill itself (Build 12, #201).</b> The helper descends from the app it replaces, and the installer descends from the helper — so an install step that stops the app's <i>service</i> (which signals every process in the service, as a group) kills the whole family mid-flight: exactly that ended the first homecoming pull on both of the Row's machines, two seconds in, before the migration carried a single byte. The rule now is stated in the code and kept in both halves of the apply: an apply may end exactly one process by signal — the bridge it replaces, by its proven pid — and never a group-shaped signal: not a unit stop, not a process-group or cgroup kill. In practice: the bridge spawns the helper <b>outside its own systemd unit</b>, in a transient scope of its own (via <span class='mono'>systemd-run</span>), so stopping the app's unit during an install cannot reach it at all; where no scope can be had (no user manager answers — the container shape), the spawn says so in the step log and the installer's ordering carries the run instead: the installer stops the old bridge <b>by pid</b> first, and only then retires the old boot services' files — <span class='mono'>disable</span> and removal, never a stop — re-proving afterwards that nothing resurrected. The same round closes the homecoming's last soft spot: a new home left standing <b>without its migration record</b> is an <i>interrupted</i> home, never a canonical one — a later install runs the migration again and carries state from the old tree, rather than converging onto a half-copied tree and calling it home.</p>" +
   "<p><b>The incoming build governs its own installation (v0.3.0e Build 1, #205).</b> Build 12's law has a limit the field named: a pull is executed end-to-end by the machinery of the build that is <i>running</i> — its spawner, its helper — so a spawner fix cannot protect the pull that installs it; on one of the Row's machines, Build 12's fixed spawner never got to run its own arrival. From this build, the package carries its apply machinery with it: <span class='mono'>apply-bootstrap.py</span> and <span class='mono'>apply-helper.py</span> beside the payload. When a bridge stages a package that carries them, the package's own bootstrap spawns the package's own helper — same spawn discipline, the package's bytes. And when an <i>older</i> build's helper runs this package's installer, the installer's first act — before anything is stopped — is the <b>bootstrap handoff</b>: the bootstrap spawns the new helper in takeover mode and the old installer's process exits, having installed nothing. The new helper never signals the old one; it waits for it to finish its own bookkeeping and die — the no-ancestry law is untouched, because a predecessor is not an ancestor — and then runs the real install itself, from outside the old bridge's unit. If a handoff cannot arm, the ordinary install carries on: a handoff can never strand an apply. The apply record names how the helper was spawned — <span class='mono'>package-bootstrap/…</span> when the incoming machinery governed, the plain Build 12 modes when it did not — and the step log tells the whole story, takeover lines included.</p>" +
   "<p>Since Build 3, the failure card pairs its fix with the reading: beside the manual-fallback command it shows a labeled <b>See what happened:</b> command — one copy-paste line that prints the failed apply's own logs (the installer's output and the helper's step log, from the staged update's folder). Read first, then run the fix with the whole story in view. Build 3 also closes the field failure behind that card (issue #174): the installer now stops the running window with the same care as the bridge before replacing files, and installs the window's binary by write-to-temp and atomic rename, so a still-running window can never again make the copy fail with <i>Text file busy</i>; and when an install runs detached — no terminal, as the Updater's helper does — the log says plainly that a detached apply cannot answer a sudo prompt when the system-package step is skipped for exactly that reason.</p>" +
@@ -7953,6 +7954,37 @@ function execContextText(x) {
   if (out.length > 1200) { note = "\n… [terminal output truncated for context — " + out.length + " characters in full]"; out = out.slice(0, 1200); }
   return "$ " + x.command + "\n" + out + note;
 }
+function readChatStream(r) {
+  // v0.6.11e (#278): read a streamed chat delivery (NDJSON
+  // frames over a chunked response). "working" frames are
+  // heartbeats — they prove the road is alive while the turn
+  // composes and are otherwise ignored; the "final" frame
+  // carries the turn's whole payload. Resolves to the final
+  // frame, or null when the stream ends without one (a
+  // delivery failure, named by the caller).
+  var reader = r.body.getReader();
+  var dec = new TextDecoder();
+  var buf = "";
+  var finalFrame = null;
+  function pump() {
+    return reader.read().then(function (res) {
+      if (res.done) return finalFrame;
+      buf += dec.decode(res.value, { stream: true });
+      var lines = buf.split("\n");
+      buf = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var ln = lines[i].trim();
+        if (!ln) continue;
+        var fr = null;
+        try { fr = JSON.parse(ln); } catch (e) { fr = null; }
+        if (fr && fr.frame === "final") finalFrame = fr;
+      }
+      if (finalFrame) { try { reader.cancel(); } catch (e) {} return finalFrame; }
+      return pump();
+    });
+  }
+  return pump();
+}
 function liveChat(text, speak) {
   // Sliding history: only the last 20 messages ride to the model
   // (the slice above). Prefill is paid per token on CPU — an
@@ -7961,9 +7993,14 @@ function liveChat(text, speak) {
   // of it slides. The bridge caps again on its side.
   // Reply presentation rule (the operator's call, stated plainly):
   // her answers are never typed out character by character. The
-  // bridge request is non-streaming, the typing indicator covers
-  // the whole wait, and when the reply is ready it renders complete,
-  // all at once. Do not add a typewriter reveal here.
+  // typing indicator covers the whole wait, and when the reply is
+  // ready it renders complete, all at once. Do not add a typewriter
+  // reveal here. (v0.6.11e, #278: the DELIVERY is streamed — the
+  // bridge exercises the socket with heartbeat frames while the
+  // turn composes, so a dead connection is detected in seconds
+  // instead of at the end of a long generation — but the reply
+  // itself still arrives whole, in the stream's final frame, and
+  // renders all at once exactly as before.)
   // Terminal blocks ride as context: a block the operator produced
   // by running a command directly (CLI-first) becomes a system note
   // carrying the command and its output, and a block attached to
@@ -7988,24 +8025,40 @@ function liveChat(text, speak) {
     if (!String(content).trim()) return;
     hist.push({ role: x.who === "YOU" ? "user" : "assistant", content: content });
   });
-  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId };
+  var payload = { messages: hist.concat([{ role: "user", content: text }]), sudo: !!CONFIG.sudo, operator_name: CONFIG.operatorName || "", speak: !!speak, mode: chatMode, memory_mode: CONFIG.memoryMode || "autonomous", chatId: activeChatId, stream: true };
+  function handleChatBody(t, okStatus) {
+    // v0.6.10e (#278): the answer is read as text and parsed
+    // under guard. Whatever stands between this page and the
+    // model — a restarting bridge, the DHD door, a loading
+    // server — a body that is not JSON is a STATE, never a
+    // parse error wearing a reply's clothes: the named state
+    // is the bridge's own, carried on the answer when there is
+    // one and otherwise the last state the status poll knew.
+    // The raw parse string is unreachable UI.
+    var j = null;
+    try { j = JSON.parse(t); } catch (e) { j = null; }
+    if (!j) return { modelState: llama.modelState === "warming" ? "warming" : (llama.modelState === "ready" ? "backend-error" : "unreachable") };
+    if (j.modelState) return { modelState: j.modelState, modelStateNote: j.modelStateNote || null };
+    if (!okStatus) { var err = new Error(j.error || "bridge error"); err.bridgeError = true; throw err; }
+    return j;
+  }
   return fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-    .then(function (r) { return r.text().then(function (t) {
-      // v0.6.10e (#278): the answer is read as text and parsed
-      // under guard. Whatever stands between this page and the
-      // model — a restarting bridge, the DHD door, a loading
-      // server — a body that is not JSON is a STATE, never a
-      // parse error wearing a reply's clothes: the named state
-      // is the bridge's own, carried on the answer when there is
-      // one and otherwise the last state the status poll knew.
-      // The raw parse string is unreachable UI.
-      var j = null;
-      try { j = JSON.parse(t); } catch (e) { j = null; }
-      if (!j) return { modelState: llama.modelState === "warming" ? "warming" : (llama.modelState === "ready" ? "backend-error" : "unreachable") };
-      if (j.modelState) return { modelState: j.modelState, modelStateNote: j.modelStateNote || null };
-      if (!r.ok) { var err = new Error(j.error || "bridge error"); err.bridgeError = true; throw err; }
-      return j;
-    }); })
+    .then(function (r) {
+      var ct = (r.headers && r.headers.get && r.headers.get("Content-Type")) || "";
+      if (ct.indexOf("x-ndjson") >= 0 && r.body && r.body.getReader) {
+        // v0.6.11e (#278): the streamed delivery — heartbeat
+        // frames while the turn composes, the whole answer in
+        // the final frame. A stream that ends WITHOUT a final
+        // frame is a delivery failure, named as itself: the
+        // turn may have composed, but nothing arrived, and
+        // nothing is rendered as if it had.
+        return readChatStream(r).then(function (fin) {
+          if (!fin) return { modelState: "delivery-failed", modelStateNote: "Her answer was still being delivered when the connection broke — nothing arrived, and nothing was saved as if it had. Ask again." };
+          return handleChatBody(JSON.stringify(fin.payload), fin.status >= 200 && fin.status < 300);
+        });
+      }
+      return r.text().then(function (t) { return handleChatBody(t, r.ok); });
+    })
     .then(function (j) { if (j.modelState) return j; vaultLoadedAt = 0; if (j.exec) lastChatExec = { command: j.exec.command, output: j.exec.output, at: Date.now() }; return { text: stripCite(j.reply), exec: j.exec ? { command: j.exec.command, output: j.exec.output, exit_code: typeof j.exec.exit_code === "number" ? j.exec.exit_code : 0 } : null, sources: (j.rag && j.rag.length) ? j.rag : null, mode: j.mode || "model", operation: j.operation || null, memorySaves: j.memorySaves || null, memoryRefused: !!j.memoryRefused, mesh: j.mesh || null, caseFilings: j.caseFilings || null, refPulls: j.refPulls || null, caseLog: j.caseLog || null, caseIntake: j.caseIntake || null, chatId: activeChatId }; })
     .catch(function (e) {
       if (e && e.bridgeError) throw e;
@@ -8938,7 +8991,7 @@ function apexNodeCardHtml() {
       var rowLive = !!ps.activePublic && (CONFIG.backend !== "live" || publicReportLive);
       h += "<div class='card'><h3>Apex | Node <span style='border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:11px;color:var(--dim)'>[local]</span></h3>";
       h += "<p style='color:var(--dim)'>Turn this on and Apex serves its web page to your local network, so you can open her from a phone or tablet on the same network — same Apex, in the phone's browser. Off (the default), she answers only this machine. Flipping the switch is the whole job: the choice is saved in <span class='mono'>config/navi.config.json</span> and <b>Apex restarts her own bridge right then</b> so it takes effect — no relaunching the app yourself.</p>";
-      h += "<p style='color:var(--am)'><b>Warning:</b> the access code is the knock on this door — a device that presents it still has to be approved (the first device approves itself), and an approved device can use Apex in full: chat, the command line, and settings included. Share the code like a house key.</p>";
+      h += "<p style='color:var(--am)'><b>Warning:</b> the access code is the knock on this door — a device that presents it still has to be approved (the first device is confirmed on this machine itself), and an approved device can use Apex in full: chat, the command line, and settings included. Share the code like a house key.</p>";
       h += "<p><button type='button' id='pub-toggle' class='" + (ps.enabled ? "act" : "ghost") + "' aria-pressed='" + (ps.enabled ? "true" : "false") + "' aria-label='Apex | Node toggle'>" + (ps.enabled ? "Apex | Node: On" : "Apex | Node: Off") + "</button></p>";
       h += "<p style='color:var(--dim)'><b style='color:var(--text)'>" + (rowLive ? "On your network" : "This machine only — 127.0.0.1:" + BRIDGE_PORT) + "</b>";
       if (rst.status === "restarting" || publicRestartPolling) h += "<br><span style='color:var(--cy)'>Restarting the bridge…</span>";
@@ -8950,7 +9003,7 @@ function apexNodeCardHtml() {
       if ((rst.status === "failed" || (ps.pending && rst.status !== "restarting")) && !publicRestartPolling) h += "<p><button type='button' class='ghost' id='pub-restart' aria-label='Restart the bridge to apply the Apex | Node choice'>Restart bridge</button> <span style='color:var(--dim)'>Fallback if it still will not take: quit Apex fully and relaunch.</span></p>";
       if (ps.enabled || rowLive) {
         h += "<p style='color:var(--dim)'>Access code — shown only here, on this machine:<br><span class='mono' style='font-size:18px;letter-spacing:.2em;color:var(--text)'>" + esc(ps.accessCode || "—") + "</span> <button type='button' class='ghost' id='pub-regen' aria-label='Regenerate the Apex | Node access code'>Regenerate</button></p>";
-        h += "<p style='color:var(--dim)'>A phone visiting Apex knocks with this code and a name for itself; the first phone approves itself, and every phone after that waits for an approval in the Door list. Regenerating makes a new code and stops new knocks with the old one — phones already approved keep their own sessions, and the Door list revokes them one by one.</p>";
+        h += "<p style='color:var(--dim)'>A phone visiting Apex knocks with this code and a name for itself; the first phone is confirmed on this machine itself, and every phone after that waits for an approval in the Door list. Regenerating makes a new code and stops new knocks with the old one — phones already approved keep their own sessions, and the Door list revokes them one by one.</p>";
         if (ps.lanUrl) h += "<p style='color:var(--dim)'>On your phone, open this address:<br><button type='button' class='act' id='pub-lan' data-url='" + esc(ps.lanUrl) + "' aria-label='Copy the LAN address " + esc(ps.lanUrl) + "'>" + esc(ps.lanUrl) + "</button></p>";
         h += "<p style='color:var(--dim)'>Same network, that address, then the code above. This machine never needs the code.</p>";
       }
@@ -8974,7 +9027,7 @@ function doorDevicesCardHtml() {
   var pending = devices.filter(function (d) { return d.status === "pending"; });
   var trusted = devices.filter(function (d) { return d.status === "approved"; });
   var h = "<div class='card'><h3>The Door — trusted devices</h3>";
-  h += "<p style='color:var(--dim)'>The access code no longer opens Apex by itself — it <b>knocks</b>. A new device that enters the code and names itself waits here as a pending device until a session that is already trusted approves it. An approved device gets its <b>own</b> session — 30 days, renewed while it stays in use — and can be revoked on its own, without changing the code under everyone else. The very first device at a door approves <b>itself</b> with the code, so a one-operator house is never locked out waiting for an approver who doesn't exist yet; from then on, every device knocks.</p>";
+  h += "<p style='color:var(--dim)'>The access code no longer opens Apex by itself — it <b>knocks</b>. A new device that enters the code and names itself waits here as a pending device until a session that is already trusted approves it. An approved device gets its <b>own</b> session — 30 days, renewed while it stays in use — and can be revoked on its own, without changing the code under everyone else. The very first device at a door is confirmed <b>here, on the machine itself</b> — a code typed at a network door never lets a device in on its own, not even the first; from then on, any trusted session can approve the next knock.</p>";
   if (doorMsg) h += "<p style='color:var(--dim)'>" + esc(doorMsg) + "</p>";
   if (pending.length) {
     h += "<p class='mono' style='color:var(--am);font-size:12px;margin-top:10px'>WAITING AT THE DOOR</p>";
@@ -8983,10 +9036,16 @@ function doorDevicesCardHtml() {
     });
   }
   h += "<p class='mono' style='color:var(--dim);font-size:12px;margin-top:12px'>TRUSTED DEVICES</p>";
-  if (!trusted.length) h += "<p style='color:var(--dim)'>None yet. The first device to knock with the code lets itself in and appears here.</p>";
+  if (!trusted.length) h += "<p style='color:var(--dim)'>None yet. The first device to knock waits here like every other — approve it from this machine and it appears here.</p>";
   trusted.forEach(function (d) {
     h += "<div style='border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px'><b>" + esc(d.name || "Unnamed device") + "</b>" + (d.expired ? " <span style='color:#f87171;font-size:12px'>EXPIRED</span>" : "") + "<div style='color:var(--dim);font-size:12px'>First seen " + esc(doorWhen(d.firstSeen)) + " · last seen " + esc(doorWhen(d.lastSeen)) + " · " + (d.expired ? "expired " : "expires ") + esc(doorWhen(d.expiresAt)) + "</div><div style='margin-top:8px'><button type='button' class='ghost' data-door-revoke='" + esc(d.id) + "' style='min-height:44px'>Revoke this device</button></div></div>";
   });
+  // v0.6.11e (#313 leg 3): trusted proxies — the doors
+  // believe forwarded headers only from these addresses.
+  var proxies = ps.trustedProxies || [];
+  h += "<p class='mono' style='color:var(--dim);font-size:12px;margin-top:14px'>TRUSTED PROXIES</p>";
+  h += "<p style='color:var(--dim)'>If a reverse proxy stands in front of a door, name its address here and the doors will judge the visitor it names in its forwarded headers — throttles and the Mesh knock ledger key on the visitor, not the proxy. Naming an address lets that proxy say who really knocked; naming <span class='mono'>127.0.0.1</span> lets any process on this machine claim any visitor it likes. Empty (the default) trusts no headers at all.</p>";
+  h += "<div class='row' style='gap:8px;margin-top:8px'><input class='grow mono' data-door-proxies-input type='text' placeholder='e.g. 203.0.113.7' aria-label='Trusted proxy addresses, comma separated' value='" + esc(proxies.join(", ")).replace(/'/g, "&#39;") + "'><button type='button' class='ghost' data-door-proxies-save style='min-height:44px'>Save proxies</button></div>";
   h += "</div>";
   return h;
 }
@@ -9010,6 +9069,16 @@ function wireDoorDevices() {
   document.querySelectorAll("[data-door-approve]").forEach(function (b) { b.onclick = function () { act("approve", b.getAttribute("data-door-approve")); }; });
   document.querySelectorAll("[data-door-deny]").forEach(function (b) { b.onclick = function () { act("deny", b.getAttribute("data-door-deny")); }; });
   document.querySelectorAll("[data-door-revoke]").forEach(function (b) { b.onclick = function () { act("revoke", b.getAttribute("data-door-revoke")); }; });
+  document.querySelectorAll("[data-door-proxies-save]").forEach(function (b) { b.onclick = function () {
+    var card = b.closest(".card");
+    var input = card ? card.querySelector("[data-door-proxies-input]") : null;
+    var value = input ? input.value : "";
+    if (CONFIG.backend !== "live") { doorMsg = "Simulated: the trusted-proxy list was saved (mock mode)."; render(); return; }
+    fetch("/api/settings/trusted-proxies", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proxies: value }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.publicServer) publicState = j.publicServer; doorMsg = j && j.ok ? "Saved — the doors read the list on every knock, starting now." : ((j && j.error) || "The bridge refused that."); render(); })
+      .catch(function () { doorMsg = "The bridge did not answer — is it running?"; render(); });
+  }; });
 }
 function dhdHtml() {
   var d = dhdViewState();
@@ -9032,7 +9101,7 @@ function dhdHtml() {
     "OUTSIDE REACH<br><span style='color:var(--text);font-size:14px'>" + (d.publicVerified ? "Verified - the domain resolves to this machine and its certificate is live." : d.active ? "Unverified - " + esc(d.nextStep || "Forward ports 443 and 80 on your router to this machine, or add your domain.") + (d.wanNote ? " " + esc(d.wanNote) : "") : "-") + "</span><br>" +
     "CERTIFICATE<br><span style='color:var(--text);font-size:14px'>" + (d.active ? (d.certPending ? "Domain saved - certificate pending (door answering on the self-signed certificate meanwhile)" : d.certExpiresAt ? "Expires " + esc(String(d.certExpiresAt).slice(0, 10)) + (d.certDaysLeft != null ? " - " + d.certDaysLeft + " days left" : "") + (d.mode === "domain" ? " - Apex renews it on its own at 30 days or less" : "") : "Self-signed, generated by Apex") : "-") + "</span><br>" +
     "THE DOOR ITSELF<br><span style='color:var(--text);font-size:14px'>Proxy on 80/443, forwarding to the bridge on 127.0.0.1:" + BRIDGE_PORT + ". In DHD mode the bridge never binds publicly - the proxy is the only public face, and it serves nothing before the code.</span></div></div>";
-  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex | Node and DHD use the same access code. It is shown only here, on the machine Apex runs on. Since Build 2 the code <b>knocks</b> rather than opens: a device that presents it waits for an approval in the Door list below (the very first device approves itself), and an approved device holds its own 30-day session. Share the code like a house key all the same - it is still the only way to knock. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
+  h += "<div class='card'><b>Access code - the same key as home</b><p style='color:var(--dim)'>One code guards both doors: Apex | Node and DHD use the same access code. It is shown only here, on the machine Apex runs on. Since Build 2 the code <b>knocks</b> rather than opens: a device that presents it waits for an approval in the Door list below (the very first device is confirmed on this machine itself), and an approved device holds its own 30-day session. Share the code like a house key all the same - it is still the only way to knock. A session that comes in through DHD is a full session, the Updater included, end to end.</p>" +
     "<div class='row'><span class='mono' style='border:1px solid var(--line);background:var(--panel2);padding:8px 12px;font-weight:700;letter-spacing:.2em;font-size:16px'>" + (code ? (dhdCodeShown ? esc(code) : "••••-••••") : "No code yet - it is generated when a door first opens") + "</span>" +
     "<button class='ghost' id='dhd-code-show' aria-label='" + (dhdCodeShown ? "Hide the access code" : "Show the access code") + "' style='min-height:40px'>" + (dhdCodeShown ? "Hide" : "Show") + "</button>" +
     "<button class='ghost' id='dhd-code-regen' aria-label='Regenerate the access code - new knocks need the new code; approved devices keep their own sessions' style='min-height:40px'>Regenerate</button></div>" +
@@ -9640,11 +9709,11 @@ function seraphHtml() {
   if (!sensors.length) h += "<p style='color:var(--dim)'>No sensors yet. Give this seat the sensor role above, or register a remote sensor below.</p>";
   sensors.forEach(function (s) {
     var snap = s.lastSnapshot;
-    h += "<div class='card' style='margin-top:8px'><div class='row' style='gap:8px;align-items:center'><b class='grow'>" + esc(s.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(s.kind) + (s.state === "revoked" ? " · REVOKED" : "") + "</span></div>";
-    h += "<div style='color:var(--dim);font-size:12px'>Last seen " + srWhen(s.lastSeen) + (snap ? " · " + snap.assets + " hosts · " + snap.listeners + " listeners" : " · no picture yet") + (s.openDetections ? " · <b style='color:#f5b544'>" + s.openDetections + " open detection(s)</b>" : "") + (s.vantage ? "<br>Vantage: " + esc(s.vantage) : "") + "</div>";
-    h += "<div class='row' style='margin-top:6px;gap:8px'><button class='act' data-sropen='" + esc(s.id) + "'>Open</button>" + (s.state !== "revoked" && s.kind !== "self" ? "<button class='ghost' data-srrevoke='" + esc(s.id) + "'>Revoke</button>" : "") + "</div></div>";
+    h += "<div class='card' style='margin-top:8px'><div class='row' style='gap:8px;align-items:center'><b class='grow'>" + esc(s.name) + "</b><span style='color:var(--dim);font-size:12px'>" + esc(s.kind) + (s.state === "revoked" ? " · REVOKED" : "") + (s.state === "removed" ? " · REMOVED" : "") + "</span></div>";
+    h += "<div style='color:var(--dim);font-size:12px'>Last seen " + srWhen(s.lastSeen) + (snap ? " · " + snap.assets + " hosts · " + snap.listeners + " listeners" : " · no picture yet") + (s.openDetections ? " · <b style='color:#f5b544'>" + s.openDetections + " open detection(s)</b>" : "") + (s.vantage ? "<br>Vantage: " + esc(s.vantage) : "") + (s.kind === "self" && s.lastReportOutcome ? "<br>Last report home: " + esc(s.lastReportOutcome) + " · " + srWhen(s.lastReportAt) + (s.lastReportConsole ? " · to " + esc(String(s.lastReportConsole).slice(0, 12)) + "…" : "") : "") + "</div>";
+    h += "<div class='row' style='margin-top:6px;gap:8px'><button class='act' data-sropen='" + esc(s.id) + "'>Open</button>" + (s.state !== "revoked" && s.kind !== "self" ? "<button class='ghost' data-srrevoke='" + esc(s.id) + "'>Revoke</button>" : "") + (s.state !== "removed" && s.kind !== "self" ? "<button class='ghost' data-srremove='" + esc(s.id) + "'>Remove</button>" : "") + "</div></div>";
   });
-  h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:8px'><input id='sr-reg-name' type='text' placeholder='Sensor name — e.g. PIA · Branch office' aria-label='Sensor name'><input id='sr-reg-addr' type='text' placeholder='Address (for SSH)' aria-label='Sensor address'><input id='sr-reg-user' type='text' placeholder='SSH user' aria-label='SSH user'><input id='sr-reg-node' type='text' placeholder='Mesh node id' aria-label='Mesh node id'><input id='sr-reg-vantage' type='text' placeholder='Vantage — the segment it watches' aria-label='Sensor vantage'></div><button class='ghost' id='sr-register' style='margin-top:8px'>Register sensor</button></div>";
+  h += "<div class='row' style='margin-top:10px;flex-wrap:wrap;gap:8px'><input id='sr-reg-name' type='text' placeholder='Sensor name — e.g. PIA · Branch office' aria-label='Sensor name'><input id='sr-reg-addr' type='text' placeholder='Address (for SSH)' aria-label='Sensor address'><input id='sr-reg-user' type='text' placeholder='SSH user' aria-label='SSH user'><input id='sr-reg-port' type='number' min='1' max='65535' placeholder='SSH port (22)' aria-label='SSH port'><input id='sr-reg-node' type='text' placeholder='Mesh node id' aria-label='Mesh node id'><input id='sr-reg-vantage' type='text' placeholder='Vantage — the segment it watches' aria-label='Sensor vantage'></div><button class='ghost' id='sr-register' style='margin-top:8px'>Register sensor</button></div>";
   // Watchlist.
   var wl = srState.watchlist || [];
   h += "<div class='card'><b>Watchlist</b> <span style='color:var(--dim);font-size:12px'>— matched on the sensor itself; the list never leaves this machine (the Wire's declared list matches too). Only matches travel.</span><div style='margin-top:6px'>" +
@@ -9696,7 +9765,7 @@ function srSshHtml(s) {
   var h = "<div class='card'><b>SSH — " + esc(s.name) + "</b><p style='color:var(--dim);font-size:13px'>Your own key, your own session, opened by hand. Seraph keeps no standing session and stores no credential; the session runs in this seat's shell machinery, and closing the tab ends it.</p>";
   if (s.kind === "self") { h += "<p>This sensor is this seat itself — its shell is the one in Chat's CLI mode.</p></div>"; return h; }
   if (!s.address) { h += "<p>No address on this sensor's record — register one to open a session.</p></div>"; return h; }
-  h += "<div class='row' style='gap:8px'><button class='act' id='sr-ssh-open'>Open SSH session</button><button class='ghost' id='sr-ssh-close'>Close</button></div>";
+  h += "<div class='row' style='gap:8px;align-items:center'><button class='act' id='sr-ssh-open'>Open SSH session</button><button class='ghost' id='sr-ssh-close'>Close</button><label style='color:var(--dim);font-size:12px'>Port <input id='sr-ssh-port' type='number' min='1' max='65535' value='" + (s.sshPort || 22) + "' style='width:84px' aria-label='SSH port for this sensor'></label></div>";
   h += "<pre id='sr-term' class='mono' style='margin-top:10px;background:#0b0f14;color:#c9e8e2;border-radius:8px;padding:10px;min-height:220px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap'></pre>";
   h += "<div class='row' style='gap:8px;margin-top:8px'><input class='grow mono' id='sr-ssh-line' type='text' placeholder='Type a line, Enter sends it' aria-label='SSH input line'><button class='ghost' id='sr-ssh-send'>Send</button></div></div>";
   return h;
@@ -9733,12 +9802,13 @@ function bindSeraph() {
   });
   on("sr-collect", "click", function () { seraphAct("collect", {}); });
   on("sr-register", "click", function () {
-    seraphAct("register", { name: document.getElementById("sr-reg-name").value, address: document.getElementById("sr-reg-addr").value, sshUser: document.getElementById("sr-reg-user").value, nodeId: document.getElementById("sr-reg-node").value, vantage: document.getElementById("sr-reg-vantage").value });
+    seraphAct("register", { name: document.getElementById("sr-reg-name").value, address: document.getElementById("sr-reg-addr").value, sshUser: document.getElementById("sr-reg-user").value, sshPort: document.getElementById("sr-reg-port").value || 22, nodeId: document.getElementById("sr-reg-node").value, vantage: document.getElementById("sr-reg-vantage").value });
   });
   on("sr-wl-addbtn", "click", function () { seraphAct("watchlist", { term: document.getElementById("sr-wl-add").value }); });
   on("sr-back", "click", function () { srSensor = ""; srTab = "dash"; render(); });
   document.querySelectorAll("[data-sropen]").forEach(function (b) { b.addEventListener("click", function () { srSensor = b.getAttribute("data-sropen"); srTab = "dash"; render(); }); });
   document.querySelectorAll("[data-srrevoke]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("revoke", { id: b.getAttribute("data-srrevoke") }); }); });
+  document.querySelectorAll("[data-srremove]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("remove", { id: b.getAttribute("data-srremove") }); }); });
   document.querySelectorAll("[data-srfile]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("detection", { id: b.getAttribute("data-srfile"), act: "file" }); }); });
   document.querySelectorAll("[data-srdismiss]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("detection", { id: b.getAttribute("data-srdismiss"), act: "dismiss" }); }); });
   document.querySelectorAll("[data-srwlremove]").forEach(function (b) { b.addEventListener("click", function () { seraphAct("watchlist", { term: b.getAttribute("data-srwlremove"), remove: true }); }); });
@@ -9750,7 +9820,15 @@ function bindSeraph() {
     fetch("/api/shell/session/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat, cols: 100, rows: 30 }) })
       .then(function (r) { return r.json(); })
       .then(function () {
-        var cmd = "ssh -o StrictHostKeyChecking=accept-new " + (s.sshUser ? s.sshUser + "@" : "") + s.address + "\n";
+        // v0.6.11e (#340): the port is the sensor's own —
+        // the field's value wins at click time, a change is
+        // persisted to the record, and the composed command
+        // carries -p whenever the port is not the default.
+        var portEl = document.getElementById("sr-ssh-port");
+        var port = portEl ? parseInt(portEl.value, 10) : NaN;
+        if (!(port >= 1 && port <= 65535)) port = s.sshPort || 22;
+        if (port !== (s.sshPort || 22)) seraphAct("sshport", { id: s.id, sshPort: port });
+        var cmd = "ssh -o StrictHostKeyChecking=accept-new " + (port !== 22 ? "-p " + port + " " : "") + (s.sshUser ? s.sshUser + "@" : "") + s.address + "\n";
         return fetch("/api/shell/session/input", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: srSshChat, text: cmd }) });
       })
       .then(function () { var term = document.getElementById("sr-term"); if (term) term.textContent = ""; srPollSsh(); })
@@ -11981,6 +12059,11 @@ function applyUpdateRecord(j) {
   if (j.diagnoseCommand) updater.diagnoseCommand = j.diagnoseCommand;
   if (j.dhdPrereqs) updater.dhdPrereqs = j.dhdPrereqs;
   if (j.tailFailure) updater.tailFailure = j.tailFailure;
+  // #307: the rollback point rides the record — the panel's
+  // rollback act, and the failure card's first remedy, render
+  // only from what the record (and the disk behind it) prove.
+  updater.rollbackPoint = j.rollbackPoint || null;
+  updater.rollbackOffer = j.rollbackOffer || "";
   if (j.state === "working") {
     updater.state = "applying";
     // When the current step started (build .81, #70): the
@@ -12010,6 +12093,10 @@ function applyUpdateRecord(j) {
 }
 var UPDATE_STEPS = [["downloading", "Downloading"], ["verifying", "Verifying"], ["staging", "Staging"], ["installing", "Installing"], ["dhd-prereqs", "DHD prerequisites"], ["restarting", "Restarting"]];
 function updaterProgressHtml() {
+  if (updater.step === "rollback") {
+    return "<div class='card' style='margin-top:10px'><b>Rolling back…</b><br>" +
+      "<span style='color:var(--dim)'>Apex will restart itself into the previous build — this page will go quiet while it does, then come back with the confirmation.</span></div>";
+  }
   var cur = 0;
   UPDATE_STEPS.forEach(function (s, i) { if (s[0] === updater.step) cur = i; });
   var parts = UPDATE_STEPS.map(function (s, i) {
@@ -12034,6 +12121,29 @@ function updaterProgressHtml() {
     "<b>Updating Apex…</b><br>" +
     "<span style='font-size:13px'>" + parts.join(" <span style='color:var(--dim)'>→</span> ") + "</span><br>" +
     "<span style='color:var(--dim)'>Apex will restart itself when the install finishes — this page will go quiet while it does, then come back on the new version with the confirmation.</span>" + slowNote + "</div>";
+}
+function updaterRollbackHtml(failed) {
+  // #307: the rollback act. On a failure card it is the FIRST
+  // remedy (the helper's own offer text rides the record);
+  // after a successful apply it stands as the quiet way back.
+  // No point in the record, no card — the offer is only ever
+  // as real as the point on disk.
+  var p = updater.rollbackPoint;
+  if (!p) return "";
+  var h = "<div class='card' style='margin-top:10px'><b>Roll back.</b><br>" +
+    "<span style='color:var(--dim)'>" + (failed && updater.rollbackOffer ? esc(updater.rollbackOffer) + "<br>" : "") +
+    "The previous install — <b>" + esc(p.label || "the previous build") + "</b> — is kept beside this one. Rolling back returns to it whole; this build is kept in its place, so the same act rolls forward again.</span><br>" +
+    "<button class='ghost' id='up-rollback' style='min-height:44px;margin-top:8px'>Roll back to " + esc(p.label || "the previous build") + "</button>";
+  if (p.withConfigAvailable) h += " <button class='ghost' id='up-rollback-config' style='min-height:44px;margin-top:8px'>Roll back, and restore the pre-update config</button>" +
+    "<br><span style='color:var(--dim);font-size:12px'>The config restore brings back the settings as they were before the update — custody material (her Mesh key, the door registry, the badge, account tokens) is held out from your current state and carried over, never rolled back.</span>";
+  return h + "</div>";
+}
+function doRollback(withConfig) {
+  fetch("/api/update/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ withConfig: !!withConfig }) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok) { updater.state = "applying"; updater.step = "rollback"; updater.stepSince = Date.now(); pollUpdateResult(); }
+    else { updater.applyError = (j && j.error) || "The rollback could not be started."; updater.state = "applyfailed"; }
+    refreshUpdaterUi();
+  }).catch(function () { refreshUpdaterUi(); });
 }
 function updaterFallbackHtml() {
   return "<div class='card' style='margin-top:10px'><b>Manual fallback.</b><br>" +
@@ -12904,6 +13014,8 @@ function settingsUpdaterHtml() {
   h += "</div>";
   if (updater.state === "applying") h += updaterProgressHtml();
   if (updater.state === "updated") h += updaterUpdatedHtml();
+  if (updater.state === "updated") h += updaterRollbackHtml(false);
+  if (updater.state === "applyfailed") h += updaterRollbackHtml(true);
   if (updater.state === "applyfailed" && updater.stagedDir) h += updaterFallbackHtml();
   return h + "</details>";
 }
@@ -12914,6 +13026,10 @@ function wireUpdaterFold() {
   if (upCheck) upCheck.onclick = function () { checkForUpdates(); };
   var upApply = document.getElementById("up-apply");
   if (upApply) upApply.onclick = function () { updaterFoldOpen = true; applyUpdate(); };
+  var upRollback = document.getElementById("up-rollback");
+  if (upRollback) upRollback.onclick = function () { updaterFoldOpen = true; doRollback(false); };
+  var upRollbackCfg = document.getElementById("up-rollback-config");
+  if (upRollbackCfg) upRollbackCfg.onclick = function () { updaterFoldOpen = true; doRollback(true); };
   mainEl.querySelectorAll("[data-upchannel]").forEach(function (b) { b.onclick = function () { setUpdaterChannel(b.getAttribute("data-upchannel")); }; });
 }
 function updaterCurrentHtml() {

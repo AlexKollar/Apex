@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-# Apex updater apply helper — written by bridge.py into
-# updates/<tag>/ and run detached (its own session), so it
-# outlives the bridge it replaces. It runs the staged installer
-# (never --fresh), relaunches the app through start.sh, and
-# records the outcome in config/update-result.json — the record
-# the Updater panel reads its confirmation (or its failure and
-# fallback) from. Stdlib only, like the bridge.
+# Apex updater apply helper — written by bridge.py into the
+# stage home (.apex-apply-stage/<tag>/ since v0.6.11e, #306-full;
+# updates/<tag>/ before it) and run detached (its own session),
+# so it outlives the bridge it replaces. It runs the staged
+# installer (never --fresh), relaunches the app through
+# start.sh, and records the outcome in
+# config/update-result.json — the record the Updater panel
+# reads its confirmation (or its failure and fallback) from.
+# Stdlib only, like the bridge.
+#
+# v0.6.11e: this file has a second mode — `--rollback`
+# (see rollback_main below): the executor that returns a seat
+# to the rollback point the installer now keeps (#307), and
+# the confirmation above gained its third leg — the serving
+# process's unit membership (#336).
 #
 # Build 6 — the helper can no longer die traceless. The Build 4
 # round-trip gate caught it dying silently: the installer ran
@@ -168,15 +176,71 @@ def write_result(patch):
                   "attempt " + str(attempt) + ": " + str(e))
 
 
-def fail(step, error):
+def _rollback_point_info(root):
+    # v0.6.11e (#307): the rollback point standing for this
+    # install, read from disk (the parked previous tree beside
+    # the root) — the same discipline as the bridge's reader:
+    # no point on disk, no offer. Returns a small dict or None.
+    if not root:
+        return None
+    prev = os.path.join(
+        os.path.dirname(os.path.abspath(root)), ".apex-prev")
+    if not os.path.isfile(os.path.join(prev, "bridge.py")):
+        return None
+    label = ""
+    stamp = ""
+    try:
+        with open(os.path.join(prev, "bridge.py"), "rb") as f:
+            head = f.read(200000)
+        m = re.search(rb'BRIDGE_BUILD = "([^"]+)"', head)
+        if m:
+            stamp = m.group(1).decode("utf-8", "replace")
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(prev, "VERSION")) as f:
+            raw = f.read().strip().splitlines()[0].strip()
+        parts = raw.split()
+        number = parts[0] if parts else ""
+        status = parts[1] if len(parts) > 1 else ""
+        label = "v" + number + (
+            "e" if status in ("edge", "alpha") else
+            "b" if status == "beta" else "")
+    except Exception:
+        pass
+    if stamp:
+        label = ((label + " ") if label else "") \
+            + "(build " + stamp + ")"
+    return {"prevDir": prev, "label": label, "stamp": stamp}
+
+
+def fail(step, error, extra=None):
     STATE["step"] = step
     job = STATE.get("job") or {}
-    write_result({
+    patch = {
         "state": "failed", "step": step, "error": error,
         "stagedDir": job.get("pkgDir", ""),
         "command": job.get("command", ""),
         "failedAt": _stamp(),
-    })
+    }
+    if isinstance(extra, dict):
+        patch.update(extra)
+    # #307: a failed or unconfirmed apply offers the rollback
+    # as its first remedy — but only as real as the record: the
+    # offer rides the record only when a point stands on disk.
+    try:
+        point = _rollback_point_info(job.get("root"))
+        if point:
+            patch["rollbackPoint"] = point
+            patch["rollbackOffer"] = (
+                "Or roll back to " + (point["label"] or "the "
+                "previous build") + " — the previous install is "
+                "kept beside this one, and the rollback act "
+                "(Updater panel, or: python3 apply-helper.py "
+                "--rollback) returns to it whole.")
+    except Exception:
+        pass
+    write_result(patch)
 
 
 def _heartbeat():
@@ -514,6 +578,43 @@ def _port_holder_pid(port):
     return None
 
 
+def _pid_cgroup(pid):
+    try:
+        with open("/proc/" + str(pid) + "/cgroup") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def _cgroup_names_unit(cgroup_text, unit="navi-bridge.service"):
+    # Pure shape check, split out so the bench can prove the
+    # parsing without a live systemd: a process belongs to the
+    # bridge's unit when its cgroup path names the unit (the
+    # user slice's app/unit subtree).
+    return bool(cgroup_text) and unit in cgroup_text
+
+
+def _serving_unit_state(port):
+    # v0.6.11e (#336): who is ACTUALLY serving the port, in
+    # unit terms? Returns (state, pid, desc):
+    #   "in-unit"  — the holder's cgroup names navi-bridge.service
+    #   "detached" — a holder exists and its cgroup does not
+    #   "unknown"  — no holder could be resolved
+    # The 2026-11-20 00:23 incident is the detached shape: an
+    # Apply-spawned bridge adopted by start.sh answered with
+    # the right build while its systemd unit stood down, and
+    # the old confirmation — which asked only WHAT answered,
+    # never WHO — certified the seat healthy.
+    pid = _port_holder_pid(port)
+    if pid is None:
+        return ("unknown", None, "")
+    if _cgroup_names_unit(_pid_cgroup(pid)):
+        return ("in-unit", pid, "process " + str(pid))
+    cmd = _pid_cmdline(pid)
+    return ("detached", pid,
+            "process " + str(pid) + ((" (" + cmd + ")") if cmd else ""))
+
+
 def _port_answers_expected(port, tgt_seq):
     # True when the bridge answering on the port already reports
     # the target identity — the case where a relaunch spawn
@@ -717,6 +818,25 @@ def _install_log_last_step(log_path):
     return "the installer's closing steps (its log names no step banner for the failure)"
 
 
+def _stage_outside_tree(job):
+    # v0.6.11e (#306-full): is this job's stage already in the
+    # stage home outside the tree (.apex-apply-stage/<tag>)?
+    # When it is, the holding copy and the stage-recovery
+    # machinery have nothing to do: the swap never renames the
+    # stage's ground, so no copy needs holding and no artifact
+    # needs rescuing — and the recovery's cleanup, which
+    # removes the holding folder, must never run, because for
+    # an outside stage the "holding folder" IS the stage.
+    # Legacy jobs (a stage an older bridge created under
+    # updates/<tag> inside the tree) return False and keep the
+    # full #237 treatment, unchanged.
+    pkg_dir = os.path.abspath(str(job.get("pkgDir") or ""))
+    root = os.path.abspath(str(job.get("root") or ""))
+    if not pkg_dir or not root:
+        return False
+    return not pkg_dir.startswith(root + os.sep)
+
+
 def _stage_holding_dir(job):
     # The apply's insurance folder: a sibling of the install
     # root, in the installer's own sibling idiom (.apex-stage,
@@ -759,6 +879,16 @@ def _recover_stage_artifacts(job, log_handle):
     # in-place migration) is left exactly as it lies.
     # Best-effort throughout: a rescue that fails is traced,
     # never fatal — the apply's verdict must not hinge on it.
+    if _stage_outside_tree(job):
+        # #306-full: the stage lives outside the tree — the
+        # swap never parked it, its logs and package stand
+        # where the job's paths name them, and there is no
+        # holding copy to clean up (the holding folder for
+        # this job is the stage itself). Nothing to rescue.
+        trace("stage-recovery-skipped",
+              "the stage lives outside the tree "
+              "(.apex-apply-stage) — its artifacts never left home")
+        return
     try:
         install_log = str(job.get("installLog") or "")
         if install_log and not os.path.isfile(install_log) \
@@ -811,6 +941,35 @@ def _recover_stage_artifacts(job, log_handle):
                 trace("stage-recovery-missed",
                       "no surviving copy of the staged package "
                       "was found to restore to " + pkg_dir)
+        # v0.6.11e (#306-full, campaign-caught): the handoff
+        # verdict (#208's named record) is stage paperwork
+        # too. Before the stage home existed, install.sh's
+        # evidence carry brought it across the swap; the
+        # carry retired with the move, and this recovery —
+        # which knew the log and the package — never learned
+        # the verdict, so a swapped in-tree stage stranded it
+        # in the parked tree. Bring it home with the rest.
+        try:
+            _stage_dir = os.path.dirname(pkg_dir)
+            _live_verdict = os.path.join(
+                _stage_dir, "apply-handoff-verdict.json")
+            if _stage_dir and not os.path.isfile(_live_verdict):
+                _orig_root = os.path.abspath(
+                    str(job.get("root") or ""))
+                if _orig_root and os.path.abspath(
+                        _stage_dir).startswith(_orig_root + os.sep):
+                    _parked_verdict = os.path.join(
+                        os.path.dirname(_orig_root), ".apex-prev") \
+                        + os.path.abspath(_live_verdict)[len(_orig_root):]
+                    if os.path.isfile(_parked_verdict):
+                        shutil.copyfile(_parked_verdict, _live_verdict)
+                        trace("stage-recovered",
+                              "the handoff verdict was brought "
+                              "home to " + _live_verdict
+                              + " — the swap had parked it with "
+                              "the previous tree")
+        except Exception:
+            pass
     except Exception as e:
         trace("stage-recovery-failed", str(e))
     # The holding copy has served either way; a finished
@@ -866,19 +1025,28 @@ def main():
     # cleanup can never take, so _recover_stage_artifacts
     # can always put the manual fallback's folder back where
     # the fallback command points.
-    try:
-        _held = _stage_holding_dir(job)
-        if _held and os.path.isdir(pkg_dir):
-            _held_pkg = os.path.join(_held, "package")
-            if os.path.isdir(_held_pkg):
-                shutil.rmtree(_held_pkg, ignore_errors=True)
-            os.makedirs(_held, exist_ok=True)
-            shutil.copytree(pkg_dir, _held_pkg)
-            trace("stage-held",
-                  "the staged package is held at " + _held_pkg
-                  + " while the installer runs")
-    except Exception as e:
-        trace("stage-hold-failed", str(e))
+    if _stage_outside_tree(job):
+        # #306-full: the stage is already on ground the swap
+        # never renames — holding a copy of it would mean
+        # copying the stage onto itself. The stage is its own
+        # insurance now.
+        trace("stage-held",
+              "the stage lives outside the tree "
+              "(.apex-apply-stage) — no holding copy is needed")
+    else:
+        try:
+            _held = _stage_holding_dir(job)
+            if _held and os.path.isdir(pkg_dir):
+                _held_pkg = os.path.join(_held, "package")
+                if os.path.isdir(_held_pkg):
+                    shutil.rmtree(_held_pkg, ignore_errors=True)
+                os.makedirs(_held, exist_ok=True)
+                shutil.copytree(pkg_dir, _held_pkg)
+                trace("stage-held",
+                      "the staged package is held at " + _held_pkg
+                      + " while the installer runs")
+        except Exception as e:
+            trace("stage-hold-failed", str(e))
 
     # v0.3.0e Build 1 (#205): takeover mode. When the staged
     # package's bootstrap spawned this helper, it takes an apply
@@ -1059,6 +1227,21 @@ def main():
         _verdict_path = os.path.join(
             os.path.dirname(os.path.abspath(job_path)),
             "apply-handoff-verdict.json")
+        if not os.path.isfile(_verdict_path):
+            # v0.6.11e (#306-full): the installer's swap may
+            # have parked the stage (and the verdict in it)
+            # before this quote runs — the recovery below
+            # brings the file home, but the quote is read
+            # now, so read through the park when the live
+            # path is bare.
+            _vroot = os.path.abspath(str(job.get("root") or ""))
+            _vdir = os.path.dirname(os.path.abspath(job_path))
+            if _vroot and _vdir.startswith(_vroot + os.sep):
+                _parked_v = os.path.join(
+                    os.path.dirname(_vroot), ".apex-prev") \
+                    + _verdict_path[len(_vroot):]
+                if os.path.isfile(_parked_v):
+                    _verdict_path = _parked_v
         with open(_verdict_path) as _vf:
             _verdict = json.load(_vf)
         trace("handoff-verdict",
@@ -1239,8 +1422,8 @@ def main():
             reason = why or ("it exited with code " + str(code))
             fail("install",
                  "Installing the update failed — " + reason + ". The "
-                 "installer's own output is in updates/" + job["tagDir"]
-                 + "/apply-install.log. Nothing is confirmed updated: "
+                 "installer's own output is in " + job["installLog"]
+                 + ". Nothing is confirmed updated: "
                  "the app is being relaunched as it lies, and the "
                  "staged package is still in place — the manual "
                  "fallback below finishes the job by hand.")
@@ -1384,10 +1567,46 @@ def main():
         and tuples_equal(version_tuple(after_number), target)
         and (tgt_seq is None or disk_seq is None
              or disk_seq == tgt_seq))
-    if live_ok and file_ok:
+    # v0.6.11e (#336): the third leg of confirmation — the
+    # seat is proven healthy only when the process SERVING the
+    # port is the seat's own bridge, inside its systemd unit,
+    # on seats where systemd owns the bridge (an on-boot
+    # install). A right-build answer from a detached process —
+    # the 2026-11-20 incident shape, a start.sh-adopted bridge
+    # standing outside the unit that reports it fine — is
+    # refused by name, never adopted. On seats systemd does
+    # not own, there is no unit to belong to and the leg does
+    # not stand.
+    unit_state = "not-applicable"
+    unit_desc = ""
+    if live_ok and _relaunch_systemd_owned(job):
+        unit_state, _unit_pid, unit_desc = _serving_unit_state(
+            job["port"])
+        trace("health-gate",
+              "serving process: " + unit_state
+              + ((" — " + unit_desc) if unit_desc else ""))
+    if live_ok and file_ok and unit_state == "detached":
+        fail("restart",
+             "The update installed and the expected build "
+             "answers, but the bridge answering on "
+             "http://localhost:" + str(job["port"]) + " is "
+             + unit_desc + " — it is NOT running inside its "
+             "systemd unit (navi-bridge.service), so the seat "
+             "is not proven healthy and the update is not "
+             "confirmed. A detached bridge is a finding, not a "
+             "relaunch: end that process and restart the unit "
+             "(systemctl --user restart navi-bridge.service), "
+             "then run the update again. The staged package is "
+             "still in place.",
+             {"healthGate": {"buildSeq": tgt_seq, "unit": unit_state}})
+    elif live_ok and file_ok:
         STATE["step"] = "done"
         write_result({
             "state": "done", "step": "done",
+            # #336: the confirmation's proof, on the record —
+            # the build it observed answering, and the serving
+            # process's unit state where a unit owns the bridge.
+            "healthGate": {"buildSeq": tgt_seq, "unit": unit_state},
             **({"tailFailure": tail_failure} if tail_failure else {}),
             "afterVersion": after_number,
             "afterStatus": after_status,
@@ -1449,6 +1668,484 @@ def main():
     STATE["stop_beat"] = True
 
 
+# ------------------------------------------------------------------
+# v0.6.11e (#307): the rollback executor — this helper's second
+# mode. `apply-helper.py --rollback [job.json] [--with-config]`
+# returns the seat to the rollback point the installer kept:
+# the parked previous tree (.apex-prev) becomes the install
+# again, and the tree it replaces is parked in its place —
+# kept, named, never deleted, so the act toggles: the same
+# command rolls forward again. It lives below the bridge on
+# purpose: a rollback whose only door is the (possibly broken)
+# new bridge fails exactly when it is needed. The bridge's
+# in-app act spawns this same mode detached with a job file;
+# the shell door runs the installed tree's copy bare, and the
+# job is synthesized from the seat itself.
+#
+# Config classes, per the design of record:
+#   * tree-only (default): the CURRENT config rides whole —
+#     installs never overwrite operator state, so a tree-only
+#     rollback loses nothing the install did; state the bad
+#     build damaged stays damaged, and the record says so.
+#   * --with-config: the pre-Apply config archive (written by
+#     the installer into .apex-apply-stage/archive/) is
+#     restored — with custody material HELD OUT from the
+#     newest state and re-carried: the Mesh node keypair, the
+#     door device registry, the Operator Badge enrollment,
+#     and account tokens. A rollback must never resurrect a
+#     device revoked under the bad build, nor strand one
+#     approved under it.
+# Every outcome lands in config/update-result.json as a
+# rollback record — receipted like an Apply, never a silent
+# filesystem act.
+# ------------------------------------------------------------------
+
+def _rollback_archive_for(stage_home, point_seq):
+    arch_root = os.path.join(stage_home, "archive")
+    best = None
+    try:
+        names = os.listdir(arch_root)
+    except Exception:
+        return None
+    for name in names:
+        rec_path = os.path.join(arch_root, name, "rollback.json")
+        tar_path = os.path.join(arch_root, name, "config.tar")
+        if not os.path.isfile(rec_path) or not os.path.isfile(tar_path):
+            continue
+        try:
+            with open(rec_path) as f:
+                rec = json.load(f)
+        except Exception:
+            continue
+        if rec.get("fromSeq") == point_seq:
+            if best is None or os.path.getmtime(rec_path) \
+                    > os.path.getmtime(best[0]):
+                best = (rec_path, tar_path, rec)
+    if best is None:
+        return None
+    return {"recordPath": best[0], "tarPath": best[1], "record": best[2]}
+
+
+def _custody_holdout(current_cfg):
+    # The custody slice of a config dict, lifted from the
+    # NEWEST state before any archive restore overwrites it.
+    # Returns (held, names): the values to re-carry, and the
+    # human names of what was actually found and held.
+    held = {}
+    names = []
+    if not isinstance(current_cfg, dict):
+        return held, names
+    ps = current_cfg.get("public_server")
+    if isinstance(ps, dict) and isinstance(ps.get("devices"), list):
+        held["doorDevices"] = ps["devices"]
+        names.append("the door device registry")
+    fed = current_cfg.get("federation")
+    if isinstance(fed, dict) and fed.get("badgeSha256"):
+        held["badgeSha256"] = fed["badgeSha256"]
+        names.append("the Operator Badge enrollment")
+    tokens = {}
+    for key, val in current_cfg.items():
+        if "token" in str(key).lower() and val:
+            tokens[key] = val
+    if tokens:
+        held["tokens"] = tokens
+        names.append("account tokens")
+    return held, names
+
+
+def _custody_recarry(restored_cfg, held):
+    if not isinstance(restored_cfg, dict):
+        return restored_cfg
+    if "doorDevices" in held:
+        ps = restored_cfg.get("public_server")
+        ps = dict(ps) if isinstance(ps, dict) else {}
+        ps["devices"] = held["doorDevices"]
+        restored_cfg["public_server"] = ps
+    if "badgeSha256" in held:
+        fed = restored_cfg.get("federation")
+        fed = dict(fed) if isinstance(fed, dict) else {}
+        fed["badgeSha256"] = held["badgeSha256"]
+        restored_cfg["federation"] = fed
+    for key, val in (held.get("tokens") or {}).items():
+        restored_cfg[key] = val
+    return restored_cfg
+
+
+def rollback_main(job):
+    root = os.path.abspath(str(job.get("root") or ""))
+    parent = os.path.dirname(root)
+    stage_home = os.path.join(parent, ".apex-apply-stage")
+    prev = os.path.join(parent, ".apex-prev")
+    port = int(job.get("port") or 8675)
+    with_config = bool(job.get("withConfig"))
+    STATE["job"] = job
+    STATE["result_path"] = job.get("resultPath") or os.path.join(
+        root, "config", "update-result.json")
+    STATE["trace_path"] = job.get("traceLog") or os.path.join(
+        stage_home, "rollback-trace.log")
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _on_signal)
+        except Exception:
+            pass
+    trace("rollback-start",
+          "pid " + str(os.getpid()) + ", root " + root
+          + ", with-config " + str(with_config))
+
+    def rfail(error):
+        trace("rollback-failed", error)
+        write_result({
+            "state": "failed", "step": "rollback",
+            "error": error, "failedAt": _stamp(),
+            "rollback": {"withConfig": with_config},
+        })
+        print("rollback: FAILED — " + error)
+        return 1
+
+    point = _rollback_point_info(root)
+    if not point:
+        return rfail(
+            "There is no rollback point on this machine: no "
+            "previous install is kept at " + prev + ". A "
+            "rollback point is kept by the first update the "
+            "current installer's build completes — nothing "
+            "was changed.")
+    point_seq = read_installed_build_seq(prev)
+    current_seq = read_installed_build_seq(root)
+    archive = _rollback_archive_for(stage_home, point_seq)
+    if with_config and not archive:
+        return rfail(
+            "The rollback point at " + prev + " carries no "
+            "config archive for build " + str(point_seq)
+            + ", so there is no pre-update config to restore. "
+            "A tree-only rollback (without --with-config) is "
+            "still available — nothing was changed.")
+    write_result({
+        "state": "working", "step": "rollback",
+        "rollback": {
+            "fromSeq": current_seq, "toSeq": point_seq,
+            "toLabel": point.get("label") or "",
+            "withConfig": with_config,
+        },
+    })
+    print("rollback: returning this seat to "
+          + (point.get("label") or "the previous build")
+          + " (point at " + prev + ")")
+
+    # Stop the serving bridge — by its proven pid only, the
+    # same discipline as the apply's wedge clear. A foreign
+    # holder is named and never touched.
+    holder = _port_holder_pid(port)
+    if holder is not None:
+        cmd = _pid_cmdline(holder)
+        owned = ("bridge.py" in cmd) \
+            and (_pid_cwd(holder) == os.path.realpath(root))
+        if not owned:
+            return rfail(
+                "The process holding port " + str(port)
+                + " (pid " + str(holder)
+                + ((", " + cmd) if cmd else "")
+                + ") is not this install's bridge, so it was "
+                "not touched and the rollback did not run. End "
+                "it yourself, then roll back again.")
+        if not _stop_proven_bridge(holder, port,
+                                    "process " + str(holder)):
+            return rfail(
+                "This install's bridge (pid " + str(holder)
+                + ") could not be stopped, so the rollback did "
+                "not run — nothing was changed.")
+    else:
+        found = _find_install_bridge(root)
+        if found is not None:
+            _stop_proven_bridge(found, port,
+                                "process " + str(found))
+
+    # Snapshot the current config BEFORE the exchange: it is
+    # the custody source either way, and the tree-only case's
+    # whole config.
+    work = os.path.join(stage_home, "rollback-work")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work, exist_ok=True)
+    current_cfg_dir = os.path.join(root, "config")
+    snapshot = os.path.join(work, "config-current")
+    if os.path.isdir(current_cfg_dir):
+        shutil.copytree(current_cfg_dir, snapshot)
+    current_cfg = {}
+    try:
+        with open(os.path.join(snapshot, "navi.config.json")) as f:
+            current_cfg = json.load(f)
+    except Exception:
+        current_cfg = {}
+    held, held_names = _custody_holdout(current_cfg)
+    if os.path.isdir(os.path.join(snapshot, "mesh")):
+        held_names.append("the Mesh node keypair")
+
+    # The exchange: three renames, each tree kept whole.
+    park = os.path.join(parent, ".apex-rollback-park")
+    if os.path.exists(park):
+        if os.path.isdir(root) and os.path.isdir(prev):
+            shutil.rmtree(park, ignore_errors=True)
+        else:
+            return rfail(
+                "A previous rollback's park still stands at "
+                + park + " and the tree state is not whole — "
+                "the rollback did not run. That folder is the "
+                "evidence; look there first.")
+    try:
+        os.rename(root, park)
+        os.rename(prev, root)
+        os.rename(park, prev)
+    except Exception as e:
+        # Best-effort restoration of the pre-exchange shape.
+        try:
+            if not os.path.isdir(root) and os.path.isdir(park):
+                os.rename(park, root)
+        except Exception:
+            pass
+        return rfail(
+            "The tree exchange failed (" + str(e) + ") — the "
+            "rollback did not complete. The trees stand as: "
+            "install " + str(os.path.isdir(root))
+            + ", park " + str(os.path.isdir(park))
+            + ", previous " + str(os.path.isdir(prev)) + ".")
+    trace("rollback-exchange",
+          "the point is installed; the replaced tree is parked "
+          "at " + prev + " as the new point")
+
+    # Config, per class.
+    config_source = ""
+    restored_cfg_dir = os.path.join(root, "config")
+    if with_config:
+        import tarfile
+        shutil.rmtree(restored_cfg_dir, ignore_errors=True)
+        os.makedirs(restored_cfg_dir, exist_ok=True)
+        with tarfile.open(archive["tarPath"]) as tf:
+            tf.extractall(root)
+        # Custody re-carry: the newest state's custody wins
+        # over the archive, by name.
+        snap_mesh = os.path.join(snapshot, "mesh")
+        if os.path.isdir(snap_mesh):
+            dest_mesh = os.path.join(restored_cfg_dir, "mesh")
+            shutil.rmtree(dest_mesh, ignore_errors=True)
+            shutil.copytree(snap_mesh, dest_mesh)
+        cfg_path = os.path.join(restored_cfg_dir, "navi.config.json")
+        try:
+            with open(cfg_path) as f:
+                restored_cfg = json.load(f)
+        except Exception:
+            restored_cfg = {}
+        restored_cfg = _custody_recarry(restored_cfg, held)
+        with open(cfg_path, "w") as f:
+            json.dump(restored_cfg, f, indent=1)
+        config_source = (
+            "the pre-update archive, with custody held out "
+            "from the newest state (" + ", ".join(held_names)
+            + ")" if held_names else
+            "the pre-update archive (no custody material "
+            "stood in the newest state to hold out)")
+    else:
+        shutil.rmtree(restored_cfg_dir, ignore_errors=True)
+        if os.path.isdir(snapshot):
+            shutil.copytree(snapshot, restored_cfg_dir)
+        config_source = (
+            "the current config, whole (tree-only rollback: "
+            "state this seat accumulated under the replaced "
+            "build rides — including anything it damaged; "
+            "that is what --with-config exists for)")
+    trace("rollback-config", config_source)
+
+    # Relaunch by the install's recorded startup mode — the
+    # #305 discipline: a boot seat's bridge belongs to its
+    # unit; a launch seat's to start.sh.
+    env = dict(os.environ)
+    env["NAVI_HOME"] = root
+    if job.get("startup") == "on-boot":
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "restart",
+                 "navi-bridge.service"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=60)
+            trace("rollback-relaunch",
+                  "systemd owns this install's bridge — "
+                  "navi-bridge.service was signalled to restart")
+        except Exception as e:
+            trace("rollback-relaunch",
+                  "the unit restart could not be signalled ("
+                  + str(e) + ") — confirmation judges what answers")
+    else:
+        log_path = os.path.join(stage_home, "rollback-relaunch.log")
+        try:
+            logf = open(log_path, "ab")
+            try:
+                subprocess.Popen(
+                    ["bash", os.path.join(root, "start.sh")],
+                    cwd=root, env=env, stdin=subprocess.DEVNULL,
+                    stdout=logf, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True)
+            finally:
+                logf.close()
+            trace("rollback-relaunch", "start.sh spawned")
+        except Exception as e:
+            return rfail(
+                "The trees were exchanged and the config "
+                "settled (" + config_source + "), but the "
+                "relaunch could not be started (" + str(e)
+                + ") — launch the app from its menu entry; the "
+                "rollback itself has landed.")
+    # Confirm the previous build answers.
+    answered = None
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:" + str(port) + "/api/status",
+                headers={"User-Agent": "navi-rollback"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                seen = json.loads(resp.read().decode("utf-8", "replace"))
+            if seen.get("app") == "Navi: Apex" \
+                    and seen.get("buildSeq") == point_seq:
+                answered = seen
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    if answered is None:
+        return rfail(
+            "The trees were exchanged and the config settled ("
+            + config_source + "), but the previous build did "
+            "not answer on port " + str(port) + " within three "
+            "minutes, so the rollback is not confirmed. The "
+            "replaced build is kept at " + prev + " — running "
+            "this same command again rolls forward to it.")
+    write_result({
+        "state": "done", "step": "rollback",
+        "rollback": {
+            "fromSeq": current_seq, "toSeq": point_seq,
+            "toLabel": point.get("label") or "",
+            "withConfig": with_config,
+            "configSource": config_source,
+            "custodyHeldOut": held_names,
+        },
+        "afterLabel": point.get("label") or "",
+    })
+    trace("rollback-done",
+          "confirmed " + (point.get("label") or "")
+          + "; config: " + config_source)
+    print("rollback: confirmed — "
+          + (point.get("label") or "the previous build")
+          + " is answering. Config: " + config_source + ".")
+    print("rollback: to return to the build you just left, "
+          "run the same act from the tree now parked at "
+          + prev + " — python3 \"" + os.path.join(
+              prev, "apply-helper.py") + "\" --rollback — its "
+          "helper speaks for this seat.")
+    shutil.rmtree(work, ignore_errors=True)
+    return 0
+
+
+def _rollback_entry():
+    # The shell door: `apply-helper.py --rollback` run from the
+    # installed tree synthesizes its job from the seat itself
+    # (the bridge is a constant port by design — BRIDGE_PORT is
+    # never read from config — and the startup mode is the
+    # config's recorded choice). The bridge's in-app act passes
+    # a job file instead.
+    args = [a for a in sys.argv[1:] if a != "--rollback"]
+    with_config = "--with-config" in args
+    args = [a for a in args if a != "--with-config"]
+    seat = ""
+    if "--seat" in args:
+        i = args.index("--seat")
+        if i + 1 < len(args):
+            seat = args[i + 1]
+            args = args[:i] + args[i + 2:]
+    job = None
+    if args and os.path.isfile(args[0]):
+        with open(args[0]) as f:
+            job = json.load(f)
+        job["withConfig"] = bool(job.get("withConfig") or with_config)
+    if job is None:
+        root = os.path.dirname(os.path.abspath(__file__))
+        if seat:
+            root = os.path.abspath(seat)
+        elif os.path.basename(root) == ".apex-prev":
+            # Run from the parked point tree — the roll-forward
+            # door. The live tree this helper serves is its
+            # seat: the one non-hidden sibling carrying a
+            # bridge. (The rolled-back build's own helper may
+            # predate this mode entirely; the point's helper
+            # is the one that can speak.) Ambiguity is refused
+            # by name, with --seat as the explicit answer.
+            parent = os.path.dirname(root)
+            seats = []
+            try:
+                seats = [d for d in sorted(os.listdir(parent))
+                         if not d.startswith(".")
+                         and os.path.isfile(os.path.join(
+                             parent, d, "bridge.py"))]
+            except Exception:
+                seats = []
+            if len(seats) == 1:
+                root = os.path.join(parent, seats[0])
+            else:
+                print("rollback: FAILED — this helper stands "
+                      "in the rollback point itself, and the "
+                      "seat it belongs to is not unambiguous "
+                      "(siblings carrying a bridge: "
+                      + (", ".join(seats) or "none") + "). "
+                      "Name the seat: --seat <install dir>.",
+                      flush=True)
+                sys.exit(1)
+        startup = ""
+        try:
+            with open(os.path.join(
+                    root, "config", "navi.config.json")) as f:
+                startup = str(json.load(f).get("startup") or "")
+        except Exception:
+            startup = ""
+        job = {
+            "root": root,
+            "resultPath": os.path.join(
+                root, "config", "update-result.json"),
+            "port": 8675,
+            "startup": startup,
+            "withConfig": with_config,
+            "traceLog": os.path.join(
+                os.path.dirname(root), ".apex-apply-stage",
+                "rollback-trace.log"),
+        }
+    try:
+        sys.exit(rollback_main(job))
+    except SystemExit:
+        # The exit IS the verdict (0 = the rollback stands,
+        # 1 = it refused or failed with its reason printed).
+        # It must never be swallowed by the crash guard below
+        # and rewritten as a failure — a confirmed rollback
+        # that exits 1 would be reported as a failure by
+        # every caller watching the code.
+        raise
+    except BaseException as e:
+        tb = traceback.format_exc()
+        try:
+            print(tb, file=sys.stderr)
+            sys.stderr.flush()
+        except Exception:
+            pass
+        try:
+            STATE["job"] = job
+            STATE["result_path"] = job.get("resultPath")
+            write_result({
+                "state": "failed", "step": "rollback",
+                "error": ("The rollback failed: "
+                          + type(e).__name__ + ": " + str(e)),
+                "failedAt": _stamp(),
+            })
+        except Exception:
+            pass
+        sys.exit(1)
+
+
 def _guarded_main():
     # The top-level guard: any Python-level failure anywhere in
     # the apply — the job load, a record write, the relaunch,
@@ -1490,4 +2187,7 @@ def _guarded_main():
 
 
 if __name__ == "__main__":
-    _guarded_main()
+    if "--rollback" in sys.argv:
+        _rollback_entry()
+    else:
+        _guarded_main()
