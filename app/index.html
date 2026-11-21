@@ -1255,7 +1255,11 @@
     #app.closed #nav-version .nv-pre { display:inline; }
     main { height:auto; min-height:0; overflow:visible; padding:12px; }
     /* The presence bar's button keeps its 44px sizing (the
-       base rule above) on phones too. */
+       base rule above) wherever it stands — since v0.6.15e
+       (#351) that is above the phone width only: at these
+       widths the button is never constructed
+       (renderPresenceBar), the top bar's dock toggle being
+       the phone's one tray door. */
     #view-root.chat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
     #view-root.docs-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; overflow:hidden; }
     #view-root.fedichat-view { height:calc(100dvh / var(--uiscale, 1) - 60px); min-height:0; }
@@ -1620,7 +1624,7 @@
   <nav id="nav">
     <div class="logo mono">APEX</div>
     <div class="tagline mono" id="tagline">Powered by Navi</div>
-    <div class="bar-title mono">Apex | powered by Navi</div>
+    <div class="bar-title mono">Apex | Powered by Navi</div>
   </nav>
   <main id="main"><div id="presence-bar"></div><div id="view-root"></div></main>
   <aside id="status"></aside>
@@ -2435,8 +2439,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-20.47";
-var SHIPPED_BUILD_SEQ = 47;
+var BRIDGE_BUILD = "2026-11-20.48";
+var SHIPPED_BUILD_SEQ = 48;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -7510,7 +7514,7 @@ var DOC_PAGES = [
   "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.2.0</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.3.0 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.3.0e</b> and this full release reads <b>v0.2.0</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
     "<div class='doc-sec'><h4>Troubleshooting</h4><ul>" +
-  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex | Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right — the Chat window's own status toggle, at its top right, drives the same dock, one state behind two doors) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
+  "<li><b>Open Apex on your phone.</b> Put the phone on the <b>same network</b> as the machine Apex runs on. On the machine, open the <b>DHD</b> page and turn on <b>Apex | Node</b> [local], under the DHD options — that is the whole setup: Apex restarts her own bridge, and the row confirms <b>On your network</b> when it is live; there is no separate restart step. On the phone, open the address that same row shows (it looks like <span class='mono'>http://192.168.1.5:8675</span> — the row's button copies it) and type the <b>access code</b> from the row; the phone's browser is remembered after that. If the phone cannot reach her: check it is not on mobile data, check the row's live state line reads On your network, and check the code is the one the row shows now — regenerating the code shuts out every phone let in before. If the row names a failed restart step instead, press <b>Restart bridge</b> there, or quit Apex fully and relaunch. On the phone, the dashboard wears its small-screen layout: a slim bar stays pinned at the top — the hamburger button hugs its left edge with Apex | Powered by Navi right beside it, the hamburger opening the menu (which slides in from the left), and the dock button hugging the right edge, opening the whole status column (which slides in from the right — the Chat window's own status toggle, at its top right, drives the same dock, one state behind two doors) — each a full-width overlay that closes itself when you pick where you're going. This machine itself never needs the code.</li>" +
   "<li><b>The dashboard shows some other page.</b> Something else holds port " + BRIDGE_PORT + " — the launcher names it by its page title; find it with <span class='mono'>ss -ltnp | grep " + BRIDGE_PORT + "</span>.</li>" +
   "<li><b>“BRIDGE OUT OF DATE”.</b> An older bridge process is still answering after a reinstall. The installer and the Updater now stop the old bridge and prove it stopped before new files land, so this should not survive an update; if you meet it after starting a bridge by hand, quit the app fully and relaunch — and if a process ever holds her port and will not stop, the failure that reports it names the process and the exact <span class='mono'>kill -9</span> command that ends it.</li>" +
   "<li><b>Chat 400s.</b> The bridge uses the model id the server itself reports (<span class='mono'>navi</span>); on failure the server's own error text is shown — check <span class='mono'>navi.llamafile.log</span>.</li>" +
@@ -8149,26 +8153,20 @@ function liveShell(cmd) {
     .then(function (j) { return { command: j.command, output: j.output, exit_code: typeof j.exit_code === "number" ? j.exit_code : 0 }; });
 }
 
-// The chat bar's hint text, from the state she is in right now:
-// on a call it speaks to the call; with the model disconnected —
-// or the latch on CLI — it invites a command; otherwise it
-// invites a question. One source for the render and for every
-// live mode change (build .52, issue #12): the placeholder used
-// to be picked only at render time, so flipping the CLI/Navi
-// latch left the old mode's words sitting in the bar.
-// Phone widths (build .67): at ≤800px the bar shares its row
-// with the 44px clip/mic/call buttons, leaving ~165–195px of
-// text room — the full teaching placeholders clipped mid-word
-// in Alex's field photo even though every box measured fine.
-// The narrow variants are short enough to sit fully visible
-// with room to spare at 360px; desktop keeps the long forms.
+// The chat bar's hint text (v0.6.15e, #354): one line in
+// every state — "Ask Navi ...". The per-mode teaching
+// placeholders (build .52, issue #12: a call line, a shell
+// line, a command line, and the conversation line whose
+// desktop form suggested "show me the contents of
+// /home/name/"; build .67 added narrow forms of each) are
+// retired by the operator's ruling: the composer invites a
+// question the same way on a call, on the CLI latch, with
+// the model down, and in conversation, at every width —
+// and no composer hint anywhere suggests a home path. One
+// source for the render and for every live mode change,
+// as before: the callers are unchanged.
 function chatPlaceholder() {
-  var narrow = false;
-  try { narrow = window.innerWidth <= 800; } catch (e) {}
-  if (call) return narrow ? "Type what you'd say…" : "You're on a call — type what you'd say…";
-  if (chatMode === "cli" && CONFIG.backend === "live") return narrow ? "Shell session…" : "Shell session — type a line, Enter sends it";
-  if (llama.status !== "running" || chatMode === "cli") return narrow ? "Run a command…" : "Run a command — try: ls";
-  return narrow ? "Ask Navi…" : "Ask Navi — try: show me the contents of /home/name/";
+  return "Ask Navi ...";
 }
 
 /* ----------------------------- autocomplete ----------------------------- */
@@ -8793,6 +8791,10 @@ function presenceState() {
 // every page. presenceState() stays the single source for the
 // dot and the line; the status column's own presence line
 // inside the pane is untouched.
+// v0.6.15e (#351): at phone widths the bar's right edge is
+// bare — the pane button is not constructed there at all;
+// the top bar's dock toggle (#dock-toggle) is the phone's
+// one tray door, and the duplicate only crowded her line.
 var presenceBarEl = document.getElementById("presence-bar");
 var chatStatusToggleBtn = null;
 function presenceAvatarSrc() {
@@ -8838,9 +8840,18 @@ function renderPresenceBar() {
       caseChip = "<button class='ghost' id='presence-case-chip' aria-label='Open the case this chat belongs to' style='min-height:44px;padding:4px 10px;font-size:12px;white-space:nowrap'>⚖ Case: " + esc(cname) + "</button>";
     }
   }
+  // v0.6.15e (#351): the pane button is constructed only
+  // where it is a door of its own — above the phone width.
+  // At ≤800px the string is empty: the top bar's dock toggle
+  // is the tray's one door there. The decision rides the
+  // same width fact framePressed reads, and the bar repaints
+  // on the poll tick, so a width change lands on the next
+  // repaint like every other width fact the bar carries.
+  var paneBtn = window.innerWidth <= 800 ? ""
+    : "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
   presenceBarEl.innerHTML = "<div class='chat-presence'><span class='presence-avwrap'><img class='presence-av' src='" + esc(presenceAvatarSrc()) + "' alt='Navi'><span class='presence-badge" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span></span><div style='min-width:0'><div class='chat-presence-line' id='chat-presence-line'>" + esc(pres.text) + "</div>" + presenceMusicHtml() + "</div></div>"
     + caseChip
-    + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
+    + paneBtn;
   chatStatusToggleBtn = document.getElementById("chat-status-toggle");
   if (chatStatusToggleBtn) chatStatusToggleBtn.onclick = function () { toggleStatusColumn(); };
   var pcc = document.getElementById("presence-case-chip");
@@ -13098,11 +13109,13 @@ function settingsUpdaterHtml() {
   // slam it shut mid-apply.
   var h = "<details class='card' id='settings-updater'" + (updaterFoldOpen ? " open" : "") + " style='margin-top:10px'><summary style='cursor:pointer'><b>Updater</b> <span style='color:var(--dim)'>(check, download, install — and the record of the last apply)</span></summary>";
   h += "<div class='card' style='margin-top:10px'>Current: <b class='mono'>v" + esc(CONFIG.version) + esc(verTag(CONFIG.versionStatus)) + "</b> <span style='color:var(--dim)'>(" + esc(CONFIG.versionStatus) + ")" + (CONFIG.versionStatus === "edge" ? " · Build " + updater.currentBuildSeq : "") + "</span><br>" + updaterStatusHtml() + "</div>";
-  if (updater.state === "available") {
-    h += CONFIG.sudo
-      ? "<p style='color:#34d399;font-size:13px;margin:8px 0 0'>Sudo Mode is on — ready to update.</p>"
-      : "<p style='color:#f87171;font-size:13px;margin:8px 0 0'>⚠ <b>Enable Sudo Mode before updating.</b> The installer's system step needs root. Without it, an update can stall or finish without its system packages.</p>";
-  }
+  // v0.6.15e (#353): the updater's sudo warning is retired.
+  // Updates install at user level; nothing in the apply path
+  // gates on sudo mode — the installer's one system-package
+  // step skips itself, named, when a detached apply cannot
+  // answer a prompt, and the core install continues. Sudo
+  // mode itself is untouched: Settings → System still arms
+  // it, and elevated commands still ride it.
   h += updaterChannelNoticeHtml();
   h += updaterEdgeNoticeHtml();
   h += updaterChannelHtml();
