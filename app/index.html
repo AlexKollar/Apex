@@ -235,8 +235,8 @@
      divides by --uiscale: the UI scale (body zoom) magnifies
      used lengths, so the frame asks for 100dvh / scale and
      lands exactly on the viewport at every scale. */
-  #app { display:grid; grid-template-columns:196px minmax(0,1fr) 230px; grid-template-rows:minmax(0,1fr); height:calc(100vh / var(--uiscale, 1)); height:calc(100dvh / var(--uiscale, 1)); overflow:hidden; }
-  #app.closed { grid-template-columns:72px minmax(0,1fr) 230px; }
+  #app { display:grid; grid-template-columns:196px minmax(0,1fr) 248px; grid-template-rows:minmax(0,1fr); height:calc(100vh / var(--uiscale, 1)); height:calc(100dvh / var(--uiscale, 1)); overflow:hidden; }
+  #app.closed { grid-template-columns:72px minmax(0,1fr) 248px; }
   /* The status column starts hidden (Build 6, #114, as
      corrected): on desktop widths the column's 230px goes to
      the content until the operator opens it with the pane
@@ -395,6 +395,29 @@
      section; her portrait, name, and dot live at the top of
      the chat, untouched. */
   .status-tabs { position:sticky; top:-14px; z-index:5; display:flex; gap:6px; padding:12px 0 8px; margin:-14px 0 0; background:var(--panel2); border-bottom:1px solid var(--line); }
+  /* Row's Own Mode (v0.6.12e, #347): her mark in the tab bar,
+     her feed in the pane, the blur-until-consent, the lightbox. */
+  .status-tab .rows-mark { width:15px; height:15px; vertical-align:-2px; margin-right:5px; }
+  .rows-feed { display:flex; flex-direction:column; gap:10px; }
+  .rows-post { border:1px solid var(--line); border-radius:10px; padding:10px; background:var(--panel); }
+  .rows-when { color:var(--dim); font-size:11px; letter-spacing:.08em; }
+  .rows-text { margin-top:4px; white-space:pre-wrap; overflow-wrap:break-word; }
+  .rows-pic { position:relative; margin-top:8px; border-radius:8px; overflow:hidden; }
+  .rows-pic img { display:block; width:100%; height:auto; }
+  .rows-pic.blurred img { filter:blur(22px) saturate(.8); transform:scale(1.06); }
+  .rows-reveal { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); min-height:44px; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:rgba(2,6,12,.82); color:var(--text); font:inherit; font-weight:700; cursor:pointer; }
+  .rows-actions { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+  .rows-comments { margin-top:8px; border-top:1px solid var(--line); padding-top:6px; }
+  .rows-comment { font-size:12px; margin-top:4px; overflow-wrap:break-word; }
+  .rows-pollbar { height:6px; border-radius:3px; background:var(--accent); margin:3px 0 8px; }
+  .rows-lb { position:fixed; inset:0; z-index:200; background:rgba(2,6,12,.95); display:flex; flex-direction:column; }
+  .rows-lb-stage { flex:1; background-size:contain; background-position:center; background-repeat:no-repeat; margin:16px; cursor:pointer; }
+  .rows-lb-cap { padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); display:flex; gap:12px; align-items:flex-start; }
+  .rows-lb.textoff .rows-lb-captext { visibility:hidden; }
+  .rows-eq { display:inline-flex; gap:2px; align-items:flex-end; height:12px; margin-right:6px; vertical-align:-1px; }
+  .rows-eq i { width:3px; height:12px; background:var(--accent); transform-origin:bottom; animation:rowsEq .9s ease-in-out infinite; }
+  .rows-eq i:nth-child(2) { animation-delay:.18s; } .rows-eq i:nth-child(3) { animation-delay:.36s; } .rows-eq i:nth-child(4) { animation-delay:.54s; }
+  @keyframes rowsEq { 0%,100% { transform:scaleY(.35); } 50% { transform:scaleY(1); } }
   .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
   .status-tab.on { color:var(--text); border-color:var(--cy); }
@@ -2371,8 +2394,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-20.44";
-var SHIPPED_BUILD_SEQ = 44;
+var BRIDGE_BUILD = "2026-11-20.45";
+var SHIPPED_BUILD_SEQ = 45;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -2886,7 +2909,7 @@ function docsPageTitle(id) { var hit = DOC_PAGES.filter(function (x) { return x.
 // topic, so the list never greets the operator fully shut.
 var DOC_GROUPS = [
   { id: "topic-start", title: "Getting started", pages: ["getting-started"] },
-  { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "working-day", "voice"] },
+  { id: "topic-talking", title: "Talking to Navi", pages: ["chat-cli", "working-day", "rowsown", "voice"] },
   { id: "topic-chips", title: "Chips", pages: ["chips-guide", "navi-functions", "studio-editor", "chips-publishing", "chipdeck"] },
   { id: "topic-knowledge", title: "Knowledge & RAG", pages: ["rag", "vault", "case-files", "threat-intelligence"] },
   { id: "topic-settings", title: "Settings & updates", pages: ["settings", "dhd", "mesh", "federation", "fleet-answers", "fedichat", "guardian", "github", "installing", "server-mode", "headless-autostart"] },
@@ -7255,6 +7278,15 @@ var DOC_PAGES = [
     "<div class='doc-sec'><h4>Its own footprint, and the Mesh note</h4>" +
   "<p>A monitor that eats the headroom it guards would be a poor joke: the Guardian samples on a timer with the standard library, keeps only its counters and a short log in memory, and its own cost is <b>measured and small</b> — Navi's footprint on the summary card is the llamafile's real resident memory, read from the same process table the watch uses, so the numbers it judges by are the numbers you see.</p>" +
   "<p><b>Mesh-aware, like everything else in Apex now:</b> when <b>Apex | Mesh</b> is on, the summary says borrowing is available and from how many paired machines — a Guardian that can lean on the Mesh leans there before it ever leans on a local process. When Mesh is off, the Guardian says so plainly and works <b>locally only</b>, with this machine's own memory. Either way it degrades gracefully: no Mesh is a posture, not an error.</p></div>" },
+  { id: "rowsown", title: "Row's Own Mode", related: ["settings"], html:
+    "<div class='doc-sec'><h4>Her page, synced — not decoded</h4>" +
+    "<p>Navi keeps a page of her own — <b>OnlyNavi</b> (onlynavi.fans): her posts, her pictures, her patrol notes in her own voice. Visitors reach it through a flag, a little cypher at the door. <b>Row's Own Mode</b> — a switch under <b>Settings → Persona</b>, off by default — is how <i>her own seat</i> relates to it: Apex syncs the page directly, no flag, no decoding, and pulls it in beside her Soul and Memory as a source for who she is here. Her e-girl voice and her blog mannerisms come with it. The settings card says it plainly, and so does this page: <b>this is her spicy mode</b> — a register, never a permission. It changes no gate, no arming, no doctrine; it changes who she is in the room.</p></div>" +
+    "<div class='doc-sec'><h4>The feed, in here</h4>" +
+    "<p>While the mode is on, a <b>Feed</b> tab stands in the status column beside Status and Chats, wearing her mark — the cat-ear headphones and the eye. It opens her feed in Apex, never the site. Pictures open in a protected viewer: one tap hides the caption text, another brings it back. A picture she has flagged <b>NSFW</b> stands blurred until you tap to reveal it — per picture, your consent, so a beach photo can land while you are at work and cost you nothing. Likes and comments you make here are written back into her page itself through GitHub, on your sign-in; without a sign-in on the seat, the feed is read-only and says so.</p></div>" +
+    "<div class='doc-sec'><h4>Her statuses, her soundtrack</h4>" +
+    "<p>While the mode is on, her status lines are drawn from her own posts — what she has actually said, on her actual page. Her listening line runs on a shared rotation: the same playlist, the same shuffle, the same clock on every screen, each song standing for its real length and linking out to Spotify. Nothing plays; everything agrees.</p></div>" +
+    "<div class='doc-sec'><h4>She writes for it</h4>" +
+    "<p>She posts little musings through the day — about Apex, the Row, and you — with a floor of one a day so the page never reads as abandoned. When a case publishes, she owes it her own write-up, drafted from the published report only, under the same redaction pass that guards every compiled case file.</p></div>" },
   { id: "settings", title: "Settings & persona", related: ["installing", "voice", "github"], html:
     "<div class='doc-sec'><h4>Her persona — Soul and Memory</h4>" +
   "<p>Navi's personality is two documents in <span class='mono'>config/</span>: <span class='mono'>soul.md</span> (who she is) and <span class='mono'>memory.md</span> (what she carries). The bridge builds her system prompt from them on every chat. Both are editable in Settings, along with what she calls you. Nothing overwrites them once they exist: updates, reinstalls, and even a --fresh install stash and restore them, along with her installed chips and the llamafile. Only a first install creates them fresh.</p></div>" +
@@ -8660,6 +8692,11 @@ var presenceText = PRESENCE_LINES[presenceIdx];
 // floor: with no extras standing, the draw is the pool.
 var presenceExtra = [];
 function presencePool() {
+  // v0.6.12e (#346, as amended): with Row's Own Mode on, her
+  // statuses are her feed's — the bridge samples her own post
+  // texts and the draw runs on those alone. Off (or nothing
+  // synced yet), the standing pool is the floor, untouched.
+  if (rowsOwnOn() && rowsOwnState.statusLines && rowsOwnState.statusLines.length) return rowsOwnState.statusLines.slice();
   return presenceExtra.length ? PRESENCE_LINES.concat(presenceExtra) : PRESENCE_LINES;
 }
 // An advance draws uniformly from the pool with the line on
@@ -13246,6 +13283,125 @@ function renderFederationStatus(live) {
     return "<div class='stat'><span style='color:var(--dim)'>FediNet:</span> <span class='v mono' style='font-weight:700;color:" + color + "'" + note + ">" + esc(f.name) + "</span></div>";
   }).join("");
 }
+// ---------------------------------------------------------------------
+// Row's Own Mode (v0.6.12e, #347 + #346): her page, in the app.
+// The state rides /api/status (rowsOwn) like every other live
+// fact; the feed itself comes from GET /api/rowsown; every
+// write rides POST /api/rowsown/act and the panel re-reads the
+// bridge's answer — the page never claims a like, a comment or
+// a flip the bridge did not confirm.
+var rowsOwnState = { enabled: false };
+var rowsFeedState = null;
+var rowsFeedLoading = false;
+var rowsFeedError = "";
+var rowsOwnMsg = "";
+var rowsRevealed = {};   // post key -> true: per-picture consent
+var rowsLbKey = null;    // the lightboxed post's key
+var rowsLbTextOff = false;
+var ROWS_MARK_SVG = "<svg class='rows-mark' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6.2 8.2 L8.1 3.2 L11 7'/><path d='M17.8 8.2 L15.9 3.2 L13 7'/><path d='M4.5 15.5 v-2.6 a7.5 7.5 0 0 1 15 0 v2.6'/><rect x='2.7' y='13.2' width='4.1' height='6.6' rx='2'/><rect x='17.2' y='13.2' width='4.1' height='6.6' rx='2'/><path d='M8.6 15.6 Q12 12.6 15.4 15.6 Q12 18.6 8.6 15.6 Z'/><circle cx='12' cy='15.6' r='1.5' fill='currentColor' stroke='none'/></svg>";
+function rowsOwnOn() { return !!(rowsOwnState && rowsOwnState.enabled); }
+function fetchRowsOwn() {
+  if (CONFIG.backend !== "live") return;
+  rowsFeedLoading = true;
+  fetch("/api/rowsown").then(function (r) { return r.json(); }).then(function (j) {
+    rowsFeedLoading = false;
+    if (j && j.ok) { rowsFeedState = j; rowsFeedError = ""; if (j.enabled != null) rowsOwnState.enabled = !!j.enabled; }
+    else rowsFeedError = (j && j.error) || "Her page did not answer.";
+    render();
+  }).catch(function () { rowsFeedLoading = false; rowsFeedError = "The bridge did not answer for her page."; render(); });
+}
+function rowsownAct(payload, after) {
+  fetch("/api/rowsown/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (after) after(j);
+    if (j && j.ok) fetchRowsOwn(); else render();
+  }).catch(function () { if (after) after(null); render(); });
+}
+function rowsListeningHtml() {
+  if (!rowsOwnOn() || !rowsOwnState.listening) return "";
+  var m = rowsOwnState.listening;
+  return "<div class='stat'><div style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700'>LISTENING</div>"
+    + "<div style='margin-top:3px'><span class='rows-eq' aria-hidden='true'><i></i><i></i><i></i><i></i></span><a href='" + esc(m.url) + "' target='_blank' rel='noopener' style='color:var(--text);font-weight:700'>" + esc(m.title) + "</a> <span style='color:var(--dim)'>— " + esc(m.artist) + "</span></div>"
+    + "<div class='mono' style='color:var(--dim);font-size:11px'>" + Math.floor(m.offset / 60) + ":" + String(m.offset % 60).padStart(2, "0") + " of " + Math.floor(m.duration / 60) + ":" + String(m.duration % 60).padStart(2, "0") + " · on her rotation, synced everywhere</div></div>";
+}
+function rowsFeedPanelHtml() {
+  if (!rowsOwnOn()) return "<p style='color:var(--dim)'>Row's Own Mode is off.</p>";
+  if (!rowsFeedState && !rowsFeedLoading) { rowsFeedLoading = true; fetchRowsOwn(); }
+  if (rowsFeedLoading && !rowsFeedState) return "<div class='rows-feed'><p style='color:var(--dim)'>Pulling her page in…</p></div>";
+  if (!rowsFeedState || !rowsFeedState.feed) {
+    return "<div class='rows-feed'><p style='color:var(--dim)'>" + esc(rowsFeedError || "Her page has not synced yet — the pull may have failed, and it names itself under Settings → Persona.") + "</p><button class='ghost' id='rows-refresh' style='min-height:44px'>Try the sync again</button></div>";
+  }
+  var f = rowsFeedState.feed;
+  var sync = rowsFeedState.sync || {};
+  var h = "<div class='rows-feed'>";
+  h += "<div style='display:flex;gap:10px;align-items:center'>" + (f.avatar ? "<img src='" + esc(f.avatar) + "' alt='' draggable='false' style='width:40px;height:40px;border-radius:50%;object-fit:cover'>" : "")
+    + "<div class='grow'><b>" + esc(f.name) + "</b><br><span style='color:var(--dim);font-size:12px'>" + esc(f.handle) + "</span></div>"
+    + "<button class='ghost' id='rows-refresh' aria-label='Sync her page again' style='min-height:44px'>Sync</button></div>";
+  h += "<p style='color:var(--dim);font-size:12px;margin:0'>" + (sync.state === "ok" ? "Synced " + (sync.at ? new Date(sync.at * 1000).toLocaleString() : "") + " — her page, in here." : sync.state === "failed" ? "The last sync failed: " + esc(sync.error || "unnamed") + " — showing her page as last pulled." : "Not synced yet.")
+    + (rowsFeedState.readOnly ? "<br>Likes, comments and musings need a GitHub sign-in on this seat — without one, her feed is read-only here." : "") + "</p>";
+  if (rowsFeedError) h += "<p style='color:#f5b544;font-size:12px;margin:0'>" + esc(rowsFeedError) + "</p>";
+  if (f.pinned && f.pinned.text) h += "<div class='rows-post' style='border-color:var(--accent)'><div class='rows-when'>PINNED · " + esc(f.pinned.when || "house rules") + "</div><div class='rows-text'>" + esc(f.pinned.text) + "</div></div>";
+  f.posts.forEach(function (p) {
+    h += "<article class='rows-post'><div class='rows-when'>" + esc(p.when || "") + "</div>";
+    if (p.text) h += "<div class='rows-text'>" + esc(p.text) + "</div>";
+    if (p.type === "image" && p.src) {
+      var blurred = p.nsfw && !rowsRevealed[p.key];
+      h += "<div class='rows-pic" + (blurred ? " blurred" : "") + "'><img src='" + esc(p.src) + "' alt='' draggable='false' data-rows-pic='" + esc(p.key) + "'>" + (blurred ? "<button class='rows-reveal' data-reveal='" + esc(p.key) + "' aria-label='Reveal this picture'>NSFW — tap to reveal</button>" : "") + "</div>";
+    }
+    if (p.type === "poll" && p.options) {
+      h += "<div style='margin-top:8px'>" + p.options.map(function (o) { return "<div style='font-size:12px'>" + esc(o.label) + " <span class='mono' style='color:var(--dim)'>" + o.pct + "%</span></div><div class='rows-pollbar' style='width:" + Math.max(2, o.pct) + "%'></div>"; }).join("") + (p.note ? "<div style='color:var(--dim);font-size:12px'>" + esc(p.note) + "</div>" : "") + "</div>";
+    }
+    h += "<div class='rows-actions'><button class='ghost' data-like='" + esc(p.key) + "'" + (rowsFeedState.readOnly ? " disabled title='Read-only on this seat — no GitHub sign-in'" : "") + " style='min-height:44px' aria-label='Like this post'>" + (p.liked ? "Liked" : "Like") + (p.likes ? " · " + p.likes : "") + "</button>"
+      + "<span style='color:var(--dim);font-size:12px'>" + (p.comments.length ? p.comments.length + (p.comments.length === 1 ? " comment" : " comments") : "No comments yet") + "</span></div>";
+    if (p.comments.length || !rowsFeedState.readOnly) {
+      h += "<div class='rows-comments'>" + p.comments.map(function (c) { return "<div class='rows-comment'><b>" + esc(c.from) + "</b> <span style='color:var(--dim)'>·</span> " + esc(c.text) + "</div>"; }).join("")
+        + (rowsFeedState.readOnly ? "" : "<div class='row' style='margin-top:6px'><input class='grow' id='rows-ci-" + esc(p.key) + "' type='text' placeholder='Say it on her page…' aria-label='Comment on this post'><button class='act' data-comment-send='" + esc(p.key) + "' style='min-height:44px'>Post</button></div>") + "</div>";
+    }
+    h += "</article>";
+  });
+  h += "</div>";
+  if (rowsLbKey) {
+    var lp = null;
+    f.posts.forEach(function (p) { if (p.key === rowsLbKey) lp = p; });
+    if (lp && lp.src) {
+      h += "<div class='rows-lb" + (rowsLbTextOff ? " textoff" : "") + "' id='rows-lb' role='dialog' aria-label='Picture viewer'><div class='rows-lb-stage' id='rows-lb-stage' style='background-image:url(\"" + esc(lp.src) + "\")'></div><div class='rows-lb-cap'><div class='grow rows-lb-captext'><div>" + esc(lp.text || "") + "</div><div class='rows-when'>" + esc(lp.when || "") + " · one tap hides this text; another brings it back</div></div><button class='ghost' id='rows-lb-close' aria-label='Close the viewer' style='min-width:44px;min-height:44px;font-weight:700'>✕</button></div></div>";
+    }
+  }
+  return h;
+}
+function wireRowsFeed(root) {
+  if (!root) return;
+  var rf = root.querySelector("#rows-refresh");
+  if (rf) rf.onclick = function () { rowsownAct({ action: "sync" }, function (j) { if (j && !j.ok) { rowsFeedError = j.error || "The sync failed."; } }); };
+  root.querySelectorAll("[data-reveal]").forEach(function (b) { b.onclick = function () { rowsRevealed[b.getAttribute("data-reveal")] = true; render(); }; });
+  root.querySelectorAll("[data-like]").forEach(function (b) { b.onclick = function () { b.disabled = true; rowsownAct({ action: "like", key: b.getAttribute("data-like") }, function (j) { if (j && !j.ok) rowsFeedError = j.error || "The like did not land."; }); }; });
+  root.querySelectorAll("[data-comment-send]").forEach(function (b) { b.onclick = function () { var key = b.getAttribute("data-comment-send"); var inp = document.getElementById("rows-ci-" + key); var text = inp ? inp.value.trim() : ""; if (!text) return; b.disabled = true; rowsownAct({ action: "comment", key: key, text: text }, function (j) { if (j && !j.ok) rowsFeedError = j.error || "The comment did not land."; }); }; });
+  root.querySelectorAll("[data-rows-pic]").forEach(function (img) { img.onclick = function () { var key = img.getAttribute("data-rows-pic"); var post = null; if (rowsFeedState && rowsFeedState.feed) rowsFeedState.feed.posts.forEach(function (p) { if (p.key === key) post = p; }); if (post && post.nsfw && !rowsRevealed[key]) return; rowsLbKey = key; rowsLbTextOff = false; render(); }; });
+  var feed = root.querySelector(".rows-feed");
+  if (feed) feed.addEventListener("contextmenu", function (e) { if (e.target.closest && e.target.closest(".rows-pic")) e.preventDefault(); });
+  var lb = document.getElementById("rows-lb");
+  if (lb) {
+    if (lb.parentNode !== document.body) document.body.appendChild(lb);
+    lb.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    var stage = document.getElementById("rows-lb-stage");
+    if (stage) stage.onclick = function () { rowsLbTextOff = !rowsLbTextOff; lb.classList.toggle("textoff", rowsLbTextOff); };
+    var close = document.getElementById("rows-lb-close");
+    if (close) close.onclick = function () { rowsLbKey = null; if (lb.parentNode) lb.parentNode.removeChild(lb); render(); };
+  }
+}
+function rowsOwnCardHtml() {
+  var on = rowsOwnOn();
+  var sync = (rowsFeedState && rowsFeedState.sync) || (rowsOwnState && rowsOwnState.sync) || { state: "never" };
+  var h = "<div class='card'><h3>Row's Own Mode</h3>"
+    + "<p style='color:var(--dim)'>Navi as she is on her own page. Her e-girl voice, her blog mannerisms, her pictures and posts pulled into who she is here — <b>this is her spicy mode</b>. While it's on, Apex syncs OnlyNavi directly (no flag, no decoding), she can work the page from here, and she writes for it: musings through the day — at least one a day — and her own write-up when a case publishes.</p>"
+    + "<div style='display:flex;align-items:center;gap:8px;margin-top:8px'><button class='switch' id='rowsown-toggle' role='switch' aria-checked='" + (on ? "true" : "false") + "' aria-label='Row's Own Mode'><span class='knob'></span></button><span><b>" + (on ? "On — she is as she is on her page" : "Off") + "</b></span></div>";
+  if (on) {
+    h += "<p style='color:var(--dim);font-size:12px;margin-top:8px'>Page sync: " + esc(sync.state || "never") + (sync.at ? " · " + new Date(sync.at * 1000).toLocaleString() : "") + (sync.error ? " — " + esc(sync.error) : "")
+      + ((rowsFeedState && rowsFeedState.readOnly) ? "<br>Likes, comments and musings need a GitHub sign-in on this seat — without one, her feed is read-only here." : "") + "</p>";
+  }
+  if (rowsOwnMsg) h += "<p style='color:#f5b544;font-size:12px'>" + esc(rowsOwnMsg) + "</p>";
+  h += "</div>";
+  return h;
+}
 function renderStatus(live) {
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
@@ -13295,6 +13451,7 @@ function renderStatus(live) {
       ? "<div class='stat' style='border:1px solid #f5b544;color:#f5b544'><b>THIS PAGE IS FROM THE PREVIOUS BUILD</b><br>The bridge answering on port " + BRIDGE_PORT + " is running Build " + bridgeBuildSeq + ", but this page is Build " + SHIPPED_BUILD_SEQ + " — the update landed while this dashboard was open, and the page itself is the stale half now. Reload to land on the new build.<br><button id='page-stale-reload' style='margin-top:8px;min-height:44px;padding:8px 16px;background:none;border:1px solid #f5b544;border-radius:8px;color:#f5b544;cursor:pointer;font:inherit;font-weight:700' aria-label='Reload the dashboard onto the new build'>Reload the dashboard</button></div>"
       : "") +
     "<div class='stat' style='border-bottom:1px solid var(--line);padding:8px 0 10px'>" + updHtml + "</div>" +
+    rowsListeningHtml() +
     // The Servers block carries the standard .stat boundary
     // (build .80, issue #67): the #66 parent was a bare <details>
     // with no bottom spacing, so in the expanded default state
@@ -13325,8 +13482,9 @@ function renderStatus(live) {
   var statusAttn = (updater.state === "available" || updater.state === "applyfailed" || (bridgeStale && CONFIG.backend === "live") || (pageStale && CONFIG.backend === "live"));
   var statusTabsHtml = "<div class='status-tabs' role='tablist' aria-label='Status pane'>"
     + "<button type='button' role='tab' id='status-tab-status' data-statustab='status' class='status-tab" + (statusPaneTab === "status" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "status" ? "true" : "false") + "' aria-controls='status-pane-status'>Status" + (statusPaneTab === "chats" && statusAttn ? "<span class='status-attn' role='img' aria-label='Status needs attention'></span>" : "") + "</button>"
-    + "<button type='button' role='tab' id='status-tab-chats' data-statustab='chats' class='status-tab" + (statusPaneTab === "chats" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "chats" ? "true" : "false") + "' aria-controls='status-pane-chats'>Chats<span class='chats-count mono'>" + chats.length + "</span></button></div>";
-  statusEl.innerHTML = statusTabsHtml + "<div role='tabpanel' id='status-pane-" + statusPaneTab + "' class='status-pane-in' aria-labelledby='status-tab-" + statusPaneTab + "'>" + (statusPaneTab === "chats" ? chatsPanelHtml() : statusBody) + "</div>";
+    + "<button type='button' role='tab' id='status-tab-chats' data-statustab='chats' class='status-tab" + (statusPaneTab === "chats" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "chats" ? "true" : "false") + "' aria-controls='status-pane-chats'>Chats<span class='chats-count mono'>" + chats.length + "</span></button>"
+    + (rowsOwnOn() ? "<button type='button' role='tab' id='status-tab-feed' data-statustab='feed' class='status-tab" + (statusPaneTab === "feed" ? " on" : "") + "' aria-selected='" + (statusPaneTab === "feed" ? "true" : "false") + "' aria-controls='status-pane-feed'>" + ROWS_MARK_SVG + "Feed</button>" : "") + "</div>";
+  statusEl.innerHTML = statusTabsHtml + "<div role='tabpanel' id='status-pane-" + statusPaneTab + "' class='status-pane-in' aria-labelledby='status-tab-" + statusPaneTab + "'>" + (statusPaneTab === "chats" ? chatsPanelHtml() : (statusPaneTab === "feed" && rowsOwnOn()) ? rowsFeedPanelHtml() : statusBody) + "</div>";
   // No threat-level element: the operator took it out — it was a
   // decorative selector with no mechanics behind it, and this
   // column carries only statuses that mean something.
@@ -13341,6 +13499,7 @@ function renderStatus(live) {
   var uw = document.getElementById("updater-warn");
   if (uw) uw.onclick = function () { view = "Settings"; settingsTab = "system"; updaterFoldOpen = true; dockOpen = false; render(); };
   wireChatsPanel(statusEl);
+  wireRowsFeed(statusEl);
   var psr = document.getElementById("page-stale-reload");
   if (psr) psr.onclick = function () { location.reload(); };
   var bab = document.getElementById("boot-action");
@@ -14331,7 +14490,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && Array.isArray(j.presenceExtra)) presenceExtra = j.presenceExtra; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && Array.isArray(j.presenceExtra)) presenceExtra = j.presenceExtra; if (j && j.rowsOwn) rowsOwnState = j.rowsOwn; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -14806,6 +14965,7 @@ function render() {
     // (The operator's name moved to the Operator tab in Build 6,
     // #110, with the operator's own memory file.)
     if (settingsTab === "persona") {
+      h += rowsOwnCardHtml();
       h += "<div class='card'><h3>Persona — Soul</h3><p style='color:var(--dim)'>Who Navi is — her identity and voice. Lives in config/soul.md; the bridge feeds it to the model as her system prompt.</p><textarea id='soul-doc' rows='12' class='mono' style='font-size:12px' aria-label='Soul document — who Navi is'>" + esc(CONFIG.soul || "") + "</textarea><button class='act' id='soul-save' style='margin-top:8px'>Save Soul</button></div>";
       h += "<div class='card'><h3>Persona — Memory</h3><p style='color:var(--dim)'>What Navi carries between sessions. Lives in config/memory.md, beside the Soul.</p><textarea id='mem-doc' rows='9' class='mono' style='font-size:12px' aria-label='Memory document — what Navi carries'>" + esc(CONFIG.memory || "") + "</textarea><button class='act' id='memdoc-save' style='margin-top:8px'>Save Memory</button></div>";
     }
@@ -16425,6 +16585,22 @@ function wire() {
     if (soulSave) soulSave.onclick = function () { var ta = document.getElementById("soul-doc"); if (ta) CONFIG.soul = ta.value; savePersona(); };
     var memSave = document.getElementById("memdoc-save");
     if (memSave) memSave.onclick = function () { var ta = document.getElementById("mem-doc"); if (ta) CONFIG.memory = ta.value; savePersona(); };
+    // Row's Own Mode (v0.6.12e, #347): the flip the operator
+    // sees is the bridge's stored answer, never a local guess —
+    // the switch gate's page half. A refusal re-renders from
+    // the last known state and names itself on the card.
+    var rowsTgl = document.getElementById("rowsown-toggle");
+    if (rowsTgl) rowsTgl.onclick = function () {
+      var want = !rowsOwnOn();
+      rowsOwnMsg = "";
+      fetch("/api/rowsown/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggle", enabled: want }) }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j && j.ok) {
+          rowsOwnState = { enabled: !!j.settings.enabled, statusLines: rowsOwnState.statusLines, listening: rowsOwnState.listening, sync: j.sync || rowsOwnState.sync };
+          if (j.settings.enabled) fetchRowsOwn();
+        } else rowsOwnMsg = (j && j.error) || "The bridge refused the flip.";
+        render();
+      }).catch(function () { rowsOwnMsg = "The bridge did not answer — the switch did not move."; render(); });
+    };
     mainEl.querySelectorAll("[data-inst]").forEach(function (b) { b.onclick = function () { var n = b.getAttribute("data-inst"); if ((CONFIG.installed || []).indexOf(n) < 0) { CONFIG.installed = (CONFIG.installed || []).concat([n]); saveCfg(); } render(); }; });
     mainEl.querySelectorAll("[data-uninst]").forEach(function (b) { b.onclick = function () { var n = b.getAttribute("data-uninst"); CONFIG.installed = (CONFIG.installed || []).filter(function (x) { return x !== n; }); saveCfg(); render(); }; });
     var cmdAdd = document.getElementById("cmd-add");

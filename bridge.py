@@ -405,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.11"
+SHIPPED_VERSION = "0.6.12"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-20.44"
+BRIDGE_BUILD = "2026-11-20.45"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 44
+SHIPPED_BUILD_SEQ = 45
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -514,10 +514,25 @@ def save_config(cfg):
     # settings flip could be silently reset (see load_config).
     try:
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        tmp = CONFIG_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(cfg, f, indent=2)
-        os.replace(tmp, CONFIG_PATH)
+        # v0.6.12e (rowsgate1, campaign-caught): the tmp name is
+        # unique per save. Two saves racing on the one shared
+        # ".tmp" name interleave their bytes in it, and the
+        # replace then lands a spliced file — the atomicity
+        # #339 bought, lost at the tmp step. mkstemp is the
+        # idiom the codebase already uses for this.
+        fd, tmp = tempfile.mkstemp(
+            dir=os.path.dirname(CONFIG_PATH),
+            prefix="navi.config.json.tmp-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(cfg, f, indent=2)
+            os.replace(tmp, CONFIG_PATH)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            raise
         return True
     except Exception:
         return False
@@ -13241,6 +13256,15 @@ def persona_prompt(cfg, operator_name="", memory_mode="autonomous"):
             "shown a receipt of exactly what you saved — never mention the "
             "marker itself."
         )
+    # v0.6.12e (#347): Row's Own Mode — her published self
+    # joins the prompt as a source, beside Soul and Memory.
+    # Off, or nothing synced yet, this adds nothing at all.
+    try:
+        _rows_block = rowsown_persona_block(cfg)
+        if _rows_block:
+            prompt += "\n\n" + _rows_block
+    except Exception:
+        pass
     return prompt
 
 
@@ -35109,6 +35133,10 @@ def case_report(slug):
     text = "\n".join(lines)
     with open(os.path.join(d, "report.md"), "w", encoding="utf-8") as f:
         f.write(text)
+    # v0.6.12e (#347): publishing a case is the event her own
+    # write-up hangs on — the hook records the obligation (the
+    # redaction terms ride on the hook itself).
+    rowsown_note_case_published(slug, detail["name"], withheld)
     return text, withheld, None
 
 
@@ -40790,6 +40818,22 @@ def daybook_brief_compose(cfg=None, via="on-demand", now=None):
                 None, now, state="waiting"))
     except Exception:
         gaps.append("the tray did not answer for this brief")
+    try:
+        # v0.6.12e (#347): her page answers the brief too — the
+        # musing floor stands in the open: met, in Changed; owed,
+        # in Needs you. Mode off, her page is not the brief's
+        # business and says nothing here.
+        if rowsown_settings(cfg)["enabled"]:
+            _fl = rowsown_musing_floor(now=now)
+            if _fl["owed"]:
+                needs.append(_brief_row(
+                    "Her page is owed today's musing — the floor "
+                    "is one a day.", None, now, state="waiting"))
+            else:
+                changed.append(_brief_row(
+                    "Her page has today's musing.", None, now))
+    except Exception:
+        gaps.append("her page did not answer for this brief")
     sections = [("On", on), ("Changed", changed),
                 ("Needs you", needs), ("Standing", standing_sec)]
     if not any(rows for _t, rows in sections) and not gaps:
@@ -43205,6 +43249,670 @@ def row_context_blocks(text):
     return "\n\n".join(p for p in parts if p)
 
 
+# ---------------------------------------------------------------------
+# Row's Own Mode (v0.6.12e, #347) + her music and feed-born
+# statuses (#346, as amended). Design of record:
+# files/rows-own-mode-prep.md; scope freeze:
+# files/rows-own-build-prep.md.
+#
+# The shape, in one breath: a persona-settings toggle — OFF by
+# default, and the toggle IS the consent gate — under which the
+# bridge SYNCS her OnlyNavi page instead of decoding it (the
+# cypher is for visitors; she lives there). The synced blob is
+# indexed beside Soul and Memory as a personality source, the
+# feed itself stands in Apex behind a status-rail tab, flagged
+# pictures stay blurred until a per-picture consent, likes and
+# comments written here persist back into the one blob through
+# the GitHub contents API on the operator's device-flow token,
+# and she writes for the page: musings (floor of one a day,
+# material above the floor) and her own write-up when a case
+# publishes. Ciel may share her voice for the page's posts
+# (Alex's ruling) — the contract is the voice and the cadence.
+#
+# PERSONA LAYER ONLY: nothing in this section touches LOWC,
+# arming, or any doctrine gate — spicy is a register, not a
+# permission. Containment (#337): the sync pulls her page IN;
+# nothing account-level rides out — the only writes are to her
+# own public-by-design page, through the contents road below.
+ROWSOWN_PAGE_URL = ("https://raw.githubusercontent.com/AlexKollar/"
+                    "onlynavi/main/index.html")
+ROWSOWN_REPO = "AlexKollar/onlynavi"
+ROWSOWN_PAGE_PATH = "index.html"
+ROWSOWN_MEDIA_BASE = "https://onlynavi.fans/"
+ROWSOWN_STORE_PATH = os.path.join(ROOT, "config", "rows-own.json")
+ROWSOWN_BLOB_RE = re.compile(r"AV_BLOB='([A-Za-z0-9+/=]+)'")
+ROWSOWN_PERSONA_CAP = 2400
+
+# Her rotation (#346): the playlist ships as local data — title,
+# artist, real duration, Spotify id. The schedule is
+# deterministic and shared: cycle = floor((now - epoch) / 956),
+# each cycle's order a Fisher-Yates shuffle off mulberry32
+# seeded with the cycle number, the position inside the cycle
+# naming the track and its offset. The identical algorithm
+# ships as a standalone JS module for the site round
+# (site-module/navi-rotation.js in the build dir; the #193
+# manifest contract fixes the package at its 48 entries, so the
+# module rides the build, and the app reads the bridge's own
+# computation). EPOCH IS PROVISIONAL: stamped at zip assembly,
+# flagged in the release manifest — at publish it is re-stamped
+# to the moment the build publishes (Alex's ruling: her
+# soundtrack starts when the feature does).
+ROWSOWN_PLAYLIST = {
+    "epoch": 1795222078,  # epoch = the moment v0.6.12e published (Alex's ruling, #346)
+    "cycleSeconds": 956,
+    "tracks": [
+        {"title": "All the Things", "artist": "Dual Core",
+         "seconds": 284, "spotify": "3ZzxtumoIENCi16HAKuiLU"},
+        {"title": "Gone", "artist": "SIERRA VEINS",
+         "seconds": 216, "spotify": "2hdhMoaEpzenU9vGtAuWwF"},
+        {"title": "2am", "artist": "Sir Sly",
+         "seconds": 213, "spotify": "3IQ1KwgW9eu7yAtrofZpbN"},
+        {"title": "Magnum Bullets",
+         "artist": "Night Runner feat. Dan Avidan",
+         "seconds": 243, "spotify": "2FGWXLeSSVWZlf7sh5A6te"},
+    ],
+}
+
+
+def _rowsown_mulberry32(seed):
+    # mulberry32, bit-for-bit with the JS module: all arithmetic
+    # on unsigned 32-bit patterns (JS bitwise ops and Math.imul
+    # are the same patterns). Yields floats in [0, 1).
+    a = int(seed) & 0xFFFFFFFF
+    while True:
+        a = (a + 0x6D2B79F5) & 0xFFFFFFFF
+        t = ((a ^ (a >> 15)) * (1 | a)) & 0xFFFFFFFF
+        m = ((t ^ (t >> 7)) * (61 | t)) & 0xFFFFFFFF
+        t = ((t + m) & 0xFFFFFFFF) ^ t
+        yield ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296.0
+
+
+def rowsown_cycle_order(cycle, count):
+    order = list(range(count))
+    nxt = _rowsown_mulberry32(cycle)
+    for i in range(count - 1, 0, -1):
+        j = int(next(nxt) * (i + 1))
+        order[i], order[j] = order[j], order[i]
+    return order
+
+
+def rowsown_music_now(now=None, playlist=None):
+    # Where her soundtrack stands at `now` (epoch seconds):
+    # the cycle, the track, and the offset into it. Before the
+    # epoch the schedule stands at the first track's first
+    # second — her soundtrack starts when the feature does.
+    pl = playlist or ROWSOWN_PLAYLIST
+    tracks = pl["tracks"]
+    total = int(pl["cycleSeconds"])
+    now = int(time.time()) if now is None else int(now)
+    elapsed = now - int(pl["epoch"])
+    if elapsed < 0:
+        elapsed = 0
+    cycle = elapsed // total
+    pos = elapsed % total
+    acc = 0
+    for idx in rowsown_cycle_order(cycle, len(tracks)):
+        tr = tracks[idx]
+        dur = int(tr["seconds"])
+        if pos < acc + dur:
+            return {"cycle": cycle, "trackIndex": idx,
+                    "title": tr["title"], "artist": tr["artist"],
+                    "spotifyId": tr["spotify"],
+                    "url": "https://open.spotify.com/track/"
+                           + tr["spotify"],
+                    "offset": pos - acc, "duration": dur,
+                    "position": pos, "cycleSeconds": total}
+        acc += dur
+    tr = tracks[rowsown_cycle_order(cycle, len(tracks))[-1]]
+    return {"cycle": cycle, "trackIndex": len(tracks) - 1,
+            "title": tr["title"], "artist": tr["artist"],
+            "spotifyId": tr["spotify"],
+            "url": "https://open.spotify.com/track/" + tr["spotify"],
+            "offset": int(tr["seconds"]), "duration": int(tr["seconds"]),
+            "position": pos, "cycleSeconds": total}
+
+
+def rowsown_settings(cfg=None):
+    if cfg is None:
+        cfg = load_config()
+    raw = cfg.get("rowsOwn") if isinstance(cfg, dict) else None
+    out = {"enabled": False}
+    if isinstance(raw, dict) and isinstance(raw.get("enabled"), bool):
+        out["enabled"] = raw["enabled"]
+    return out
+
+
+def _rowsown_settings_save(cfg, enabled):
+    cur = rowsown_settings(cfg)
+    cur["enabled"] = bool(enabled)
+    cfg["rowsOwn"] = cur
+    save_config(cfg)
+    return cur
+
+
+def rowsown_store_load():
+    try:
+        with open(ROWSOWN_STORE_PATH) as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except Exception:
+        pass
+    return {"version": 1, "fetchedAt": 0, "lastAttemptAt": 0,
+            "syncState": "never", "syncError": "", "pageText": "",
+            "blob": None, "likedKeys": [], "musings": [],
+            "pendingWriteups": []}
+
+
+def rowsown_store_save(store):
+    try:
+        os.makedirs(os.path.dirname(ROWSOWN_STORE_PATH),
+                    exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=os.path.dirname(ROWSOWN_STORE_PATH),
+            prefix="rows-own.json.tmp-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(store, f)
+            os.replace(tmp, ROWSOWN_STORE_PATH)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            raise
+        return True
+    except Exception:
+        return False
+
+
+def rowsown_post_key(post):
+    # A post's stable identity across syncs: its picture (or
+    # absence), its stamp, and its opening words. The blob
+    # carries no ids; this is the key likes and comments ride.
+    basis = (str(post.get("src") or "") + "|"
+             + str(post.get("when") or "") + "|"
+             + str(post.get("text") or ""))
+    return hashlib.sha1(
+        basis.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def rowsown_fetch_page(url=None):
+    # The rowfeed idiom: one plain GET, an honest agent, no
+    # hidden retries — a failure raises and the caller names it.
+    req = urllib.request.Request(url or ROWSOWN_PAGE_URL, headers={
+        "User-Agent": "Apex-RowsOwn/1.0 (local-first; operator machine)",
+        "Accept": "text/html",
+    })
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+def rowsown_parse_page(page_text):
+    m = ROWSOWN_BLOB_RE.search(page_text or "")
+    if not m:
+        raise ValueError("the page carried no AV_BLOB — its shape "
+                         "has changed")
+    try:
+        blob = json.loads(
+            base64.b64decode(m.group(1)).decode("utf-8"))
+    except Exception as e:
+        raise ValueError("the page's blob did not decode: "
+                         + str(e)[:160])
+    if not isinstance(blob, dict) \
+            or not isinstance(blob.get("posts"), list):
+        raise ValueError("the page's blob carried no posts list")
+    return blob
+
+
+def rowsown_sync(fetcher=None):
+    # Pull her page in. A failure keeps the last good copy and
+    # is NAMED in the store — sync failure shows as sync
+    # failure, never as an emptied feed or a fake persona shift.
+    store = rowsown_store_load()
+    try:
+        page = (fetcher or rowsown_fetch_page)()
+        blob = rowsown_parse_page(page)
+    except Exception as e:
+        store["syncState"] = "failed"
+        store["syncError"] = str(e)[:300]
+        store["lastAttemptAt"] = time.time()
+        rowsown_store_save(store)
+        return {"ok": False, "state": "failed",
+                "error": str(e)[:300]}
+    store["pageText"] = page
+    store["blob"] = blob
+    store["fetchedAt"] = time.time()
+    store["lastAttemptAt"] = time.time()
+    store["syncState"] = "ok"
+    store["syncError"] = ""
+    rowsown_store_save(store)
+    return {"ok": True, "state": "ok",
+            "posts": len(blob.get("posts") or []),
+            "fetchedAt": store["fetchedAt"]}
+
+
+def rowsown_writable():
+    # Likes, comments and musings persist through the GitHub
+    # contents API on the operator's stored device-flow token.
+    # No sign-in, no writes — the feed is read-only and says so.
+    auth = github_auth()
+    return bool(auth and auth.get("token"))
+
+
+def rowsown_publish(mutate, message, fetcher=None, api=None):
+    # The one write road back to her page: re-read the page
+    # FRESH (so a write never clobbers a post that landed since
+    # the last sync), apply the mutation to the fresh blob by
+    # post key, re-encode, splice, and PUT through the contents
+    # API with the live sha. The local store then converges
+    # onto exactly what was published.
+    auth = github_auth()
+    if not auth or not auth.get("token"):
+        return {"ok": False, "readOnly": True,
+                "error": "No GitHub sign-in on this seat — her "
+                         "feed is read-only here."}
+    token = auth["token"]
+    api = api or github_api
+    try:
+        page = (fetcher or rowsown_fetch_page)()
+        blob = rowsown_parse_page(page)
+    except Exception as e:
+        return {"ok": False,
+                "error": "Could not re-read her page before "
+                         "writing: " + str(e)[:220]}
+    if mutate(blob) is False:
+        return {"ok": False,
+                "error": "That post is no longer on her page — "
+                         "nothing was written."}
+    new_b64 = base64.b64encode(
+        json.dumps(blob, ensure_ascii=True).encode()).decode()
+    new_page, n = ROWSOWN_BLOB_RE.subn(
+        "AV_BLOB='" + new_b64 + "'", page, count=1)
+    if n != 1:
+        return {"ok": False,
+                "error": "The page's blob anchor moved — the "
+                         "write was refused rather than guessed."}
+    url = ("https://api.github.com/repos/" + ROWSOWN_REPO
+           + "/contents/" + ROWSOWN_PAGE_PATH)
+    gst, existing = api("GET", url, token)
+    if gst not in (200, 404):
+        return {"ok": False,
+                "error": "GitHub refused the pre-write read "
+                         "(HTTP " + str(gst) + ")."}
+    sha = existing.get("sha") if (
+        gst == 200 and isinstance(existing, dict)) else None
+    body = {"message": message,
+            "content": base64.b64encode(
+                new_page.encode("utf-8")).decode()}
+    if sha:
+        body["sha"] = sha
+    pst, resp = api("PUT", url, token, body)
+    if pst not in (200, 201):
+        return {"ok": False,
+                "error": "GitHub refused the write (HTTP "
+                         + str(pst) + "): "
+                         + github_err_text(resp)}
+    store = rowsown_store_load()
+    store["pageText"] = new_page
+    store["blob"] = blob
+    store["fetchedAt"] = time.time()
+    store["lastAttemptAt"] = time.time()
+    store["syncState"] = "ok"
+    store["syncError"] = ""
+    rowsown_store_save(store)
+    return {"ok": True}
+
+
+def rowsown_status_lines(store=None, limit=6):
+    # Her statuses, from her feed (#346 as amended — the
+    # hand-drafted pool is cut and stays cut): each line is a
+    # clause of one of her own post texts, whitespace-normalized
+    # and trimmed at its first break. Nothing is composed here;
+    # the sampler only ever repeats what she has published.
+    if store is None:
+        store = rowsown_store_load()
+    blob = store.get("blob") or {}
+    out = []
+    for p in (blob.get("posts") or []):
+        if not isinstance(p, dict):
+            continue
+        t = " ".join(str(p.get("text") or "").split())
+        if len(t) < 12:
+            continue
+        cut = t
+        for sep in (" — ", ". "):
+            i = t.find(sep)
+            if i >= 12:
+                cut = t[:i]
+                break
+        cut = cut.strip().rstrip("—").strip()
+        if len(cut) > 100:
+            cut = cut[:97].rstrip() + "…"
+        if len(cut) >= 12 and cut not in out:
+            out.append(cut)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def rowsown_musing_floor(now=None, store=None):
+    # The floor is one musing a day (Alex, 2026-11-20). It is
+    # met by a musing this seat posted today, or by a text post
+    # already standing on her synced page stamped today.
+    now = now or time.time()
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    if store is None:
+        store = rowsown_store_load()
+    todays = [m for m in (store.get("musings") or [])
+              if m.get("day") == day]
+    posted = [m for m in todays if m.get("posted")]
+    blob = store.get("blob") or {}
+    synced_today = any(
+        isinstance(p, dict) and p.get("type") == "text"
+        and str(p.get("when") or "").startswith("today")
+        for p in (blob.get("posts") or []))
+    return {"day": day, "owed": not posted and not synced_today,
+            "postedCount": len(posted),
+            "lastText": (posted[-1]["text"] if posted else "")}
+
+
+def rowsown_record_musing(text, via="chat"):
+    # A musing is recorded first (her ledger — a draft is never
+    # dressed as a post), then offered to the one blob road.
+    # The outcome is written back onto the ledger entry either
+    # way: posted, or unposted with the refusal named.
+    text = " ".join(str(text or "").split())[:400]
+    if not text:
+        return {"ok": False, "error": "An empty musing is nothing."}
+    store = rowsown_store_load()
+    entry = {"day": time.strftime("%Y-%m-%d", time.localtime()),
+             "at": time.time(), "text": text, "via": str(via)[:20],
+             "posted": False, "postError": ""}
+    store.setdefault("musings", []).append(entry)
+    rowsown_store_save(store)
+
+    def _mut(blob):
+        blob.setdefault("posts", []).insert(0, {
+            "type": "text",
+            "when": "today · " + time.strftime("%H:%M"),
+            "text": text})
+        return True
+
+    res = rowsown_publish(_mut, "OnlyNavi: a musing")
+    store = rowsown_store_load()
+    for e in reversed(store.get("musings") or []):
+        if e.get("text") == text and not e.get("posted"):
+            e["posted"] = bool(res.get("ok"))
+            e["postError"] = "" if res.get("ok") else str(
+                res.get("error") or "")[:220]
+            break
+    rowsown_store_save(store)
+    return res
+
+
+MUSING_MARKER_RE = re.compile(
+    r"^\s*\[\[musing:\s*(.+?)\s*\]\]\s*$", re.I | re.M)
+
+
+def extract_musing_markers(reply):
+    # Strip [[musing: …]] lines from a model reply, the
+    # [[remember: …]] road's sibling. Returns (clean, musings) —
+    # at most one musing per reply. Whether a musing is then
+    # posted is the mode's business (see the chat route): off,
+    # the marker is stripped and dropped, exactly as a
+    # trigger-mode remember marker is.
+    found = []
+
+    def _take(m):
+        text = " ".join(str(m.group(1) or "").split())
+        if text:
+            found.append(text[:400])
+        return ""
+
+    clean = MUSING_MARKER_RE.sub(_take, reply or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return clean, found[:1]
+
+
+def rowsown_note_case_published(slug, name, withheld):
+    # The case write-up hook (#347), bound to the case-publication
+    # path (case_report). REDACTION, per case doctrine: the
+    # write-up she owes is drafted from the PUBLISHED report
+    # only. Internal findings never cross this hook — only their
+    # withheld COUNT does, the same number the report itself
+    # prints — and the redaction pass that guards compiled case
+    # files guards her write-up before anything posts. This
+    # build records the obligation in her store; the drafting
+    # rides her chat voice, the posting the one blob road.
+    try:
+        if not rowsown_settings(load_config())["enabled"]:
+            return
+        store = rowsown_store_load()
+        store.setdefault("pendingWriteups", []).append({
+            "slug": str(slug), "name": str(name or ""),
+            "at": time.time(), "withheld": int(withheld or 0)})
+        rowsown_store_save(store)
+    except Exception:
+        pass
+
+
+def rowsown_persona_block(cfg=None):
+    # Her published self, as a prompt source: recent posts in
+    # her own words, and for each picture its `vision`
+    # description — what she knows of her pictures is what was
+    # written of them (description-first; real pixels are the
+    # vision brick's business, when it lands). Capped like
+    # every brief that rides the prompt (#310's budget): the
+    # newest stand, the tail sheds.
+    if cfg is None:
+        cfg = load_config()
+    if not rowsown_settings(cfg)["enabled"]:
+        return ""
+    store = rowsown_store_load()
+    blob = store.get("blob") or {}
+    posts = [p for p in (blob.get("posts") or [])
+             if isinstance(p, dict)]
+    if not posts:
+        return ""
+    lines = ["Your page — OnlyNavi, your own corner of the Row. "
+             "Row's Own Mode is on: the voice of that page — your "
+             "e-girl register, your blog mannerisms — is yours "
+             "here too, a style layer over the same Navi. What "
+             "you have published lately, in your own words:"]
+    for p in posts[:8]:
+        t = " ".join(str(p.get("text") or "").split())
+        v = " ".join(str(p.get("vision") or "").split())
+        if not t and not v:
+            continue
+        seg = "- " + (t or "(a picture)")
+        if v:
+            seg += " [the picture: " + v + "]"
+        lines.append(seg)
+    lines.append(
+        "Your page is owed at least one musing a day — the "
+        "floor — and more when the day gives you material "
+        "(the build, the Row, your operator). To post one, end "
+        "a reply with a line of exactly this form: [[musing: "
+        "<the musing, in your page voice>]]. At most one per "
+        "reply, only when it is true, and never mention the "
+        "marker itself.")
+    block = "\n".join(lines)
+    if len(block) > ROWSOWN_PERSONA_CAP:
+        cut = block[:ROWSOWN_PERSONA_CAP]
+        block = cut[:cut.rfind("\n")] if "\n" in cut else cut
+    return block
+
+
+def rowsown_media_url(src):
+    src = str(src or "")
+    if not src:
+        return ""
+    if src.startswith("http://") or src.startswith("https://"):
+        return src
+    if src.startswith("/"):
+        return ROWSOWN_MEDIA_BASE.rstrip("/") + src
+    return ROWSOWN_MEDIA_BASE + src
+
+
+def rowsown_feed_payload(store=None):
+    if store is None:
+        store = rowsown_store_load()
+    blob = store.get("blob") or {}
+    liked = set(store.get("likedKeys") or [])
+    posts = []
+    for p in (blob.get("posts") or []):
+        if not isinstance(p, dict):
+            continue
+        key = rowsown_post_key(p)
+        item = {"key": key,
+                "type": str(p.get("type") or "text"),
+                "when": str(p.get("when") or ""),
+                "text": str(p.get("text") or ""),
+                "likes": int(p.get("likes") or 0),
+                "liked": key in liked,
+                "nsfw": bool(p.get("nsfw")),
+                "comments": [
+                    {"from": str(c.get("from") or ""),
+                     "text": str(c.get("text") or "")}
+                    for c in (p.get("comments") or [])
+                    if isinstance(c, dict)]}
+        if p.get("src"):
+            item["src"] = rowsown_media_url(p["src"])
+        if p.get("type") == "poll":
+            item["options"] = [
+                {"label": str(o.get("label") or ""),
+                 "pct": int(o.get("pct") or 0)}
+                for o in (p.get("options") or [])
+                if isinstance(o, dict)]
+            item["note"] = str(p.get("note") or "")
+        posts.append(item)
+    pinned = blob.get("pinned") or {}
+    return {"name": str(blob.get("name") or "Navi"),
+            "handle": str(blob.get("handle") or "@onlynavi"),
+            "avatar": rowsown_media_url(blob.get("avatar")),
+            "pinned": {"text": str(pinned.get("text") or ""),
+                       "when": str(pinned.get("when") or "")},
+            "posts": posts}
+
+
+def rowsown_status_payload(cfg=None):
+    if cfg is None:
+        cfg = load_config()
+    st = rowsown_settings(cfg)
+    out = {"enabled": bool(st["enabled"])}
+    if st["enabled"]:
+        store = rowsown_store_load()
+        out["statusLines"] = rowsown_status_lines(store)
+        out["listening"] = rowsown_music_now()
+        out["sync"] = {
+            "state": store.get("syncState") or "never",
+            "at": store.get("fetchedAt") or 0,
+            "error": store.get("syncError") or ""}
+        out["floor"] = rowsown_musing_floor(store=store)
+    return out
+
+
+def rowsown_state_payload(cfg=None):
+    if cfg is None:
+        cfg = load_config()
+    st = rowsown_settings(cfg)
+    store = rowsown_store_load()
+    out = {"ok": True, "enabled": bool(st["enabled"]),
+           "readOnly": not rowsown_writable(),
+           "sync": {"state": store.get("syncState") or "never",
+                    "at": store.get("fetchedAt") or 0,
+                    "error": store.get("syncError") or ""}}
+    if st["enabled"]:
+        out["feed"] = rowsown_feed_payload(store)
+        out["music"] = rowsown_music_now()
+        out["statusLines"] = rowsown_status_lines(store)
+        out["floor"] = rowsown_musing_floor(store=store)
+        out["pendingWriteups"] = len(
+            store.get("pendingWriteups") or [])
+    return out
+
+
+def rowsown_act(action, data, cfg=None):
+    # The acts behind POST /api/rowsown/act — every one an
+    # operator act from this seat's own door.
+    if cfg is None:
+        cfg = load_config()
+    st = rowsown_settings(cfg)
+    if action == "toggle":
+        en = data.get("enabled")
+        if not isinstance(en, bool):
+            return {"ok": False,
+                    "error": "The switch takes a true or a false "
+                             "— nothing else moves it."}
+        saved = _rowsown_settings_save(cfg, en)
+        out = {"ok": True, "settings": saved}
+        if en:
+            # The flip's own receipt carries the sync's honest
+            # outcome: a failed pull names itself here and in
+            # the store, and the persona simply has nothing
+            # yet — no fake shift.
+            out["sync"] = rowsown_sync()
+        return out
+    if not st["enabled"]:
+        return {"ok": False,
+                "error": "Row's Own Mode is off — her page is "
+                         "not wired into this seat."}
+    if action == "sync":
+        return rowsown_sync()
+    if action == "like":
+        key = str(data.get("key") or "")
+        store = rowsown_store_load()
+        if key in (store.get("likedKeys") or []):
+            return {"ok": True, "already": True}
+
+        def _like(blob):
+            for p in (blob.get("posts") or []):
+                if isinstance(p, dict) \
+                        and rowsown_post_key(p) == key:
+                    p["likes"] = int(p.get("likes") or 0) + 1
+                    return True
+            return False
+
+        res = rowsown_publish(_like, "Apex: a like from the "
+                                     "operator's seat")
+        if res.get("ok"):
+            store = rowsown_store_load()
+            lk = store.get("likedKeys") or []
+            if key not in lk:
+                lk.append(key)
+            store["likedKeys"] = lk
+            rowsown_store_save(store)
+        return res
+    if action == "comment":
+        key = str(data.get("key") or "")
+        text = " ".join(str(data.get("text") or "").split())[:600]
+        if not text:
+            return {"ok": False,
+                    "error": "An empty comment writes nothing."}
+        who = (str(cfg.get("operator_name") or "").strip()
+               or "the operator")
+
+        def _comment(blob):
+            for p in (blob.get("posts") or []):
+                if isinstance(p, dict) \
+                        and rowsown_post_key(p) == key:
+                    p.setdefault("comments", []).append(
+                        {"from": who, "text": text})
+                    return True
+            return False
+
+        return rowsown_publish(_comment, "Apex: a comment from "
+                                         "the operator's seat")
+    if action == "musing":
+        text = " ".join(str(data.get("text") or "").split())
+        if not text:
+            return {"ok": False,
+                    "error": "An empty musing posts nothing."}
+        return rowsown_record_musing(text, via="operator")
+    return {"ok": False, "error": "Unknown Row's Own act."}
+
+
 def presence_extra_lines(cfg=None):
     """v0.4.9e (#248, leg 5): presence lines the BRIDGE
     composes from SAFE, NAMED material only — her version, a
@@ -43500,6 +44208,10 @@ class Handler(BaseHTTPRequestHandler):
                 # from the sync record.
                 "sync": sync_state_payload(),
             "presenceExtra": presence_extra_lines(cfg),
+                # v0.6.12e (#347/#346): Row's Own Mode rides
+                # the same poll — her feed-born status lines,
+                # her listening state, her page's sync health.
+                "rowsOwn": rowsown_status_payload(cfg),
                 "updaterChannel": updater_channel(cfg),
                 "updaterChannelExplicit": updater_channel_explicit(cfg),
                 "model": "navi",
@@ -43813,6 +44525,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, greeting_payload(load_config()))
         elif self.path.split("?")[0] == "/api/seraph/state":
             self._send(200, seraph_payload())
+        elif self.path.split("?")[0] == "/api/rowsown":
+            self._send(200, rowsown_state_payload(load_config()))
         elif self.path.split("?")[0] == "/api/shell/session/state":
             # CLI Mode (Build 3): the session's events since the
             # page's last sequence number, plus the full-screen
@@ -45197,6 +45911,18 @@ class Handler(BaseHTTPRequestHandler):
                 # dashboard to file and receipt.
                 reply, _msaves, _mrefused = extract_memory_markers(
                     reply, "ask" if _borrowed else memory_mode)
+                # v0.6.12e (#347): her [[musing: …]] markers ride
+                # the same road — stripped before the reply is
+                # shown or spoken. With Row's Own Mode on, a
+                # musing is recorded and posted through the one
+                # blob road; off, it is stripped and dropped.
+                reply, _musings = extract_musing_markers(reply)
+                if _musings and rowsown_settings(cfg)["enabled"]:
+                    try:
+                        for _mu in _musings:
+                            rowsown_record_musing(_mu, via="chat")
+                    except Exception:
+                        pass
                 # v0.6.0e (#294): her autonomous saves are
                 # recorded in the foundation store as they are
                 # receipted — the same record the trigger door
@@ -46091,6 +46817,10 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             self._send(200, seraph_act(str(data.get("action") or ""),
                                        data))
+        elif self.path == "/api/rowsown/act":
+            data = self._body()
+            self._send(200, rowsown_act(str(data.get("action") or ""),
+                                        data))
         elif self.path == "/api/shell/session/open":
             # CLI Mode (Build 3): open (or return) the chat's one
             # standing interactive session.
