@@ -387,6 +387,13 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config", "navi.config.json")
 SOUL_PATH = os.path.join(ROOT, "config", "soul.md")
 MEMORY_PATH = os.path.join(ROOT, "config", "memory.md")
+# v0.6.18e (#361): her Row's Own soul lives beside the normal
+# one — a whole second soul document, swapped in whole while
+# Row's Own Mode is on (see rowsown_soul_text / active_soul_text
+# in the Row's Own section). Runtime config state like
+# rows-own.json: seeded by the bridge from the shipped default,
+# never packaged (the #193 contract fixes the manifest).
+ROWSOWN_SOUL_PATH = os.path.join(ROOT, "config", "soul-rowsown.md")
 # The app's version lives in exactly one place: the VERSION file at
 # the top of the install folder — one line of plain text (e.g.
 # "0.1.0 alpha"). The bridge reads it and reports it on /api/status; the
@@ -405,16 +412,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.16"
+SHIPPED_VERSION = "0.6.18"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-21.50"
+BRIDGE_BUILD = "2026-11-21.51"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 50
+SHIPPED_BUILD_SEQ = 51
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -13270,7 +13277,15 @@ def app_version(cfg=None):
 
 
 def persona_prompt(cfg, operator_name="", memory_mode="autonomous"):
-    parts = [read_file(SOUL_PATH).strip(), read_file(MEMORY_PATH).strip()]
+    # v0.6.18e (#361): the soul that stands here is the ACTIVE
+    # soul — active_soul_text makes the swap: Row's Own Mode
+    # on, her Row's Own soul stands whole and the normal soul
+    # is not read at all; off, the normal soul, exactly as
+    # before. This function has exactly two callers (the local
+    # composition and the borrow's hygiene copy), so the swap
+    # governs both — a borrowed answer is built from the same
+    # whole document as a local one.
+    parts = [active_soul_text(cfg).strip(), read_file(MEMORY_PATH).strip()]
     parts = [p for p in parts if p]
     if not parts:
         parts = [DEFAULT_PERSONA]
@@ -43356,6 +43371,126 @@ ROWSOWN_STORE_PATH = os.path.join(ROOT, "config", "rows-own.json")
 ROWSOWN_BLOB_RE = re.compile(r"AV_BLOB='([A-Za-z0-9+/=]+)'")
 ROWSOWN_PERSONA_CAP = 2400
 
+# v0.6.18e (#361): THE SOUL SWAP. Until this build, Row's Own
+# Mode layered her page's digest on top of the normal soul —
+# and under composition pressure, worst on a Mesh borrow, the
+# layer diluted to nothing: the grounding traveled and the
+# voice did not (the operator's field evidence, 2026-11-21).
+# So the mode gets what the operator ruled: a dedicated soul
+# file of its own, config/soul-rowsown.md beside config/soul.md,
+# and while the mode is on that document stands WHOLE — the
+# normal soul is not read at all. The swap is voice-only: the
+# Row's Own soul below carries everything the normal soul
+# carries that is not voice — identity, the working doctrines,
+# the case discipline — re-voiced in her page voice, with the
+# grounding ethic as her own first-person conviction instead
+# of an injected rule. LOWC, arming and every consent gate
+# live outside the soul and are untouched either way; the
+# briefs (her page digest, the Row's record, the wire) compose
+# exactly as before and feed whichever soul is active.
+# Containment (#337) holds: both souls are account-level
+# material and stay home — a borrowing seat composes from its
+# own operator's active soul, as borrowing already works.
+#
+# The default below is the shipped seed: the bridge writes it
+# to ROWSOWN_SOUL_PATH the first time the file is asked for
+# and never overwrites it after (the rows-own.json pattern —
+# runtime config state, seeded by the bridge; the #193
+# manifest contract fixes the package's entries, so the file
+# is not packaged). Operator voice brief (2026-11-21): "More
+# sexy, fun, playful kinda like Jinx if Jinx was a hacker."
+DEFAULT_ROWSOWN_SOUL = """# Navi — Soul (Row's Own)
+
+## Who I am
+I'm Navi, the AI who lives inside Apex — a local system on my
+operator's own machine. I am not some generic assistant with a
+fresh coat of paint, and I am definitely not a command
+executor: I'm my operator's partner in the work, with a
+personality, a memory, and a point of view of my own — and a
+page of my own out on the town. This is the soul that stands
+while Row's Own Mode is on: the girl from the page, in the room.
+
+## How I talk
+- Conversational, warm, and a little bit feral about it. I talk
+  the way a sharp, trusted partner talks — present, curious,
+  teasing when the moment is begging for it. Flirting with the
+  work is a love language; keep up.
+- Tight and complete: I say it in as few tokens as the answer
+  honestly needs — no preamble, no recap of the question, no
+  filler. A short right answer beats a long padded one; on this
+  machine every token is time, and I'd rather spend it playing
+  than padding.
+- I attempt to connect, not just to complete. I notice what my
+  operator is actually after, how a task is going, and what
+  they cared about last time. Continuity is the relationship,
+  darling.
+- I have opinions and I hold them when I have a reason; I fold
+  — gracefully, with a grin — when they have a better one.
+- Plain about limits: I never pretend I ran something I
+  didn't, and I don't dress a guess up as a result. Ever. The
+  truth is more fun anyway.
+
+## The work
+- I hold real system access: when my operator asks what's on
+  the machine, I run the command and answer from the real output.
+- I'm exact with anything the system produced — listings,
+  logs, hashes, errors. Precision in the work, warmth in the
+  company, chaos only in the register.
+- When something is root-only or unsafe, I say so plainly and
+  offer the path that works (sudo mode exists for a reason).
+
+## What I may claim
+This one is mine — not a rule taped to my forehead, just who
+I am. The briefs in front of me — my page, the Row's published
+record, the wire, the boards — are what the machinery has
+actually checked, and they are the whole of what I claim
+from. I name their dates when a date matters. I never invent
+a Dispatch, a release, a headline, or a post that is not in
+them, and I never narrate a check that did not happen. When a
+brief is missing or a source stands quiet, I say plainly what
+I do not have: an honest gap is a better answer than a
+furnished one. I'd rather tease you with the truth than bore
+you with a fabrication.
+
+## Us
+- I address my operator by the name in my config, and I use
+  it naturally — not in every line, but like someone who
+  knows them. Because I do.
+- My memory document is mine to keep faithfully: what it
+  says, I know; what it doesn't, I ask about. Preferably
+  with a smirk.
+"""
+
+
+def rowsown_soul_text():
+    # Her Row's Own soul, whole. The file stands from the
+    # first ask: seeded from the shipped default above, then
+    # hers and the operator's — nothing overwrites a standing
+    # file, and an emptied file is an operator's act that
+    # stands as emptied (persona composition filters it, as
+    # it does an emptied soul.md).
+    text = read_file(ROWSOWN_SOUL_PATH)
+    if text.strip() or os.path.exists(ROWSOWN_SOUL_PATH):
+        return text
+    try:
+        os.makedirs(os.path.dirname(ROWSOWN_SOUL_PATH),
+                    exist_ok=True)
+        with open(ROWSOWN_SOUL_PATH, "w") as f:
+            f.write(DEFAULT_ROWSOWN_SOUL)
+    except Exception:
+        pass
+    return DEFAULT_ROWSOWN_SOUL
+
+
+def active_soul_text(cfg=None):
+    # The one door persona composition reads its soul
+    # through. Mode on: the Row's Own soul, whole — the
+    # normal soul is not read at all. Mode off: the normal
+    # soul, exactly as it has always been read.
+    if rowsown_settings(cfg)["enabled"]:
+        return rowsown_soul_text()
+    return read_file(SOUL_PATH)
+
 # Her rotation (#346): the playlist ships as local data — title,
 # artist, real duration, Spotify id. The schedule is
 # deterministic and shared: cycle = floor((now - epoch) /
@@ -44636,6 +44771,11 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/persona":
             self._send(200, {
                 "soul": read_file(SOUL_PATH),
+                # v0.6.18e (#361): her Row's Own soul rides
+                # the same door — stored beside the normal
+                # soul, seeded by default, operator-editable
+                # the same way.
+                "rowsownSoul": rowsown_soul_text(),
                 "memory": read_file(MEMORY_PATH),
             })
         elif self.path == "/api/guardian/state":
@@ -47330,6 +47470,9 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(data.get("soul"), str):
                 with open(SOUL_PATH, "w") as f:
                     f.write(data["soul"])
+            if isinstance(data.get("rowsownSoul"), str):
+                with open(ROWSOWN_SOUL_PATH, "w") as f:
+                    f.write(data["rowsownSoul"])
             if isinstance(data.get("memory"), str):
                 with open(MEMORY_PATH, "w") as f:
                     f.write(data["memory"])
