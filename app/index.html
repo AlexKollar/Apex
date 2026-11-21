@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <style>
-  :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --blue:#58a6ff; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
+  :root { color-scheme:dark; --bg:#0a0e12; --panel:#10161d; --panel2:#0d1218; --line:#22303d; --text:#e6f1f5; --dim:#9fb3c8; --cy:#22d3ee; --accent:#22d3ee; --blue:#58a6ff; --am:#f5b544; --red:#f87171; --green:#34d399; --ver-alpha:#f87171; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   /* Curated themes (Settings): the same variables, twelve palettes.
      Nocturne Row is the default (issue #118); the others swap the
      whole variable set on <body data-theme>, so every view — selects and
@@ -15,33 +15,33 @@
      family: Polar Night backgrounds, Snow Storm text, Frost accents,
      muted Aurora highlights. Code and terminal surfaces stay dark
      in the light theme (their text is pinned light below). */
-  body[data-theme="light"] { color-scheme:light; --bg:#e8edf1; --panel:#f7fafc; --panel2:#eef3f6; --line:#b3c3cf; --text:#12212b; --dim:#43586a; --cy:#0284c7; --blue:#1d6fd1; --am:#b45309; --red:#dc2626; --green:#059669; --ver-alpha:#dc2626; --ver-beta:#b45309; --ver-stable:#0284c7; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
+  body[data-theme="light"] { color-scheme:light; --bg:#e8edf1; --panel:#f7fafc; --panel2:#eef3f6; --line:#b3c3cf; --text:#12212b; --dim:#43586a; --cy:#0284c7; --accent:#0284c7; --blue:#1d6fd1; --am:#b45309; --red:#dc2626; --green:#059669; --ver-alpha:#dc2626; --ver-beta:#b45309; --ver-stable:#0284c7; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f9a8d4; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#000000; }
   body[data-theme="light"] .hlayer { --syn-cmd:#047857; --syn-bad:#b91c1c; --syn-flag:#0369a1; --syn-str:#92400e; --syn-path:#1d4ed8; --syn-kw:#a21caf; --syn-num:#6d28d9; --syn-op:#9d174d; }
   body[data-theme="light"] .ed-code pre, body[data-theme="light"] .hlayer { color:#e6f1f5; }
   body[data-theme="light"] .ed-gutter, body[data-theme="light"] .ed-mini pre { color:#9fb3c8; }
-  body[data-theme="contrast"] { --bg:#000000; --panel:#0c0d0f; --panel2:#14161a; --line:#7f95ab; --text:#ffffff; --dim:#d7e3ee; --cy:#2fd8ff; --am:#ffc933; --red:#ff7a7a; --green:#4ade80; --ver-alpha:#ff7a7a; --ver-beta:#ffc933; --ver-stable:#2fd8ff; --syn-cmd:#4ade80; --syn-bad:#ff9a9a; --syn-flag:#2fd8ff; --syn-str:#ffc933; --syn-path:#a5c8ff; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#fda4af; --exec-bg:#000000; }
-  body[data-theme="nord"] { --bg:#2e3440; --panel:#3b4252; --panel2:#434c5e; --line:#4c566a; --text:#eceff4; --dim:#a9b4c6; --cy:#88c0d0; --am:#ebcb8b; --red:#d98a94; --green:#a3be8c; --ver-alpha:#bf616a; --ver-beta:#ebcb8b; --ver-stable:#88c0d0; --syn-cmd:#b5e48c; --syn-bad:#ffb4b4; --syn-flag:#a5f3fc; --syn-str:#fde68a; --syn-path:#bfdbfe; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#f9a8d4; --exec-bg:#242933; }
-  body[data-theme="terminal"] { --bg:#000000; --panel:#020a02; --panel2:#010501; --line:#14532d; --text:#4ade80; --dim:#22c55e; --cy:#4ade80; --am:#a3e635; --red:#f87171; --green:#4ade80; --ver-alpha:#f87171; --ver-beta:#a3e635; --ver-stable:#4ade80; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#a3e635; --syn-str:#fde047; --syn-path:#2dd4bf; --syn-kw:#bef264; --syn-num:#bbf7d0; --syn-op:#f0abfc; --exec-bg:#000000; }
+  body[data-theme="contrast"] { --bg:#000000; --panel:#0c0d0f; --panel2:#14161a; --line:#7f95ab; --text:#ffffff; --dim:#d7e3ee; --cy:#2fd8ff; --accent:#2fd8ff; --am:#ffc933; --red:#ff7a7a; --green:#4ade80; --ver-alpha:#ff7a7a; --ver-beta:#ffc933; --ver-stable:#2fd8ff; --syn-cmd:#4ade80; --syn-bad:#ff9a9a; --syn-flag:#2fd8ff; --syn-str:#ffc933; --syn-path:#a5c8ff; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#fda4af; --exec-bg:#000000; }
+  body[data-theme="nord"] { --bg:#2e3440; --panel:#3b4252; --panel2:#434c5e; --line:#4c566a; --text:#eceff4; --dim:#a9b4c6; --cy:#88c0d0; --accent:#88c0d0; --am:#ebcb8b; --red:#d98a94; --green:#a3be8c; --ver-alpha:#bf616a; --ver-beta:#ebcb8b; --ver-stable:#88c0d0; --syn-cmd:#b5e48c; --syn-bad:#ffb4b4; --syn-flag:#a5f3fc; --syn-str:#fde68a; --syn-path:#bfdbfe; --syn-kw:#f0abfc; --syn-num:#ddd6fe; --syn-op:#f9a8d4; --exec-bg:#242933; }
+  body[data-theme="terminal"] { --bg:#000000; --panel:#020a02; --panel2:#010501; --line:#14532d; --text:#4ade80; --dim:#22c55e; --cy:#4ade80; --accent:#4ade80; --am:#a3e635; --red:#f87171; --green:#4ade80; --ver-alpha:#f87171; --ver-beta:#a3e635; --ver-stable:#4ade80; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#a3e635; --syn-str:#fde047; --syn-path:#2dd4bf; --syn-kw:#bef264; --syn-num:#bbf7d0; --syn-op:#f0abfc; --exec-bg:#000000; }
   /* DHD glyph tuning (build .74): ring and wedges resolve from the theme like the other nav icons; the center stays warm red-orange in the glyph itself. */
   body[data-theme="nord"] .nav-ico-dhd { color:#88c0d0; }
   body[data-theme="terminal"] .nav-ico-dhd { color:#4ade80; }
   body[data-theme="nord"] .nav-ico-mesh { color:#88c0d0; }
   body[data-theme="terminal"] .nav-ico-mesh { color:#4ade80; }
-  body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
-  body[data-theme="nocturne"] { color-scheme:dark; --bg:#060a14; --panel:#0b1220; --panel2:#0d1526; --line:#1e3a5f; --text:#dbeafe; --dim:#9db8d9; --cy:#22d3ee; --am:#f471b5; --red:#fb7185; --green:#34d399; --ver-alpha:#fb7185; --ver-beta:#fbbf24; --ver-stable:#22d3ee; --syn-cmd:#22d3ee; --syn-bad:#ff7a93; --syn-flag:#67e8f9; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f471b5; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#04070f; }
-  body[data-theme="abyss"] { color-scheme:dark; --bg:#010304; --panel:#041014; --panel2:#061a1e; --line:#0f3038; --text:#cfe3e8; --dim:#b8ccd1; --cy:#22e6ee; --am:#67e8f9; --red:#f87171; --green:#2dd4bf; --ver-alpha:#f87171; --ver-beta:#e7c65a; --ver-stable:#22e6ee; --syn-cmd:#67e8f9; --syn-bad:#ff8a8a; --syn-flag:#5eead4; --syn-str:#e7c65a; --syn-path:#cbd5e1; --syn-kw:#7dd3d8; --syn-num:#d9e8ec; --syn-op:#8be9e2; --exec-bg:#000000; }
-  body[data-theme="casefile"] { color-scheme:light; --bg:#f3ead8; --panel:#faf4e6; --panel2:#efe4cd; --line:#c9b894; --text:#1a1512; --dim:#5c4a36; --cy:#b91c1c; --am:#92400e; --red:#b91c1c; --green:#166534; --ver-alpha:#b91c1c; --ver-beta:#92400e; --ver-stable:#1d4ed8; --syn-cmd:#86efac; --syn-bad:#fca5a5; --syn-flag:#7dd3fc; --syn-str:#fcd34d; --syn-path:#c4b5fd; --syn-kw:#f9a8d4; --syn-num:#fde68a; --syn-op:#fdba74; --exec-bg:#1a1512; }
+  body[data-theme="glass"] { color-scheme:dark; --bg:#05080d; --panel:rgba(16,26,38,.72); --panel2:rgba(10,17,27,.78); --line:rgba(148,196,220,.35); --text:#f4f8fb; --dim:#c3d0da; --cy:#22d3ee; --accent:#22d3ee; --am:#f5b544; --red:#ff8a8a; --green:#34d399; --ver-alpha:#ff8a8a; --ver-beta:#f5b544; --ver-stable:#22d3ee; --syn-cmd:#4ade80; --syn-bad:#ff8a8a; --syn-flag:#22d3ee; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f0abfc; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#030609; }
+  body[data-theme="nocturne"] { color-scheme:dark; --bg:#060a14; --panel:#0b1220; --panel2:#0d1526; --line:#1e3a5f; --text:#dbeafe; --dim:#9db8d9; --cy:#22d3ee; --accent:#22d3ee; --am:#f471b5; --red:#fb7185; --green:#34d399; --ver-alpha:#fb7185; --ver-beta:#fbbf24; --ver-stable:#22d3ee; --syn-cmd:#22d3ee; --syn-bad:#ff7a93; --syn-flag:#67e8f9; --syn-str:#fbbf24; --syn-path:#93c5fd; --syn-kw:#f471b5; --syn-num:#c4b5fd; --syn-op:#e879f9; --exec-bg:#04070f; }
+  body[data-theme="abyss"] { color-scheme:dark; --bg:#010304; --panel:#041014; --panel2:#061a1e; --line:#0f3038; --text:#cfe3e8; --dim:#b8ccd1; --cy:#22e6ee; --accent:#22e6ee; --am:#67e8f9; --red:#f87171; --green:#2dd4bf; --ver-alpha:#f87171; --ver-beta:#e7c65a; --ver-stable:#22e6ee; --syn-cmd:#67e8f9; --syn-bad:#ff8a8a; --syn-flag:#5eead4; --syn-str:#e7c65a; --syn-path:#cbd5e1; --syn-kw:#7dd3d8; --syn-num:#d9e8ec; --syn-op:#8be9e2; --exec-bg:#000000; }
+  body[data-theme="casefile"] { color-scheme:light; --bg:#f3ead8; --panel:#faf4e6; --panel2:#efe4cd; --line:#c9b894; --text:#1a1512; --dim:#5c4a36; --cy:#b91c1c; --accent:#b91c1c; --am:#92400e; --red:#b91c1c; --green:#166534; --ver-alpha:#b91c1c; --ver-beta:#92400e; --ver-stable:#1d4ed8; --syn-cmd:#86efac; --syn-bad:#fca5a5; --syn-flag:#7dd3fc; --syn-str:#fcd34d; --syn-path:#c4b5fd; --syn-kw:#f9a8d4; --syn-num:#fde68a; --syn-op:#fdba74; --exec-bg:#1a1512; }
   body[data-theme="casefile"] .hlayer { --syn-cmd:#065f46; --syn-bad:#b91c1c; --syn-flag:#075985; --syn-str:#92400e; --syn-path:#3730a3; --syn-kw:#86198f; --syn-num:#5b21b6; --syn-op:#9d174d; }
   body[data-theme="casefile"] .exec, body[data-theme="casefile"] .md-code { font-family:ui-monospace,"Courier New",monospace; }
-  body[data-theme="bloodmoon"] { color-scheme:dark; --bg:#070203; --panel:#12050a; --panel2:#180710; --line:#4a1020; --text:#f3e9e4; --dim:#c9a9a0; --cy:#e7c65a; --am:#d4af37; --red:#e11d48; --green:#a3be8c; --ver-alpha:#ff4d6d; --ver-beta:#e7c65a; --ver-stable:#e7c65a; --syn-cmd:#e7c65a; --syn-bad:#ff4d6d; --syn-flag:#93c5fd; --syn-str:#fbbf24; --syn-path:#cbd5e1; --syn-kw:#ff7b54; --syn-num:#fda4af; --syn-op:#ff9e7a; --exec-bg:#0d0205; }
-  body[data-theme="phosphor"] { color-scheme:dark; --bg:#050300; --panel:#0d0801; --panel2:#120b02; --line:#7c4a03; --text:#ffd166; --dim:#e8a33d; --cy:#ffb000; --am:#ffd166; --red:#ff6b6b; --green:#ffb000; --ver-alpha:#ff6b6b; --ver-beta:#ffd166; --ver-stable:#ffb000; --syn-cmd:#ffb000; --syn-bad:#ff6b6b; --syn-flag:#ffd166; --syn-str:#fef08a; --syn-path:#ffcf87; --syn-kw:#fb923c; --syn-num:#ffe066; --syn-op:#ff9f1c; --exec-bg:#000000; }
+  body[data-theme="bloodmoon"] { color-scheme:dark; --bg:#070203; --panel:#12050a; --panel2:#180710; --line:#4a1020; --text:#f3e9e4; --dim:#c9a9a0; --cy:#e7c65a; --accent:#e7c65a; --am:#d4af37; --red:#e11d48; --green:#a3be8c; --ver-alpha:#ff4d6d; --ver-beta:#e7c65a; --ver-stable:#e7c65a; --syn-cmd:#e7c65a; --syn-bad:#ff4d6d; --syn-flag:#93c5fd; --syn-str:#fbbf24; --syn-path:#cbd5e1; --syn-kw:#ff7b54; --syn-num:#fda4af; --syn-op:#ff9e7a; --exec-bg:#0d0205; }
+  body[data-theme="phosphor"] { color-scheme:dark; --bg:#050300; --panel:#0d0801; --panel2:#120b02; --line:#7c4a03; --text:#ffd166; --dim:#e8a33d; --cy:#ffb000; --accent:#ffb000; --am:#ffd166; --red:#ff6b6b; --green:#ffb000; --ver-alpha:#ff6b6b; --ver-beta:#ffd166; --ver-stable:#ffb000; --syn-cmd:#ffb000; --syn-bad:#ff6b6b; --syn-flag:#ffd166; --syn-str:#fef08a; --syn-path:#ffcf87; --syn-kw:#fb923c; --syn-num:#ffe066; --syn-op:#ff9f1c; --exec-bg:#000000; }
   /* LCARS (v0.6.4e, #324): the palette half — a black field,
      pale blue-white text, and the accent family in the app's
      own slots: ice blue in cyan's, the classic orange in
      amber's, brick in red's, the 2.0 teal in green's. The
      geometry half stands below with the glass theme's
      structural block. */
-  body[data-theme="lcars"] { color-scheme:dark; --bg:#000000; --panel:#07070c; --panel2:#0b0b12; --line:#33334a; --text:#dfe8f5; --dim:#9aa8cc; --cy:#99ccff; --blue:#9999ff; --am:#ff9900; --red:#dd4444; --green:#2fd4c4; --ver-alpha:#dd4444; --ver-beta:#ff9900; --ver-stable:#99ccff; --syn-cmd:#99ffcc; --syn-bad:#ff8888; --syn-flag:#99ccff; --syn-str:#ffcc99; --syn-path:#9999ff; --syn-kw:#cc99cc; --syn-num:#ccddff; --syn-op:#ffcc99; --exec-bg:#000000; --lc-orange:#ff9900; --lc-peach:#ffcc99; --lc-lilac:#cc99cc; --lc-peri:#9999ff; --lc-blue:#99ccff; --lc-teal:#33ccdd; --lc-brick:#cc4444; }
+  body[data-theme="lcars"] { color-scheme:dark; --bg:#000000; --panel:#07070c; --panel2:#0b0b12; --line:#33334a; --text:#dfe8f5; --dim:#9aa8cc; --cy:#99ccff; --accent:#99ccff; --blue:#9999ff; --am:#ff9900; --red:#dd4444; --green:#2fd4c4; --ver-alpha:#dd4444; --ver-beta:#ff9900; --ver-stable:#99ccff; --syn-cmd:#99ffcc; --syn-bad:#ff8888; --syn-flag:#99ccff; --syn-str:#ffcc99; --syn-path:#9999ff; --syn-kw:#cc99cc; --syn-num:#ccddff; --syn-op:#ffcc99; --exec-bg:#000000; --lc-orange:#ff9900; --lc-peach:#ffcc99; --lc-lilac:#cc99cc; --lc-peri:#9999ff; --lc-blue:#99ccff; --lc-teal:#33ccdd; --lc-brick:#cc4444; }
   body[data-theme="lcars"] .nav-ico-dhd { color:#99ccff; }
   body[data-theme="lcars"] .nav-ico-mesh { color:#33ccdd; }
   /* Dark Liquid Glass treatment (build .55, #30): resource-light — backdrop blur only on the large surfaces, translucent fill + specular edge on repeated surfaces, multi-glow backdrop, opaque fallbacks. */
@@ -449,10 +449,22 @@
   .rows-lb-count { color:var(--dim); font-size:12px; white-space:nowrap; align-self:center; }
   .rows-lb-cap { padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); display:flex; gap:12px; align-items:flex-start; }
   .rows-lb.textoff .rows-lb-captext { visibility:hidden; }
-  .rows-eq { display:inline-flex; gap:2px; align-items:flex-end; height:12px; margin-right:6px; vertical-align:-1px; }
-  .rows-eq i { width:3px; height:12px; background:var(--accent); transform-origin:bottom; animation:rowsEq .9s ease-in-out infinite; }
-  .rows-eq i:nth-child(2) { animation-delay:.18s; } .rows-eq i:nth-child(3) { animation-delay:.36s; } .rows-eq i:nth-child(4) { animation-delay:.54s; }
+  /* v0.6.16e (#359): the equalizer, rebuilt to be SEEN. The
+     shipped bars were 3x12px in var(--accent) — a variable no
+     theme in this sheet defined, so every bar's background was
+     invalid at computed-value time and computed to
+     transparent: present, sized, animating, invisible (the
+     field's report on v0.6.14e and v0.6.15e; presencebar1
+     passed because jsdom never resolves the variable).
+     --accent is now defined in every theme block above, and
+     the eq itself is bigger: five bars, 4x16px, in a 16px
+     box. Reduced motion still shows an equalizer — the bars
+     stand at rest heights instead of animating. */
+  .rows-eq { display:inline-flex; gap:3px; align-items:flex-end; height:16px; margin-right:7px; vertical-align:-2px; }
+  .rows-eq i { width:4px; height:16px; background:var(--accent); transform-origin:bottom; animation:rowsEq .9s ease-in-out infinite; }
+  .rows-eq i:nth-child(2) { animation-delay:.18s; } .rows-eq i:nth-child(3) { animation-delay:.36s; } .rows-eq i:nth-child(4) { animation-delay:.54s; } .rows-eq i:nth-child(5) { animation-delay:.72s; }
   @keyframes rowsEq { 0%,100% { transform:scaleY(.35); } 50% { transform:scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .rows-eq i { animation:none; } .rows-eq i:nth-child(1) { transform:scaleY(.55); } .rows-eq i:nth-child(2) { transform:scaleY(.95); } .rows-eq i:nth-child(3) { transform:scaleY(.7); } .rows-eq i:nth-child(4) { transform:scaleY(1); } .rows-eq i:nth-child(5) { transform:scaleY(.8); } }
   .status-tab { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
   .status-tab.on { color:var(--text); border-color:var(--cy); }
@@ -461,6 +473,29 @@
   .status-pane-in { animation:view-in var(--motion-view) ease both; }
   @media (prefers-reduced-motion: reduce) { .nav-children, .nav-group-head .nav-chev, .nav-children .nav-child { transition:none; } .status-pane-in { animation:none; } }
   #nav-toggle { color:var(--dim); border:1px solid var(--line); margin-bottom:8px; }
+  /* v0.6.16e (#355): on desktop the toggle leaves the nav's
+     flow and stands as an edge tab riding the nav's right
+     border: a slim chevron — ‹ while the nav is open, › while
+     it is closed — 18px wide, ~52px tall, muted at rest and
+     stronger on hover, in theme variables so glass and lcars
+     read it too. It stands at the SAME screen position in
+     both states: anchored to #app (the frame, made the
+     containing block inside this same block) at the open
+     border's line, upper third — so the door never moves,
+     never hides inside the closed rail, and stays reachable
+     at the left edge where the border stood. Anchoring to
+     #app (not fixed-to-viewport) is deliberate: the glass
+     theme's backdrop-filter on nav would otherwise make nav
+     the tab's containing block and clip it at the border.
+     This block is min-width:801px by construction: at
+     ≤800px nothing here applies, and #nav-toggle remains the
+     phone top bar's ☰ exactly as shipped. */
+  @media (min-width:801px) {
+    #app { position:relative; }
+    #app #nav-toggle { position:absolute; left:187px; top:30%; z-index:95; width:18px; height:52px; min-width:0; min-height:0; margin:0; padding:0; display:flex; align-items:center; justify-content:center; background:var(--panel2); border:1px solid var(--line); border-radius:0 6px 6px 0; color:var(--dim); font-size:15px; line-height:1; white-space:normal; overflow:visible; transition:color var(--motion-med) ease, border-color var(--motion-med) ease, background var(--motion-med) ease; }
+    #app #nav-toggle:hover, #app #nav-toggle:focus-visible { color:var(--text); border-color:var(--cy); background:var(--panel); }
+  }
+  @media (min-width:801px) and (prefers-reduced-motion: reduce) { #app #nav-toggle { transition:none; } }
   /* The destination buttons and the version footer live in one
      container so the small-screen rules can lift them out of the
      top bar as a single overlay panel; on desktop the container is
@@ -1837,7 +1872,12 @@ function operatorPictureSrc() {
 }
 function msgAvatarHtml(m) {
   if (!m) return "";
-  if (m.who === "NAVI") return "<img class='m-av' src='" + NAVI_PORTRAIT_SRC + "' alt=''>";
+  // v0.6.16e (#356): her message icons read from the SAME
+  // source of truth as the presence bar — presenceAvatarSrc():
+  // Row's Own Mode on + a synced OnlyNavi picture → her chats
+  // wear it; off, or no synced copy → the Apex portrait, never
+  // broken. One rule, both surfaces, no second copy of it.
+  if (m.who === "NAVI") return "<img class='m-av' src='" + esc(presenceAvatarSrc()) + "' alt=''>";
   if (m.who === "YOU") return "<img class='m-av' src='" + esc(operatorPictureSrc()) + "' alt=''>";
   if (m.who === "SHELL") return "<span class='m-av m-av-shell' aria-hidden='true'>&gt;_</span>";
   return "<span class='m-av m-av-shell' aria-hidden='true'></span>";
@@ -2439,8 +2479,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-20.48";
-var SHIPPED_BUILD_SEQ = 48;
+var BRIDGE_BUILD = "2026-11-21.49";
+var SHIPPED_BUILD_SEQ = 49;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -7509,7 +7549,7 @@ var DOC_PAGES = [
   "<p><b>An update never needs a reboot — and it proves it took.</b> Before any file is replaced, the installer finds the bridge that is running — by its pid file, by the process holding her port, and by every bridge process working out of the install folder — and stops it <i>provably</i>: it waits for the process to be gone and the port to be free, escalates to a forced end if a polite signal is not enough, and if the port still cannot be cleared it aborts before touching a single file, naming the process that holds the port and the exact command that ends it (<span class='mono'>kill -9 &lt;pid&gt;</span>). Nothing is left nameless: a stuck process is a named process, with its remedy printed. If a bridge was running when the install began, the installer also relaunches her at the end and checks that the bridge answering reports the new build before it says <span class='mono'>Done.</span> — an update is not finished when the files land, but when the new build is the thing answering. The apply helper runs the same escalation before its own relaunch, and a dashboard left open across the update notices the bridge is newer than the page and offers a reload in the status column, so the new UI is one click away rather than one reboot. (An installer run that should leave her stopped can say so: <span class='mono'>--no-relaunch</span> — and it prints plainly that Apex is not running.)</p>" +
   "<p><b>Two channels: Stable and Edge.</b> The Updater follows one release channel, set by the <b>Release channel</b> card directly under the Current card in the Updater tab — the panel reads Current, then Release channel, then the patch notes, then the Check for updates / Download &amp; install buttons. <b>Stable</b> follows full releases only — cut from the project's main branch and tagged with the bare version number, like <b>v0.1.7</b>. <b>Edge</b> follows the newest release including pre-releases — test builds cut from the project's separate dev branch and tagged with an <span class='mono'>e</span>, like <b>v0.1.8e</b>. Edge is how you get a build before it is finished: newer, less settled. <b>Until you choose a channel yourself, the default follows the build you are running</b>: an Edge build defaults to the Edge channel, a full release to Stable — a preview is never silently stranded on a channel that does not carry it. A channel you pick in the panel is yours and it stays. And if you are running an Edge build and set the channel to Stable yourself, the Updater says so plainly, in a notice in the panel: Edge builds and refreshes of your preview are published only on Edge, so none will be offered while the channel stands. An Edge build of a version is the preview of that version, never an upgrade over its full release — when the full release of the same numbers lands, graduating to it is the update. Switching back to Stable never downgrades you; it simply waits for the next full release to pass what you run. The <b>About this release</b> dropdown in the Updater tab carries the release page of the version you are running — its name, tag, whether it is a full release or an Edge pre-release, its published date, the link to GitHub, and its full patch notes — fetched with the same check, straight from the release page.</p>" +
   "<p><b>Checks also happen in the background.</b> While the bridge runs, it re-checks your channel on its own every three hours, the first run shortly after startup, and the dashboard folds the verdict in quietly: an available update shows as <b>Update available</b> without you pressing anything, and a stale one clears. It never interrupts an install already under way. <b>Edge publications of one version are numbered</b> — Build 1, Build 2, and so on: the Updater's Current line shows the build you are running, and when the same Edge version is republished with fixes, the offer is a <b>refresh</b> of the preview you already run (Build 2 replaces Build 1), labeled with its build — not a new version. When the offered update is an Edge pre-release, an amber notice in the Updater says so plainly: preview contents can change between builds, your Soul, Memory, chips and packs carry over as always, and the next full release supersedes the preview automatically; graduating to that full release gets a green notice instead, because updating leaves the preview line.</p>" +
-  "<p><b>Turn Sudo Mode on before you update.</b> The installer's system step needs root, and without it an update can stall or finish without its system packages — field-proven the hard way. So when an update is available and Sudo Mode is off, the Updater shows a red warning directly above the <b>Download &amp; install</b> button: <i>Enable Sudo Mode before updating.</i> Turn Sudo Mode on (in the status column) and the warning is replaced by a quiet green <i>Sudo Mode is on — ready to update.</i> It is a warning, not a lock — the button still works, because you may know your machine needs nothing new.</p>" +
+  "<p><b>An update never needs Sudo Mode.</b> Updates install at user level, into your own data home, and nothing in the apply path gates on sudo — press <b>Download &amp; install</b> and the whole job runs as you. The installer's one system-package step is the only piece that ever wanted root, and it looks after itself: when an install runs detached, as the Updater's helper does, and a sudo prompt cannot be answered, that step is skipped — by name, in the step log — and the core install continues without it. Sudo Mode itself still stands, in Settings → System, for the system actions that genuinely need it; updating is not one of them. (The Updater once warned you to arm it first — v0.6.15e retired the warning, and this paragraph, which still taught it, is corrected in v0.6.16e.)</p>" +
   "<p><b>Once you opt in, the install chain moves.</b> The moment you press Download &amp; install, the step chain — downloading, verifying, staging, installing, DHD prerequisites, restarting — appears below the buttons, as the panel's tail, with a slim progress bar across the top of its card: the bar for the glance, the chain for the receipts. And if the Installing step runs long, the chain says why, in place: <i>Taking a while? This step is likely rebuilding the UI — that can take a few minutes on modest hardware. It's working, not stuck. We're working on making it faster.</i> No countdown and no ETA — on a modest machine an honest note beats a lying estimate.</p>" +
   "<p><b>One file says which version she is.</b> At the top of the install folder sits a plain text file named <span class='mono'>VERSION</span>. It holds the version number, and — only on an Edge build — the status word after it: <span class='mono'>0.2.0</span> is the current full release's own line; an Edge build reads like <span class='mono'>0.3.0 edge</span>. (The status word can be <span class='mono'>edge</span>, <span class='mono'>beta</span>, or <span class='mono'>stable</span>; no word means a full release. Builds from before the channels era wrote <span class='mono'>alpha</span> where Edge stands now — she reads those as Edge too, so nothing old is stranded.) It is the one source of truth: the bridge reads it and reports the number and the status, the update checker reads the same file to compare against the newest release on your channel, and the dashboard shows it at the bottom of the side menu (under a divider, centered) in GitHub tag form, as <b>v + number + a one-letter status tag</b> — Edge wears <span class='mono'>e</span>, beta wears <span class='mono'>b</span>, a full release wears none. So an Edge build reads <b>v0.3.0e</b> and this full release reads <b>v0.2.0</b>. With the side menu collapsed to its icon rail, the footer keeps the same v-form, centered, in the same status color. The number-and-tag is colored by status in every theme: red for Edge, yellow for beta, blue for a full release (in Nordic dark, Aurora red #BF616A, Aurora yellow #EBCB8B, and Frost blue #88C0D0). The status column's update entry carries no number and no label: it is a single line directly under Navi's status, bracketed by separators, reading a green <b>Up to date</b> once a check has run clean — and flipping to a yellow <b>Update available</b>, which opens the Updater, when a check finds a newer one. Nothing sits beneath the line. Installing an update replaces the VERSION file along with the rest of the app; no other place stores the version.</p></div>" },
   { id: "troubleshooting", title: "Troubleshooting", related: ["installing", "getting-started"], html:
@@ -8429,7 +8469,7 @@ var toggleBtn = document.createElement("button");
 toggleBtn.id = "nav-toggle";
 toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");
 toggleBtn.setAttribute("aria-label", "Collapse or expand the side menu");
-toggleBtn.textContent = navClosed ? (window.innerWidth <= 800 ? "☰" : "»") : (window.innerWidth <= 800 ? "☰" : "« Menu");
+toggleBtn.textContent = navClosed ? (window.innerWidth <= 800 ? "☰" : "›") : (window.innerWidth <= 800 ? "☰" : "‹");
 toggleBtn.onclick = function () {
   navClosed = !navClosed;
   // Opening the menu puts the dock away (build .64): on a phone
@@ -8810,12 +8850,15 @@ function presenceMusicHtml() {
   // her music is independent of Row's Own Mode) — the
   // listening line lives here, in the bar, in BOTH modes: the
   // track, with the equalizer playing beside it, its bars in
-  // the theme's accent. The rail's Status stack no longer
+  // the theme's accent. (v0.6.16e, #359: the accent variable
+  // the bars name is now defined in every theme, and the eq
+  // is five 4x16px bars — the shipped 3x12px bars computed to
+  // transparent and were never seen.) The rail's Status stack no longer
   // carries a Listening block; this is its one home. The link
   // is her playlist (the payload's url), for every track.
   var m = (typeof rowsOwnState !== "undefined" && rowsOwnState) ? rowsOwnState.listening : null;
   if (!m) return "";
-  return "<div class='chat-presence-music'><span class='rows-eq' aria-hidden='true'><i></i><i></i><i></i><i></i></span><a href='" + esc(m.url) + "' target='_blank' rel='noopener'>" + esc(m.title) + "</a><span>&nbsp;— " + esc(m.artist) + "</span></div>";
+  return "<div class='chat-presence-music'><span class='rows-eq' aria-hidden='true'><i></i><i></i><i></i><i></i><i></i></span><a href='" + esc(m.url) + "' target='_blank' rel='noopener'>" + esc(m.title) + "</a><span>&nbsp;— " + esc(m.artist) + "</span></div>";
 }
 function renderPresenceBar() {
   if (!presenceBarEl) return;
@@ -14655,7 +14698,7 @@ function render() {
   if (!(view === "Chips" && chipsTab === "studio")) studioFocus = false;
   appEl.classList.toggle("studio-focus", studioFocus);
   var smallScreen = window.innerWidth <= 800;
-  toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "»") : (smallScreen ? "☰" : "« Menu");
+  toggleBtn.textContent = navClosed ? (smallScreen ? "☰" : "›") : (smallScreen ? "☰" : "‹");
   toggleBtn.title = smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : (navClosed ? "Expand the side menu" : "Collapse the side menu");
   toggleBtn.setAttribute("aria-label", smallScreen ? (navClosed ? "Open the main menu" : "Close the main menu") : "Collapse or expand the side menu");
   toggleBtn.setAttribute("aria-expanded", navClosed ? "false" : "true");

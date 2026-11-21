@@ -405,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.15"
+SHIPPED_VERSION = "0.6.16"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-20.48"
+BRIDGE_BUILD = "2026-11-21.49"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 48
+SHIPPED_BUILD_SEQ = 49
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -4054,15 +4054,37 @@ def _awareness_brief_block():
     # The composed situation briefing: the wire's sections, the
     # CTF board, the bounty board — one block, so "what's the
     # sitch" reads whole. Each engine's block carries its own
-    # staleness; a family with nothing contributes nothing.
+    # staleness; a family with nothing contributes nothing —
+    # EXCEPT the wire (v0.6.16e, #357): the wire's absence is
+    # itself a sitch fact, and it is stated, with the honesty
+    # order attached, so a quiet wire is reported as quiet
+    # rather than furnished with invented headlines. (When the
+    # budget sheds this whole segment, the grounding law in
+    # the persona still forbids claiming a check that did not
+    # happen, and forbids inventing what a shed brief held.)
     parts = []
+    wire_blk = ""
     for engine in (WIRE, CTF, BOUNTIES):
         try:
             blk = engine.brief_block()
         except Exception:
             blk = ""
+        if engine is WIRE:
+            wire_blk = blk
         if blk:
             parts.append(blk)
+    if not wire_blk:
+        try:
+            stale = WIRE.staleness_sentence()
+        except Exception:
+            stale = ("The wire is carrying nothing current "
+                     "on this seat.")
+        parts.append(
+            "[The wire — quiet]\n" + stale + " It is carrying "
+            "no current stories. If the operator asks for the "
+            "sitch or the news, say the wire is quiet, with its "
+            "state and date — never invent headlines, stories, "
+            "or a take on stories you do not have.")
     return "\n\n".join(parts)
 
 
@@ -11396,6 +11418,10 @@ def mesh_try_borrow(messages, cfg, ms, route=None):
     # answer pose as the first choice. An explicit route never
     # carries the mark: its roads name themselves through the
     # route fields and the route-unavailable line.
+    # v0.6.16e (#357): Mesh contact refreshes the Row presence
+    # digest — non-blocking; the cache serves this turn and
+    # the fetch lands for the next.
+    _row_presence_kick()
     reply, payload = _mesh_try_borrow_inner(messages, cfg, ms,
                                             route=route)
     if route is not None or not isinstance(payload, dict):
@@ -13293,6 +13319,25 @@ def persona_prompt(cfg, operator_name="", memory_mode="autonomous"):
             prompt += "\n\n" + _rows_block
     except Exception:
         pass
+    # v0.6.16e (#357): the Row's public record joins her page
+    # digest here — one presence picture: what she posted,
+    # what the Row published, what shipped — and the grounding
+    # law stands over every brief she is fed. This function
+    # has exactly two callers, the local composition and the
+    # borrow's hygiene persona, so what stands here rides
+    # borrowed answers identically: the persona layer and the
+    # grounding travel with the borrow, and no function, tool
+    # or doctrine gate is subtracted with the mode on — one
+    # Navi, one voice, every screen. The Row digest is always
+    # on (public, professional surface); her page digest
+    # above stays Row's-Own-gated, as shipped.
+    try:
+        _presence_block = row_presence_block()
+        if _presence_block:
+            prompt += "\n\n" + _presence_block
+    except Exception:
+        pass
+    prompt += "\n\n" + PRESENCE_HONESTY_RULE
     return prompt
 
 
@@ -43817,6 +43862,250 @@ def rowsown_persona_block(cfg=None):
     block = "\n".join(lines)
     if len(block) > ROWSOWN_PERSONA_CAP:
         cut = block[:ROWSOWN_PERSONA_CAP]
+        block = cut[:cut.rfind("\n")] if "\n" in cut else cut
+    return block
+
+
+# ---------------------------------------------------------------------
+# Her presence, whole (v0.6.16e, #357): the Row's public record
+# joins her page digest in the prompt. The site publishes a
+# small structured digest (presence.json — the latest
+# Dispatches, the shipped versions, the roadmap's headline
+# state); the bridge fetches and caches it under the config
+# home, refreshes it on a slow cycle and on Mesh contact, and
+# serves stale-with-its-date rather than nothing. A failed
+# fetch is a NAMED absence inside the block itself — never a
+# crash, never fabricated content. The Row digest is public,
+# professional surface (releases and Dispatches are not
+# persona content), so it is ALWAYS ON; her page digest above
+# stays Row's-Own-gated, as shipped. Nothing here crosses
+# #337's line: published material only, built locally by
+# every seat from the same public source, so a borrowed
+# answer grounds exactly like a local one.
+ROW_PRESENCE_URL = "https://nocturnerow.com/presence.json"
+ROW_PRESENCE_CACHE_PATH = os.path.join(ROOT, "config",
+                                       "row-presence.json")
+ROW_PRESENCE_CAP = 2400
+ROW_PRESENCE_REFRESH_S = 6 * 3600
+ROW_PRESENCE_RETRY_S = 900
+ROW_PRESENCE_STALE_S = 24 * 3600
+_ROW_PRESENCE_LOCK = threading.Lock()
+_ROW_PRESENCE_FETCHING = {"on": False}
+
+PRESENCE_HONESTY_RULE = (
+    "[Grounding — what you may claim]\n"
+    "The briefs that ride this prompt — your page, the Row's "
+    "published record, the wire, the boards — are the whole of "
+    "what the machinery has actually checked for you. Answer "
+    "from them, and name their dates when a date matters. "
+    "Never narrate a check that did not happen (\"let me check "
+    "the Dispatches\") and never invent what a brief does not "
+    "contain — no Dispatches, releases, headlines, posts, or "
+    "animals that are not in them. When a brief is missing or "
+    "a source stands quiet, say plainly what you do not have; "
+    "an honest gap is a better answer than a furnished one.")
+
+
+def _row_presence_fetch(url=ROW_PRESENCE_URL, timeout=10):
+    # One plain GET, an honest user agent, no hidden retries —
+    # the rowfeed idiom. Raises on any failure; the caller
+    # names it. Returns the validated digest dict.
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ("Apex-RowPresence/1.0 (local-first; "
+                       "operator machine)"),
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", "replace")
+    d = json.loads(raw)
+    if not isinstance(d, dict) \
+            or not isinstance(d.get("dispatches"), list):
+        raise ValueError("presence.json did not carry the "
+                         "digest shape")
+    return d
+
+
+def row_presence_cache_load():
+    try:
+        with open(ROW_PRESENCE_CACHE_PATH) as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except Exception:
+        pass
+    return {"digest": None, "fetchedAt": 0, "lastAttempt": 0,
+            "lastError": ""}
+
+
+def row_presence_cache_save(cache):
+    try:
+        os.makedirs(os.path.dirname(ROW_PRESENCE_CACHE_PATH),
+                    exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=os.path.dirname(ROW_PRESENCE_CACHE_PATH),
+            prefix="row-presence.json.tmp-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(cache, f)
+            os.replace(tmp, ROW_PRESENCE_CACHE_PATH)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            raise
+        return True
+    except Exception:
+        return False
+
+
+def row_presence_refresh(fetch=None, now=None, force=False):
+    # The synchronous core (the benches drive this directly):
+    # fetch + cache when due. Due = the cache is older than
+    # the slow cycle; a failed attempt backs off for the retry
+    # window, so a dark site is not hammered on every turn.
+    # Returns the state word: "fresh" (the cache stands within
+    # its cycle), "fetched", "failed" (the error is recorded
+    # on the cache, where the block builder names it), or
+    # "backoff" (a recent failure still stands).
+    if now is None:
+        now = time.time()
+    cache = row_presence_cache_load()
+    fetched_at = cache.get("fetchedAt") or 0
+    last_attempt = cache.get("lastAttempt") or 0
+    if not force:
+        if fetched_at and now - fetched_at < ROW_PRESENCE_REFRESH_S:
+            return "fresh"
+        if last_attempt > fetched_at \
+                and now - last_attempt < ROW_PRESENCE_RETRY_S:
+            return "backoff"
+    cache["lastAttempt"] = now
+    try:
+        digest = (fetch or _row_presence_fetch)()
+        if not isinstance(digest, dict) \
+                or not isinstance(digest.get("dispatches"), list):
+            raise ValueError("the presence fetch returned "
+                             "no digest")
+    except Exception as e:
+        cache["lastError"] = str(e)[:200]
+        row_presence_cache_save(cache)
+        return "failed"
+    cache["digest"] = digest
+    cache["fetchedAt"] = now
+    cache["lastError"] = ""
+    row_presence_cache_save(cache)
+    return "fetched"
+
+
+def _row_presence_due(now=None):
+    if now is None:
+        now = time.time()
+    cache = row_presence_cache_load()
+    fetched_at = cache.get("fetchedAt") or 0
+    last_attempt = cache.get("lastAttempt") or 0
+    if fetched_at and now - fetched_at < ROW_PRESENCE_REFRESH_S:
+        return False
+    if last_attempt > fetched_at \
+            and now - last_attempt < ROW_PRESENCE_RETRY_S:
+        return False
+    return True
+
+
+def _row_presence_kick():
+    # The non-blocking door the prompt composition and Mesh
+    # contact use: a due refresh runs on a daemon thread and
+    # lands for the NEXT turn; this turn composes from
+    # whatever cache stands (stale-with-its-date, or the named
+    # absence). A reply never blocks on the network for this.
+    try:
+        if not _row_presence_due():
+            return
+        with _ROW_PRESENCE_LOCK:
+            if _ROW_PRESENCE_FETCHING["on"]:
+                return
+            _ROW_PRESENCE_FETCHING["on"] = True
+
+        def _run():
+            try:
+                row_presence_refresh()
+            except Exception:
+                pass
+            finally:
+                with _ROW_PRESENCE_LOCK:
+                    _ROW_PRESENCE_FETCHING["on"] = False
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass
+
+
+def row_presence_block(now=None):
+    # The Row's public record as she reads it: the latest
+    # Dispatches (newest first, at most four, with their
+    # deks), what is shipping, and the roadmap's headline —
+    # capped like every brief that rides the prompt. A digest
+    # older than a day carries the order to date the answers
+    # drawn from it. No digest at all: the absence is named,
+    # with its reason, and the invention door is closed in
+    # words in the same breath.
+    if now is None:
+        now = time.time()
+    _row_presence_kick()
+    cache = row_presence_cache_load()
+    digest = cache.get("digest")
+    if not isinstance(digest, dict):
+        err = cache.get("lastError") or ""
+        why = ("the last fetch failed (" + err + ")") if err \
+            else "no fetch has landed yet"
+        return ("[Your presence — the Row's public record]\n"
+                "The Row's published record is not in front of "
+                "you: " + why + ", and no cached copy stands. "
+                "You have no current Row news — if the operator "
+                "asks what is new on the Row, say you could not "
+                "fetch it rather than inventing Dispatches, "
+                "releases, or headlines.")
+    gen = str(digest.get("generated") or "")
+    lines = ["[Your presence — the Row's public record]",
+             "Nocturne Row's site (nocturnerow.com), as published"
+             + (" " + gen if gen else "") + ":"]
+    dispatches = [d for d in (digest.get("dispatches") or [])
+                  if isinstance(d, dict)][:4]
+    if dispatches:
+        lines.append("Latest Dispatches:")
+        for d in dispatches:
+            seg = "- \"" + str(d.get("title") or "") + "\""
+            if d.get("date"):
+                seg += " (" + str(d["date"]) + ")"
+            if d.get("dek"):
+                seg += " — " + str(d["dek"])
+            if d.get("url"):
+                seg += " — " + str(d["url"])
+            lines.append(seg)
+    versions = digest.get("versions") or {}
+    if versions.get("stable") or versions.get("edge"):
+        lines.append("Shipping now: Apex v"
+                     + str(versions.get("stable") or "?")
+                     + " (Stable) · v"
+                     + str(versions.get("edge") or "?")
+                     + " (Edge).")
+    roadmap = digest.get("roadmap") or {}
+    if roadmap.get("chapters") or roadmap.get("headline"):
+        seg = "The Roadmap"
+        if roadmap.get("chapters"):
+            seg += (" stands at " + str(roadmap["chapters"])
+                    + " chapters")
+        if roadmap.get("headline"):
+            seg += " — " + str(roadmap["headline"]).rstrip(".")
+        lines.append(seg + ".")
+    fetched_at = cache.get("fetchedAt") or 0
+    if fetched_at and now - fetched_at > ROW_PRESENCE_STALE_S:
+        when = time.strftime("%Y-%m-%d",
+                             time.localtime(fetched_at))
+        lines.append("This digest is over a day old (fetched "
+                     + when + ") — date any answer you draw "
+                     "from it: \"as of " + when + "…\".")
+    block = "\n".join(lines)
+    if len(block) > ROW_PRESENCE_CAP:
+        cut = block[:ROW_PRESENCE_CAP]
         block = cut[:cut.rfind("\n")] if "\n" in cut else cut
     return block
 
