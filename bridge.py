@@ -412,16 +412,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.18"
+SHIPPED_VERSION = "0.6.19"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-21.51"
+BRIDGE_BUILD = "2026-11-21.52"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 51
+SHIPPED_BUILD_SEQ = 52
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -25921,6 +25921,21 @@ def _llamafile_chat_impl(messages, endpoint, model):
 # a stamp LATER than the deletion, the copy wins and the tombstone
 # is dropped — a thread genuinely continued after its deletion
 # elsewhere is not a resurrection.
+#
+# v0.6.19e (#365): a CLEAR is a tombstone too — the "clears" kind.
+# Emptying a thread is not a deletion (the thread stands; its
+# history up to a point retires), so the entry is not a bare
+# epoch: {key: {"at": epoch ms, "account": owner login, "seat":
+# seat name}} — a point in the thread's history, ordered against
+# message stamps on the same millisecond basis the page and the
+# bridge both stamp, composing by max. The account rides the
+# entry because the machinery is account gated (#337, ruled
+# 2026-11-21): a clear is applied only by a seat signed in to
+# the account that spoke it, and a refusal is named, never
+# silent. Keys follow chat_delete's dual discipline — the
+# thread's id and its conversation key; the main family also
+# records under the canonical "1", since every seat's main is
+# id "1" but each was born under its own conversation key.
 SYNC_STATE_PATH = os.path.join(ROOT, "config", "sync-state.json")
 _SYNC_TOMBSTONE_KEEP_SECONDS = 90 * 86400
 _sync_state_cache = {"mtime": None, "state": None}
@@ -25935,7 +25950,8 @@ def _sync_state_load():
         mtime = None
     if _sync_state_cache["state"] is not None and _sync_state_cache["mtime"] == mtime:
         return _sync_state_cache["state"]
-    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}, "daybook": {}},
+    state = {"tombstones": {"chats": {}, "cases": {}, "vault": {}, "daybook": {},
+                             "clears": {}},
              "lastSyncAt": None, "lastSyncEpoch": 0, "lastResult": "",
              "lastTrigger": "", "lastState": ""}
     try:
@@ -25950,6 +25966,13 @@ def _sync_state_load():
                         state["tombstones"][kind] = {
                             str(k): float(v) for k, v in tombs[kind].items()
                             if isinstance(v, (int, float))}
+                if isinstance(tombs.get("clears"), dict):
+                    kept = {}
+                    for k, v in tombs["clears"].items():
+                        e = _clear_entry_norm(v)
+                        if e is not None:
+                            kept[str(k)] = e
+                    state["tombstones"]["clears"] = kept
     except Exception:
         pass
     _sync_state_cache["mtime"] = mtime
@@ -25973,6 +25996,24 @@ def _sync_state_save(state):
         pass
 
 
+def _clear_entry_norm(v):
+    # A clear tombstone's entry, normalized: the object shape
+    # {"at": epoch ms, "account": login, "seat": name}; a bare
+    # number is a legacy epoch with no account named (it will be
+    # refused at the gate — unknown is not a pass). Anything
+    # else is not an entry.
+    if isinstance(v, dict):
+        at = v.get("at")
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0:
+            return {"at": float(at),
+                    "account": str(v.get("account") or "")[:120],
+                    "seat": str(v.get("seat") or "")[:80]}
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return {"at": float(v), "account": "", "seat": ""}
+    return None
+
+
 def _sync_tombstones_pruned(tombs, now=None):
     now = now if now is not None else time.time()
     out = {}
@@ -25983,6 +26024,15 @@ def _sync_tombstones_pruned(tombs, now=None):
             for k, v in rows.items():
                 if isinstance(v, (int, float)) and now - float(v) <= _SYNC_TOMBSTONE_KEEP_SECONDS:
                     out[kind][str(k)] = float(v)
+    # The clears kind keeps on the same 90-day law, read on its
+    # own millisecond basis.
+    out["clears"] = {}
+    rows = tombs.get("clears") if isinstance(tombs, dict) else None
+    if isinstance(rows, dict):
+        for k, v in rows.items():
+            e = _clear_entry_norm(v)
+            if e is not None and now * 1000.0 - e["at"] <= _SYNC_TOMBSTONE_KEEP_SECONDS * 1000.0:
+                out["clears"][str(k)] = e
     return out
 
 
@@ -26010,13 +26060,137 @@ def _sync_merge_tombstones(local, remote):
     # Union by key, newest deletion wins — a tombstone one machine
     # has not seen yet must survive every round until it ages out,
     # or the delete it guards could resurrect from the one machine
-    # that missed it.
+    # that missed it. Clears compose the same way, by their "at".
     merged = _sync_tombstones_pruned(local or {})
     for kind, rows in _sync_tombstones_pruned(remote or {}).items():
         for k, v in rows.items():
+            if kind == "clears":
+                cur = merged["clears"].get(k)
+                if cur is None or v["at"] > cur["at"]:
+                    merged["clears"][k] = v
+                continue
             if k not in merged[kind] or v > merged[kind][k]:
                 merged[kind][k] = v
     return merged
+
+
+def _clear_keys_for(rec):
+    # The keys a thread's clear tombstone is recorded — and read —
+    # under: its id, its conversation key, and (main family) the
+    # canonical main id, per the section header.
+    keys = []
+    if isinstance(rec, dict):
+        cid = str(rec.get("id") or "")
+        if cid:
+            keys.append(cid)
+        try:
+            ck = _chat_conv_tomb_key(rec)
+            if ck not in keys:
+                keys.append(ck)
+        except Exception:
+            pass
+        if _chat_is_main_family(rec) and MAIN_CHAT_ID not in keys:
+            keys.append(MAIN_CHAT_ID)
+    return keys
+
+
+def _clear_epoch_for(rec, tombs=None):
+    # The newest clear epoch a tombstone speaks for this thread,
+    # or 0. Reads the local sync state unless a tombstone set is
+    # handed in.
+    try:
+        if tombs is None:
+            tombs = _sync_state_load().get("tombstones") or {}
+        rows = _sync_tombstones_pruned(tombs).get("clears") or {}
+        best = 0.0
+        for key in _clear_keys_for(rec):
+            e = rows.get(key)
+            if e is not None and e["at"] > best:
+                best = e["at"]
+        return best
+    except Exception:
+        return 0.0
+
+
+def sync_record_clear(rec, at=None):
+    # A clear act's one recording call, from the store door
+    # (chat_write) when a write advances a thread's clear epoch
+    # outside a sync round. The entry is stamped with this
+    # seat's account — the gate on the far side admits only its
+    # own account's clears. Best-effort like every tombstone: a
+    # record that fails must never fail the clear itself.
+    try:
+        when = float(at) if at else float(int(time.time() * 1000))
+        account = ""
+        try:
+            account = str((github_auth() or {}).get("login") or "")
+        except Exception:
+            account = ""
+        entry = {"at": when, "account": account,
+                 "seat": _chat_seat_name()}
+        state = _sync_state_load()
+        tombs = _sync_tombstones_pruned(state.get("tombstones") or {})
+        for key in _clear_keys_for(rec):
+            prev = tombs["clears"].get(key)
+            if prev is None or when > prev["at"]:
+                tombs["clears"][key] = dict(entry)
+        state["tombstones"] = tombs
+        _sync_state_save(state)
+        sync_note_write("tombstone")
+    except Exception:
+        pass
+
+
+def _sync_gate_clears(rows):
+    # The account gate on arriving clears (#365, #337): an entry
+    # is admitted only when the account it is stamped with and
+    # this seat's signed-in login are both present and equal —
+    # the #323 doctrine, unknown is a refusal, never a pass.
+    # Returns (admitted, refused[(key, stamped account)]).
+    mine = ""
+    try:
+        mine = str((github_auth() or {}).get("login") or "")
+    except Exception:
+        mine = ""
+    admitted, refused = {}, []
+    for k, v in (rows or {}).items():
+        e = _clear_entry_norm(v)
+        if e is None:
+            continue
+        if e["account"] and mine and e["account"].lower() == mine.lower():
+            admitted[str(k)] = e
+        else:
+            refused.append((str(k), e["account"]))
+    return admitted, refused
+
+
+def _sync_note_foreign_refusal(state, kind, account, key=""):
+    # Name a foreign refusal in a sync state dict (the caller
+    # saves): the latest stands on its own field, and the last
+    # twenty ride a capped ledger — the sync log's record that
+    # a foreign artifact knocked and was turned away, and whose
+    # account it was stamped with.
+    try:
+        entry = {"at": time.time(), "kind": str(kind or ""),
+                 "account": str(account or ""), "key": str(key or "")}
+        state["lastForeignRefusal"] = entry
+        rows = state.get("foreignRefusals")
+        rows = list(rows) if isinstance(rows, list) else []
+        rows.append(entry)
+        state["foreignRefusals"] = rows[-20:]
+    except Exception:
+        pass
+
+
+def _sync_foreign_refusal_note(kind, account, key=""):
+    # _sync_note_foreign_refusal against the stored state, for
+    # callers that hold no state of their own (the Mesh legs).
+    try:
+        state = _sync_state_load()
+        _sync_note_foreign_refusal(state, kind, account, key)
+        _sync_state_save(state)
+    except Exception:
+        pass
 
 
 # --- Server-side chats (0.1.9e Build 12, issue #139) -----------------
@@ -26152,21 +26326,36 @@ def _chat_path(cid):
     return os.path.join(CHATS_DIR, cid + ".json")
 
 
-def _chat_clear_filter(rec):
+def _chat_clear_filter(rec, hard=False):
     # The messages a record's clear epoch retires: lines
     # stamped at or before the moment the thread was emptied.
-    # Post-clear lines stand; a line carrying no stamp is not
-    # timestamped content and the epoch does not govern it.
+    # Post-clear lines stand. Soft (the #318 default): a line
+    # carrying no stamp is not timestamped content and the
+    # epoch does not govern it — the writer who KNOWS the clear
+    # keeps its own unstamped work. Hard (v0.6.19e, #365): the
+    # filter is applied to a copy that does not know the newest
+    # clear — a stale window's write, a peer's pre-clear
+    # record, a tombstone's enforcement — and there an
+    # unstamped line cannot prove it postdates the clear, so
+    # it yields with the rest. (Every living writer stamps:
+    # the page stamps Date.now(), the bridge stamps its lines
+    # too — an unstamped line is legacy or receipt work from
+    # before the clear in every case that exists.)
     epoch = rec.get("clearedAt") if isinstance(rec, dict) else None
     msgs = (rec or {}).get("messages") or []
     if not isinstance(epoch, (int, float)) or isinstance(epoch, bool) \
             or not epoch:
         return list(msgs)
-    return [m for m in msgs
-            if not (isinstance(m, dict)
-                    and isinstance(m.get("ts"), (int, float))
-                    and not isinstance(m.get("ts"), bool)
-                    and m["ts"] <= epoch)]
+
+    def _dies(m):
+        if not isinstance(m, dict):
+            return False
+        ts = m.get("ts")
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+            return ts <= epoch
+        return hard
+
+    return [m for m in msgs if not _dies(m)]
 
 
 def _chat_seat_name():
@@ -26182,6 +26371,17 @@ def _chat_seat_name():
     return socket.gethostname()[:80]
 
 
+def _sync_in_round():
+    # True on a sync round's own thread, where writes are the
+    # round landing a peer's set — the guard sync_note_write
+    # keeps, shared by the clear recording below.
+    try:
+        return _SYNC_ROUND["depth"] > 0 and \
+            _SYNC_ROUND.get("thread") == threading.get_ident()
+    except Exception:
+        return False
+
+
 def chat_write(rec):
     rec = _chat_normalize(rec)
     if rec is None:
@@ -26195,24 +26395,41 @@ def chat_write(rec):
     # it. When a write ADVANCES the epoch — a clear act landing
     # at this bridge — the marker takes this seat's name unless
     # the act already carries one.
-    if _chat_is_main_family(rec):
+    #
+    # v0.6.19e (#365): the door's law now covers EVERY thread,
+    # not the main family alone, and the epoch has a third
+    # witness — the clear TOMBSTONE (see the tombstone section).
+    # The governing epoch is the max of the record's own, the
+    # stored copy's, and the tombstone's. A write that does not
+    # know the governing clear (its epoch is older) is filtered
+    # HARD — unstamped lines yield too — because it is exactly
+    # the stale copy the clear exists to retire. A write that
+    # advances the epoch outside a sync round is a clear act
+    # landing at this seat: it is recorded as a tombstone,
+    # account-stamped, so the clear travels as its own synced
+    # event instead of as cargo inside the record it emptied.
+    stored = None
+    try:
+        with open(_chat_path(rec["id"]), encoding="utf-8") as f:
+            stored = _chat_normalize(json.load(f))
+    except Exception:
         stored = None
-        try:
-            with open(_chat_path(rec["id"]), encoding="utf-8") as f:
-                stored = _chat_normalize(json.load(f))
-        except Exception:
-            stored = None
-        new_epoch = rec.get("clearedAt") or 0
-        old_epoch = (stored or {}).get("clearedAt") or 0
-        if old_epoch > new_epoch:
-            rec["clearedAt"] = old_epoch
-            if (stored or {}).get("clearedBy"):
+    in_epoch = rec.get("clearedAt") or 0
+    old_epoch = (stored or {}).get("clearedAt") or 0
+    tomb_epoch = _clear_epoch_for(rec)
+    epoch = max(in_epoch, old_epoch, tomb_epoch)
+    if epoch:
+        if epoch > in_epoch:
+            rec["clearedAt"] = epoch
+            if old_epoch >= in_epoch and (stored or {}).get("clearedBy"):
                 rec["clearedBy"] = stored["clearedBy"]
-            new_epoch = old_epoch
-        if new_epoch:
-            if new_epoch > old_epoch and not rec.get("clearedBy"):
+            rec["messages"] = _chat_clear_filter(rec, hard=True)
+        else:
+            if epoch > old_epoch and not rec.get("clearedBy"):
                 rec["clearedBy"] = _chat_seat_name()
             rec["messages"] = _chat_clear_filter(rec)
+        if in_epoch > old_epoch and not _sync_in_round():
+            sync_record_clear(rec, at=in_epoch)
     os.makedirs(CHATS_DIR, exist_ok=True)
     full = _chat_path(rec["id"])
     tmp = full + ".tmp"
@@ -26551,7 +26768,17 @@ def _chats_fold_main_ghosts():
         # pre-clear lines before the fold — the fold must never
         # resurrect content any seat emptied. (The main's own
         # epoch is enforced again at the write below.)
-        merged_msgs, added = _chat_merge_messages(cur.get("messages"), _chat_clear_filter(g))
+        # v0.6.19e (#365): the ghost is also filtered by the
+        # MAIN's governing epoch (its record's and its clear
+        # tombstone's), hard — a ghost is a copy that never
+        # heard the main's clear, and its unstamped lines
+        # cannot prove they postdate it.
+        _gov = max(g.get("clearedAt") or 0, cur.get("clearedAt") or 0,
+                   _clear_epoch_for(cur))
+        _gview = dict(g)
+        if _gov:
+            _gview["clearedAt"] = _gov
+        merged_msgs, added = _chat_merge_messages(cur.get("messages"), _chat_clear_filter(_gview, hard=True))
         nxt = dict(cur)
         nxt["messages"] = merged_msgs
         nxt["updatedAt"] = max(cur.get("updatedAt") or 0, g.get("updatedAt") or 0)
@@ -26687,13 +26914,20 @@ def chats_converge(incoming, incoming_uploads=None):
                 # merged record, whichever seat spoke it, and
                 # its pre-clear lines yield here (and again at
                 # the store door, where chat_write enforces it).
+                # v0.6.19e (#365): the clear TOMBSTONE is a third
+                # witness to the epoch — when it outruns both
+                # records it governs HARD, unstamped lines and
+                # all, because neither record in hand has heard
+                # the clear it speaks for.
                 _epochs = [r.get("clearedAt") or 0 for r in (cur_main, rec)]
-                if max(_epochs) > 0:
+                _tomb = _clear_epoch_for(cur_main)
+                if max(_epochs + [_tomb]) > 0:
                     _winner = cur_main if _epochs[0] >= _epochs[1] else rec
-                    nxt["clearedAt"] = max(_epochs)
+                    nxt["clearedAt"] = max(_epochs + [_tomb])
                     if _winner.get("clearedBy"):
                         nxt["clearedBy"] = _winner["clearedBy"]
-                    nxt["messages"] = _chat_clear_filter(nxt)
+                    nxt["messages"] = _chat_clear_filter(
+                        nxt, hard=_tomb > _epochs[0] and _tomb > _epochs[1])
                     summary["mainCleared"] = summary.get("mainCleared", 0) + 1
                 saved = chat_write(nxt)
                 if saved is not None:
@@ -26718,6 +26952,37 @@ def chats_converge(incoming, incoming_uploads=None):
                 # Converge into it: identity by conversation,
                 # not by import event (Build 5, #218).
                 cur = rep
+        # v0.6.19e (#365): the clear law reaches convergence for
+        # every thread, not the main alone. The governing epoch —
+        # the incoming record's, the local copy's, the clear
+        # tombstone's — filters the incoming copy BEFORE any
+        # verdict judges it, and a local copy that has not heard
+        # a newer clear is retired in place. Without this the
+        # prefix verdict below hands an emptied thread back to
+        # whichever copy is fuller — it un-clears it. When the
+        # tombstone is the only witness that knows the clear,
+        # the filter is hard: unstamped lines yield too.
+        _tomb = _clear_epoch_for(rec)
+        _epoch = max(rec.get("clearedAt") or 0,
+                     (cur.get("clearedAt") or 0) if cur else 0,
+                     _tomb)
+        if _epoch:
+            _hard = _tomb >= _epoch \
+                and _tomb > (rec.get("clearedAt") or 0) \
+                and _tomb > ((cur.get("clearedAt") or 0) if cur else 0)
+            rec = dict(rec)
+            rec["clearedAt"] = max(rec.get("clearedAt") or 0, _epoch)
+            rec["messages"] = _chat_clear_filter(rec, hard=_hard)
+            if cur is not None and _epoch > (cur.get("clearedAt") or 0):
+                _nxt = dict(cur)
+                _nxt["clearedAt"] = _epoch
+                _nxt["messages"] = _chat_clear_filter(_nxt, hard=_hard)
+                _saved = chat_write(_nxt)
+                if _saved is not None:
+                    local[str(_saved["id"])] = _saved
+                    by_conv[_chat_conv_key(_saved)] = _saved
+                    cur = _saved
+                    summary["chatsCleared"] = summary.get("chatsCleared", 0) + 1
         if cur is None and str(rec["id"]) not in local:
             saved = chat_write(rec)
             if saved is not None:
@@ -27563,7 +27828,8 @@ def _sync_main_verdict(fetched):
             local_main = c
             break
     epoch = max((local_main or {}).get("clearedAt") or 0,
-                remote_main.get("clearedAt") or 0)
+                remote_main.get("clearedAt") or 0,
+                _clear_epoch_for(local_main or remote_main))
     expected, _added = _chat_merge_messages(
         (local_main or {}).get("messages"), remote_main.get("messages"))
     if epoch:
@@ -28119,6 +28385,7 @@ def sync_apply(cfg, fetched):
     # summary the card speaks.
     summary = {"removedChats": 0, "removedCases": 0, "removedNotes": 0,
                "chatsAdded": 0, "chatsReplaced": 0, "chatsSiblings": 0,
+               "chatsCleared": 0, "foreignRefusals": [],
                "chatsDeduped": 0, "chatsMainMerged": 0, "chatsMainFolded": 0,
                "chatsMainMergedMessages": 0, "chatsMainFoldedMessages": 0,
                "orphanedCaseChats": 0, "casePairsWhole": 0,
@@ -28138,6 +28405,62 @@ def sync_apply(cfg, fetched):
         except Exception:
             remote_tombs = {}
     state = _sync_state_load()
+    # v0.6.19e (#365): the account gate, at the shared funnel.
+    # The set's manifest names its account; when it names one
+    # and this seat is signed in to a DIFFERENT one, the set is
+    # foreign here — nothing of it lands: not its chat push,
+    # not its tombstones, not its clears. The refusal is named
+    # in the summary the card speaks and in the sync state's
+    # refusal record. A set naming no account (an older build's)
+    # is taken as it comes, as before — but its CLEARS are
+    # judged one by one at the per-artifact gate below, since
+    # every clear carries its own stamp. A seat that cannot
+    # name its own account does not refuse whole sets here:
+    # the doors (Mesh admission, the repo's own ownership)
+    # already govern that road, and #323's unknown-is-a-refusal
+    # law applies in full to the clears.
+    _early_manifest = {}
+    if SYNC_PREFIX + "manifest.json" in files:
+        try:
+            _pm0 = json.loads(files[SYNC_PREFIX + "manifest.json"].decode("utf-8", "replace"))
+            if isinstance(_pm0, dict):
+                _early_manifest = _pm0
+        except Exception:
+            _early_manifest = {}
+    _mine_login = ""
+    try:
+        _mine_login = str((github_auth() or {}).get("login") or "")
+    except Exception:
+        _mine_login = ""
+    _set_account = str(_early_manifest.get("account") or "")
+    _foreign_set = bool(_set_account and _mine_login
+                        and _set_account.lower() != _mine_login.lower())
+    _raw_clears = remote_tombs.pop("clears", {}) \
+        if isinstance(remote_tombs, dict) else {}
+    if not isinstance(_raw_clears, dict):
+        _raw_clears = {}
+    if _foreign_set:
+        _sync_note_foreign_refusal(state, "set", _set_account)
+        summary["foreignRefusals"].append(
+            "a whole sync set, stamped " + _set_account)
+        for _k in sorted(_raw_clears):
+            _e = _clear_entry_norm(_raw_clears[_k])
+            if _e is not None:
+                summary["foreignRefusals"].append(
+                    "a clear for a chat, stamped "
+                    + (_e["account"] or "with no account"))
+        if _raw_clears:
+            _sync_note_foreign_refusal(state, "clear", _set_account)
+        summary["changed"] = 0
+        _sync_state_save(state)
+        return summary
+    _admitted_clears, _refused_clears = _sync_gate_clears(_raw_clears)
+    for _k, _acct in _refused_clears:
+        _sync_note_foreign_refusal(state, "clear", _acct, _k)
+        summary["foreignRefusals"].append(
+            "a clear for a chat, stamped " + (_acct or "with no account"))
+    if _admitted_clears:
+        remote_tombs["clears"] = _admitted_clears
     merged = _sync_merge_tombstones(state.get("tombstones") or {}, remote_tombs)
     dropped = _sync_apply_tombstones(merged, summary)
     remote_chats, remote_uploads = [], None
@@ -28276,6 +28599,7 @@ def sync_apply(cfg, fetched):
     summary["chatsAdded"] = conv["added"]
     summary["chatsReplaced"] = conv["replaced"]
     summary["chatsSiblings"] = conv["siblings"]
+    summary["chatsCleared"] = conv.get("chatsCleared", 0)
     summary["chatsDeduped"] = conv.get("deduped", 0)
     summary["chatsMainMerged"] = conv.get("mainMerged", 0)
     summary["chatsMainFolded"] = conv.get("mainFolded", 0)
@@ -28502,6 +28826,7 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "deckFilesPulled": summary.get("deckFilesPulled", 0),
         "cardsImported": summary.get("cardsImported", 0),
         "ghostRefusals": list(summary.get("ghostRefusals") or []),
+        "foreignRefused": list(summary.get("foreignRefusals") or []),
         "docsPulled": summary.get("docsPulled", 0),
         "entriesPulled": summary.get("entriesPulled", 0),
         "entriesRemoved": summary.get("entriesRemoved", 0),
@@ -28525,6 +28850,13 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
                              + ". A fuller copy heals "
                              + ("them" if len(result["incomplete"]) != 1 else "it")
                              + " on a later round.")
+    elif result["foreignRefused"]:
+        # v0.6.19e (#365): a foreign artifact was turned away
+        # this round — named, never silent (#337).
+        result["message"] = ("Synced — and refused "
+                             + "; ".join(result["foreignRefused"][:3])
+                             + ". Nothing stamped with another "
+                             "account lands on this seat.")
     elif pulled_chats or summary["chatsSiblings"] or summary["changed"]:
         result["message"] = "Synced — the machines converged."
     else:
@@ -28567,12 +28899,14 @@ def _sync_finish_summary(summary, pushed_files, open_chat_id, collected_chats):
         "removedNotes": summary.get("removedNotes", 0),
         "chatsAdded": summary.get("chatsAdded", 0),
         "chatsReplaced": summary.get("chatsReplaced", 0),
+        "chatsCleared": summary.get("chatsCleared", 0),
+        "foreignRefused": len(summary.get("foreignRefusals") or []),
         "changed": summary.get("changed", 0),
     }
     receipt["incomplete"] = list(result["incomplete"])
     receipt["material"] = bool(receipt["foldedGhosts"] or receipt["gapTitles"]
                                or receipt["pairsRepaired"] or receipt["tombstones"]
-                               or receipt["incomplete"])
+                               or receipt["incomplete"] or receipt["foreignRefused"])
     result["receipt"] = receipt
     return result
 
@@ -28804,7 +29138,12 @@ def sync_account_gate_sweep():
                 if _purge_predates(_chat_path("1"), first_arrival):
                     main_held = True
                 else:
-                    now = time.time()
+                    # v0.6.19e (#365): the reset's stamps are
+                    # MILLISECONDS — the basis every chat stamp
+                    # (the page's Date.now(), the bridge's own)
+                    # already keeps. This block stood in seconds
+                    # through .18e: an epoch that retired nothing.
+                    now = int(time.time() * 1000)
                     chat_write({"id": "1",
                                 "title": (main_rec or {}).get("title") or "Main session",
                                 "messages": [],
@@ -28925,6 +29264,12 @@ def _sync_mesh_round(cfg, open_chat_id):
         if theirs is None:
             continue
         if _mesh_sync_foreign_account(payload):
+            # v0.6.19e (#365): the skip is named in the sync
+            # record, as the serving door already names its
+            # refusals — a foreign set turned away is a fact
+            # of the road, not a silent nothing.
+            _fman = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
+            _sync_foreign_refusal_note("chats", str(_fman.get("account") or ""), peer["name"])
             continue
         _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
@@ -28991,6 +29336,10 @@ def _sync_mesh_pull(cfg):
         if theirs is None:
             continue
         if _mesh_sync_foreign_account(payload):
+            # v0.6.19e (#365): named, not silent — see the
+            # exchange leg above.
+            _fman = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
+            _sync_foreign_refusal_note("chats", str(_fman.get("account") or ""), peer["name"])
             continue
         _sync_preempt_checkpoint("merge")
         _sync_progress_set("merge")
@@ -29056,11 +29405,27 @@ def _sync_fail_record(trigger, out):
 # its writes, as they always have. A push that cannot land
 # names its stall through the same fail record a failed round
 # uses, rather than silently aging.
+#
+# v0.6.19e (#365): the note fires for BOTH authors (operator
+# ruling, 2026-11-21). The funnel is the store door itself —
+# chat_write — and her writes land through it exactly as his
+# do: her bridge-side appends call it directly, and a borrowed
+# reply lands through the writing window's write-through like
+# any of her lines. A device switch mid-chat is usually
+# waiting on HER half of the conversation; a push that fired
+# only on the operator's writes would leave the thread
+# half-stale. The fire's discipline also changes: a failed
+# push re-arms on a bounded backoff (_SYNC_PUSH_BACKOFF)
+# instead of dropping its note after one retry.
 _SYNC_ROUND = {"depth": 0, "thread": None}
 _SYNC_PUSH = {"lock": threading.Lock(), "timer": None,
               "attempts": 0, "kinds": set()}
 _SYNC_PUSH_COALESCE = 1.25
 _SYNC_PUSH_RETRY = 3.0
+# v0.6.19e (#365): the push fire's re-arm ladder — a failed
+# push retries behind the round it collided with, across the
+# span a slow road needs, before it names its stall.
+_SYNC_PUSH_BACKOFF = (3.0, 15.0, 45.0, 90.0)
 
 
 # -- Sync preemption (v0.6.3e, #317) ------------------------------
@@ -29227,23 +29592,28 @@ def _sync_push_fire():
         with _SYNC_PUSH["lock"]:
             _SYNC_PUSH["attempts"] = 0
         return
-    # Any first failure earns exactly one retry: the commonest
-    # cause is a collision with a round already in flight on
-    # one seat or the other (the lender answers "busy" rather
-    # than waiting), and a retry a few seconds later lands
-    # behind it. A retry that also fails leaves the rounds'
-    # own named receipts standing — except the held shape,
-    # which no round records (a busy round returns before
-    # recording), so the push names that stall itself.
+    # A failure re-arms on a bounded backoff (v0.6.19e, #365;
+    # through .18e a first failure earned exactly one retry and
+    # a second dropped the note whole). The commonest causes —
+    # a collision with a round already in flight on one seat or
+    # the other (the lender answers "busy" rather than waiting),
+    # a slow road — both pass with time, and a write whose push
+    # evaporated otherwise waits for an occasion that may be
+    # hours away: that is how a cleared thread outlived fifteen
+    # clears. The kinds stay noted across the retries; only the
+    # last failure lets go, and names its stall below (the held
+    # shape, which no round records — a busy round returns
+    # before recording).
     with _SYNC_PUSH["lock"]:
         _SYNC_PUSH["attempts"] += 1
         attempts = _SYNC_PUSH["attempts"]
-        if attempts < 2:
+        if attempts <= len(_SYNC_PUSH_BACKOFF):
             _SYNC_PUSH["kinds"] |= kinds
-    if attempts < 2:
+    if attempts <= len(_SYNC_PUSH_BACKOFF):
         with _SYNC_PUSH["lock"]:
             if _SYNC_PUSH["timer"] is None:
-                t = threading.Timer(_SYNC_PUSH_RETRY, _sync_push_fire)
+                t = threading.Timer(_SYNC_PUSH_BACKOFF[attempts - 1],
+                                    _sync_push_fire)
                 t.daemon = True
                 _SYNC_PUSH["timer"] = t
                 t.start()
@@ -29258,7 +29628,7 @@ def _sync_push_fire():
         _sync_fail_record("push", {
             "ok": False, "state": "held",
             "route": (result or {}).get("route") or "",
-            "error": "Push stalled — a sync round was already running and the retry could not land either. The write is safe on this seat; the next occasion carries it."})
+            "error": "Push stalled — the retries could not land a round either. The write is safe on this seat; the next occasion carries it."})
 
 
 def sync_round(cfg, trigger="button", open_chat_id=""):
@@ -30711,7 +31081,13 @@ def _chat_append_navi(chat_id, text, extra=None):
         if str(rec.get("id")) == str(chat_id):
             rec = dict(rec)
             msgs = list(rec.get("messages") or [])
-            msg = {"who": "NAVI", "text": text, "exec": None}
+            # v0.6.19e (#365): her receipt lines carry a stamp
+            # like every other writer's — an unstamped line
+            # cannot be ordered against a clear epoch, and the
+            # bridge's own handwriting must not be immune to
+            # the clear it may one day need to honor.
+            msg = {"who": "NAVI", "text": text, "exec": None,
+                   "ts": int(time.time() * 1000)}
             if extra:
                 msg.update(extra)
             msgs.append(msg)
