@@ -405,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.12"
+SHIPPED_VERSION = "0.6.13"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-20.45"
+BRIDGE_BUILD = "2026-11-20.46"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 45
+SHIPPED_BUILD_SEQ = 46
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -514,6 +514,34 @@ def save_config(cfg):
     # settings flip could be silently reset (see load_config).
     try:
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        # v0.6.13e (#348): merge at write. The config is one
+        # file written whole by every settings path, and the
+        # slow writers — a Mesh exchange, a sync cycle — hold
+        # their snapshot across seconds of network work. A
+        # snapshot loaded before an operator's flip and saved
+        # after it used to resurrect the pre-flip file whole:
+        # Row's Own Mode "did not stick" in the field exactly
+        # this way, the flip dying unattended while the seat
+        # sat idle. No code path deletes a top-level key on
+        # purpose (premise grepped at this bake: the only
+        # config pops ride inside sub-dicts the writer still
+        # carries under a key of its own), so at write time
+        # the on-disk config is re-read and every top-level
+        # key the writer's dict never knew is preserved from
+        # disk. The writer's own keys win; what it never
+        # heard of, it cannot kill. An unreadable disk file
+        # merges as the writer's dict alone — the standing
+        # behavior for a first write or a corrupt file.
+        merged = cfg
+        if isinstance(cfg, dict):
+            try:
+                with open(CONFIG_PATH) as f:
+                    _disk = json.load(f)
+                if isinstance(_disk, dict):
+                    merged = dict(_disk)
+                    merged.update(cfg)
+            except Exception:
+                merged = cfg
         # v0.6.12e (rowsgate1, campaign-caught): the tmp name is
         # unique per save. Two saves racing on the one shared
         # ".tmp" name interleave their bytes in it, and the
@@ -525,7 +553,7 @@ def save_config(cfg):
             prefix="navi.config.json.tmp-")
         try:
             with os.fdopen(fd, "w") as f:
-                json.dump(cfg, f, indent=2)
+                json.dump(merged, f, indent=2)
             os.replace(tmp, CONFIG_PATH)
         except Exception:
             try:
@@ -43383,10 +43411,20 @@ def rowsown_settings(cfg=None):
 
 
 def _rowsown_settings_save(cfg, enabled):
+    # v0.6.13e (#348): the save's verdict is the switch's
+    # verdict — the sync_set_choice pattern, one function
+    # over. Returns the settings that now stand, or None
+    # when the save itself failed, so the caller names that
+    # refusal rather than letting the switch pretend the
+    # flip landed. (Before this build the save's return
+    # went unread and the act answered ok:true on a save
+    # that had not happened — a receipt that could lie,
+    # on a trust toggle.)
     cur = rowsown_settings(cfg)
     cur["enabled"] = bool(enabled)
     cfg["rowsOwn"] = cur
-    save_config(cfg)
+    if not save_config(cfg):
+        return None
     return cur
 
 
@@ -43846,6 +43884,12 @@ def rowsown_act(action, data, cfg=None):
                     "error": "The switch takes a true or a false "
                              "— nothing else moves it."}
         saved = _rowsown_settings_save(cfg, en)
+        if saved is None:
+            return {"ok": False,
+                    "error": "The switch did not move — the "
+                             "bridge could not save the setting "
+                             "to its config file, so Row's Own "
+                             "Mode stays exactly as it was."}
         out = {"ok": True, "settings": saved}
         if en:
             # The flip's own receipt carries the sync's honest
