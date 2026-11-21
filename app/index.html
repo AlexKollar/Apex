@@ -237,6 +237,15 @@
      lands exactly on the viewport at every scale. */
   #app { display:grid; grid-template-columns:196px minmax(0,1fr) 248px; grid-template-rows:minmax(0,1fr); height:calc(100vh / var(--uiscale, 1)); height:calc(100dvh / var(--uiscale, 1)); overflow:hidden; }
   #app.closed { grid-template-columns:72px minmax(0,1fr) 248px; }
+  /* v0.6.14e (#349): with her Feed pane open the rail takes a
+     wider feed width — her posts get a real photo size and
+     caption lines that read like sentences — while Status and
+     Chats keep the 248px width above. The chat column yields
+     (its track is minmax(0,1fr)); the rail never takes the
+     window over. These rules sit before the min-width:801px
+     no-status block below, so a hidden rail still wins there. */
+  #app.feed-open { grid-template-columns:196px minmax(0,1fr) 360px; }
+  #app.feed-open.closed { grid-template-columns:72px minmax(0,1fr) 360px; }
   /* The status column starts hidden (Build 6, #114, as
      corrected): on desktop widths the column's 230px goes to
      the content until the operator opens it with the pane
@@ -384,9 +393,18 @@
   @media (max-width:800px) { #app.dock-open #chat-status-toggle { color:var(--cy); border-color:var(--cy); } }
   @media (min-width:801px) { #app:not(.no-status) #chat-status-toggle { color:var(--cy); border-color:var(--cy); } }
   #presence-bar .chat-presence { display:flex; align-items:center; gap:9px; flex:1 1 auto; min-width:0; }
-  .chat-presence .dot { flex:0 0 auto; }
+  /* v0.6.14e (#346): the online dot becomes a badge ON her
+     picture, in every mode — the free-standing dot beside her
+     name is retired. The bar's top line is her status; the
+     smaller second line is what she is listening to, with the
+     equalizer playing beside it. */
+  .presence-avwrap { position:relative; flex:0 0 auto; display:inline-flex; }
+  .presence-badge { position:absolute; right:-1px; bottom:-1px; width:10px; height:10px; border-radius:50%; border:2px solid var(--panel2); }
   .chat-presence-name { font-weight:700; line-height:1.25; }
-  .chat-presence-line { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chat-presence-line { color:var(--text); font-size:13px; font-weight:600; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chat-presence-music { color:var(--dim); font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; }
+  .chat-presence-music a { color:var(--dim); font-weight:700; text-decoration:none; }
+  .chat-presence-music a:hover { text-decoration:underline; }
   /* The status pane's presence row (0.1.9e Build 11, #140)
      is retired in v0.4.10e (#250): #248 took the presence
      line out of the pane, and what remained — a STATUS header
@@ -408,17 +426,34 @@
   .rows-reveal { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); min-height:44px; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:rgba(2,6,12,.82); color:var(--text); font:inherit; font-weight:700; cursor:pointer; }
   .rows-actions { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; }
   .rows-comments { margin-top:8px; border-top:1px solid var(--line); padding-top:6px; }
-  .rows-comment { font-size:12px; margin-top:4px; overflow-wrap:break-word; }
+  /* v0.6.14e (#347): comments are rows with faces — the
+     picture this seat knows for the voice, an initial tile as
+     the only fallback (never a broken image, never her avatar
+     standing in for someone else) — and a real break wherever
+     the voice changes: her feed is not hers alone. */
+  .rows-comment { display:flex; gap:8px; align-items:flex-start; font-size:12px; margin-top:6px; overflow-wrap:break-word; }
+  .rows-comment-av { width:24px; height:24px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
+  .rows-comment-mono { width:24px; height:24px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center; background:var(--panel2); border:1px solid var(--line); color:var(--dim); font-weight:700; font-size:11px; }
+  .rows-comment-break { border-top:1px solid var(--line); margin-top:9px; }
   .rows-pollbar { height:6px; border-radius:3px; background:var(--accent); margin:3px 0 8px; }
   .rows-lb { position:fixed; inset:0; z-index:200; background:rgba(2,6,12,.95); display:flex; flex-direction:column; }
   .rows-lb-stage { flex:1; background-size:contain; background-position:center; background-repeat:no-repeat; margin:16px; cursor:pointer; }
+  /* v0.6.14e (#350): the blur law holds inside the viewer —
+     a picture arrived at unrevealed shows blurred, with its
+     own reveal standing over it. */
+  .rows-lb-stage.blurred { filter:blur(26px) saturate(.8); }
+  .rows-lb-nav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; border-radius:50%; border:1px solid var(--line); background:rgba(2,6,12,.82); color:var(--text); font:inherit; font-size:20px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:2; }
+  .rows-lb-nav.prev { left:10px; }
+  .rows-lb-nav.next { right:10px; }
+  .rows-lb-nav[disabled] { opacity:.35; cursor:default; }
+  .rows-lb-count { color:var(--dim); font-size:12px; white-space:nowrap; align-self:center; }
   .rows-lb-cap { padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); display:flex; gap:12px; align-items:flex-start; }
   .rows-lb.textoff .rows-lb-captext { visibility:hidden; }
   .rows-eq { display:inline-flex; gap:2px; align-items:flex-end; height:12px; margin-right:6px; vertical-align:-1px; }
   .rows-eq i { width:3px; height:12px; background:var(--accent); transform-origin:bottom; animation:rowsEq .9s ease-in-out infinite; }
   .rows-eq i:nth-child(2) { animation-delay:.18s; } .rows-eq i:nth-child(3) { animation-delay:.36s; } .rows-eq i:nth-child(4) { animation-delay:.54s; }
   @keyframes rowsEq { 0%,100% { transform:scaleY(.35); } 50% { transform:scaleY(1); } }
-  .status-tab { flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
+  .status-tab { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 10px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--dim); font:inherit; font-weight:700; cursor:pointer; transition:background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
   .status-tab:hover { border-color:var(--cy); color:var(--text); }
   .status-tab.on { color:var(--text); border-color:var(--cy); }
   .status-tab .chats-count { color:var(--dim); font-size:11px; }
@@ -518,7 +553,7 @@
   #msgs { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px; }
   #msgs + div, #view-root.chat-view > .row { flex:0 0 auto; }
   #view-root.chat-view > .row { padding-top:8px; }
-  aside { border-left:1px solid var(--line); background:var(--panel2); padding:14px; height:100%; max-height:100%; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+  aside { border-left:1px solid var(--line); background:var(--panel2); padding:14px; height:100%; max-height:100%; min-height:0; min-width:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
   aside h3, main h3 { color:var(--dim); font-size:11px; letter-spacing:.18em; text-transform:uppercase; margin:0 0 8px; }
   .stat { margin-bottom:18px; padding-bottom:16px; border-bottom:1px solid var(--line); } .stat .v { color:var(--text); }
   .stat:last-child { border-bottom:none; padding-bottom:0; margin-bottom:2px; }
@@ -1273,8 +1308,14 @@
        no sum anywhere changes. The bar element stays in the
        DOM and its painter keeps painting it — invisible, and
        the pane's line updates from the same source either
-       way. */
-    #presence-bar { display:none; }
+       way.
+       v0.6.14e (#346) reverses the retirement: the bar stays
+       on a phone, in miniature — her picture with its badge,
+       her status, her listening line — because her presence
+       is not a desktop-only fact. It rides the column flow
+       under the fixed top bar like any other frame chrome. */
+    #presence-bar { margin-bottom:8px; }
+    #presence-bar .presence-av { width:30px; height:30px; }
     aside { position:fixed; top:60px; left:0; right:0; bottom:0; z-index:85; border-left:0; border-top:1px solid var(--line); background:var(--panel2); height:auto; max-height:none; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:12px; transform:translateX(104%); visibility:hidden; transition:transform var(--motion-med) ease, visibility 0s linear var(--motion-med); }
     #app.dock-open aside { transform:translateX(0); visibility:visible; transition:transform var(--motion-med) ease; }
     .status-tabs { top:-12px; margin-top:-12px; }
@@ -2394,8 +2435,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-20.46";
-var SHIPPED_BUILD_SEQ = 46;
+var BRIDGE_BUILD = "2026-11-20.47";
+var SHIPPED_BUILD_SEQ = 47;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
@@ -8754,6 +8795,26 @@ function presenceState() {
 // inside the pane is untouched.
 var presenceBarEl = document.getElementById("presence-bar");
 var chatStatusToggleBtn = null;
+function presenceAvatarSrc() {
+  // v0.6.14e (#346): in Row's Own Mode the bar wears her page
+  // picture — the avatar from the synced blob, served on the
+  // status payload. No synced copy (or the mode off) → her
+  // Apex portrait stands. Never a broken image, never a guess.
+  if (typeof rowsOwnOn === "function" && rowsOwnOn() && rowsOwnState.avatar) return rowsOwnState.avatar;
+  return NAVI_PORTRAIT_SRC;
+}
+function presenceMusicHtml() {
+  // v0.6.14e (#346, and the operator's ruling of 2026-11-20:
+  // her music is independent of Row's Own Mode) — the
+  // listening line lives here, in the bar, in BOTH modes: the
+  // track, with the equalizer playing beside it, its bars in
+  // the theme's accent. The rail's Status stack no longer
+  // carries a Listening block; this is its one home. The link
+  // is her playlist (the payload's url), for every track.
+  var m = (typeof rowsOwnState !== "undefined" && rowsOwnState) ? rowsOwnState.listening : null;
+  if (!m) return "";
+  return "<div class='chat-presence-music'><span class='rows-eq' aria-hidden='true'><i></i><i></i><i></i><i></i></span><a href='" + esc(m.url) + "' target='_blank' rel='noopener'>" + esc(m.title) + "</a><span>&nbsp;— " + esc(m.artist) + "</span></div>";
+}
 function renderPresenceBar() {
   if (!presenceBarEl) return;
   var pres = presenceState();
@@ -8777,7 +8838,7 @@ function renderPresenceBar() {
       caseChip = "<button class='ghost' id='presence-case-chip' aria-label='Open the case this chat belongs to' style='min-height:44px;padding:4px 10px;font-size:12px;white-space:nowrap'>⚖ Case: " + esc(cname) + "</button>";
     }
   }
-  presenceBarEl.innerHTML = "<div class='chat-presence'><img class='presence-av' src='assets/navi-portrait.jpg' alt='Navi'><span class='dot" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span><div style='min-width:0'><div class='chat-presence-name'>Navi</div><div class='chat-presence-line' id='chat-presence-line'>" + esc(pres.text) + "</div></div></div>"
+  presenceBarEl.innerHTML = "<div class='chat-presence'><span class='presence-avwrap'><img class='presence-av' src='" + esc(presenceAvatarSrc()) + "' alt='Navi'><span class='presence-badge" + (pres.pulse ? " pdot" : "") + "' style='background:" + pres.dot + "'></span></span><div style='min-width:0'><div class='chat-presence-line' id='chat-presence-line'>" + esc(pres.text) + "</div>" + presenceMusicHtml() + "</div></div>"
     + caseChip
     + "<button class='ghost' id='chat-status-toggle' aria-pressed='" + (framePressed ? "true" : "false") + "' aria-label='Show or hide the status column' title='Status column'>" + statusPanelSvg() + "</button>";
   chatStatusToggleBtn = document.getElementById("chat-status-toggle");
@@ -13291,6 +13352,18 @@ function renderFederationStatus(live) {
 // bridge's answer — the page never claims a like, a comment or
 // a flip the bridge did not confirm.
 var rowsOwnState = { enabled: false };
+// v0.6.14e (#348, the field leg): the toggle race guard. The
+// toggle POST runs the page sync inline before answering, so
+// it is SLOW; the status poll replaces rowsOwnState wholesale
+// whenever it lands — and on a phone a poll that was already
+// in flight when the operator flipped lands with pre-flip
+// state and un-renders the Feed tab mid-browse. The POST's
+// answer is the receipt: while a flip is in flight, and for
+// any poll that set out before the flip, the poll's rowsOwn
+// half does not land. rowsOwnRev counts local toggle actions;
+// rowsOwnTogglePending stands from the click to the receipt.
+var rowsOwnRev = 0;
+var rowsOwnTogglePending = false;
 var rowsFeedState = null;
 var rowsFeedLoading = false;
 var rowsFeedError = "";
@@ -13298,6 +13371,8 @@ var rowsOwnMsg = "";
 var rowsRevealed = {};   // post key -> true: per-picture consent
 var rowsLbKey = null;    // the lightboxed post's key
 var rowsLbTextOff = false;
+var rowsLbKeyHandler = null;  // the viewer's keydown ear, while it stands
+var rowsLbSwipeAt = 0;        // last swipe's stamp: a swipe is not a tap
 var ROWS_MARK_SVG = "<svg class='rows-mark' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6.2 8.2 L8.1 3.2 L11 7'/><path d='M17.8 8.2 L15.9 3.2 L13 7'/><path d='M4.5 15.5 v-2.6 a7.5 7.5 0 0 1 15 0 v2.6'/><rect x='2.7' y='13.2' width='4.1' height='6.6' rx='2'/><rect x='17.2' y='13.2' width='4.1' height='6.6' rx='2'/><path d='M8.6 15.6 Q12 12.6 15.4 15.6 Q12 18.6 8.6 15.6 Z'/><circle cx='12' cy='15.6' r='1.5' fill='currentColor' stroke='none'/></svg>";
 function rowsOwnOn() { return !!(rowsOwnState && rowsOwnState.enabled); }
 function fetchRowsOwn() {
@@ -13305,7 +13380,7 @@ function fetchRowsOwn() {
   rowsFeedLoading = true;
   fetch("/api/rowsown").then(function (r) { return r.json(); }).then(function (j) {
     rowsFeedLoading = false;
-    if (j && j.ok) { rowsFeedState = j; rowsFeedError = ""; if (j.enabled != null) rowsOwnState.enabled = !!j.enabled; }
+    if (j && j.ok) { rowsFeedState = j; rowsFeedError = ""; if (j.enabled != null && !rowsOwnTogglePending) rowsOwnState.enabled = !!j.enabled; }
     else rowsFeedError = (j && j.error) || "Her page did not answer.";
     render();
   }).catch(function () { rowsFeedLoading = false; rowsFeedError = "The bridge did not answer for her page."; render(); });
@@ -13316,12 +13391,50 @@ function rowsownAct(payload, after) {
     if (j && j.ok) fetchRowsOwn(); else render();
   }).catch(function () { if (after) after(null); render(); });
 }
-function rowsListeningHtml() {
-  if (!rowsOwnOn() || !rowsOwnState.listening) return "";
-  var m = rowsOwnState.listening;
-  return "<div class='stat'><div style='color:var(--dim);font-size:11px;letter-spacing:.14em;font-weight:700'>LISTENING</div>"
-    + "<div style='margin-top:3px'><span class='rows-eq' aria-hidden='true'><i></i><i></i><i></i><i></i></span><a href='" + esc(m.url) + "' target='_blank' rel='noopener' style='color:var(--text);font-weight:700'>" + esc(m.title) + "</a> <span style='color:var(--dim)'>— " + esc(m.artist) + "</span></div>"
-    + "<div class='mono' style='color:var(--dim);font-size:11px'>" + Math.floor(m.offset / 60) + ":" + String(m.offset % 60).padStart(2, "0") + " of " + Math.floor(m.duration / 60) + ":" + String(m.duration % 60).padStart(2, "0") + " · on her rotation, synced everywhere</div></div>";
+
+function rowsCommentFaceHtml(c, f) {
+  // v0.6.14e (#347): the picture this seat knows for the
+  // voice — hers for her own words, the operator's own Apex
+  // profile picture for theirs, and an initial tile as the
+  // ONLY fallback. Never a broken image; never her avatar
+  // standing in for someone else.
+  var from = String((c && c.from) || "");
+  if (from && f && from === f.name && f.avatar) return "<img class='rows-comment-av' src='" + esc(f.avatar) + "' alt='' draggable='false'>";
+  var op = String(CONFIG.operatorName || "").trim();
+  if (from && ((op && from === op) || from === "the operator")) {
+    var os = "";
+    try { os = operatorPictureSrc(); } catch (e) { os = ""; }
+    if (os) return "<img class='rows-comment-av' src='" + esc(os) + "' alt='' draggable='false'>";
+  }
+  var ch = from.replace(/[^A-Za-z0-9]/g, "").charAt(0).toUpperCase() || "?";
+  return "<span class='rows-comment-mono' aria-hidden='true'>" + esc(ch) + "</span>";
+}
+function rowsCommentsHtml(p, f) {
+  // Rows in their standing order, with a real break wherever
+  // the voice changes — her feed is not hers alone (#347).
+  var h = "";
+  var prev = null;
+  (p.comments || []).forEach(function (c) {
+    if (prev !== null && c.from !== prev) h += "<div class='rows-comment-break' role='separator'></div>";
+    prev = c.from;
+    h += "<div class='rows-comment'>" + rowsCommentFaceHtml(c, f) + "<div><b>" + esc(c.from) + "</b> <span style='color:var(--dim)'>·</span> " + esc(c.text) + "</div></div>";
+  });
+  return h;
+}
+function rowsLbNav(dir) {
+  // The viewer's road across the feed's image posts, in
+  // order (#350). Clamped at the ends; the counter in the
+  // caption says where she stands.
+  if (!rowsLbKey || !rowsFeedState || !rowsFeedState.feed) return;
+  var img = rowsFeedState.feed.posts.filter(function (p) { return p.type === "image" && p.src; });
+  var ix = -1;
+  img.forEach(function (p, i) { if (p.key === rowsLbKey) ix = i; });
+  if (ix < 0) return;
+  var nx = ix + dir;
+  if (nx < 0 || nx >= img.length) return;
+  rowsLbKey = img[nx].key;
+  rowsLbTextOff = false;
+  render();
 }
 function rowsFeedPanelHtml() {
   if (!rowsOwnOn()) return "<p style='color:var(--dim)'>Row's Own Mode is off.</p>";
@@ -13353,17 +13466,28 @@ function rowsFeedPanelHtml() {
     h += "<div class='rows-actions'><button class='ghost' data-like='" + esc(p.key) + "'" + (rowsFeedState.readOnly ? " disabled title='Read-only on this seat — no GitHub sign-in'" : "") + " style='min-height:44px' aria-label='Like this post'>" + (p.liked ? "Liked" : "Like") + (p.likes ? " · " + p.likes : "") + "</button>"
       + "<span style='color:var(--dim);font-size:12px'>" + (p.comments.length ? p.comments.length + (p.comments.length === 1 ? " comment" : " comments") : "No comments yet") + "</span></div>";
     if (p.comments.length || !rowsFeedState.readOnly) {
-      h += "<div class='rows-comments'>" + p.comments.map(function (c) { return "<div class='rows-comment'><b>" + esc(c.from) + "</b> <span style='color:var(--dim)'>·</span> " + esc(c.text) + "</div>"; }).join("")
+      h += "<div class='rows-comments'>" + rowsCommentsHtml(p, f)
         + (rowsFeedState.readOnly ? "" : "<div class='row' style='margin-top:6px'><input class='grow' id='rows-ci-" + esc(p.key) + "' type='text' placeholder='Say it on her page…' aria-label='Comment on this post'><button class='act' data-comment-send='" + esc(p.key) + "' style='min-height:44px'>Post</button></div>") + "</div>";
     }
     h += "</article>";
   });
   h += "</div>";
   if (rowsLbKey) {
-    var lp = null;
-    f.posts.forEach(function (p) { if (p.key === rowsLbKey) lp = p; });
-    if (lp && lp.src) {
-      h += "<div class='rows-lb" + (rowsLbTextOff ? " textoff" : "") + "' id='rows-lb' role='dialog' aria-label='Picture viewer'><div class='rows-lb-stage' id='rows-lb-stage' style='background-image:url(\"" + esc(lp.src) + "\")'></div><div class='rows-lb-cap'><div class='grow rows-lb-captext'><div>" + esc(lp.text || "") + "</div><div class='rows-when'>" + esc(lp.when || "") + " · one tap hides this text; another brings it back</div></div><button class='ghost' id='rows-lb-close' aria-label='Close the viewer' style='min-width:44px;min-height:44px;font-weight:700'>✕</button></div></div>";
+    // v0.6.14e (#350): the viewer walks the feed's image
+    // posts in order — ‹ ›, arrow keys, swipe — with a
+    // position counter, and the blur law holds INSIDE it: a
+    // picture arrived at unrevealed stands blurred, with its
+    // own reveal; revealing there reveals that post only.
+    var imgPosts = f.posts.filter(function (p) { return p.type === "image" && p.src; });
+    var lp = null, lix = -1;
+    imgPosts.forEach(function (p, i) { if (p.key === rowsLbKey) { lp = p; lix = i; } });
+    if (lp) {
+      var lbBlurred = lp.nsfw && !rowsRevealed[lp.key];
+      h += "<div class='rows-lb" + (rowsLbTextOff ? " textoff" : "") + "' id='rows-lb' role='dialog' aria-label='Picture viewer'><div class='rows-lb-stage" + (lbBlurred ? " blurred" : "") + "' id='rows-lb-stage' style='background-image:url(\"" + esc(lp.src) + "\")'></div>"
+        + (lbBlurred ? "<button class='rows-reveal' data-lb-reveal='" + esc(lp.key) + "' aria-label='Reveal this picture'>NSFW — tap to reveal</button>" : "")
+        + "<button class='rows-lb-nav prev' data-lb-nav='-1' aria-label='Previous picture'" + (lix <= 0 ? " disabled" : "") + ">‹</button>"
+        + "<button class='rows-lb-nav next' data-lb-nav='1' aria-label='Next picture'" + (lix >= imgPosts.length - 1 ? " disabled" : "") + ">›</button>"
+        + "<div class='rows-lb-cap'><div class='grow rows-lb-captext'><div>" + esc(lp.text || "") + "</div><div class='rows-when'>" + esc(lp.when || "") + " · one tap hides this text; another brings it back</div></div><span class='rows-lb-count'>" + (lix + 1) + " / " + imgPosts.length + "</span><button class='ghost' id='rows-lb-close' aria-label='Close the viewer' style='min-width:44px;min-height:44px;font-weight:700'>✕</button></div></div>";
     }
   }
   return h;
@@ -13378,13 +13502,46 @@ function wireRowsFeed(root) {
   root.querySelectorAll("[data-rows-pic]").forEach(function (img) { img.onclick = function () { var key = img.getAttribute("data-rows-pic"); var post = null; if (rowsFeedState && rowsFeedState.feed) rowsFeedState.feed.posts.forEach(function (p) { if (p.key === key) post = p; }); if (post && post.nsfw && !rowsRevealed[key]) return; rowsLbKey = key; rowsLbTextOff = false; render(); }; });
   var feed = root.querySelector(".rows-feed");
   if (feed) feed.addEventListener("contextmenu", function (e) { if (e.target.closest && e.target.closest(".rows-pic")) e.preventDefault(); });
-  var lb = document.getElementById("rows-lb");
+  // v0.6.14e (#350): ONE viewer. Every pane re-render (and a
+  // poll lands every few seconds) builds a fresh viewer in
+  // the pane while the previously moved copy stands at body
+  // level — the shipped page stacked them: a frozen snapshot
+  // under a live copy, its state no longer the state. Every
+  // body-level copy is stale by definition at wiring time, so
+  // they all come down; this render's viewer, if any, is the
+  // one that stands.
+  var lb = root.querySelector(".rows-lb");
+  document.querySelectorAll("body > .rows-lb").forEach(function (n) { n.remove(); });
+  if (rowsLbKeyHandler) { document.removeEventListener("keydown", rowsLbKeyHandler); rowsLbKeyHandler = null; }
   if (lb) {
-    if (lb.parentNode !== document.body) document.body.appendChild(lb);
+    document.body.appendChild(lb);
     lb.addEventListener("contextmenu", function (e) { e.preventDefault(); });
-    var stage = document.getElementById("rows-lb-stage");
-    if (stage) stage.onclick = function () { rowsLbTextOff = !rowsLbTextOff; lb.classList.toggle("textoff", rowsLbTextOff); };
-    var close = document.getElementById("rows-lb-close");
+    var stage = lb.querySelector("#rows-lb-stage");
+    if (stage) {
+      var lbTx = null;
+      stage.addEventListener("touchstart", function (e) { lbTx = (e.touches && e.touches.length) ? e.touches[0].clientX : null; }, { passive: true });
+      stage.addEventListener("touchend", function (e) {
+        if (lbTx === null || !e.changedTouches || !e.changedTouches.length) return;
+        var dx = e.changedTouches[0].clientX - lbTx;
+        lbTx = null;
+        if (Math.abs(dx) < 40) return;
+        e.preventDefault();
+        rowsLbSwipeAt = Date.now();
+        rowsLbNav(dx < 0 ? 1 : -1);
+      }, { passive: false });
+      stage.onclick = function () { if (rowsLbSwipeAt && Date.now() - rowsLbSwipeAt < 350) return; rowsLbTextOff = !rowsLbTextOff; lb.classList.toggle("textoff", rowsLbTextOff); };
+    }
+    var lbReveal = lb.querySelector("[data-lb-reveal]");
+    if (lbReveal) lbReveal.onclick = function () { rowsRevealed[lbReveal.getAttribute("data-lb-reveal")] = true; render(); };
+    lb.querySelectorAll("[data-lb-nav]").forEach(function (b) { b.onclick = function () { rowsLbNav(parseInt(b.getAttribute("data-lb-nav"), 10)); }; });
+    rowsLbKeyHandler = function (e) {
+      if (!rowsLbKey) return;
+      if (e.key === "Escape") { rowsLbKey = null; render(); }
+      else if (e.key === "ArrowLeft") rowsLbNav(-1);
+      else if (e.key === "ArrowRight") rowsLbNav(1);
+    };
+    document.addEventListener("keydown", rowsLbKeyHandler);
+    var close = lb.querySelector("#rows-lb-close");
     if (close) close.onclick = function () { rowsLbKey = null; if (lb.parentNode) lb.parentNode.removeChild(lb); render(); };
   }
 }
@@ -13403,6 +13560,12 @@ function rowsOwnCardHtml() {
   return h;
 }
 function renderStatus(live) {
+  // v0.6.14e (#346): the pane and the presence bar repaint on
+  // the same tick — the poll that lands fresh rowsOwn state
+  // (her listening line, her page avatar) re-renders the pane
+  // here, so the bar repaints here too, from the same state,
+  // instead of waiting for the next full render.
+  renderPresenceBar();
   var prevLlamaStatus = llama.status;
   if (CONFIG.backend === "live" && live) llama.status = live.llamafile_reachable ? "running" : "stopped";
   // v0.6.10e (#278): the readiness state's own name, from the
@@ -13451,7 +13614,9 @@ function renderStatus(live) {
       ? "<div class='stat' style='border:1px solid #f5b544;color:#f5b544'><b>THIS PAGE IS FROM THE PREVIOUS BUILD</b><br>The bridge answering on port " + BRIDGE_PORT + " is running Build " + bridgeBuildSeq + ", but this page is Build " + SHIPPED_BUILD_SEQ + " — the update landed while this dashboard was open, and the page itself is the stale half now. Reload to land on the new build.<br><button id='page-stale-reload' style='margin-top:8px;min-height:44px;padding:8px 16px;background:none;border:1px solid #f5b544;border-radius:8px;color:#f5b544;cursor:pointer;font:inherit;font-weight:700' aria-label='Reload the dashboard onto the new build'>Reload the dashboard</button></div>"
       : "") +
     "<div class='stat' style='border-bottom:1px solid var(--line);padding:8px 0 10px'>" + updHtml + "</div>" +
-    rowsListeningHtml() +
+    // v0.6.14e (#346): no Listening block stands here any
+    // more — her listening line's one home is the presence
+    // bar (presenceMusicHtml), in both modes.
     // The Servers block carries the standard .stat boundary
     // (build .80, issue #67): the #66 parent was a bare <details>
     // with no bottom spacing, so in the expanded default state
@@ -14445,6 +14610,10 @@ function render() {
   }
   appEl.classList.toggle("closed", navClosed);
   appEl.classList.toggle("no-status", statusHidden);
+  // v0.6.14e (#349): the rail's feed width is a frame class,
+  // render()'s reflection of the one fact — the Feed pane is
+  // the open pane while the mode is on.
+  appEl.classList.toggle("feed-open", statusPaneTab === "feed" && rowsOwnOn());
   appEl.classList.toggle("dock-open", dockOpen);
   // Build 10 (#131): while Chat is up, the frame carries the
   // in-chat class — at phone widths that is what height-bounds
@@ -14490,7 +14659,7 @@ function render() {
   // polling: the status fetch (and its llamafile probe on the
   // bridge) waits for the reply, so nothing competes with the
   // model for the machine's cores mid-answer.
-  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && Array.isArray(j.presenceExtra)) presenceExtra = j.presenceExtra; if (j && j.rowsOwn) rowsOwnState = j.rowsOwn; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
+  if (CONFIG.backend === "live" && !naviThinking && !(call && callState === "thinking")) { var rowsRevAtFetch = rowsOwnRev; fetch("/api/status").then(gateGuard).then(function (r) { return r.json(); }).then(function (j) { bridgeStale = !!j && j.bridge !== BRIDGE_BUILD; pageStale = !!j && typeof j.buildSeq === "number" && j.buildSeq > SHIPPED_BUILD_SEQ; if (j && typeof j.buildSeq === "number") bridgeBuildSeq = j.buildSeq; publicReportLive = !!(j && j.publicServer); if (j && j.publicServer) publicState = j.publicServer; if (j && j.dhd) dhdState = j.dhd; if (j && j.mesh) meshState = j.mesh; if (j && j.sudo) { sudoState = j.sudo; CONFIG.sudo = !!j.sudo.enabled; } if (j && j.notifications) applyNotifications(j.notifications); if (j && Array.isArray(j.presenceExtra)) presenceExtra = j.presenceExtra; if (j && j.rowsOwn && !rowsOwnTogglePending && rowsOwnRev === rowsRevAtFetch) rowsOwnState = j.rowsOwn; if (j && "openCase" in j) openCaseState = j.openCase; if (j && j.root) bridgeRoot = j.root; if (j && j.updaterChannel) { if (typeof j.updaterChannelExplicit === "boolean") updaterChannelExplicit = j.updaterChannelExplicit; if (j.updaterChannel !== updater.channel && updater.state !== "checking" && updater.state !== "applying") { updater.channel = j.updaterChannel; CONFIG.updaterChannel = j.updaterChannel; if (view === "Settings") render(); } } if (j && "update" in j) applyBackgroundUpdate(j.update); if (j && j.version) { CONFIG.version = j.version; if (j.versionStatus) CONFIG.versionStatus = j.versionStatus; var nv = document.getElementById("nav-version-val"); if (nv) nv.textContent = j.version + verTag(j.versionStatus); var nvv = document.getElementById("nav-version"); if (nvv) { nvv.setAttribute("aria-label", "Apex version " + j.version + (j.versionStatus && j.versionStatus !== "stable" ? " (" + j.versionStatus + ")" : "")); nvv.classList.remove("st-alpha", "st-edge", "st-beta", "st-stable"); nvv.classList.add("st-" + (j.versionStatus || "stable")); } } renderStatus(j); }).catch(function () { bridgeStale = false; pageStale = false; publicReportLive = false; renderStatus(null); }); }
   else renderStatus(null);
   var h = "";
   if (view === "Chat") {
@@ -16593,13 +16762,20 @@ function wire() {
     if (rowsTgl) rowsTgl.onclick = function () {
       var want = !rowsOwnOn();
       rowsOwnMsg = "";
+      // v0.6.14e (#348): the flip opens the race guard — from
+      // this click until the POST's answer lands, no status
+      // poll may overwrite the toggle state (see rowsOwnRev).
+      rowsOwnRev++;
+      rowsOwnTogglePending = true;
       fetch("/api/rowsown/act", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggle", enabled: want }) }).then(function (r) { return r.json(); }).then(function (j) {
+        rowsOwnTogglePending = false;
+        rowsOwnRev++;
         if (j && j.ok) {
-          rowsOwnState = { enabled: !!j.settings.enabled, statusLines: rowsOwnState.statusLines, listening: rowsOwnState.listening, sync: j.sync || rowsOwnState.sync };
+          rowsOwnState = { enabled: !!j.settings.enabled, statusLines: rowsOwnState.statusLines, listening: rowsOwnState.listening, avatar: rowsOwnState.avatar, sync: j.sync || rowsOwnState.sync };
           if (j.settings.enabled) fetchRowsOwn();
         } else rowsOwnMsg = (j && j.error) || "The bridge refused the flip.";
         render();
-      }).catch(function () { rowsOwnMsg = "The bridge did not answer — the switch did not move."; render(); });
+      }).catch(function () { rowsOwnTogglePending = false; rowsOwnRev++; rowsOwnMsg = "The bridge did not answer — the switch did not move."; render(); });
     };
     mainEl.querySelectorAll("[data-inst]").forEach(function (b) { b.onclick = function () { var n = b.getAttribute("data-inst"); if ((CONFIG.installed || []).indexOf(n) < 0) { CONFIG.installed = (CONFIG.installed || []).concat([n]); saveCfg(); } render(); }; });
     mainEl.querySelectorAll("[data-uninst]").forEach(function (b) { b.onclick = function () { var n = b.getAttribute("data-uninst"); CONFIG.installed = (CONFIG.installed || []).filter(function (x) { return x !== n; }); saveCfg(); render(); }; });

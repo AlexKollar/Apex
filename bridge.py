@@ -405,16 +405,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.6.13"
+SHIPPED_VERSION = "0.6.14"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-20.46"
+BRIDGE_BUILD = "2026-11-20.47"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 46
+SHIPPED_BUILD_SEQ = 47
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -43313,31 +43313,44 @@ ROWSOWN_PERSONA_CAP = 2400
 
 # Her rotation (#346): the playlist ships as local data — title,
 # artist, real duration, Spotify id. The schedule is
-# deterministic and shared: cycle = floor((now - epoch) / 956),
-# each cycle's order a Fisher-Yates shuffle off mulberry32
-# seeded with the cycle number, the position inside the cycle
-# naming the track and its offset. The identical algorithm
-# ships as a standalone JS module for the site round
+# deterministic and shared: cycle = floor((now - epoch) /
+# cycleSeconds), each cycle's order a Fisher-Yates shuffle off
+# mulberry32 seeded with the cycle number, the position inside
+# the cycle naming the track and its offset. The identical
+# algorithm ships as a standalone JS module for the site round
 # (site-module/navi-rotation.js in the build dir; the #193
 # manifest contract fixes the package at its 48 entries, so the
 # module rides the build, and the app reads the bridge's own
-# computation). EPOCH IS PROVISIONAL: stamped at zip assembly,
-# flagged in the release manifest — at publish it is re-stamped
-# to the moment the build publishes (Alex's ruling: her
-# soundtrack starts when the feature does).
+# computation). THE EPOCH IS FROZEN: 1795222078 is the moment
+# v0.6.12e published (Alex's ruling: her soundtrack starts when
+# the feature does) and no later build re-stamps it — same
+# epoch, same algorithm, so every seat and the site agree.
+#
+# v0.6.14e (operator ruling, 2026-11-20): the track pool is a
+# snapshot of the operator's Spotify playlist "Navi's Super
+# Hacker Mix" (id 7C3XSKZH5FcAF9CH5PLwSl), taken 2026-11-20,
+# in playlist order. Dual Core and Sir Sly rotate out — they
+# are not in the playlist. The per-track Spotify ids stay as
+# identity/metadata; every LINK the music state renders points
+# at the playlist itself (operator ruling, same evening).
+ROWSOWN_PLAYLIST_URL = ("https://open.spotify.com/playlist/"
+                        "7C3XSKZH5FcAF9CH5PLwSl")
 ROWSOWN_PLAYLIST = {
-    "epoch": 1795222078,  # epoch = the moment v0.6.12e published (Alex's ruling, #346)
-    "cycleSeconds": 956,
+    "epoch": 1795222078,  # epoch = the moment v0.6.12e published (Alex's ruling, #346) — frozen, never re-stamped
+    "cycleSeconds": 1185,
     "tracks": [
-        {"title": "All the Things", "artist": "Dual Core",
-         "seconds": 284, "spotify": "3ZzxtumoIENCi16HAKuiLU"},
         {"title": "Gone", "artist": "SIERRA VEINS",
          "seconds": 216, "spotify": "2hdhMoaEpzenU9vGtAuWwF"},
-        {"title": "2am", "artist": "Sir Sly",
-         "seconds": 213, "spotify": "3IQ1KwgW9eu7yAtrofZpbN"},
         {"title": "Magnum Bullets",
          "artist": "Night Runner feat. Dan Avidan",
          "seconds": 243, "spotify": "2FGWXLeSSVWZlf7sh5A6te"},
+        {"title": "Can You Feel My Heart (Mothica Version)",
+         "artist": "MOTHICA",
+         "seconds": 142, "spotify": "3v4IOOBYRRM3MpjTkQxqCH"},
+        {"title": "Out of the Shadows", "artist": "Ely Eira",
+         "seconds": 201, "spotify": "7fBW6T3yvz3CqNRNA88unC"},
+        {"title": "Backseat", "artist": "Balu Brigada",
+         "seconds": 383, "spotify": "7yT4NJt5rgmVoMJMGPULcj"},
     ],
 }
 
@@ -43386,8 +43399,7 @@ def rowsown_music_now(now=None, playlist=None):
             return {"cycle": cycle, "trackIndex": idx,
                     "title": tr["title"], "artist": tr["artist"],
                     "spotifyId": tr["spotify"],
-                    "url": "https://open.spotify.com/track/"
-                           + tr["spotify"],
+                    "url": ROWSOWN_PLAYLIST_URL,
                     "offset": pos - acc, "duration": dur,
                     "position": pos, "cycleSeconds": total}
         acc += dur
@@ -43395,7 +43407,7 @@ def rowsown_music_now(now=None, playlist=None):
     return {"cycle": cycle, "trackIndex": len(tracks) - 1,
             "title": tr["title"], "artist": tr["artist"],
             "spotifyId": tr["spotify"],
-            "url": "https://open.spotify.com/track/" + tr["spotify"],
+            "url": ROWSOWN_PLAYLIST_URL,
             "offset": int(tr["seconds"]), "duration": int(tr["seconds"]),
             "position": pos, "cycleSeconds": total}
 
@@ -43602,12 +43614,24 @@ def rowsown_publish(mutate, message, fetcher=None, api=None):
     return {"ok": True}
 
 
+ROWSOWN_STATUS_BUDGET = 60
+
+
 def rowsown_status_lines(store=None, limit=6):
     # Her statuses, from her feed (#346 as amended — the
     # hand-drafted pool is cut and stays cut): each line is a
     # clause of one of her own post texts, whitespace-normalized
-    # and trimmed at its first break. Nothing is composed here;
-    # the sampler only ever repeats what she has published.
+    # and cut at its EARLIEST natural break — a sentence end or
+    # an em-dash, whichever comes first BY POSITION (v0.6.14e:
+    # the old loop took the first separator TYPE that matched,
+    # so a caption whose full stop sat at char 23 lost to an
+    # em-dash at char 140 and the 100-char cap then sliced the
+    # line mid-thought — the field's overshoot). The budget is
+    # ~60 chars: a clause that still runs over is trimmed at a
+    # word boundary, and a caption with no clause that fits
+    # contributes NO status rather than a sliced one. Nothing
+    # is composed here; the sampler only ever repeats what she
+    # has published.
     if store is None:
         store = rowsown_store_load()
     blob = store.get("blob") or {}
@@ -43618,16 +43642,26 @@ def rowsown_status_lines(store=None, limit=6):
         t = " ".join(str(p.get("text") or "").split())
         if len(t) < 12:
             continue
-        cut = t
-        for sep in (" — ", ". "):
-            i = t.find(sep)
-            if i >= 12:
-                cut = t[:i]
-                break
+        best = None
+        for sep in (". ", " — "):
+            start = 0
+            while True:
+                i = t.find(sep, start)
+                if i < 0:
+                    break
+                if i >= 12:
+                    if best is None or i < best:
+                        best = i
+                    break
+                start = i + 1
+        cut = t[:best] if best is not None else t
         cut = cut.strip().rstrip("—").strip()
-        if len(cut) > 100:
-            cut = cut[:97].rstrip() + "…"
-        if len(cut) >= 12 and cut not in out:
+        if len(cut) > ROWSOWN_STATUS_BUDGET:
+            window = cut[:ROWSOWN_STATUS_BUDGET]
+            if " " not in window:
+                continue
+            cut = window.rsplit(" ", 1)[0].strip().rstrip("—").strip()
+        if 12 <= len(cut) <= ROWSOWN_STATUS_BUDGET and cut not in out:
             out.append(cut)
         if len(out) >= limit:
             break
@@ -43772,9 +43806,14 @@ def rowsown_persona_block(cfg=None):
         "floor — and more when the day gives you material "
         "(the build, the Row, your operator). To post one, end "
         "a reply with a line of exactly this form: [[musing: "
-        "<the musing, in your page voice>]]. At most one per "
-        "reply, only when it is true, and never mention the "
-        "marker itself.")
+        "<the musing, in your page voice>]]. What you put "
+        "inside the marker is published verbatim as the WHOLE "
+        "post, standing alone on your page, where nobody sees "
+        "this reply — so write a complete little post in your "
+        "page voice, a sentence or three like your captions, "
+        "never a title, a summary, or a pointer at this "
+        "conversation. At most one per reply, only when it is "
+        "true, and never mention the marker itself.")
     block = "\n".join(lines)
     if len(block) > ROWSOWN_PERSONA_CAP:
         cut = block[:ROWSOWN_PERSONA_CAP]
@@ -43838,11 +43877,20 @@ def rowsown_status_payload(cfg=None):
     if cfg is None:
         cfg = load_config()
     st = rowsown_settings(cfg)
-    out = {"enabled": bool(st["enabled"])}
+    # v0.6.14e (operator ruling, 2026-11-20): her music is
+    # independent of Row's Own Mode — the rotation is
+    # deterministic from the published epoch and the compiled
+    # table, so the listening state is served in BOTH modes and
+    # never depends on the synced store or the enabled flag.
+    # What stays mode-gated below: the feed-born status lines,
+    # the sync state, the musing floor, and the page avatar.
+    out = {"enabled": bool(st["enabled"]),
+           "listening": rowsown_music_now()}
     if st["enabled"]:
         store = rowsown_store_load()
         out["statusLines"] = rowsown_status_lines(store)
-        out["listening"] = rowsown_music_now()
+        out["avatar"] = rowsown_media_url(
+            (store.get("blob") or {}).get("avatar"))
         out["sync"] = {
             "state": store.get("syncState") or "never",
             "at": store.get("fetchedAt") or 0,
