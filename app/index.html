@@ -478,21 +478,33 @@
      border: a slim chevron — ‹ while the nav is open, › while
      it is closed — 18px wide, ~52px tall, muted at rest and
      stronger on hover, in theme variables so glass and lcars
-     read it too. It stands at the SAME screen position in
-     both states: anchored to #app (the frame, made the
-     containing block inside this same block) at the open
-     border's line, upper third — so the door never moves,
-     never hides inside the closed rail, and stays reachable
-     at the left edge where the border stood. Anchoring to
-     #app (not fixed-to-viewport) is deliberate: the glass
-     theme's backdrop-filter on nav would otherwise make nav
-     the tab's containing block and clip it at the border.
-     This block is min-width:801px by construction: at
-     ≤800px nothing here applies, and #nav-toggle remains the
-     phone top bar's ☰ exactly as shipped. */
+     read it too. Anchoring to #app (not fixed-to-viewport)
+     is deliberate: the glass theme's backdrop-filter on nav
+     would otherwise make nav the tab's containing block and
+     clip it at the border.
+     v0.6.17e (#360) corrects the anchor: .16e stood the tab
+     at the OPEN border's line in both states (left:187px) —
+     as specced, and navtab1 proved the spec — but with the
+     nav collapsed the tab floated at the old border's line,
+     detached from the 72px icon rail, hanging over the main
+     column's text. The operator's verdict: a glitch. The
+     tab now stands at the CURRENT rail edge in both states,
+     straddling the border by the same −9px (187px against
+     the 196px open column, 63px against the 72px closed
+     one), and its left transitions on #app's own grid timing
+     (var(--motion-view) ease — the same duration and easing
+     as the grid-template-columns transition), so during the
+     flip the tab rides the moving border at every instant;
+     under reduced motion the grid and the tab snap together
+     (the reduce rule below kills the tab's transitions, and
+     #app's own transition is none there). This block is
+     min-width:801px by construction: at ≤800px nothing here
+     applies, and #nav-toggle remains the phone top bar's ☰
+     exactly as shipped. */
   @media (min-width:801px) {
     #app { position:relative; }
-    #app #nav-toggle { position:absolute; left:187px; top:30%; z-index:95; width:18px; height:52px; min-width:0; min-height:0; margin:0; padding:0; display:flex; align-items:center; justify-content:center; background:var(--panel2); border:1px solid var(--line); border-radius:0 6px 6px 0; color:var(--dim); font-size:15px; line-height:1; white-space:normal; overflow:visible; transition:color var(--motion-med) ease, border-color var(--motion-med) ease, background var(--motion-med) ease; }
+    #app #nav-toggle { position:absolute; left:187px; top:30%; z-index:95; width:18px; height:52px; min-width:0; min-height:0; margin:0; padding:0; display:flex; align-items:center; justify-content:center; background:var(--panel2); border:1px solid var(--line); border-radius:0 6px 6px 0; color:var(--dim); font-size:15px; line-height:1; white-space:normal; overflow:visible; transition:left var(--motion-view) ease, color var(--motion-med) ease, border-color var(--motion-med) ease, background var(--motion-med) ease; }
+    #app.closed #nav-toggle { left:63px; }
     #app #nav-toggle:hover, #app #nav-toggle:focus-visible { color:var(--text); border-color:var(--cy); background:var(--panel); }
   }
   @media (min-width:801px) and (prefers-reduced-motion: reduce) { #app #nav-toggle { transition:none; } }
@@ -2479,8 +2491,8 @@ var speakPlaying = false;
 // which is exactly how chat 400s and sudo-auth 404s present. The
 // status column says so, loudly, instead of leaving the operator to
 // decode bare error strings.
-var BRIDGE_BUILD = "2026-11-21.49";
-var SHIPPED_BUILD_SEQ = 49;
+var BRIDGE_BUILD = "2026-11-21.50";
+var SHIPPED_BUILD_SEQ = 50;
 var BRIDGE_PORT = 8675;
 var bridgeStale = false;
 var pageStale = false;   // build .91: the reverse mismatch — this PAGE is older than the bridge answering (an update landed under an open dashboard); the status column offers a reload
