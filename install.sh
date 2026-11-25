@@ -241,6 +241,47 @@ if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ] && [ -z "$AS_ROOT" ]; then
   fi
 fi
 
+# --- The promotion target is never a swap slot (#434) ---------
+# [apex:promotion-guard]
+# A target naming one of the swap's own sibling slots — the
+# rollback park, a stage, a carry, a failed tree — makes the
+# promotion rename land the new tree INSIDE the slot: target
+# and rollback point become the same directory, and the park
+# consumes the very rollback point the install exists to keep.
+# That is the NeoArcadia v0.7.9e pull: the serving bridge ran
+# from .apex-prev (the rollback era's unit aim), the apply
+# job's root came with it, and the installer promoted into the
+# slot. The installer enforces the separation itself, here,
+# before any slot is derived from the target: a slot target is
+# retargeted to the seat it belongs to — the one non-hidden
+# sibling carrying a bridge, the rollback door's own
+# resolution — named out loud; ambiguity is refused by name.
+apex_promotion_guard() {
+  case "$(basename "$INSTALL_DIR")" in
+    .apex-prev|.apex-stage|.apex-carry|.apex-apply-stage|.apex-failed-*|.apex-prev-kept-*)
+      _pg_parent="$(dirname "$INSTALL_DIR")"
+      _pg_seats=""
+      for _pg_d in "$_pg_parent"/*/; do
+        _pg_d="${_pg_d%/}"
+        case "$(basename "$_pg_d")" in .*) continue ;; esac
+        if [ -f "$_pg_d/bridge.py" ]; then _pg_seats="$_pg_seats $_pg_d"; fi
+      done
+      set -- $_pg_seats
+      if [ $# -eq 1 ]; then
+        echo "==> Promotion target named a swap slot ($INSTALL_DIR) — retargeting to the seat it belongs to: $1"
+        INSTALL_DIR="$1"
+      else
+        echo "ERROR: the promotion target $INSTALL_DIR is one of the swap's own slots — promoting there would make" >&2
+        echo "       the target and the rollback slot the same directory. The seat it belongs to is not unambiguous" >&2
+        echo "       (bridge-carrying siblings found:${_pg_seats:- none}). Name the seat explicitly: --dir <install dir>." >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+# [/apex:promotion-guard]
+apex_promotion_guard
+
 PARENT_DIR="$(dirname "$INSTALL_DIR")"
 STAGE_DIR="$PARENT_DIR/.apex-stage"
 PREV_DIR="$PARENT_DIR/.apex-prev"
@@ -1286,6 +1327,43 @@ manifest_rows() {
   [ -f "$MANIFEST" ] || return 0
   grep -v '^#' "$MANIFEST" | grep -v '^$' || true
 }
+# --- Clone completeness: the binary icons ride as text (#41) --
+# A git clone of the repo cannot carry the four binary icon
+# files — the route that publishes the repo carries text
+# only — so the tree carries each icon ALSO as a base64 text
+# bundle beside its home (assets/icon.png.b64 and kin). When
+# an icon is missing here but its bundle is present, restore
+# the icon from the bundle now, before the manifest
+# verification below: the verification then hash-checks the
+# restored bytes against the declared digest, so a corrupt
+# bundle fails by name like any other damaged package file.
+# When the icon is already here — every release-zip install —
+# its bundle is never touched.
+for _icon_pair in \
+  "assets/icon.png assets/icon.png.b64" \
+  "assets/navi-apex.ico assets/navi-apex.ico.b64" \
+  "assets/navi-apex.icns assets/navi-apex.icns.b64" \
+  "shell/icons/icon.png shell/icons/icon.png.b64"; do
+  _icon_target="${_icon_pair%% *}"; _icon_bundle="${_icon_pair##* }"
+  if [ ! -f "$SRC_DIR/$_icon_target" ] && [ -f "$SRC_DIR/$_icon_bundle" ]; then
+    mkdir -p "$SRC_DIR/$(dirname "$_icon_target")"
+    if command -v base64 >/dev/null 2>&1; then
+      base64 -d "$SRC_DIR/$_icon_bundle" > "$SRC_DIR/$_icon_target.tmp" || _icon_failed=1
+    else
+      python3 -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(open(sys.argv[1],"rb").read()))' "$SRC_DIR/$_icon_bundle" "$SRC_DIR/$_icon_target.tmp" || _icon_failed=1
+    fi
+    if [ -n "${_icon_failed:-}" ] || [ ! -s "$SRC_DIR/$_icon_target.tmp" ]; then
+      rm -f "$SRC_DIR/$_icon_target.tmp"
+      echo "ERROR: the text bundle for $_icon_target ($_icon_bundle) could not be decoded — this copy of the sources is damaged." >&2
+      echo "       Nothing was stopped or changed. Re-fetch the tree and run the installer again." >&2
+      exit 1
+    fi
+    mv "$SRC_DIR/$_icon_target.tmp" "$SRC_DIR/$_icon_target"
+    echo "    note: $_icon_target was not in this copy of the sources (a git clone cannot carry the"
+    echo "          binary icon files) — restored it from the text bundle the tree carries for this."
+  fi
+done
+
 # Verify the package against its own declaration BEFORE anything
 # is stopped or staged: a payload file missing from the package,
 # or one whose bytes are not the declared bytes, fails the
@@ -1900,7 +1978,7 @@ reason = []
 if perf: threads = max(2, min(12, int(perf))); reason.append(f"Threads {threads}: matched to the {perf} performance cores.")
 elif logical >= 16: threads = 8; reason.append(f"Threads 8: half of {logical} logical cores, capped.")
 elif logical >= 8: threads = 4; reason.append(f"Threads 4: half of {logical} logical cores.")
-elif logical >= 4: threads = 2; reason.append(f"Threads 2: conservative for a {logical}-core machine.")
+elif logical >= 4: threads = max(2, logical - 1); reason.append(f"Threads {threads}: one short of the {logical} logical cores — a flat 2 measured a third of this class's speed in #310; one core stays for the OS and the UI.")
 else: threads = 1; reason.append("Threads 1: single-core floor.")
 if ram < 6: ctx = 4096; reason.append("Context 4096: under 6 GiB RAM — floored at the product's own prompt floor (#310): below it, her standing prompt does not fit.")
 elif ram < 12: ctx = 4096; reason.append(f"Context 4096: {ram:.1f} GiB RAM — proven fluid size for this class (Framework 13 baseline).")
@@ -1919,6 +1997,22 @@ elif ram >= 20: tier, tier_label = "performance", "Performance — ample RAM, CP
 elif ram >= 12: tier, tier_label = "balanced", "Balanced — above the fluid baseline"
 else: tier, tier_label = "fluid", "Fluid — Framework-class baseline (proven on an i5-1340P / ~9.5 GiB)"
 settings = {"threads": threads, "ctxSize": ctx, "batchSize": batch, "gpuLayers": gpu}
+# v0.8.5e (#476): a standing runtime that DISAGREES with
+# the profile it rode with is the operator's hand on the
+# config (the field seat: hand-edited 8192/6 under an
+# "auto" profile) — preserve it across the re-derivation
+# and say so in the log, instead of silently resetting
+# it to the derived numbers. A clean auto seat (runtime
+# == its profile's settings) re-derives as ever, and a
+# manual override already exited above, preserved whole.
+_standing_rt = cfg.get("runtime") or {}
+_standing_st = existing.get("settings") or {}
+def _rt_of_rt(rt): return (rt.get("threads"), rt.get("ctx_size"), rt.get("batch_size"), rt.get("gpu_layers"))
+def _rt_of_st(st): return (st.get("threads"), st.get("ctxSize"), st.get("batchSize"), st.get("gpuLayers"))
+if _standing_rt and all(v is not None for v in _rt_of_rt(_standing_rt)) and _rt_of_rt(_standing_rt) != _rt_of_st(_standing_st):
+    threads = int(_standing_rt["threads"]); ctx = int(_standing_rt["ctx_size"]); batch = int(_standing_rt["batch_size"]); gpu = int(_standing_rt["gpu_layers"])
+    settings = {"threads": threads, "ctxSize": ctx, "batchSize": batch, "gpuLayers": gpu}
+    reason.append(f"Preserved the seat's standing runtime (threads {threads}, ctx {ctx}, batch {batch}, gpu layers {gpu}): it differed from the profile it rode with, so it reads as the operator's own choice (#476).")
 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 flags = f"--ctx-size {ctx} --threads {threads} --batch-size {batch}" + (f" --n-gpu-layers {gpu}" if gpu > 0 else "")
 log = [f"[hardware] {now} — install-time profiling (Linux)", f"[hardware] OS: {det['osLabel']}", f"[hardware] CPU: {det['cpuModel']} — {logical} logical cores" + (f", {perf} performance" if perf else ""), f"[hardware] RAM: {ram:.1f} GiB total", f"[hardware] GPU: {det['gpuName'] or 'none detected'} ({det['gpuKind']})"] + [f"[hardware] → {r}" for r in reason] + [f"[hardware] chosen: {flags} (written to config hardware_profile + runtime)"]
@@ -2128,9 +2222,10 @@ ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
 APP_DIR="$HOME/.local/share/applications"
 mkdir -p "$ICON_DIR" "$APP_DIR"
 # Same rule as the install-tree copy above: no icon file in this
-# copy of the sources (a git clone) means the menu entry is still
-# written — it just uses a fallback icon — and the installer's
-# report below says which of the two actually happened.
+# copy of the sources (the icon and its text bundle both absent —
+# the #41 restore above found neither) means the menu entry is
+# still written — it just uses a fallback icon — and the
+# installer's report below says which of the two happened.
 MENU_ICON=""
 if [ -f assets/icon.png ]; then
   cp assets/icon.png "$ICON_DIR/navi-apex.png"
@@ -2450,12 +2545,12 @@ fi
 # made a lost stamp indistinguishable from changed sources.
 shell_sources_hash() {
   local dir="$1"
-  # The shell icon is optional in the hash: a git clone of the repo
-  # carries no binary icon files (they ship only in the release
-  # zip), and a missing cosmetic file must never break the shell
-  # step — hash what is there. When the icon is present it is
-  # hashed in its usual place, so a full package stamps exactly
-  # as it always has.
+  # The shell icon is optional in the hash: a copy of the sources
+  # missing both the icon and its #41 text bundle must never
+  # break the shell step over a cosmetic file — hash what is
+  # there. When the icon is present (a restored clone included)
+  # it is hashed in its usual place, so a full package stamps
+  # exactly as it always has.
   local files="Cargo.toml build.rs src/main.rs tauri.conf.json"
   if [ -f "$dir/icons/icon.png" ]; then files="$files icons/icon.png"; fi
   files="$files README.md"
@@ -2530,12 +2625,14 @@ fi
 
 # Her window is built around its icon — the shell's own
 # icons/icon.png, which the shell's config names and its build
-# embeds. A git clone of the repo does not carry it (the binary
-# icon files ship only in the release zip), so from a clone the
-# window build genuinely cannot proceed: name it here, and the
-# build step below skips itself in plain words instead of dying
-# halfway through a cargo build. With the file present — every
-# release-zip install — this stays empty and nothing changes.
+# embeds. The #41 restore above rebuilds that file from its
+# text bundle when a clone lacks it, so a missing icon here
+# means this copy of the sources is incomplete in both forms
+# (no icon, no bundle): name it here, and the build step below
+# skips itself in plain words instead of dying halfway through
+# a cargo build. With the file present — every release-zip
+# install and every whole clone — this stays empty and
+# nothing changes.
 # (The assets/ .ico/.icns renditions are never copied into the
 # install tree and the Linux shell build never reads them, so
 # they are not part of this check.)
@@ -2666,10 +2763,11 @@ elif [ -n "$SHELL_SKIP" ]; then
   echo "    (binary: $INSTALL_DIR/navi-apex-shell — pass --fresh, change the shell sources, or delete navi-apex-shell.stamp to force a rebuild)"
 elif [ -n "$SHELL_ICON_MISSING" ]; then
   echo "    her window cannot be built from this copy of the sources: the icon files her window"
-  echo "    is built with are not here (missing: $SHELL_ICON_MISSING). A git clone of the repo does"
-  echo "    not carry the binary icon files — they ship inside the release zip — so the window"
-  echo "    build is skipped for this install, in the open, instead of failing halfway through."
-  echo "    The release zip is the complete package."
+  echo "    is built with are not here (missing: $SHELL_ICON_MISSING), and neither is the text"
+  echo "    bundle the tree carries to restore them (#41) — this copy of the sources is incomplete"
+  echo "    in both forms, so the window build is skipped for this install, in the open, instead"
+  echo "    of failing halfway through. Re-fetch the whole tree (a clone carries the bundles;"
+  echo "    the release zip carries the icons themselves) and re-run this installer."
   retire_stale_shell
   echo "    Navi still launches: start.sh falls back to the dashboard in your browser."
 elif [ "$DISTRO_FAMILY" = "bazzite" ] && [ -z "$BAZZITE_BOX" ]; then
@@ -2847,7 +2945,28 @@ if [ "$STARTUP" = "boot" ]; then
   # the swap long before this step runs.
   sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$UNIT_TEMPLATE_DIR/navi-llamafile.service" > "$UNIT_DIR/navi-llamafile.service"
   sed "s|__INSTALL_DIR__|$INSTALL_DIR|g" "$UNIT_TEMPLATE_DIR/navi-bridge.service" > "$UNIT_DIR/navi-bridge.service"
+  # v0.7.8e (#363 Part A): the units just written are verified
+  # before anything enables them — each one's ExecStart must
+  # resolve to a file that exists and is executable in the
+  # tree that now stands. A miss is named here, beside the
+  # registration it belongs to, with the commands that finish
+  # by hand — never discovered as a dead door (203/EXEC) at
+  # the next boot.
+  _aim_failed=""
+  for _u in navi-llamafile.service navi-bridge.service; do
+    _aim="$(sed -n 's/^ExecStart=//p' "$UNIT_DIR/$_u" | head -n 1 | awk '{print $1}')"
+    if [ -z "$_aim" ] || [ ! -x "$_aim" ]; then
+      echo "  *** $_u aims at ${_aim:-<no ExecStart at all>} — that file does not exist or is not executable in this tree" >&2
+      _aim_failed=1
+    fi
+  done
+  if [ -n "$_aim_failed" ]; then
+    echo "  *** The unit files are written at $UNIT_DIR; once the aim above is repaired, finish with:" >&2
+    echo "  ***   systemctl --user daemon-reload" >&2
+    echo "  ***   systemctl --user enable --now navi-llamafile.service navi-bridge.service" >&2
+  fi
   _svc_ok=1
+  [ -n "$_aim_failed" ] && _svc_ok=""
   systemctl --user daemon-reload || _svc_ok=""
   if [ -n "$_svc_ok" ]; then systemctl --user enable --now navi-llamafile.service || _svc_ok=""; fi
   if [ -n "$_svc_ok" ]; then systemctl --user enable --now navi-bridge.service || _svc_ok=""; fi
@@ -2865,7 +2984,7 @@ if [ "$STARTUP" = "boot" ]; then
       echo "    NOTE: lingering could not be enabled from here, so for now the services start at LOGIN, not boot."
       echo "    To make Apex start at boot, run exactly:  sudo loginctl enable-linger $(id -un)"
     fi
-  else
+  elif [ -z "$_aim_failed" ]; then
     echo "  *** THE BOOT SERVICES COULD NOT BE REGISTERED — systemctl --user did not answer" >&2
     echo "  *** (no user bus is reachable from this session: a headless seat before linger is" >&2
     echo "  *** enabled, or a session with no XDG_RUNTIME_DIR, is exactly this shape)." >&2

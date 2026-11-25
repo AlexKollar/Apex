@@ -1,0 +1,26 @@
+{
+  "tombstones": {
+    "chats": {},
+    "cases": {},
+    "vault": {},
+    "daybook": {},
+    "clears": {}
+  },
+  "lastSyncAt": null,
+  "lastSyncEpoch": 0,
+  "lastResult": "",
+  "lastTrigger": "",
+  "lastState": "",
+  "attribution": {
+    "chats": {},
+    "cases": {},
+    "docs": {
+      "soul": "",
+      "memory": ""
+    },
+    "daybook": {},
+    "seat": {},
+    "pulse": {}
+  },
+  "gateLedgerAt": 1795410388
+}

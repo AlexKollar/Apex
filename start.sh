@@ -54,6 +54,30 @@ if [ -n "$HEADLESS" ]; then
   log_line "launch mode: headless — services only, no window"
 fi
 
+# Single-start ownership (v0.7.0e, #363): navi-llamafile.service
+# (run-llamafile.sh) and this launcher start the same engine, and
+# on the 2026-11-21 boot both spawned her at once and lost the
+# 8080 bind — an owner mid-start (process alive, model still
+# loading, port not yet answering) was invisible to a port-only
+# check. The probes below name the other owner before any spawn:
+# a navi.llamafile process on the box, or the service unit live.
+# Both probes are guarded — a missing pgrep/systemctl or a failed
+# probe reads as "no other owner", never as a crash.
+llamafile_other_owner() {
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f "navi.llamafile" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    _llama_unit="$(systemctl --user is-active navi-llamafile.service 2>/dev/null || true)"
+    if [ "$_llama_unit" = "active" ] || [ "$_llama_unit" = "activating" ]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+LLAMA_HANDLED=""
+LLAMA_MAY_SPAWN=1
 if curl -s --max-time 2 "http://localhost:$PORT/" >/dev/null 2>&1; then
   # Check first, always: a llamafile server is already answering —
   # started at boot, by an earlier launch, or by hand — so leave it
@@ -61,7 +85,39 @@ if curl -s --max-time 2 "http://localhost:$PORT/" >/dev/null 2>&1; then
   # fail to bind the port and litter the log with a dead start.
   echo "navi.llamafile is already running on port $PORT — leaving it alone."
   log_line "llamafile: already running on port $PORT — left alone"
-elif [ -x ./navi.llamafile ]; then
+  LLAMA_HANDLED=1
+else
+  if llamafile_other_owner; then
+    # The port is silent but another owner is starting her: wait
+    # for the port up to the same 120s, do not spawn. If she
+    # answers, this launcher proceeds exactly as the
+    # already-running path above does.
+    echo "llamafile: another owner is starting her — waiting for the port, not spawning"
+    log_line "llamafile: another owner is starting her — waiting for the port, not spawning"
+    LLAMA_MAY_SPAWN=""
+    for i in $(seq 1 120); do
+      if curl -s --max-time 2 "http://localhost:$PORT/" >/dev/null 2>&1; then LLAMA_HANDLED=1; break; fi
+      if ! llamafile_other_owner; then LLAMA_MAY_SPAWN=1; break; fi
+      sleep 1
+    done
+    if [ -n "$LLAMA_HANDLED" ]; then
+      echo "navi.llamafile is already running on port $PORT — leaving it alone."
+      log_line "llamafile: the other owner's server is answering on port $PORT — left alone"
+    elif [ -n "$LLAMA_MAY_SPAWN" ]; then
+      # The other owner vanished without answering: this launcher
+      # becomes the single owner and falls through to the spawn.
+      echo "llamafile: the other owner vanished without answering — this launcher becomes the single owner and starts her"
+      log_line "llamafile: the other owner vanished without answering — this launcher becomes the single owner and starts her"
+    else
+      # The other owner is still starting her after two minutes:
+      # name it and do not race it — the bridge can retry the
+      # start from the UI once the owner resolves, either way.
+      echo "llamafile: another owner is still starting her after two minutes — not spawning; the bridge can retry the start: open the UI and click Connect." >&2
+      log_line "llamafile: another owner still starting after 120s — not spawning"
+      LLAMA_HANDLED=1
+    fi
+  fi
+  if [ -z "$LLAMA_HANDLED" ] && [ -n "$LLAMA_MAY_SPAWN" ] && [ -x ./navi.llamafile ]; then
   echo "navi.llamafile is not running — starting it: ./navi.llamafile --server --v2 $HW_FLAGS (output: navi.llamafile.log) …"
   log_line "llamafile: not running — starting ./navi.llamafile --server --v2 $HW_FLAGS (hardware profile from config/navi.config.json)"
   # shellcheck disable=SC2086
@@ -77,8 +133,9 @@ elif [ -x ./navi.llamafile ]; then
     fi
     sleep 1
   done
-else
+  elif [ -z "$LLAMA_HANDLED" ] && [ -n "$LLAMA_MAY_SPAWN" ]; then
   echo "navi.llamafile is not in $(pwd) — the model server cannot start until the installer downloads it." >&2
+  fi
 fi
 
 # The bridge runs on the voice venv's Python when that venv exists:

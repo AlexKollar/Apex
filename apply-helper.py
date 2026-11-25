@@ -243,6 +243,107 @@ def fail(step, error, extra=None):
     write_result(patch)
 
 
+# ------------------------------------------------------------------
+# v0.7.8e (#363 Part A): the managed units' aim. The rollback
+# incident of 2026-11-21: a rollback deleted the tree both
+# systemd user units' ExecStart lines pointed into, the units
+# were never re-aimed, and the seat came back dark — 203/EXEC
+# on navi-llamafile.service and navi-bridge.service, nothing
+# listening, no door in. The rules that close it, all judged
+# from the unit FILES (the only witnesses that survive a dead
+# seat): a unit that does not exist is not a defect (a
+# launch-mode seat may carry none); a unit that exists must
+# aim at a file that exists and is executable; a rollback
+# re-aims the units at the tree it restored BEFORE it
+# relaunches anything, and proves the aim before it calls
+# itself done.
+
+_MANAGED_UNITS = ("navi-llamafile.service", "navi-bridge.service")
+
+
+def _units_dir():
+    return os.path.join(os.path.expanduser("~"),
+                        ".config", "systemd", "user")
+
+
+def _unit_exec_aim(unit_path):
+    # The first path a unit's ExecStart names, or "".
+    try:
+        with open(unit_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ExecStart="):
+                    rest = line[len("ExecStart="):].strip()
+                    if rest:
+                        return rest.split()[0]
+    except Exception:
+        pass
+    return ""
+
+
+def _unit_aim_verdict(units_dir=None):
+    # Every managed unit that exists, judged: its ExecStart
+    # must resolve to a file present and executable. Returns
+    # the named problems (empty = every standing unit aims at
+    # a tree that exists).
+    if units_dir is None:
+        units_dir = _units_dir()
+    problems = []
+    for name in _MANAGED_UNITS:
+        path = os.path.join(units_dir, name)
+        if not os.path.isfile(path):
+            continue
+        aim = _unit_exec_aim(path)
+        if not aim:
+            problems.append(name + " carries no ExecStart to resolve")
+        elif not os.path.isfile(aim):
+            problems.append(name + " aims at " + aim
+                            + ", which does not exist")
+        elif not os.access(aim, os.X_OK):
+            problems.append(name + " aims at " + aim
+                            + ", which is not executable")
+    return problems
+
+
+def _repoint_units(root, units_dir=None):
+    # (Re)write the managed units from the standing tree's own
+    # systemd/ templates, aimed at that tree, then reload the
+    # manager's view and clear the units' failed state. The
+    # systemctl acts are best-effort (a seat whose user manager
+    # is unreachable answers for them at confirmation); a
+    # template that cannot be read or a unit that cannot be
+    # written is a named problem, never a silent pass.
+    if units_dir is None:
+        units_dir = _units_dir()
+    problems = []
+    for name in _MANAGED_UNITS:
+        tpl = os.path.join(root, "systemd", name)
+        try:
+            with open(tpl) as f:
+                text = f.read()
+        except Exception:
+            problems.append("the restored tree carries no readable "
+                            "systemd/" + name + " template")
+            continue
+        try:
+            os.makedirs(units_dir, exist_ok=True)
+            with open(os.path.join(units_dir, name), "w") as f:
+                f.write(text.replace("__INSTALL_DIR__", root))
+        except Exception as e:
+            problems.append(name + " could not be rewritten ("
+                            + type(e).__name__ + ")")
+    if not problems:
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"],
+                           capture_output=True, timeout=30)
+            subprocess.run(["systemctl", "--user", "reset-failed"]
+                           + list(_MANAGED_UNITS),
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+    return problems
+
+
 def _heartbeat():
     # While the helper lives it beats every 30 seconds into the
     # step log, naming the step it is on. A log whose beats stop
@@ -438,6 +539,29 @@ def _shell_window_state(root):
     return "ok", ""
 
 
+def _systemd_bridge_unit_present():
+    # v0.8.5e (#475): the live-system witness — is
+    # navi-bridge.service a standing user unit on THIS
+    # seat (enabled, or active right now)? The job record
+    # is one witness; the system is the other, and an old
+    # job record that never learned to name the startup
+    # mode cannot outvote the seat it runs on. Any doubt
+    # (no systemctl, no answer) reads as absent — the
+    # start.sh road is the fallback, as ever.
+    try:
+        for verb in ("is-enabled", "is-active"):
+            p = subprocess.run(
+                ["systemctl", "--user", verb,
+                 "navi-bridge.service"],
+                capture_output=True, text=True, timeout=10)
+            if (p.stdout or "").strip() in ("enabled",
+                                            "active"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _relaunch_systemd_owned(job):
     # v0.6.7e (#305): does systemd own this install's bridge?
     # The job's startup mode is the install's own recorded
@@ -448,7 +572,56 @@ def _relaunch_systemd_owned(job):
     # hold the foreground polling it — one immortal start.sh
     # per Apply, in a transient scope, lying about who
     # supervises the bridge.
-    return bool(job) and job.get("startup") == "on-boot"
+    # v0.8.5e (#475): a job that NAMES its startup mode has
+    # spoken — "on-boot" owns, any other named mode does
+    # not. But a job record written by an older bridge may
+    # carry no startup field at all (the v0.6.1e shape the
+    # field wore): then the seat itself is asked, through
+    # the live witness above, so an Apply started by an old
+    # bridge still hands the bridge back to its unit
+    # instead of stranding a detached start.sh bridge for
+    # the health gate to find.
+    if job and job.get("startup") == "on-boot":
+        return True
+    if job and "startup" in job:
+        return False
+    return _systemd_bridge_unit_present()
+
+
+def _runtime_of_config(cfg_path):
+    # v0.8.5e (#476): the effective runtime a config
+    # carries — the four numbers an install can move.
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        rt = cfg.get("runtime") if isinstance(cfg, dict) else None
+        if isinstance(rt, dict):
+            return {"ctx_size": rt.get("ctx_size"),
+                    "threads": rt.get("threads"),
+                    "batch_size": rt.get("batch_size"),
+                    "gpu_layers": rt.get("gpu_layers")}
+    except Exception:
+        pass
+    return None
+
+
+def _runtime_change(before, after):
+    # v0.8.5e (#476): the Apply result's naming — which
+    # runtime numbers the install moved, and how. None
+    # when nothing moved (or a side could not be read):
+    # silence is only ever the no-change answer, never
+    # the changed one.
+    if not before or not after:
+        return None
+    labels = (("ctx_size", "ctx"), ("threads", "threads"),
+              ("batch_size", "batch"),
+              ("gpu_layers", "gpu layers"))
+    changed = {}
+    for key, label in labels:
+        if before.get(key) != after.get(key):
+            changed[label] = (str(before.get(key)) + "→"
+                              + str(after.get(key)))
+    return changed or None
 
 
 def _install_headless(job, root):
@@ -691,6 +864,89 @@ def _find_install_bridge(root):
     return None
 
 
+def _bridge_root_of(pid):
+    # The tree a bridge process runs from: its working
+    # directory when that directory carries a bridge.py,
+    # else the directory of the bridge.py its command line
+    # names. None when neither proof resolves.
+    cwd = _pid_cwd(pid)
+    if cwd and os.path.isfile(os.path.join(cwd, "bridge.py")):
+        return cwd
+    cmd = _pid_cmdline(pid)
+    for tok in cmd.replace("'", " ").replace('"', " ").split():
+        if tok.endswith("bridge.py"):
+            d = os.path.dirname(os.path.abspath(tok))
+            if os.path.isfile(os.path.join(d, "bridge.py")):
+                return d
+    return None
+
+
+def _orphan_bridge_verdict(pid, root):
+    # v0.7.12e (#434): classify the process holding the
+    # bridge port against this install, by the tree it runs
+    # from. Returns (kind, bridge_root):
+    #   "own"        — a bridge.py process running from the
+    #                  install root itself: this install's
+    #                  bridge, whoever supervises it.
+    #   "orphan"     — a bridge.py process running from a
+    #                  SIBLING tree of the same seat (the
+    #                  rollback park .apex-prev, a stage, a
+    #                  failed tree): this seat's own product,
+    #                  orphaned when its supervisor (a
+    #                  start.sh chain) stands outside the
+    #                  unit that owns the port. The .9e field
+    #                  shape: the helper's restart step met
+    #                  exactly this, called it "not this
+    #                  install's bridge", and refused to
+    #                  touch it — while unit stop/start
+    #                  cycles silently adopted it. An orphan
+    #                  is clearable WITH PREJUDICE: stopped,
+    #                  named in the log and the record, and
+    #                  replaced — never adopted.
+    #   "foreign"    — a bridge.py process running from an
+    #                  unrelated tree (another seat's install
+    #                  elsewhere on the machine): reported,
+    #                  never touched.
+    #   "not-bridge" — the command line names no bridge.py,
+    #                  or its root cannot be proven: reported,
+    #                  never touched.
+    cmd = _pid_cmdline(pid)
+    if "bridge.py" not in cmd:
+        return ("not-bridge", None)
+    broot = _bridge_root_of(pid)
+    if broot is None:
+        return ("not-bridge", None)
+    home = os.path.realpath(root)
+    if os.path.realpath(broot) == home:
+        return ("own", broot)
+    if os.path.dirname(os.path.realpath(broot)) == \
+            os.path.dirname(home):
+        return ("orphan", broot)
+    return ("foreign", broot)
+
+
+def _find_orphan_bridge(root):
+    # The /proc scan for an orphaned bridge of this seat —
+    # the sibling of _find_install_bridge for the case where
+    # the socket named no holder and the install's own proof
+    # found nothing: a same-product chain running from a
+    # sibling tree. Returns (pid, bridge_root) or None.
+    try:
+        names = os.listdir("/proc")
+    except Exception:
+        return None
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == os.getpid() or _pid_gone(pid):
+            continue
+        kind, broot = _orphan_bridge_verdict(pid, root)
+        if kind == "orphan":
+            return (pid, broot)
+    return None
+
+
 def _stop_proven_bridge(holder, port, desc):
     # The escalation both identification paths share: SIGTERM
     # (the bridge's polite exit — the installer's stop does the
@@ -761,12 +1017,34 @@ def clear_wedged_bridge(root, port, tgt_seq):
             return (True, None, "")
         found = _find_install_bridge(root)
         if found is None:
+            # v0.7.12e (#434): one more proof before the
+            # unidentifiable verdict — an orphaned chain of
+            # this seat running from a sibling tree. It is
+            # named, never silently adopted, and cleared
+            # with prejudice like any proven holder.
+            orphan = _find_orphan_bridge(root)
+            if orphan is not None:
+                holder, broot = orphan
+                cmd = _pid_cmdline(holder)
+                desc = ("process " + str(holder)
+                        + ((" (" + cmd + ")") if cmd else "")
+                        + " — an ORPHANED bridge of this seat, "
+                        "running from " + broot + " outside the "
+                        "unit's tree, found by the sibling-tree "
+                        "scan after the socket named no process; "
+                        "cleared with prejudice — replaced, "
+                        "never adopted")
+                trace("orphan-bridge", desc)
+                if _stop_proven_bridge(holder, port, desc):
+                    return (True, holder, desc)
+                return (False, holder, desc)
             return (False, None,
                     "something is listening on the port but its process "
                     "could not be identified — the socket named no readable "
                     "process, the install's pid file (bridge.pid) named no "
-                    "live bridge, and no bridge.py process runs from this "
-                    "install home")
+                    "live bridge, no bridge.py process runs from this "
+                    "install home, and no orphaned bridge of this seat "
+                    "runs from a sibling tree")
         holder = found
         cmd = _pid_cmdline(holder)
         desc = ("process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
@@ -777,8 +1055,28 @@ def clear_wedged_bridge(root, port, tgt_seq):
         return (False, holder, desc)
     cmd = _pid_cmdline(holder)
     desc = "process " + str(holder) + ((" (" + cmd + ")") if cmd else "")
-    owned = ("bridge.py" in cmd) and (_pid_cwd(holder) == os.path.realpath(root))
-    if not owned:
+    # v0.7.12e (#434): the holder is judged by the tree it
+    # runs from, not by the install root alone. The pre-.12e
+    # test — cwd equal to the install root, nothing else
+    # counts — is the exact shape that stranded the .9e pull:
+    # the serving bridge was this seat's own product running
+    # from the rollback park, and the helper refused it as
+    # foreign while the unit adopted it in silence.
+    kind, broot = _orphan_bridge_verdict(holder, root)
+    if kind == "orphan":
+        desc += (" — an ORPHANED bridge of this seat, running "
+                 "from " + broot + " outside the unit's tree; "
+                 "cleared with prejudice — replaced, never "
+                 "adopted")
+        trace("orphan-bridge", desc)
+        if _stop_proven_bridge(holder, port, desc):
+            return (True, holder, desc)
+        return (False, holder, desc)
+    if kind != "own":
+        if kind == "foreign":
+            return (False, holder, desc
+                    + " — a bridge of another seat (it runs from "
+                    + str(broot) + "), so it was not touched")
         return (False, holder, desc + " — not this install's bridge, so it was not touched")
     if _stop_proven_bridge(holder, port, desc):
         return (True, holder, desc)
@@ -1159,6 +1457,12 @@ def main():
     # the panel a moment to paint the installing step before the
     # installer stops the bridge.
     time.sleep(2)
+    # v0.8.5e (#476): the seat's standing runtime, read
+    # before the installer runs — the confirmation below
+    # names any move the install made to it, on the
+    # record the operator reads.
+    STATE["runtimeBefore"] = _runtime_of_config(
+        os.path.join(root, "config", "navi.config.json"))
     STATE["step"] = "installing"
     write_result({"state": "working", "step": "installing"})
     startup = "boot" if job.get("startup") == "on-boot" else "launch"
@@ -1487,6 +1791,14 @@ def main():
              + " The staged package is still in place.")
         STATE["stop_beat"] = True
         return
+    if wedge_pid is not None:
+        # v0.7.12e (#434): a cleared holder — above all an
+        # ORPHANED one — is named in the record the panel
+        # reads, not only in this helper's log. An adoption
+        # the operator never sees named is the silent shape
+        # this build exists to end.
+        write_result({"state": "working", "step": "restarting",
+                      "wedgeCleared": wedge_desc})
     relaunch_err = relaunch()
     if relaunch_err:
         if _port_answers_expected(job["port"], job.get("targetBuildSeq")):
@@ -1585,6 +1897,18 @@ def main():
         trace("health-gate",
               "serving process: " + unit_state
               + ((" — " + unit_desc) if unit_desc else ""))
+    # v0.7.8e (#363 Part A): the unit-aim leg of confirmation —
+    # an apply is not complete until every managed unit that
+    # exists aims at a tree that exists. A unit left aimed at
+    # a deleted tree is the 2026-11-21 dark seat; it fails the
+    # confirmation BY NAME below, in the record, instead of
+    # surfacing as a dead door at the next boot.
+    aim_problems = []
+    if live_ok and file_ok:
+        aim_problems = _unit_aim_verdict()
+        if aim_problems:
+            trace("health-gate",
+                  "unit aim: " + "; ".join(aim_problems))
     if live_ok and file_ok and unit_state == "detached":
         fail("restart",
              "The update installed and the expected build "
@@ -1599,10 +1923,40 @@ def main():
              "then run the update again. The staged package is "
              "still in place.",
              {"healthGate": {"buildSeq": tgt_seq, "unit": unit_state}})
+    elif live_ok and file_ok and aim_problems:
+        fail("restart",
+             "The update installed and the expected build "
+             "answers, but a service unit is aimed at a tree "
+             "that does not exist: "
+             + "; ".join(aim_problems)
+             + ". The seat would come back dark at the next "
+             "boot, so the update is not confirmed. The "
+             "recovery procedure in the installed tree's "
+             "docs/RECOVERY.md walks the repoint by hand. The "
+             "staged package is still in place.",
+             {"unitAim": aim_problems})
     elif live_ok and file_ok:
         STATE["step"] = "done"
+        # v0.8.5e (#476): a runtime the install moved is
+        # NAMED on the Apply result — what it was, what
+        # it became — never a silent re-derivation.
+        _rt_change = _runtime_change(
+            STATE.get("runtimeBefore"),
+            _runtime_of_config(os.path.join(
+                root, "config", "navi.config.json")))
         write_result({
             "state": "done", "step": "done",
+            **({"runtimeChanged": _rt_change,
+                "runtimeNote": "This install changed the "
+                "seat's runtime — "
+                + ", ".join(k + " " + v for k, v
+                            in _rt_change.items())
+                + " — re-derived by the install's auto "
+                "profile. A standing runtime that differs "
+                "from its profile is preserved by the "
+                "installer; a manual override set in "
+                "Settings is never re-derived."}
+               if _rt_change else {}),
             # #336: the confirmation's proof, on the record —
             # the build it observed answering, and the serving
             # process's unit state where a unit owns the bridge.
@@ -1954,6 +2308,42 @@ def rollback_main(job):
             "that is what --with-config exists for)")
     trace("rollback-config", config_source)
 
+    # --- re-aim the units at the restored tree ------------------
+    # v0.7.8e (#363 Part A): the step whose absence darkened
+    # the 2026-11-21 seat. On a boot seat the units are
+    # rewritten from the restored tree's own templates BEFORE
+    # anything relaunches; on every seat, each managed unit
+    # that exists is then proven to aim at a file that exists
+    # and is executable. A miss fails the rollback BY NAME
+    # here, in the record the operator reads — not as a dead
+    # door at the next boot.
+    if job.get("startup") == "on-boot":
+        repoint_problems = _repoint_units(root)
+        if repoint_problems:
+            return rfail(
+                "The trees were exchanged and the config settled ("
+                + config_source + "), but the service units could "
+                "not be re-aimed at the restored tree: "
+                + "; ".join(repoint_problems)
+                + ". The units still point where they pointed. "
+                "The recovery procedure in the restored tree's "
+                "docs/RECOVERY.md walks the repoint by hand.")
+        trace("rollback-units",
+              "units re-aimed at the restored tree")
+    aim_problems = _unit_aim_verdict()
+    if aim_problems:
+        return rfail(
+            "The trees were exchanged and the config settled ("
+            + config_source + "), but a service unit is aimed at "
+            "a tree that does not exist: "
+            + "; ".join(aim_problems)
+            + ". Left as it stands, the seat comes back dark at "
+            "the next boot. The recovery procedure in the "
+            "restored tree's docs/RECOVERY.md walks the repoint "
+            "by hand.")
+    trace("rollback-units",
+          "every standing unit aims at a tree that exists")
+
     # Relaunch by the install's recorded startup mode — the
     # #305 discipline: a boot seat's bridge belongs to its
     # unit; a launch seat's to start.sh.
@@ -1963,12 +2353,15 @@ def rollback_main(job):
         try:
             subprocess.run(
                 ["systemctl", "--user", "restart",
-                 "navi-bridge.service"],
+                 "navi-llamafile.service", "navi-bridge.service"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=60)
             trace("rollback-relaunch",
                   "systemd owns this install's bridge — "
-                  "navi-bridge.service was signalled to restart")
+                  "both units were signalled to restart "
+                  "(v0.7.8e, #363: the exchange swapped the "
+                  "tree under the llamafile too, and the "
+                  "units were re-aimed above)")
         except Exception as e:
             trace("rollback-relaunch",
                   "the unit restart could not be signalled ("

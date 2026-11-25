@@ -148,7 +148,7 @@
   "last_import_at": null,
   "last_import_result": ""
  },
- "version": "0.6.19",
+ "version": "0.7.10",
  "version_status": "edge",
  "updater": {
   "channel": "stable"

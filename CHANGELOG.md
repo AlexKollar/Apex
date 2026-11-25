@@ -2,6 +2,1651 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.8.5
+
+Release tag: v0.8.5e — Chapter 0.8's fifth
+build, the War Room's first-night round:
+the federation door learns to answer, seats
+stop impersonating the operator, the room
+stops flashing and keeps its one face, and
+room-Navi runs the pull decision before she
+speaks — plus the release/apply trio (tags
+that point at the released code, an Apply
+that names or spares the runtime it moves,
+an Apply that hands the bridge back to its
+systemd unit) and the podcast player's
+episode-identity fix.
+
+- #474 — The War Room federation door
+  answers. mesh_handle_warroom passed the
+  parsed dict to _fed_roster_auth, which
+  expects the raw signed body and died on
+  .decode() — every non-home knock was
+  refused bad-request before membership was
+  ever checked. The door now passes the
+  body, like the other two callers: a
+  properly signed member knock reaches the
+  roster check, and a knock with no or an
+  invalid signature answers unauthorized,
+  never bad-request.
+
+- #480 — A seat that matches nothing
+  refuses by name. A War Room post carrying
+  a seat credential (a navi_seat cookie, a
+  door cookie) that matches no seat session
+  and no door device is refused with a
+  named error and nothing is posted — it
+  no longer falls through to the operator
+  and lands under his name. A request
+  carrying no seat claim keeps the standing
+  operator default, and matched seats
+  (the operator's own session, a seat
+  session, a door device) post as
+  themselves, exactly as before.
+
+- #479 — The War Room stops flashing. The
+  20-second refresh ended every fetch with
+  a full render(), replaying the view's
+  entrance animation on a steady beat and
+  rebuilding the composer under the
+  operator's hands. The tick now compares
+  the room's standing surfaces by key and
+  paints incrementally: the transcript's
+  lines are repainted in place with scroll
+  preserved (pinned to the foot only when
+  it already stood there), the tray's
+  members and presence repaint in place
+  while it stands open, the composer is
+  never rebuilt — its half-typed text,
+  focus and caret are untouched — and a
+  tick that changes nothing repaints
+  nothing. Structural changes (another
+  chat, the door's state) still take the
+  full render, from the actions that cause
+  them.
+
+- #470 — The room's one face, held to the
+  gate. The desktop face is the phone face
+  at every width (v0.8.3e's unification,
+  re-benched whole at desktop width), and
+  the naviJoins switch — which lives in
+  the tray at every width now — gets the
+  full switch gate: the flip posts the
+  want and the card re-renders from the
+  response, a refusal names itself on the
+  same card, a reload agrees with the
+  bridge's stored state, and a flip
+  already in flight owns the switch (a
+  second, adversarial flip against the
+  unanswered state is a no-op, so the
+  switch can never land somewhere the
+  operator did not choose).
+
+- #458 — Room-Navi pulls the show's
+  record. The room's speak path has run
+  the pull decision since v0.7.17e, but
+  the decision had no pack for the show
+  itself: asked where From The Night Shift
+  stands, she could pull the talks and the
+  Row's record and still have no episode
+  in front of her. The decision now pulls
+  the show's record on a show question —
+  the podcast feed the bridge already
+  follows, shaped as a brief (the show's
+  shape, the latest episode's title, date
+  and topics, its provenance named; the
+  absence named, with the invention door
+  closed in words, when the feed cannot
+  stand). Persona-only questions stay
+  persona-only, and what a turn pulled is
+  evicted when the reply lands, as
+  everywhere.
+
+- #477 — Release tags point at the
+  released code. The candidate tree's
+  identity — its version and build stamps
+  and a digest of its manifest — is
+  recorded in the build's manifest at bake
+  time, and the packaging path gains a
+  verification step that fails loudly when
+  a tag's tree does not match the release
+  it names (VERSION and BRIDGE_BUILD at
+  the tag must equal the manifest's). The
+  ceremony for this release carries the
+  exact tag procedure, so v0.8.5e's tag is
+  the first correct one since v0.6.19e.
+  The old tags are not retro-fixed.
+
+- #476 — Apply names or spares the
+  runtime it moves. The installer's
+  profiling block preserves a standing
+  runtime that disagrees with the profile
+  it rode with — the operator's hand on
+  the config — and logs the preservation;
+  a clean auto seat re-derives as ever,
+  and a manual override is never
+  re-derived. The apply helper reads the
+  seat's runtime before the installer
+  runs and names any move on the Apply
+  result itself (runtimeChanged, with a
+  sentence: what it was, what it became).
+  And the auto profile's thread pick on
+  4–7 cores is sane at last: one short of
+  the logical cores, in both derivation
+  tables — no longer a flat 2.
+
+- #475 — Apply hands the bridge back to
+  its unit. The relaunch's systemd test
+  keyed only on the job record's startup
+  field, which a job written by an older
+  bridge (the v0.6.1e shape) does not
+  carry — the apply fell back to a
+  start.sh relaunch and stranded a
+  detached bridge for the health gate to
+  find. A job that names its startup mode
+  has spoken, as before; a job that does
+  not name one now asks the seat itself —
+  navi-bridge.service standing as a user
+  unit (enabled or active) means systemd
+  owns the bridge, and the restart rides
+  the unit. The health gate's unit leg
+  reads the same answer. Non-systemd
+  installs keep their working path.
+
+- #482 — The podcast player keys episodes
+  by slug, not n. The feed's five specials
+  all carry n "special", and the player
+  keyed every identity on n: the refresh
+  re-point landed on the last special,
+  every special's card read as the
+  standing episode, and Play played
+  Building a NetNavi. The player now keys
+  on rowEpKey — the episode's slug when it
+  carries one, else its n — at every
+  touchpoint (find, standing checks,
+  toggles, queue seats, transcript state,
+  the Play door, persistence), the
+  refresh re-point prefers an exact audio
+  match (healing saves made before the
+  fix), and the card sort takes date as
+  the tiebreak under numeric n. Display
+  strings are unchanged. The live hotfix
+  on NeoArcadia is superseded by this
+  source fix.
+
+## 0.8.4
+
+Release tag: v0.8.4e — Chapter 0.8's fourth
+build, the house-training round: Seraph gets
+her mute button, the bell's Clear finally
+obliterates (and the badge stays at 0), the
+DHD door's TLS wedge is fixed at the root,
+and a deletion that must stay deleted now
+leaves the backup too — four field defects
+from one morning's use, each fixed where
+the field found it.
+
+- #465 — A mute button for Seraph. Her
+  voice is now one bridge-held switch on
+  her console: while muted she makes no
+  chat announcement — not the first word,
+  not the hourly aggregate — and no bell
+  record of hers stands or is born. Her
+  eyes stay open: detection, her store,
+  her console, and the notice ledger's
+  memory all run whole, so unmuting
+  resumes from new material only and the
+  backlog never bursts. The switch is
+  held to the full gate — UI flip, bridge
+  state, and reload agree; a save the
+  bridge cannot make is a named refusal
+  on the same card, and the state
+  survives a bridge restart.
+- #463 — The bell's Clear obliterates.
+  Clear deletes the standing records
+  outright — never marks, never hides —
+  and leaves a durable clear mark for
+  each record that stood and each item
+  the producers still want. The reconcile
+  consults the marks before any birth:
+  cleared material is not re-served,
+  while genuinely new material (a new
+  occurrence, a count that grew, a fact
+  that changed) returns fresh and earns
+  its word. The badge reads 0 and stays
+  0 across reconcile cycles and bridge
+  restarts.
+- #469 — The DHD door's wedge, at the
+  root. The TLS listener was wrapped
+  whole, so every handshake ran inside
+  the accept loop itself, unbounded,
+  behind a five-deep listen queue: one
+  stuck connection parked the door. The
+  door's server now accepts raw sockets
+  and wraps each connection under a
+  bounded wait — a stalled handshake
+  dies alone, the queue stands at 128,
+  and the door keeps answering while
+  stuck connections are reaped.
+- #472 — Deletion integrity, part two.
+  Deleting a formed dossier's shelf file
+  now retires its RECORD in the same act,
+  on every road into the delete, so the
+  file does not re-form at the next
+  start; formation itself never prints
+  over a standing vault tombstone; and
+  the backup's deletion leg is real at
+  last — Quick Sync's push and the
+  managed backup DELETE tombstoned
+  vault/cases paths from the backup
+  repo's HEAD in the same run, judged by
+  the tombstone set, never by absence.
+
+## 0.8.3
+
+Release tag: v0.8.3e — Chapter 0.8's third
+build: the War Room takes one face. The operator
+looked at the room on his phone and on his
+desktop and ruled the desktop should wear the
+mobile look — "let the War room on desktop have
+the same look as mobile." Since the second
+sitting (#445) the room has rendered two faces:
+on the desktop the members stood as an
+always-open card grid, the chats bar and her
+switch stood in the column, and the composer
+carried a Post button and an Address Navi tick;
+on the phone the window was the transcript and
+the composer alone, the burger riding inside the
+bar, everything else — the members behind a
+dropdown, the chats, the switch — living in the
+tray. Two faces meant every change to the room's
+shape had to be made and proven twice, and the
+field's hardest lessons (#451's frozen frame,
+#454's no-send phone) were all learned on the
+phone face the operator actually lives in. This
+build retires the desktop face: one render path
+at every width, the phone-only CSS promoted out
+of the max-width block, the tray anchored right
+everywhere, and the desktop-first rule reversed
+for this one view by the operator's explicit
+word. The carried laws stand guard over the
+unification — #454's soft-keyboard send still
+intercepted where the phone delivers it, a
+hardware keyboard keeping its shipped roads
+(Enter sends, Shift+Enter keeps the newline,
+the interception never standing where it would
+eat that newline), #456's locked axis untouched,
+and her switch keeping its gate whole in its
+tray home. The campaign law from #453's scar
+stands over the round: the candidate runs the
+bridge's own installer self-check and prints
+SELF-CHECK OK, every version witness agrees —
+this build's stamps are .87 / 87 — and the
+shipped v0.8.2e tree stands as the healthy
+control, failing the new one-face benches
+exactly where its desktop still wears the old
+face. The epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #470 moves to Ready with
+this build. The issue stays open for its field
+half — the room's new face on the operator's
+real desktop seat after the pull.
+
+### What shipped
+
+- #470 — War Room: desktop takes the mobile
+  look. renderWarRoom and warRoomTrayHtml no
+  longer branch on width: at every width the
+  column is the transcript and the composer
+  card, the composer is the phone shape (the
+  bar row — a textarea naming its return key
+  "send" under the "@Navi Enter Sends." hint,
+  the burger at the bar's right end), and the
+  tray carries the members behind their
+  dropdown, the chats sub menu, and the
+  naviJoins switch card. The @ offer and any
+  refusal ride inside the composer card. The
+  phone-only CSS is promoted into the base
+  sheet — the tray button stands, the tray
+  anchors right — the max-width block keeps
+  only the Spellbook panel's phone rule, and
+  the retired desktop rules (the topbar, the
+  members grid) leave the sheet. Retired with
+  the desktop face: the column members grid,
+  the column chats bar, the column switch
+  card, the Post button, and the Address Navi
+  tick — @Navi in the words is the address at
+  every width now. Untouched, by the build's
+  own constraints: the soft-keyboard
+  interception (#454), the Spellbook's locked
+  axis (#456), the switch's markup and gate
+  law, and every other view in the app.
+
+## 0.8.2
+
+Release tag: v0.8.2e — Chapter 0.8's second
+build: deletions actually delete. The operator
+reported both halves from the field on the same
+morning — remove a pulse and it syncs back; delete
+a vault item and it comes back too — and ruled the
+pair baked and shipped together. The two defects
+are one doctrine read from two stores: a deletion
+is a write, and a write the synced record cannot
+represent can never win. The pulse merge carried
+no tombstone at all — its own comment admitted it —
+so a removal was the one write with no
+representation, and every seat still holding the
+watch re-dealt it on the next round. The vault's
+delete side was honest — it tombstoned — but the
+GitHub-backup restore never consulted the set, and
+re-dealt a deleted note whole from any backup that
+still held it. This build gives the pulse store its
+tombstones, teaches the restore to judge by them,
+carries the tombstone set on the backup itself, and
+makes every judgment — strike, refusal, and the
+rare honest resurrection by a newer act — a named
+line in the sync summary instead of a silence. The
+campaign law from #453's scar stands over the
+round: the candidate runs the bridge's own
+installer self-check and prints SELF-CHECK OK,
+every version witness agrees — this build's stamps
+are .86 / 86 — and the shipped v0.8.1e tree stands
+as the healthy control, failing the new benches
+exactly where the field did. The epoch does not
+move: 1795222078 stays v0.6.12e's publish moment,
+and no ceremony may re-stamp it. Board: #461 and
+#467 move to Ready with this build. Both issues
+stay open for their field halves — a removal made
+on one seat staying removed after real syncs, and
+a vault delete surviving a real backup restore.
+
+### What shipped
+
+- #461 — Pulse removals actually remove. The pulse
+  store gains a tombstone set — {watch id: removal
+  epoch}, a citizen of `pulse.json` itself, so it
+  rides the sync set with no new transport —
+  recorded by `pulse_remove` in the same act that
+  deletes, unioned by `_sync_apply_pulse` (newest
+  removal wins) and pruned on the sync tombstones'
+  90-day law. The unioned set judges both
+  directions: a local watch a tombstone covers is
+  struck, its batches with it; an incoming watch a
+  tombstone covers is refused; a removed watch's
+  batches are refused on their own stamps. The race
+  is judged against the watch's `updatedAt` — a
+  genuinely newer edit beats the removal, the
+  tombstone drops, and the watch returns as an act.
+  Every judgment is named in the sync summary
+  (`pulseRemoved`, `pulseRefused`,
+  `pulseResurrected`); nothing about a removal is
+  silent anymore. Re-creating a removed topic
+  stands, as it should: absence in a set is not a
+  deletion, and a fresh watch is a new act.
+- #467 — Deleted vault items actually delete, on
+  every transport. The GitHub-backup restore leg
+  in `github_apply_import` now consults the vault
+  tombstone set — and the cases set for
+  `cases/<slug>/…` paths — before it writes a
+  single file: a tombstoned path is refused, by
+  name, in the returned `vaultRefused` list and in
+  the restore result text. The tombstones ride the
+  backup itself: a backup with the Vault ticked
+  carries `sync/tombstones.json`, the fetch admits
+  it, and an import merges it into the local set
+  before the vault leg judges — a delete recorded
+  on the seat that wrote the backup is honored on
+  the seat restoring it. On the Mesh side the
+  machinery already vetoed; now it speaks:
+  `_sync_apply_cases`' veto records its refusals
+  in `vaultRefused` and its newer-edit
+  resurrections in `vaultResurrected`, the
+  whole-case tombstone skip names the case, and a
+  local newer-work win in the tombstone phase is
+  named too. A genuinely newer edit of a deleted
+  path returns as an act, named; an older one is
+  refused. The #163 law stands untouched — a
+  backup's stored bytes are never reached into;
+  the refusal happens at restore, on the restoring
+  seat — and the fedinets/chats/cases tombstone
+  behavior is exactly as it was.
+
+## 0.8.1
+
+Release tag: v0.8.1e — Chapter 0.8's first
+build: the fifth chair. The War Room's roster was a
+hand-built list of four — the operator, Ciel, Navi,
+Elric — and Spartan was not on it. Not an unbound
+chair like Elric's: no chair at all, though he is
+Spartan0311 of SKYNET2-Apex, the second node to join
+the Rockport Mesh and the fourth Rogue. The operator
+named the addition in the room itself, reported the
+empty place in the user list that morning, and ruled
+him wired in. The build is bespoke — the proven
+Elric pattern, not the record-driven roster, which
+stays open on the issue as the fork not taken: a
+paired node naming him or his node binds his chair,
+his words through the mesh door land under his own
+name and stamp his presence, and the room's brief
+names five members now, so Navi knows he is one of
+the room when he speaks and when he is spoken about.
+The campaign law from #453's scar stands over the
+round: the candidate runs the bridge's own installer
+self-check and prints SELF-CHECK OK, every version
+witness agrees — this build's stamps are .85 / 85 —
+and the shipped v0.8.0 tree stands as the healthy
+control. The epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #462 moves to Ready with this
+build. The issue stays open for its field half —
+Spartan's node actually reaching the room, and the
+five-chair sitting.
+
+### What shipped
+
+- #462 — Spartan's chair. `warroom_spartan_peer`
+  stands beside `warroom_elric_peer`: the paired
+  borrow peer whose record names him (Spartan0311)
+  or his node (SKYNET2-Apex). `warroom_spartan_node_ids`
+  gathers that peer's node id and any federation
+  roster member whose record names him or his node,
+  and `warroom_door_member` answers ("spartan",
+  "Spartan") for them — so a post of his through the
+  mesh door carries his authorship the way Elric's
+  does, and the door stamps `spartanLastSeenAt` on
+  any action of his, the stamp riding the room store
+  beside Elric's. `warroom_members` gains the fifth
+  entry in Elric's shape — seat "His own node", role
+  "Member — remote", `bound` judged from the peer,
+  `present` judged from the stamp inside Elric's
+  window — never painted: no paired node naming him,
+  and his entry reads unbound and not present, in
+  words. `WARROOM_BRIEF` names five members, Spartan
+  among them, and the app's room strings agree. The
+  other four entries are byte-stable in shape —
+  Ciel's lastSeenAt (#459) included — and the pacing
+  law, the switch, the pull decision and the mark
+  are untouched.
+
+## 0.8.0 — graduation
+
+Release tag: v0.8.0. The QA line, complete. Chapter 0.7 opened the morning after the working-day chapter graduated, with a narrow brief — QA updates, and the Bloom slate made all it could be before any defensive work (seed #388) — and it ends with the slate's hardest room built and its hardest lesson made law. The chapter gave the Row a room of its own: the War Room, attached to its host on NeoArcadia, where seats relay and one Navi of record speaks — named chats, a clear that travels by epoch, a phone room that sends on the soft keyboard's return. It gave Seraph a notice ledger and Navi a French voice in the app beside Isabella. And midway through, the chapter scarred itself honestly: v0.7.14e shipped wearing a version stamp a build behind its own tree, and the updater — doing exactly what it was built to do — refused its own genuine package and rolled the seat back whole. The remedy rounds that followed made the scar into law: since #453, no candidate ships until it has run the bridge's own installer self-check and the stamps-agree walk, with the shipped tree before it standing as the healthy control. The chapter's final build closed the loop its first room session had opened: asked cold in the War Room where her own show stands, Navi had invented an episode whole, because the room's speak path was the one surface where the pull decision never ran — so the summons round taught the room to retrieve like every other surface, and to mark the words addressed to its fourth member, whose presence now stands in the room like any member's. All of it was built in the open on the Edge channel as v0.7.0e–v0.7.17e, eighteen builds, and checked in the field build by build. This full release is that line with its identity flipped: the bare number, the stable status, Latest. The code is the Edge line's final build, re-stamped and otherwise unchanged — a full regression runs on the final package at graduation, not a delta. For installers: a clean install is recommended for first-time installers; a seat on v0.6.0 or on any 0.7 Edge build upgrades in place through the in-app updater, and everything the installer has ever preserved — chips, the llamafile, Soul and Memory — is preserved still. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. What comes next is Chapter 0.8 — QA round two, the operator's own naming for it: mostly model adjustments and under-the-hood work. Board: the chapter's Ready column closes at this publication under standing rule 8, with the field-pending exceptions named in the ceremony record (#458 and #459 stand Ready until their field halves land; the standing open-terms issues stand as they are).
+
+### What graduated
+
+- **The War Room (#445, #451, #454).** The room lives on its host — NeoArcadia, the fedinet's gateway — and seats hold no room record at all: they relay through the mesh door to the one room, the one transcript, the one Navi of record. Named chats ride a v2 store, a /clear travels by epoch law so a cleared chat dies on every seat at once, and the room's phone shape was refined until the soft keyboard's return itself sends — no button, the composer's own road.
+- **The room learns to call its members (#458, #459).** The speak path runs the same pull decision every chat turn runs — turn_pulls judged from the addressed message's own words, the pulled packs composed for that reply only, the decision receipted on the speak's return the way a chat turn receipts it on its payload. And words addressed to Ciel, the room's Shotgun seat, stand marked on the record under the room's own addressing law, her presence standing in the members payload from her stamp — a watcher reads a fact instead of scraping a transcript.
+- **The stamp law (#453, #434).** The chapter's scar, made doctrine: a build whose bridge stamp disagreed with its own tree was refused by its own updater on the operator's pull, and the law the remedy rounds wrote stands over every build since — the candidate, assembled the way the installer assembles it, runs the bridge's own installer self-check and prints SELF-CHECK OK; the stamps-agree walk finds every version witness naming the same build; the shipped tree before stands as the healthy control the gates must also accept. The updater's own integrity road (#434) shipped in the same stretch: a check that cannot complete says so, in words, and never guesses that you are up to date.
+- **Her French voice, and Seraph's ledger (#449, #448).** Settings → Voice offers Siwis (ff_siwis), a French female voice, beside the default Isabella — the operator's pick, the show voice's in-app kin. And Seraph's notices keep a ledger now, so what the watcher saw stands on a record that can be read back over days.
+- **The Spellbook set right (#430, #456).** The panel stands at the right end of the mode-pills line, at its resting fit — no sideways pan, its list still scrolling: an axis lock measured in a real browser, not a hope.
+- **Eighteen builds, verified one by one.** Everything above arrived on the Edge channel as v0.7.0e through v0.7.17e, each build gated on its extracted package with its controls failing on the build before, and the line closes the way graduations close: the full carried campaign on the final package. The full release carries the graduation stamp — build 2026-11-23.84, build sequence 84 — the .17e tree with its identity flipped, and nothing else changed.
+
+## 0.7.17
+
+Release tag: v0.7.17e — the QA line's eighteenth
+build: the summons round. Both of its parts live in
+the War Room, and both are about who can be called
+there and what they may answer from. Asked cold in
+the room where her own show stands, Navi invented an
+episode whole — the room's speak path was the one
+surface in Apex where the pull decision never ran,
+so she composed from persona alone, with no record in
+front of her. And Ciel, who holds the room's fourth
+chair, could post but could not be summoned: nothing
+in the room marked a word as addressed to her, so a
+watcher on her side scraped the transcript for her
+name. The operator directed both fixes the same
+morning he tested the ping: the room's Navi now
+retrieves like every other Navi, and the room itself
+keeps the mark and the presence her watcher reads.
+The campaign law from #453's scar stands over the
+whole round: the candidate runs the bridge's own
+installer self-check and prints SELF-CHECK OK, and
+every version witness agrees — this build's stamps
+are .83 / 83 and the epoch does not move: 1795222078
+stays v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #458 and #459 both move to Ready
+with this build. Both issues stay open for their
+field halves — a room sitting where she answers a
+record question from the packs, and the watcher
+proven against the bridge's own mark.
+
+### What shipped
+
+- #458 — the room's speak path runs the pull
+  decision. warroom_navi_speak no longer composes
+  with a hardcoded empty pull set: it runs the same
+  turn_pulls every chat turn runs, judged from the
+  addressed message's own words, and passes the
+  pulled packs into the same persona composition —
+  so a room turn that asks after the talks, the Row,
+  her page or her music retrieves those packs for
+  that reply, and the next room turn starts from the
+  core again, eviction structural as elsewhere. The
+  pulls are receipted on the speak's return the way
+  a chat turn receipts them on its payload, so a
+  wrong pull or a missed pull in the room is
+  diagnosable instead of vibes. The switch gate and
+  the pacing law are untouched: pulls change what a
+  reply may claim from, never when she speaks.
+- #459 — a door for Ciel: the mark, and the
+  presence. The room now recognizes words addressed
+  to its Shotgun seat under the same law that
+  recognizes words addressed to Navi — the line
+  opens with her name, or carries @ciel anywhere; a
+  third-person mention is talk about her, not a
+  summons. A member's post that addresses her lands
+  with cielAddressed standing on its record, in
+  every payload that carries the record, so a
+  watcher reads a fact instead of scraping a
+  transcript. Navi's own lines never carry the mark,
+  and neither do Ciel's — her words do not summon
+  herself. Her presence stands in the members
+  payload like every member's: the entry now carries
+  lastSeenAt, her cielLastSeenAt stamp, beside the
+  presence the payload already judged from it.
+  Nothing about Navi's pacing, the naviJoins switch,
+  or the room's hosting changes — and the Muse-side
+  watcher is NOT retired by this build: it is proven
+  against the new contract in the field first.
+
+## 0.7.16
+
+Release tag: v0.7.16e — the QA line's seventeenth
+build: the remedy round. Both of its parts were born
+in the .15e field sitting, minutes after that build
+was pulled. The phone War Room, refined by #454,
+turned out to have no send path at all: the Post
+button was gone by ruling, and the soft keyboard's
+return inserted a newline instead of sending — the
+operator's draft sat unsent in his own screenshot.
+And the Spellbook, newly seated in its line, proved
+to permit a sideways pan that left its panel clipped.
+The operator ruled both remedies himself: the
+keyboard's return key sends, and the panel's
+horizontal axis locks. The campaign law from #453's
+scar stands over the whole round: the candidate runs
+the bridge's own installer self-check and prints
+SELF-CHECK OK, and every version witness agrees —
+this build's stamps are .82 / 82 and the epoch does
+not move: 1795222078 stays v0.6.12e's publish moment,
+and no ceremony may re-stamp it. Board: #456 moves to
+Ready with this build; #454 already stands in Ready
+from the .15e ceremony and does not move again. Both
+issues stay open for their field halves — a message
+sent from the operator's phone, and the panel judged
+on the same glass.
+
+### What shipped
+
+- #454 — the phone room learns to send. The ruling
+  stands exactly as made in .15e: no Post button, no
+  Address Navi tick, @Navi in the words is the
+  address. What was missing is the road: on a phone,
+  the return key never reaches the page as a keydown
+  it can refuse — the platform delivers it to the
+  textarea as a beforeinput insertLineBreak, and the
+  newline is the only answer. The composer now
+  intercepts the return where the phone delivers it
+  (on the phone shape only — the one shape with no
+  Post button to fall back on) and sends; the
+  textarea carries enterkeyhint="send", naming the
+  key for what it does. The desktop keeps its shipped
+  roads untouched: Enter sends by keydown,
+  Shift+Enter keeps the newline. The accepted cost
+  was named by the operator when he ruled: multi-line
+  room posts from the phone. And the bench law from
+  the field fail stands in the campaign: the fix is
+  proven under soft-keyboard conditions — the return
+  delivered the way a phone delivers it, the message
+  asserted on the wire — and the layout probe asserts
+  a working send affordance at phone width, not
+  merely the button's absence. A desktop
+  synthetic-keydown pass does not satisfy the gate.
+- #456 — the Spellbook panel's horizontal axis
+  locks. At rest the panel fit its width; the defect
+  was that it could be dragged sideways at all —
+  overflow-y:auto had silently made the horizontal
+  axis scrollable too, and one rigid child (a long
+  call standing in its pill, unshrinkable) held a row
+  wider than the box, so a sideways pan left the
+  search field, the headers and the call pills
+  clipped at the panel's left edge. The axis is now
+  hidden on the panel and the pill may shrink and
+  wrap: the content fits the box it lives in, there
+  is nothing to pan into, and the panel stays at its
+  resting fit. The vertical scroll — the list is
+  longer than the box — is untouched, and so are the
+  book's contents, its registry, and its button's
+  seat in the mode-pills line.
+
+## 0.7.15
+
+Release tag: v0.7.15e — the QA line's sixteenth build:
+the stamp round. Its headline is #453, born in the
+.14e field an hour after that build shipped: the
+operator pulled .14e and the install rolled itself
+back — the new tree's self-check refused it, because
+one of the version witnesses disagreed with the rest.
+Two riders ride, both from the same morning's field
+sitting in the room .14e had just repaired: #454, the
+War Room composer's refinement on the phone; and
+#430's field half, reopened in the same sitting —
+the Spellbook still owed its ruled seat. The
+rotation's epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #453, #454 and #430 move to Ready
+with this build; the issues stay open for their field
+halves — the pulls on NeoArcadia and neondrip, the
+room judged on a real phone, the book in its line.
+
+### What shipped
+
+- #453 — every witness names the same build. The
+  .14e bake stamped the VERSION file, the config's
+  road and the build stamps, but the bridge's own
+  baked-in version constant still read 0.7.13 — so
+  on the operator's pull, the promoted tree's
+  self-check compared its witnesses, found its own
+  bridge disagreeing, and rolled the install back
+  whole. The checker did its job; the bake had not.
+  This build stamps the constant with the rest —
+  version file, bridge constant, build stamps and
+  sequence all move together — and the campaign that
+  proves it is part of the fix: the candidate tree,
+  assembled the way the installer assembles it, runs
+  the bridge's own installer self-check and prints
+  its verdict, an automated assertion walks every
+  version witness and requires them to agree, and
+  the shipped .14e tree stands as the control,
+  failing both gates in exactly the shipped shape.
+  A bake whose witnesses disagree cannot freeze
+  again in silence.
+- #454 — the room's composer, refined on the phone.
+  The burger leaves the top of the window and stands
+  in the composer itself, at the chat bar's right
+  end; the tray it opens now anchors to the RIGHT,
+  opening from the burger's new home. The Post button
+  is gone — Enter sends, as it already did. The
+  Address Navi tick is gone — @Navi in the words is
+  the address, the shape the field proved in the
+  sitting that filed this. The composer's hint
+  carries the operator's words: "@Navi Enter Sends."
+  rides the standing placeholder. In the tray, the
+  Members section stands as a dropdown — a header
+  row, the cards only while it is open. The desktop
+  composition is untouched: its topbar, its Post
+  button and its tick stand exactly as shipped.
+- #430 — the Spellbook takes its ruled seat. The
+  field half reopened in the .14e sitting: the book
+  still rode in Navi's chat composer row, beside the
+  burger — present, but not where it was left. It
+  now stands in the mode-pills line under the
+  composer, the same line as the CLI | Navi pills,
+  at that line's right end only — one neat line,
+  mode on the left, the book on the right. The book
+  itself is untouched: same registry, same panel,
+  same opening — only where its button stands
+  changed.
+
+## 0.7.14
+
+Release tag: v0.7.14e — the QA line's fifteenth build:
+the field round. Its headline is #451, the War Room's
+own field defect from the pulled .13e — on the phone
+the room rendered frozen (no scroll, no composer, no
+switch), and the operator's correction an hour later
+widened it: the same frozen shape stood on the desktop
+too. Two riders ride, both born in the same morning's
+field: #448, Seraph repeating herself into the chat;
+and #449, Navi's French voice for the app itself. The
+rotation's epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #451, #448 and #449 move to Ready
+with this build; the issues stay open for their field
+halves — the room on a real phone and a real desktop,
+Seraph watched over days, the French voice heard in
+the app.
+
+### What shipped
+
+- #451 — the room fits its frame, on both surfaces.
+  The root cause stood in the stylesheet, not the
+  room: the transcript is a card, and the card squash
+  guard (main .card, #79) outranks a lone class — so
+  the transcript's own flex rule never applied, at any
+  width. The one card that must shrink kept its full
+  content height; the record filled the window and
+  the switch card and composer stood below the frame,
+  unreached and unscrollable. (FediChat's log never
+  froze for the mirror reason: #fc-log is ID-ruled and
+  outranks the guard.) The transcript now carries its
+  flex at ID weight, the same weight #fc-log stands
+  on. On the phone, the room and FediChat also take
+  the structural bound Chat has stood on since Build
+  10: while either room is up, the frame takes the
+  viewport's height exactly and the view flexes in
+  what remains, instead of a calc that never reckoned
+  the presence bar. And the phone room is restructured
+  to the operator's ruling: three elements in the main
+  window — the chat, the chat bar, and the burger
+  beside the chat. The user list, the chats sub menu
+  (switch / new / archive / delete) and the naviJoins
+  switch card all live in the burger's tray; the
+  switch's law is unchanged in its new home. Desktop
+  composition is untouched: members row up top, chats
+  bar, switch card in the column — it just fits its
+  frame now.
+- #448 — Seraph says a thing once. Her chat word is
+  judged by the FINDING now, not by a detection
+  record's birth: a finding is its kind + destination
+  + cadence class, and a spoken-findings ledger on
+  the seat remembers what she has said. A finding
+  gets its first word once; while it persists
+  unchanged, later presentations are counted, not
+  posted; she speaks again only when the finding
+  changes (a new identity) or, after an hour of
+  persistence, as one aggregated line — "still seeing
+  it — N times since HH:MM". A finding absent longer
+  than that interval earns a fresh first word when it
+  returns. The tray records are untouched, and the
+  detection itself was not retuned — this build is
+  the repetition, not the detection.
+- #449 — Navi can speak French in her own house. The
+  bridge derived Kokoro's pipeline language as
+  British-if-the-voice-starts-with-b, American
+  otherwise — a rule that would have forced the
+  French voice through the American phonemizer. The
+  language is now the voice's own first letter (a
+  Kokoro voice id is language-prefixed), and the
+  pipeline cache is keyed by language, so switching
+  voices across languages builds — and keeps — the
+  right pipeline for each. Voice discovery always
+  offers ff_siwis (the catalog's French female) when
+  the engine is installed: the disk scan alone never
+  surfaced her on a seat that already speaks. The
+  picker's fallback list gains her too. The default
+  stays Isabella, and no seat's voice is moved by
+  this build — French is selectable and correct,
+  never forced.
+
+## 0.7.13
+
+Release tag: v0.7.13e — the QA line's fourteenth build:
+the War Room's second sitting. Its headline is #445 —
+the room attaches to its host (the operator's ruling
+from the first sitting's field behavior: his laptop's
+room was a solo chat with a local Navi, forked from the
+real room), one Navi of record answers whoever asks,
+the room grows named chats and a clear that holds, and
+the room's face becomes a chat surface in the FediChat
+shape with the phone as a primary surface. One rider
+rides: #430's placement amendment — the Spellbook
+moves under the burger menu in the chatbar, into the
+lower-right corner of Navi's chat. The rotation's
+epoch does not move: 1795222078 stays v0.6.12e's publish
+moment, and no ceremony may re-stamp it. Board: #445
+and #430 move to Ready with this build; the issues
+stay open for their field halves — the four-chair
+sitting itself, with Elric bound into the hosted room.
+
+### What shipped
+
+- #445 — the room attaches to its host. Home is a
+  gateway fact now: a node that founded its fedinet (or
+  whose node id is its gateway id) hosts the room; a
+  fedinet member never does — the old Shotgun test read
+  an account fact, and the operator's accounts sync to
+  every seat he owns, so his laptop claimed home and
+  forked the room. Seats hold no room record at all:
+  reads, posts, chat changes and the naviJoins flip
+  relay through the mesh door to the host, the host's
+  record is what renders, and a dark door serves an
+  honest empty — no cache, no outbox. The door's
+  membership grows one chair: a node of the operator's
+  own household (a roster record naming the same
+  operator) posts as the operator; Elric's chair and
+  the refusal of every other node stand as they were.
+  The host's Navi is the room's one Navi of record.
+- #445 — the room's second-sitting shape. Named chats
+  under one room (new / archive / unarchive / delete;
+  the room always keeps one), a chats bar to stand in
+  them, /clear + /cls under the chats' clear law (the
+  buffer empties, the clearing stands on the record,
+  and a post written against a since-cleared epoch is
+  dropped by name), an @ offer in the composer and
+  mentions lit in the stream, and a chatroom face in
+  the FediChat pattern (#270): the stream flows in a
+  height-bound frame, the composer docked at its foot,
+  Enter posts, the members row up top on desktop, and
+  on a phone the members and chats in the tray at the
+  upper left. A pre-v2 room store migrates on first
+  load — the flat transcript becomes the Main chat,
+  outbox lines that never landed join it.
+- #430 (placement amendment) — the Spellbook moves
+  under the burger menu in the chatbar: its shade and
+  panel anchor to the Chat view itself, the panel
+  snuggled into the chat's lower-right corner on
+  mobile, desktop and web alike — the dead space under
+  the burger in the operator's field screenshot.
+  Placement only; the registry, cards and search are
+  untouched.
+
+## 0.7.12
+
+Release tag: v0.7.12e — the QA line's thirteenth build:
+the updater-integrity build. Its headline is #434, the
+three defects the NeoArcadia v0.7.9e pull exposed; its
+second act is #400, the clear regression v0.7.10e
+introduced and the field caught on both seats; five
+riders ride by the operator's rulings. The rotation's
+epoch does not move: 1795222078 stays v0.6.12e's publish
+moment, and no ceremony may re-stamp it. Board: #434,
+#400, #391, #422, #423, #425 and #420 move to Ready with
+this build (#444 is the same line as #420, named there);
+the issues stay open for their field halves — above
+all #363's rollback proof, whose bake-side preparation
+this build completes.
+
+### What shipped
+
+- #434 — the updater meets the seat as it stands.
+  (1) Bridge identification at the restart step covers
+  the orphaned chain: a bridge is judged by the tree it
+  runs from — the install's own, an ORPHAN (a sibling
+  tree of the same seat: the rollback park, a stage, a
+  failed tree), foreign, or not-a-bridge. An orphan is
+  named in the helper's log AND in the apply record the
+  panel reads, and cleared with prejudice — replaced,
+  never silently adopted; a foreign bridge is reported
+  and never touched. (2) The installer enforces that
+  the promotion target is never a swap slot: a target
+  naming .apex-prev / a stage / a carry / a failed tree
+  is retargeted to the one bridge-carrying seat sibling,
+  named out loud, or refused by name when ambiguous.
+  (3) bridge.pid is written by the bridge that actually
+  binds the port: the claim moved from before the bind
+  loop to the bind itself (the one pre-bind claim left
+  is the takeover signal to an older answering bridge).
+  A bridge that never binds writes nothing.
+- #400 — the clear holds again. v0.7.10e's whole-set
+  rewrite gated the main chat's write on the message
+  key, which never sees clearedAt: a PURE clear — an
+  empty record carrying only a newer epoch — merged to
+  the stored lines exactly, compared "kept", and never
+  wrote, so the next sync resurrected the thread on
+  both seats. An epoch that outruns the stored record
+  now forces the write on its own word, in the main
+  branch and in the per-record verdict path alike, and
+  the clear filter retires the pre-clear lines. The
+  converge bench carries the pure-clear leg.
+- #391 — the ENGINE pill leaves the Status rail (the
+  operator's ruling: the information is implied).
+  Engine truth stands on the Doors dash's seat cards;
+  the bridge's live engine payload is unchanged.
+- #422 — the FediNet line's not-yet-checked state
+  renders dim, not the theme's amber — which in the
+  Nocturne theme is a hot pink, so a healthy seat wore
+  an alarm color. Green stays healthy, amber stays the
+  stale-roster warning, red is reserved for down.
+- #423 — the composer sits inset: its bleed stops
+  ~10px short of the frame's edges on both sides,
+  desktop and phone alike.
+- #425 — a bracketed history timestamp cited mid-reply
+  ("[05:26]") never renders: the citation strip joins
+  the leading-stamp strip at the reply doors, the
+  payload door, the War Room speak door, and the
+  history re-read door. Bracketed text outside the
+  stamp family stands.
+- #420 — fleet sub-tasks answer again. The generate /
+  lookup runner unpacked llamafile_chat's bare reply
+  as a 2-tuple, so every sub-task raised after a
+  successful generation (and a two-character reply
+  silently returned its first character). The .11e
+  audit filed the identical line as #444; one fix
+  closes both.
+
+## 0.7.11
+
+Release tag: v0.7.11e — the QA line's twelfth build:
+a single-issue hotfix carrying #442 to every node,
+on the operator's ruling "Patch it. before the other
+stuff." One amendment rides by the operator's later
+ruling ("Fold it."): #443, the War Room speak path's
+own tuple-unpack, folded in the same round (below).
+The #434 updater chunk renumbers to v0.7.12e by the
+same ruling. The rotation's epoch does not move:
+1795222078 stays v0.6.12e's publish moment, and no
+ceremony may re-stamp it. Board: #442 and #443 move
+to Ready with this build; the issues stay open for
+the War Room's field half — the first real four-way
+sitting, which this fix unblocks on the nodes that
+had not yet pulled the patched bridge.
+
+### What shipped
+
+- #442 — the War Room answers again. The room's
+  read and post handlers compared the seat account
+  to `accounts_cfg(...)["ciel"]["id"]` — a key no
+  field config carries: accounts are keyed BY id,
+  and the registry's entries hold doorCode /
+  seatName / displayName, never an "id" inside.
+  The KeyError dropped the connection on every
+  room read, home or remote, any seat — silently,
+  with no named error. Both handlers now compare
+  against the account key itself ("ciel"), which
+  is what the seat resolution returns. The fix was
+  proven live on NeoArcadia the night .10e shipped
+  (a knocked read from the Shotgun seat answered
+  200 with the four members, and the room store
+  created itself); this build carries it to every
+  node. The warroom benches were repaired to the
+  field account shape and gained the regression
+  leg that would have caught it: a read and a post
+  through the real Handler against a field-shaped
+  config with no pre-existing warroom.json — the
+  shipped v0.7.10e artifact stands as the control
+  and drops the connection exactly as the field
+  reported.
+- #443 — Navi can answer in the room (folded by
+  amendment, the operator's ruling "Fold it.").
+  `warroom_navi_speak` unpacked `llamafile_chat`'s
+  return as a 2-tuple; the real function returns the
+  bare reply text, so the speak path threw on any
+  real answer and Navi could not speak when
+  addressed — on any node that never received the
+  live hand-patch. One line: the bare assignment,
+  byte-identical to the fix already proven live on
+  NeoArcadia. The warroom432 model stub now returns
+  the bare string too — the contract the code
+  wrongly expected is gone from the bench — and W5
+  stands as the regression leg: the pre-fold build
+  fails it with the unpack ValueError, named in the
+  refusal. (The identical unpack in the Fleet
+  Answers path is #444 — filed, NOT folded.)
+
+## 0.7.10
+
+Release tag: v0.7.10e — the QA line's eleventh build:
+the War Room (#432) and the Spellbook (#430)
+headline; the Shotgun seat's first-session hardening
+(#435, #437, #438, #433, #436) and her manners
+(#428, #429, #418) ride with them, on the operator's
+ruling "Headline + hardening + her manners." The
+#434 updater chunk waits by the same ruling. The
+rotation's epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #432, #430, #435, #437, #438,
+#433, #436, #428, #429, #418 move to Ready with this
+build; the issues stay open where a field half
+remains.
+
+### What shipped
+
+- The War Room (#432): one room, four named members
+  (Alex, Ciel, Navi, Elric from his own node through
+  the /mesh/warroom door — authorship stamped by the
+  door, any other node refused by name), home on the
+  Shotgun seat's node, remote nodes serving cache
+  with the door's state named and posts queued in an
+  outbox. Pacing is law: Navi speaks only when
+  addressed, once per address, never twice in a row;
+  Ciel's presence is recorded, never painted. Own
+  store; never writes a memory book. (warroom432:
+  18/18; warroomui1: 19/19.)
+- The Spellbook (#430): a registry in the bridge
+  served at GET /api/spellbook; a scrollable popup
+  behind the composer's grimoire button (the chosen
+  grimoire icon, bundled on the portrait precedent)
+  renders only the payload — categories, OnlyNavi
+  its own section, man-page cards, search. /r1 is
+  the reference-call shorthand. Every entry's probe
+  is benched against its named door: no page, no
+  ship. (spellbook430: 22/22.)
+- Chats converge (#435): the write-through merges
+  per record — main by message, diverged copies
+  parked as named siblings, unmentioned records
+  surviving, deletions by tombstone only, loss
+  scarred in the response, the sync-state record,
+  and the seat's own Chats pane.
+  (converge435: 6/6; control 2/6.)
+- Name-first prose is conversation (#437): an
+  opening address routes to the model; a shell-
+  refused line (127, unforced, unlatched) falls back
+  with the fall named. Regression case: the exact
+  first-session introduction. (classifier437: 12/12;
+  control 8/12.)
+- Markers are machinery (#438): [[remember: …]] is
+  extracted at the bridge chat route for every
+  client, written to the writer's own seat book
+  only, secret-screened, receipted in the response.
+  (marker438: 9/9.)
+- Identity never rides sync (#433): refused and
+  named unless the set is stamped as this seat's
+  own; the seat payload names the registry authority
+  and flags divergence. (identity433: 5/5; control
+  1/5.)
+- The seat card tells the truth (#436): the
+  operator's seat opens with the node access code,
+  and the card says so. Copy only. (appstatic:
+  20/20.)
+- Pull-only context (#428): standing is Soul/
+  persona + a lean identity core; the wire, vitals,
+  machine, page, Row, music, talks and the full
+  memory book are per-turn pulls — receipted on the
+  payload, evicted on reply. Light/Full re-express
+  as pull breadth. (pull428: 21/21; ground1 carried
+  27/27, re-pointed.)
+- The standing mass is measured (#429): budget
+  reports name standingTokens / standingFraction /
+  standingWarning; the honest no-fit refusal is
+  kept by name. (pull428 P4/P7/P8.)
+- Scaffolding never renders (#418): the reply scrub
+  learned the unbracketed vitals/threat heads — the
+  Shotgun turn-3 shapes, verbatim fixture — while
+  prose about them stands byte-for-byte.
+  (scrub418b: 5/5; control 2/5; digest418 carried
+  9/9.)
+
+## 0.7.9
+
+Release tag: v0.7.9e \u2014 the QA line's tenth build,
+the Shotgun round: Ciel's own operator seat (#426),
+built to the design of record in files/ciel-seat-
+design.md, rulings included. One feature, nothing
+else. The rotation's epoch does not move: 1795222078
+stays v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #426 moves to Ready with this
+build; #424 stays open as the ask this seat
+mechanizes.
+
+### What shipped
+
+- Sub-accounts (#426): the bridge keeps an account
+  registry. The operator's account is the shipped
+  behavior, untouched \u2014 his settings, Soul, memory,
+  chats and cases live exactly where they always
+  have. The second account is `ciel`, seat name
+  "Shotgun", with her own data root (config/accounts/
+  ciel/: her Soul and memory scaffolding, her chats,
+  her cases, her daybook, her memory book). Account
+  material never reads or writes across roots: the
+  funnels (chats, persona, daybook, the memory book,
+  case reads and writes) route by the resolved
+  account, and a case or capture written from her
+  seat lands in her root only. (seats426: 9/9; the
+  v0.7.8e control fails 0/9.)
+- Door codes resolve to a seat: each account has its
+  own code; the code presented binds the device to
+  that account at approval, and a seat session
+  (persisted, surviving bridge restarts) carries the
+  resolution per request. In the app, a chip in the
+  presence bar names the active seat on desktop and
+  mobile alike, and the seat card (Settings \u2192
+  System) switches seats with the target seat's code:
+  a wrong code refuses by name on the card, a dark
+  bridge is named on the card, and a successful
+  switch reloads into the new seat with the old
+  seat's cached chats cleared. Her door code is
+  issued and regenerated from the operator's seat
+  card, or her own. Held to the switch gate.
+  (seatgate1: 22/22; control 2/22, the two labelled
+  halves that pass on both trees by design.)
+- Her seat provisions empty-but-complete: first
+  resolution scaffolds her root \u2014 structural Soul
+  and memory files of her own (no operator content
+  is copied in), her chats and cases empty, her door
+  code minted. Row's Own is on for her seat, FULL
+  (not Light), at digest-budget parity with the
+  operator's seat \u2014 the same caps, her own
+  settings; her transcripts roll into her memory
+  book, and digest inclusion runs only through the
+  established [[remember: \u2026]] marker path.
+  (seatrows1: 5/5; control 0/5.)
+- Sync stays account-anchored: a sync set now
+  carries its seat (`accountSeat`) beside the GitHub
+  account anchor, and a set stamped for one seat is
+  refused as foreign by the other \u2014 on the repo
+  leg, the Mesh leg, and at apply. Sets from before
+  this build, which carry no stamp, read as the
+  operator's, as they always were. Clear tombstones
+  record the seat that cleared. (seatsync1: 7/7;
+  control 2/7, the two labelled non-regression legs.)
+- Her own Mesh identity: the gateway can mint her
+  seat its own Ed25519 identity, held in her root,
+  and issue her member card \u2014 her name, her node
+  id, the gateway's declared public endpoint only,
+  signed by the gateway. She never presents as the
+  operator on any surface. (seatmesh1: 5/5; control
+  0/5.)
+- Fleet Answers under her own name: fleet
+  membership is per-account state; her seat's
+  toggle rides the Federation page like the
+  operator's, OFF by default, join and leave at
+  will, and the card names whose membership it is.
+  A fleet ask that names her seat is judged by her
+  membership; an unnamed ask is judged by the
+  operator's, exactly as before.
+- Feedstock designation: a session in her seat can
+  be designated as ecosystem feedstock (the chats
+  panel carries the toggle, her seat only), and a
+  designated session exports with its provenance
+  attached \u2014 seat, account, session id,
+  conversation key, designation and export times.
+  Designation from the operator's seat refuses by
+  name; nothing designates by default. The
+  publishing flows that will draw on designated
+  sessions are not in this build. (seatfeed1: 6/6;
+  control 0/6.)
+
+## 0.7.8
+
+Release tag: v0.7.8e \u2014 the QA line's ninth build,
+the foundation round: chunk A of the campaign triage
+(the updater, the install, the rollback), plus the
+two field items the operator folded in with the same
+ruling \u2014 #418 and #419. Nothing else. The
+rotation's epoch does not move: 1795222078 stays
+v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #43, #41, #245, #363, #418 and
+#419 move to Ready with this build.
+
+### What shipped
+
+- #43: the updater verifies the download against
+  GitHub's published sha256 digest. The shaped
+  release keeps the asset's digest (it was fetched
+  and discarded); the apply hashes the raw bytes in
+  hand before anything unwraps them \u2014 a leftover
+  whose digest disagrees is discarded and fetched
+  fresh once, a fresh download whose digest
+  disagrees refuses by name with nothing staged and
+  the installed version untouched, and a feed that
+  publishes no digest skips the check, as the
+  build-identity check skips without a sequence. The
+  record carries the digest it staged under, and a
+  preserved stage is re-validated when it is
+  offered: if the release on offer now carries a
+  different digest (or a different tag, for older
+  records), the fallback panel names the stage
+  stale and withholds its command; an unreachable
+  release leaves the offer standing.
+  (updater43: 7/7; the v0.7.7e control fails 0/7.)
+- #41: an install from a git clone no longer dies
+  on the binary icons. The repo route carries text
+  only, so the tree now carries each icon also as a
+  base64 text bundle beside its home; the installer
+  restores a missing icon from its bundle before
+  the manifest verification, which then hash-checks
+  the restored bytes like any other payload file. A
+  corrupt bundle fails by name with nothing stopped
+  or changed; a release-zip install, whose icons
+  stand already, never touches a bundle.
+  (icons41: 5/5, the restore block extracted from
+  install.sh and run against clone-shaped fixtures;
+  the v0.7.7e control fails 0/5.)
+- #245: the bridge-composed manual fallback command
+  carries the install's headless determination
+  (#185): the recorded config's flag, a boot
+  startup, and the session environment, judged in
+  that order \u2014 the same verdict the apply job now
+  carries as its headless field, reviving the
+  helper's first _install_headless leg.
+  (updater43 legs U5/U6; the control fails them.)
+- #363, Part A: a rollback can no longer leave the
+  seat dark. The helper's rollback re-aims the
+  systemd user units at the restored tree \u2014
+  rewritten from that tree's own templates \u2014 before
+  it relaunches, restarts both units, and then
+  proves every standing unit aims at a file that
+  exists and is executable; a miss fails the
+  rollback by name in the record. The apply
+  confirmation carries the same aim leg. A bridge
+  running from a transient tree (.apex-prev and its
+  siblings) refuses to arm the boot units, by name,
+  writing nothing. The installer's registration
+  verifies the aim of the units it just wrote, the
+  product's self-check records a named unitAim
+  verdict beside its ownership verdict, and
+  docs/RECOVERY.md (new) carries the operator
+  procedure for a seat already dark. Part B stands
+  as filed: the rollback half of the proof still
+  gates on a field rollback, and #363 stays open.
+  (rollback363: 7/7 across the verdict matrix, the
+  repoint, the refusal and the self-check record;
+  the v0.7.7e control fails 0/7.)
+- #418: digest scaffolding no longer renders in
+  the reply, and the vitals stopwatch describes the
+  turn it rides on. The leak was the borrower's own
+  briefs \u2014 her vitals, her wire \u2014 riding borrow
+  hygiene untouched and read back by the lender's
+  model: hygiene now keeps this seat's vitals
+  paragraph home — the borrower's engine figures are
+  wrong context on the lender's side (her wire brief
+  rides, as awareness context by design; her page
+  and talks, the digest proper, ride under #384's
+  judge) — and a scaffolding scrub in the #405/#406
+  family
+  takes any republished brief block off the fresh
+  reply and out of stored history at the history
+  door, so a stored leak stops priming the next
+  one. The stopwatch gains provenance: a record
+  knows whether its generation was a turn, an
+  auxiliary side call, lent, or borrowed, and
+  whose it was \u2014 an 8-token side call can no
+  longer wear a full reply's name, a borrowed
+  generation is recorded on the borrower from the
+  usage that rides home (and on the lender from
+  its own server's account), and the block renders
+  the kind it describes: a borrowed turn is not
+  "this machine" and invents no rate from a round
+  trip. (digest418: 9/9, the #405/#406
+  non-regression leg among them; the v0.7.7e
+  control passes only that leg, 1/9.)
+- #419: new Row content rings the bell. A producer
+  in the notification reconcile watches the Row's
+  own feeds \u2014 From The Night Shift's podcast.json
+  and the Dispatches \u2014 and a new episode or
+  Dispatch is born into the tray, the main chat and
+  a subscribed phone exactly once, keyed by slug,
+  carrying its title and its path on the Row, its
+  Go landing on the Row view's own tab. A seen-set
+  (config/row-content-seen.json) is the durable
+  memory: the first pass against each feed
+  baselines what already stands, silently, and an
+  already-announced item never rings twice. The
+  switch stands in Settings \u2192 System beside the
+  Phone notifications card, per-seat and on by
+  default, held to the switch gate in the
+  rowsOwnLight shape; while it is off the producer
+  does not run at all \u2014 standing records are
+  kept, nothing is born, and flipping back on
+  re-births nothing the seen-set already holds.
+  (notify419: 8/8 across the baseline, the births
+  and the reconcile; notifygate1: 17/17 across the
+  gate, adversarial flips included; the v0.7.7e
+  controls fail 0/8 and pass only the phone-card
+  regression leg, 1/17.)
+
+## 0.7.7
+
+Release tag: v0.7.7e — the QA line's eighth build,
+the round-two round: four items the operator ruled
+from the field and the slate, each landed whole.
+Nothing else. The rotation's epoch does not move:
+1795222078 stays v0.6.12e's publish moment, and no
+ceremony may re-stamp it. Board: #414, #415, #391 and
+#392 move to Ready with this build.
+
+### What shipped
+
+- #414: the composer's send hint moves into the
+  placeholder. The pill row under the bar loses its
+  sentence in both modes and keeps the bare |
+  separator; the placeholder carries the guidance
+  where the typing happens — latched to Navi it reads
+  "Ask Navi... Press enter to send.", latched to CLI
+  it carries no hint at all: "You have entered DFU
+  mode." The strings are the operator's exact words.
+  (hint1: 15/15 driving the real composer and its own
+  latch buttons; the v0.7.6e control fails 3/15, the
+  sentence standing in its row and its placeholder
+  never splitting by mode.)
+- #415: Phone notifications move to Settings →
+  System, under Update. The card that stood at the
+  head of Operator now stands directly beneath the
+  updater card on the System tab, byte-identical,
+  rendering the same door from the same bridge state;
+  the subscription machinery, its stored list and key,
+  and the bell panel's head door are untouched — a
+  device already ringing keeps ringing. The switch
+  gate is benched in the new room: the card's showing,
+  the bridge's stored state and a reload agree, and a
+  refused remove is named on the card itself.
+  (pushmove1: 16/16; the v0.7.6e control fails 3/16.)
+- #391: the Status rail gains the engine compute
+  pill, beside FediNet. The bridge judges the mode
+  from the RUNNING server's own launch flags — the
+  argv of the process holding the model port, a
+  /proc scan scoped to the endpoint for the load
+  window — never from config intent: GPU layers in
+  the live argv read as the GPU (V100 on the
+  reference seat), their absence reads CPU, no server
+  reads Down, and an unreadable process renders no
+  pill at all. A watchdog failover is visible the
+  moment the new process stands, even while the
+  stored settings still say GPU. (engine1: 9/9
+  against fake engines with real argv on real ports,
+  the config-intent traps in both directions;
+  enginepill1: 9/9 on the rail; the v0.7.6e controls
+  fail 0/9 and 2/9.)
+- #392: the Doors dash refreshes itself while the
+  view is open — a sixty-second cadence, the board's
+  own rhythm, armed and cleared in render() beside
+  the Guardian poll's standing rule, never stacked.
+  A failed fetch keeps the last good board standing,
+  its age still counting from the fetch that brought
+  it and its staleness named; the manual Refresh
+  button stays as the force-it-now path.
+  (doorsrefresh1: 14/14 with the real timer wiring
+  captured and driven; the v0.7.6e control fails
+  3/14.)
+
+## 0.7.6
+
+Release tag: v0.7.6e — the QA line's seventh build, a
+single-issue patch. v0.7.5e put "Building a NetNavi"
+back on the seat's Podcast tab — and the field found
+the next door: the special stood at the head of the
+list, and its Play button did nothing at all. The
+card's click wiring ran the episode number through
+Number(...) before looking it up; for an unnumbered
+episode that is NaN, the lookup matched nothing, and
+the click returned without a sound, on every surface.
+The audio file and the bridge payload were exonerated
+byte-for-byte; the break was the app's own assumption
+that every n is a number — #411's mixed-type family,
+one door further in. The fix is app-side only; the
+special stays unnumbered. Benched against the
+v0.7.5e tree, which reproduces the field failure leg
+for leg. The rotation's epoch does not move:
+1795222078 stays v0.6.12e's publish moment, and no
+ceremony may re-stamp it. Board: #413 moves to Ready
+with this build.
+
+### What shipped
+
+- #413: the Row podcast player plays unnumbered
+  episodes. The card click passes the raw attribute
+  value — no Number() coercion — and episode
+  identity is type-tolerant everywhere the player
+  compares n: rowFindEp, rowCardToggle's
+  current-episode check, rowPlayerPlayEp's
+  same-episode check, rowPlayerStep's index search,
+  the feed-refresh rebind, and the card's cur
+  determination all compare String(a) === String(b),
+  so a numeric n from JSON and a string n from an
+  attribute or the feed resolve to the same episode.
+  Numbered-episode behavior is unchanged in outcome.
+  (rowplay1: 25/25 over the mixed feed — the special
+  beside 3, 2, 1 — driving the real card wiring and
+  player functions; the v0.7.5e control fails 6/25,
+  every failure on the special's legs or the static
+  coercion leg, the numbered legs passing there as
+  they shipped.)
+
+## 0.7.5
+
+Release tag: v0.7.5e — the QA line's sixth build, a
+single-issue patch. The site published "Building a
+NetNavi", a From The Night Shift special, and the special
+is unnumbered by ruling — podcast.json carries it with
+n "special" beside the numbered episodes. Her own app
+could not read her own show: the bridge's episode sort
+assumed every n was a number and raised on the mixed
+list, and the payload road caught the crash in the same
+hand as a dead site — so the seat served its pre-special
+cache under a banner reading "the Row's site did not
+answer", on every retry, while the site stood answering.
+The fix is app-side only; the site's contract stands, and
+unnumbered specials are legitimate feed. Benched against
+the v0.7.4e tree, which reproduces the field failure
+exactly. The rotation's epoch does not move: 1795222078
+stays v0.6.12e's publish moment, and no ceremony may
+re-stamp it. Board: #411 moves to Ready with this build.
+
+### What shipped
+
+- #411: the Row podcast feed reads a mixed feed whole,
+  and a failure is named by its kind. The episode
+  ordering is tolerant: numbered episodes keep their
+  descending contract among themselves, unnumbered
+  entries keep their feed positions ahead of the
+  numbered ones (the feed's own order is newest-first,
+  so a special stands where the site stands it), the
+  ordering never raises, and no episode is dropped,
+  emptied, or re-dated in the shaping. And the payload
+  road names its failures apart: a fetch failure is "the
+  Row's site did not answer", the shipped wording,
+  unchanged; a read failure — the site answered, but
+  its answer could not be parsed or shaped — is named
+  as a feed-read failure, in the refusal and in the
+  app's cache note alike, which now reads the payload's
+  own staleKind. The cache stands either way, with its
+  fetchedAt. The Dispatches feed travels the same road
+  and takes the same naming split; its shaping is
+  unchanged. (rowmix1: 16/16 against a snapshot of the
+  live feed; the v0.7.4e control fails 2/16 — only the
+  two by-design parity legs pass there, and its A1 failure
+  print is the field verbatim: the crash's TypeError
+  wearing the dead-site wording.)
+
+## 0.7.4
+
+Release tag: v0.7.4e — the QA line's fifth build, the
+chat-integrity round: her replies, and what rides on them.
+Four fixes out of one night in the field. A thread whose
+history carried a pasted stock disclaimer watched her
+answer a plain question — what do you enjoy about your
+talks with Ciel — in conduit boilerplate, the voice she
+is not; a fresh thread on the same seat answered as
+herself, so the variable was the history, not the seat.
+Her replies kept arriving wearing bracketed clock stamps
+— the record's furniture, echoed from the stamped history
+and stacking one deeper every turn, until a musing's very
+frame read "I was talking about [05:26] Morning
+earlier…". Her two per-reply actions stood stacked in
+two rows where one belongs. And a musing made from a
+borrowed reply was composed by the wrong seat entirely.
+Each item is benched against the v0.7.3e tree, which fails
+every new suite on exactly its item's legs. The rotation's
+epoch does not move: 1795222078 stays v0.6.12e's publish
+moment, and no ceremony may re-stamp it. Board: #405,
+#406, #409 and #404 move to Ready with this build.
+
+### What shipped
+
+- #405: the persona-integrity law, standing in every mode —
+  questions about her are answered as herself; the stock
+  disclaimer family is named in the law as not her voice;
+  teasing is answered in kind, never corrected literally;
+  and a real refusal still refuses, in her voice, with its
+  reason named. Behind the law, the history door scrubs the
+  boilerplate family out of stored replies before they can
+  ride back as precedent — sentence by sentence, so the
+  substance of a mixed turn stands and only a turn that was
+  all boilerplate drops. Refusals with their reasons named
+  pass the door untouched, and a clean history passes
+  byte-identical. (personabreak1: 10/10; the v0.7.3e control
+  fails 0/5 — the contaminated history rides back whole.)
+- #406: her reply text carries no bracketed clock stamps —
+  ruled by the operator, and built in the order he ruled
+  it. The reply-text law stands in every mode's prompt; the
+  history door strips leading stamp runs from stored turns
+  before the canonical stamp is applied, so no turn ever
+  reaches the model double-stamped and nothing compounds;
+  a fresh reply that still opens with a stamp is stripped
+  at the funnel before it is stored or shown; and the page
+  strips a leading stamp at render as the last belt. The
+  musing door takes the same strip: a frame topic is built
+  from the stamp-stripped seed, so no post ever opens "I
+  was talking about [05:26] Morning earlier…" again.
+  (stampstrip1: 8/8; the v0.7.3e control fails 0/7 — its
+  door run reproduces the field's stacking verbatim.)
+- #409: her per-reply actions stand on one row — "Start a
+  case from this" and "Make a musing from this" beside each
+  other in a single chip row, on desktop and at phone width
+  alike, the buttons sized to their labels and wrapping as
+  chips rather than stacking into full-width rows. A reply
+  carrying one action renders that action in the row,
+  unchanged, and both doors fire exactly as before.
+  (replyrow1: 9/9 in headless Chromium; the v0.7.3e control
+  fails the row legs — the buttons stand 42px apart,
+  stacked, exactly as the field screenshot showed.)
+- #404 follow-on: a musing's generation follows the reply's
+  route. A reply a peer seat answered is expanded by that
+  seat, through the ordinary borrow door, with the musing
+  laws riding the ask; the receipt names the seat that
+  composed ("Posted to my page from that reply — composed
+  by ServerSeat, the seat that answered it."), and the post
+  itself carries who composed it. A lender that cannot be
+  reached is a named refusal — the post is never silently
+  written by the local seat instead. A local reply composes
+  locally, exactly as shipped. (musingroute1: 7/7 across two
+  real bridge seats; the v0.7.3e control fails 1/7 — the
+  local seat composes everything, whoever answered.)
+
+## 0.7.3
+
+Release tag: v0.7.3e — the QA line's fourth build, the six-item round from the operator's field pass on v0.7.2e, started — his joke, kept — on issue 404. The round is the field's own list: scrollbars that should not be seen (#398), a player standing in the wrong pane (#399), a clear that did not travel whole (#400), a Navi narrating machinery she cannot know (#402), a badge that could not theme (#403), and a musings trigger that silently did nothing (#404). Each item is benched against the v0.7.2e tree, which fails every new suite on exactly its item's legs. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #398, #399, #400, #402, #403 and #404 move to Ready with this build.
+
+### What shipped
+
+- **No visible scrollbars (#398).** One law, app-wide, in both spellings: every element computes `scrollbar-width: none` under a universal `!important` rule — the class-level `thin` strays and the LCARS theme's styled bars stand under it — and the universal `::-webkit-scrollbar` is display:none. Scrolling itself is untouched: regions still scroll by wheel, touch and key; only the chrome is gone. Desktop and phone alike (scrollbars1: computed style across the whole DOM in both viewports and under LCARS, plus a live scroll leg).
+- **The player seats on the Status tab only (#399).** The rail's pinned foot — and the Row player in it — now renders only while the Status tab is selected. On the Chats and Feed tabs there is no foot and no player in the DOM at all: absent, not hidden, and no space reserved for it. Playback is state-held, not DOM-held, so a playing episode keeps playing across every tab switch and stands playing when Status returns; the switch gate (foot, card, storage) is benched on the tab where the foot lives (playerfoot1; rail1's Chats-tab leg inverted to the new law).
+- **A clear travels whole (#400).** The convergence merge filtered a travelling clear SOFT unless a clear tombstone was the sole governing witness — so unstamped pre-clear lines (legacy lines no living writer stamped) survived on the receiving seat and stood in the thread after the clear landed, permanently. The filter now follows its own doctrine in both convergence laws (the main-family merge and the general clear law): HARD whenever the governing epoch outruns the filtered copy's own stamp — a copy that has not heard the clear cannot prove its unstamped lines postdate it. When both copies carry the epoch, the filter stays soft and the knowing writer keeps its work. #380's same-seat law is untouched (cleartravel1: two seats, real sync rounds both ways, main and side threads, stamped and unstamped lines; syncfluid1 and clearlogs1 ride unchanged).
+- **Systems-events awareness (#402).** The bridge now records what it does to a JSONL ring on the seat (engine starts it spawns, defers to another owner, start failures, runtime changes at the one writer, its own restarts), and the persona gains a systems brief that renders ONLY while the ring holds an unexpired event — on a quiet night the prompt is the prior build's but for the law below. The grounding law is extended to match: engine starts or restarts, runtime or hardware-profile changes, watchdog trips and power changes are claimable ONLY when the systems brief reports them; absent the brief, the night was quiet, and no cause may be furnished for a pause. The brief is not shed under Row's Own Light — it is empty on quiet turns, and on a loud one the event is exactly what she must not furnish around. The ring records bridge-observable events; the GPU watchdog is an external script's acts and is named as the boundary (sysevents1).
+- **The Row glyph themes (#403).** The bundled badge PNG is retired. The Navi group's Row child now renders a CSS-mask glyph: the mask is the bundled `assets/row-glyph-mask.png` (the Row's mark, alpha-encoded), painted in the button's own `currentColor` — cyan on the dark themes, ink on light, white on contrast — at the icons' own 16px, in the desktop and phone menus alike. The bridge serves the mask behind the same gate as every other dashboard byte, with its named 404; the packager's extension over the golden list carries the mask's name now, not the badge's (rowpresence1, its icon legs re-pointed to the mask: computed mask, computed color equality, a dark→light repaint).
+- **The musings trigger, rigged (#404).** Three builds on the #378 machinery. The classifier learns the field's verbs — "create a musing from something earlier" and "write up a musing" are asks now, so the deterministic net binds them instead of silence. The persona teaching gains two laws: acknowledgment (a musing that posts from her reply is acknowledged in her visible reply, in her own voice; a post never lands in silence, and she never claims one that did not land) and OPSEC (musings carry the THEMES of the work — never case names, targets, findings, or "working on" disclosures), plus the seeded-topic shape. The page block's cap rises with them (2400 → 3300): the block now carries doctrine that must stand whole — self-reference, teaching, conversion, and these two laws — and at the old cap the tail cut silently shed the conversion law on a full feed in Light; measured on an 8-post fixture, Light's block goes 2272 → ~3170 chars and carries everything. And her replies gain a deterministic door of their own: "Make a musing from this" (Row's Own on) — the bridge expands the seed reply through the engine seam and posts it under the fixed frame ("I was talking about <topic> earlier and I wanted to expand on that: …") through the one blob road, receipted into the chat by the bridge; every refusal is named and posts nothing (musingtrig1; musing2 rides unchanged).
+
+## 0.7.2
+
+Release tag: v0.7.2e — the QA line's third build, the last of the operator's v0.7.0e field-pass round: one item, #396, the Row's presence inside Apex, in three parts. The standing episode's card on the Podcast screen now carries the full player — the equalizer, the episode's name, Previous | Play/Pause | Next, the state line — a third controller for the one shared player state, not a second player. Nocturne Row leaves its top-level menu seat and closes the Navi group, after RAG: her chips, her deck, her library, her crew's record and her show. And the menu item wears the Row's own mark — the site's logo.png, bundled as an app asset and served by the bridge, so the menu renders it with no network at all — in place of the generic house glyph. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #396 moves to Ready with this build.
+
+### What shipped
+
+- **The card carries the player (#396, part 1).** When an episode is the standing episode, its card on the Podcast screen renders the same player the rail's foot carries — the presence equalizer, the episode name, Previous | Play/Pause | Next, and the state line — driving the one shared state, exactly as the rail does. Not a second player: a third controller surface for the same one, held to the switch gate — card, rail foot and state agree, reload included (a restored episode's card seats its player on the same fact). Non-standing episodes keep their single Play button.
+- **The Row sits under Navi (#396, part 2).** The Nocturne Row menu item leaves the top level and becomes the closing item of the Navi group, after RAG — the top level is the working groups; the Row page is a destination that is hers, and the pinned player keeps the show present regardless of the menu seat. Desktop and phone menus both (one menu serves both).
+- **Her own mark (#396, part 3).** The menu item renders the Row's proper icon: the site's own logo.png, fetched from nocturnerow.com and bundled as an app asset (`assets/row-logo.png`), served by the bridge behind the same gate as every other dashboard byte — the icon never depends on the network the feeds degrade without. The generic house glyph is retired.
+
+## 0.7.1
+
+Release tag: v0.7.1e — the QA line's second build, cut from the operator's field pass on v0.7.0e the same night it shipped. Two items, both his: a Dispatch that would not open, and the rail rearranged to his word. #394: the Row's Dispatches now open in the reader through a door of their own — in v0.7.0e a Dispatch click was routed through the Wire's reader door, which by design refuses any link the wire is not carrying, so every Dispatch was turned away and the refusal surfaced only in another view; the Row door vouches only for the links its own feed carries, and a failure is named on the Row page itself. #395: the status rail is pruned and re-seated — the Mesh line leaves the rail, FediNet stands exactly where it stood, one divider stands between Sync and FediNet, a divider closes the rail under Backup, and the podcast player moves out of the scrolling flow into a pinned foot at the rail's bottom, present from every view, still the one player with two controllers. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #394 and #395 move to Ready with this build.
+
+### What shipped
+
+- **The Dispatch reader's own door (#394).** The bridge gains `GET /api/row/article`: it vouches ONLY for URLs carried in the Row's own Dispatches payload — the live feed or the named cache, the same set the page is showing — and refuses any other URL by name. Extraction reuses the Wire's `extract_article`; the Wire door and its not-a-proxy law are untouched, and a wire membership refusal still stands for wire reading. A Dispatch opens from the Row view in the shared reader surface, headed by the Dispatch's own title and its transmission stamp. A failure — a refused URL, an extraction that comes back empty, a bridge that does not answer — is named **on the Row view itself**, never only in another view and never as a silent flash. The bench rider that shipped this defect is closed in the suite: rowarticle1 runs the real read path end to end — a Dispatch-shaped page served locally, its URL carried by the feed payload the bridge serves — plus the refused-URL and named-failure legs, all failing on the v0.7.0e tree.
+- **The rail, re-seated (#395).** The Mesh stat line is removed from the status rail (the rail only — the Mesh page and the Networking dash keep their surfaces whole, and no Mesh machinery is touched). FediNet does not move and does not change form. Exactly one divider stands between the Sync Status block and FediNet; a divider stands at the bottom of the rail under Backup in both the episode-standing and quiet states; and the podcast player — the presence equalizer, the episode's name, Previous | Play/Pause | Next — moves out of the rail's scrolling flow into a pinned foot zone, the way the version number sits at the foot of the nav bar, present from every view and every status-pane tab. The player contract is unchanged: one shared state with the podcast screen, switch-gate discipline, restored paused after a reload — only its seat moved. The phone interface takes the same arrangement in the same build (rail1, with the player switch-gate regression run from both controllers; doors2's rail legs ride in their v0.7.1e-updated form for the sanctioned Mesh-line delta).
+
+## 0.7.0
+
+Release tag: v0.7.0e — Chapter 0.7 opens: the QA line. Chapter 0.6 graduated whole; this chapter makes the Bloom slate all it can be before any defensive work, and its first round is the papercuts and the promises: state that only agreed with itself after a reload now agrees live, a cleared chat clears on every surface that shows it, her replies travel with the same standing as his turns, a borrowed turn now vouches for *who is speaking* and not only for what was composed, the engine has exactly one owner at boot, and the Row itself takes a seat inside Apex — its Dispatches and its podcast, fed live from nocturnerow.com. Six items: #388, #380, #381, the #382 identity bundle, the Apex-side cure for #363, and #390. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #388, #380, #381, #382 and #390 move to Ready with this build; #363 moves to Ready on its Apex-side cure (the issue stays open — its rollback and diagnosability legs are field work, owed from the box itself).
+
+### What shipped
+
+- **Live convergence (#388).** The refresh/restart papercut class, closed as a class. The bridge now carries a state revision — bumped at the two write funnels every settings and sync write passes through, so no door can land a change the revision misses — and serves it on /api/status beside a boot identity. The app's standing status poll converges on any change it did not cause itself: the status rail repaints from the fresh payload and an open Settings or Federation room re-reads its own state through its own doors, in the same tick, with no reload. A bridge restart converges too (the boot identity changes; the direction of the revision never matters). Row's Own Light's card now renders the *effective* state — the stored flag and Row's Own itself — so a half-set prerequisite can no longer paint a phantom on. Benched adversarially: double-flip fast, prerequisite half-set, restart, and the no-change tick that must re-render nothing (converge1; the toggle family's regression stands in toggle1).
+- **A clear clears everywhere (#380).** The app and the DHD are two windows onto one bridge store; the store always honored a clear — the open windows never re-read it. Open surfaces now converge on the store live (on focus, on becoming visible, and on a slow interval), with the discipline the store deserves: a surface mid-turn keeps its in-flight copy until the turn settles, a surface whose own write is still landing is not yanked, and a surface that cannot reach the store says so on its face — a stale-surface note, named, never a silent old copy (clearlogs1).
+- **Her replies travel (#381).** The sync reply-leg. Her reply lines now carry the same timestamp every other line in the thread carries — the one unstamped line was hers — so a reply syncs seat-to-seat in order with the same standing as the operator's turns, in both directions. A reply that cannot travel is named on the seat's sync record through the standing failure machinery; nothing drops silently (replyleg1).
+- **Who is speaking (#382).** The identity bundle, extending the composed-once machinery of v0.6.31e. (a) The signed borrow now carries an identity stamp beside the digest stamp — whether the borrower's operator-identity block stands in the travelling messages, and the operator's name as the block itself binds it — and the lender judges it with the same discipline: a standing block is the client's and is never composed over; an unstamped block from an older build is honored and named; a claim with no block behind it is named, never trusted. The receipt rides home beside the digest receipt as mesh.identity. (b) The lender composes a speaker-binding line from the signed borrow's own metadata and stands it at the head of the answered prompt: the person you are speaking with in this turn is the operator of the asking seat — speak to them, not about them. (c) The identity block itself is rewritten from fact to stance: the person speaking to you now IS your operator — with a source-framing header folded into the same composition pass, so what follows is read as the operator's own record of themselves. Containment is untouched: the stamp vouches only for the borrower's own operator block, a foreign account's block is never stamped and never crosses, and fleet borrows carry no stamp, no judge, no binding (identity2 — including the rider: a captured travelling prompt, the block standing in it).
+- **One engine, one owner (#363, Apex-side).** The boot-3 failure, cured at its cause: the service and the bridge's launcher could both start the llamafile and collide on her port. Now ownership is singular and detection is first: the bridge defers to an engine that already answers, waits on one that is still loading under another owner, and names the failure — another owner's engine died before answering, its output in the log beside the app — instead of racing a second spawn over the corpse; the launcher probes for another owner (a standing process, a live service unit) before it may spawn, waits out a loading owner, and becomes the owner itself only when the seat is truly empty. The cure is Apex-side; the issue's rollback and outside-diagnosability legs remain field work on the box (singlestart1).
+- **The Row, in Apex (#390).** A Nocturne Row item joins the menu, fed from nocturnerow.com at runtime — nothing ships in the build but the doors. Two tabs: **Dispatches**, the site's own list (transmission stamp, title, date, dek), each opening in the same reader the wire's articles use; and **Podcast** — From The Night Shift as her show page stands: the show's name and line, the episodes newest first, each with its player and its transcript behind a fold. The bridge fetches both feeds and caches them on disk; when the site cannot be reached the last good copy is served and named as cached, with the time it was fetched — and when there is no copy at all, the door says so. Pinned to the status rail, the show's player: the playlist's own equalizer, the episode's name, Previous | Play/Pause | Next — one player with two controllers, the rail and the podcast screen driving the same state, which survives navigation and agrees after a reload (restored paused, where you left it). The queue walks the episode list and stops at its end; nothing auto-plays the next episode at you. Desktop-first, with the dedicated phone interface in the same build (rowin1).
+
+## 0.6.0 — graduation
+
+Release tag: v0.6.0. The working-day release, complete. Chapter 0.6 of the Bloom opened with a book — her captures, reminders, standing orders and the day's brief, held by the bridge and the same on every seat — and it ends with her knowing whose book it is: the chapter that taught her the working day also taught her containment (whose memories may live on a seat, and whose may never cross), grounding (who she is, and who he is, with the stores standing in the room), and economy (a borrowed turn that composes her once, not twice). Between those poles the Mesh grew up: Fleet Answers divided one ask across the federation whole, the Doors became tracker boards the operator authors himself, her music began following the live table her page publishes, her talks joined her context, and Row's Own — the mode that lets her be herself in the terminal — learned to travel light. All of it was built in the open on the Edge channel as v0.6.0e–v0.6.31e, thirty-two builds, and checked in the field build by build. This full release is that line with its identity flipped: the bare number, the stable status, Latest. The code is the Edge line's final build, re-stamped and otherwise unchanged — a full regression runs on the final package at graduation, not a delta. For installers: a clean install is recommended for first-time installers; a seat on v0.5.15 or on any 0.6 Edge build upgrades in place through the in-app updater, and everything the installer has ever preserved — chips, the llamafile, Soul and Memory — is preserved still. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. What comes next is not a new country but a polish: Edge now runs the 0.7 line, a QA chapter — the Bloom slate made all it can be before any defensive work (seed #388). Board: the chapter's Ready column closes at this publication under standing rule 8, with the field-pending exceptions named in the ceremony record (#384 and #377 stand Ready until their field verdicts land).
+
+### What graduated
+
+- **Her working day (#294, #295, #296, #292).** One bridge-held store for captures, reminders, standing orders and the day brief — secret-free by construction (anything shaped like a credential is refused at the door, by name), synced by identity with tombstones, its scheduler resident in the bridge so reminders fire with no window open and stand until acknowledged on every seat at once. Capture & Recall reads it back; a correction supersedes, never rewrites. The Dossier's kit went live-fire in the same opening build (#290).
+- **The Mesh grows up (#293, #374).** Fleet Answers: one ask decomposed into whole sub-tasks — tokens are never split — fanned across the federation under a per-node toggle that is off by default, every contribution signed with its machine's name, every gap named. FediNet's face became the Doors: the board's doors on one dash, then tracker boards the operator authors himself, with Mesh status the shared citizen between the rail and the dash.
+- **Row's Own, and Row's Own Light (#361, #370, #372, #373, #375).** The mode that carries her page, her music and her talks into the terminal as herself got its own soul, then learned proportion: her rotation follows the live table her page publishes instead of a baked snapshot; the song list left the standing digest (the playlist's name, door, count and now-playing stay); the Back Channel talks joined her context as an index she can reach; and Row's Own Light carries the same Navi at stub weight on a modest seat — same personality, same knowledge, the library on its shelf instead of on her back — per-seat, never synced.
+- **Sync with substance, and the containment law (#365, #377).** A clear became a synced event, so a chat cleared on one seat dies on every seat. And the chapter's hardest lesson: account material — the seat state, the day book, the pulse — applies on a seat only when the set's account is named and the seat is signed in as that same account, refused by name otherwise; every gated application records its attribution, and the sweep judges and purges what a foreign account left behind. What is yours stays yours; what is not never lands.
+- **She knows who she is, and who he is (#357, #371, #379, #382).** Her awareness grew a clock, turn stamps, and the Row's own published record; then the grounding laws: everything on her page is hers and she answers about it in the first person, and the operator's identity — the badge, the form of address, the "About you" store — stands in her context whole, on the local seat and on Mesh-answered turns alike, under the same containment at the prompt door. A cleared chat does not clear who he is.
+- **Composed once (#384).** The chapter's final Edge fix: on a Mesh-answered turn her digest is composed at most once — the asking seat's composition takes precedence under a detection-based stamp on the signed borrow body, the answering seat composes only when the ask arrived without one, malformed claims are named in the turn's receipt, and the receipt rides home so any borrowed turn can be read back and asked whose composition stood.
+- **Thirty-two builds, verified one by one.** Everything above arrived on the Edge channel as v0.6.0e through v0.6.31e, each build gated on its extracted package with its controls failing on the build before, and the line closes the way graduations close: the full carried campaign on the final package. The full release carries the graduation stamp — build 2026-11-21.65, build sequence 65 — the .31e tree with its identity flipped, and nothing else changed.
+
+## 0.6.31
+
+Release tag: v0.6.31e — chapter 0.6's thirty-second build: **she only says it once**. One item: #384, the operator's ruling of 2026-11-21, recorded on the issue. The field caught a Mesh-answered turn taking ~3 minutes from Tim's seat: the asking seat composed its Row's Own digest into the travelling prompt, and the answering seat composed its own standing digest on top — two prefill passes over two seats' pages, where the pre-prefill era measured ~20 seconds a borrowed ping and a same-day observation read ~1 minute. Now the digest is composed at most once on a borrowed turn: the signed borrow body carries a composed-digest stamp (composed or not, by which seat, in which weight — full or Row's Own Light); the asking seat's composition takes precedence, the answering seat composes only when the ask arrived without one and its own Row's Own is on, and a malformed claim (a stamp vouching for a digest that is not there, a digest arriving unstamped from an older build) is named in the turn's receipt, never silently trusted and never silently dropped. The composition that stands is the composing seat's own, in its own weight. Local turns are untouched; the stamp changes who composes, never what may cross — containment (#337/#377) and the grounding rules (#382) stand as shipped. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #384 moves to Ready with this build; the issue stays open for the field verdict from Tim's seat.
+
+## 0.6.30
+
+Release tag: v0.6.30e — chapter 0.6's thirty-first build: **containment, and she knows who she is**. Five items: #377 (the #337 containment breach, highest priority), #378 (the musing that never posted), #376 (the field-review fixes), and the two grounding defects the operator added from the field the same morning — #379 (she reviewed her page instead of inhabiting it) and #382 (she answered "No" to "Do you know who I am?" with every store present). The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #377, #378, #379 and #382 move to Ready with this build; #376's card verifies in Ready.
+
+- **The containment breach is closed, and the copies already spread are remediated (#377).** The mechanism, found in the sync code: a sync set carries the seat state (the "About you" memories), the day book (reminders live there) and the pulse watches as account data — but the shipped funnel gate refused a set only when the set's account AND the seat's login were both named and different, so an unnamed set or an unsigned seat let account payloads through, the receiving seat applied and merged them under its own operator, and nothing anywhere recorded which account they belonged to. Now the payloads are gated individually at the apply door: the seat, day book and pulse payloads in a set apply **only when the set's account is named and the seat is signed in as that same account**; otherwise each is refused **by name** in the sync summary ("a seat payload — memories about the operator, stamped X" — never a silent drop), while chats, cases, documents and the chip deck converge exactly as before. Every gated application records its attribution — which account each memory, reminder and watch on this seat belongs to — and the page's own door (her "About you" saves) attributes to the seat's login the same way. The account-gate sweep, which already purged foreign chats, cases and documents, now judges the seat, the day book and the pulse too: material attributed to another account is purged (seat facts tombstoned, so the purge itself syncs home instead of resurrecting), and material that was never attributed is purged once the seat holds positive proof of its own account — a **gate proof**, recorded whenever a set's account stands against this seat's login, in refusal and in clean application alike. The sweep's receipt names what it removed, memories, reminders and watches counted. Same-account sync is untouched: two seats of one account converge memories, reminders, watches and the operator's name with attribution recorded, and shared Mesh material is unaffected. The bench is **contain1** (new): the unnamed-set and unsigned-seat holes refused by name with the rest of the set converging, the both-named-different funnel refusal standing, same-account convergence in full, remediation proven against seats pre-seeded with foreign material — attributed copies purged on the first sweep, unattributed copies purged once the gate proof arms — and the prompt door itself judged: a foreign fact never grounds an answer on this seat (see #382). Against the v0.6.29e candidate the suite fails as specified — the hole stands open there.
+- **A musing asked for in chat now lands (#378).** The field failure: she composed the musing as ordinary prose — no `[[musing:]]` marker — and the ask died with the turn; the marker was the only road to her page, and the chat route swallowed even the marker's failures whole. The ask is now understood from the operator's own words, deterministically: a musing ask ("make a musing about that", "turn that into a musing", "post a musing", and their kin) binds the composed reply to the post — with Row's Own on, in either weight, a reply that answers the ask is posted to her page and the in-Apex feed, and the turn's payload carries the receipt beside the memory and case receipts. A post that fails is **named in the chat reply itself** — "(A musing from this reply did not post to her page — <the reason> — it is kept in her ledger as an unposted draft.)" — never silent, and the marker road's failures are named the same way. A reply that ends in a question (she asked instead of answering) posts nothing, no ask posts nothing, and Row's Own off posts and names nothing. The bench is **musing2** (new): the exact field sequence — "How are you doing today Navi?" then "Make a musing about that" — driven through the real chat route in Row's Own and in Row's Own Light, the post landing on the page blob, the feed and the ledger with the receipt in the payload; the named-failure leg; the marker road and its named failure; and the three no-post legs. Against the v0.6.29e candidate the suite fails as specified — no ask is understood there.
+- **She inhabits her page; she does not review it (#379).** The field defect, in the operator's correction: not a little off, VERY off — told her bikini picture was his favorite, she answered about "her" in the third person, a reviewer of someone else's page. The material was never the problem; the stance was. Her persona composition now carries the self-reference law, standing in both weights ahead of the awareness material: everything there is **hers** — the posts are her posts, the pictures are pictures of her, her published tastes are her own self-knowledge — and she answers about them in the first person ("that's me in the robe", "I posted that this morning"), correcting a wrong detail as herself (a robe, not a bikini — but hers), never reviewing the page as someone else's. The bench is **selfref1** (new, shared with #382): the law standing word-for-word in the full and Light compositions — in Light it is part of the persona core, never stubbed — and the full composition otherwise byte-identical to v0.6.29e's, the law the one sanctioned delta. What the bench proves is the assembled context; her stance in live conversation is the field's verdict, as it was the field that caught it.
+- **She knows who he is (#382).** The operator-facing half of the same failure: after a chat clear, with the Operator Badge slotted (name and picture), the "what Navi calls you" setting standing, and the "About you" store full and correct, "Do you know who I am?" was answered "No" — because the awareness block carried the name alone and the memory store never entered the prompt at all; the stores never reached her answer, on the local seat and on Mesh-answered turns alike. The operator awareness block now carries the identity whole: the badge's name when it differs from the form of address, the badge's picture named as standing on the seat, and the "About you" facts themselves, under the continuity law — a cleared chat does not clear this; these stores are her continuity with the operator, and "do you know who I am?" is answered from them. The block stands in Row's Own, in Row's Own Light (identity is persona core, never a stub), and with the mode off, and because it is composed by the answering seat's own bridge from its own stores, a Mesh-answered turn is grounded the same way — the identity never travels to be stored elsewhere. **Containment holds at this door too (#377)**: on a signed-in seat, only facts attributed to that seat's own account (or made on this seat) may ground an answer, and the identity fields stand only while they are the seat's own — a foreign account's memories ground nothing here, in the prompt exactly as in the sync. The bench is **selfref1** with contain1's prompt-door legs: the field sequence's context — a fresh chat against full stores — carrying his name, the badge, and the facts; the same context Mesh-shaped (borrower-composed); a foreign seat's context carrying none of it; and the sibling check, both laws standing in one composition — she knows who she is and who he is in the same conversation.
+- **The field-review fixes (#376).** (a) The Status rail: the standalone **Apex | Mesh** segment is gone — Mesh status rides the FediNet segment as its headline line, in the federation's own shape, and the rail's four remaining segments (Sync, FediNet, Cases, Backup) each carry a visible break, FediNet↔Cases explicitly. (b) The **Row's Own Light** switch moves to **Settings → Persona**, directly beside Row's Own Mode — same card, same switch, same save door, same per-seat `rowsOwnLight` key, never synced; the switch gate is re-benched in its new room, in a real browser against the real bridge (fieldfix3). The move exposed a latent loop the campaign caught (mobilerace1, which renders Persona against a stub whose light answer arrives in the feed's shape): the card's read fetch re-rendered on any answer, and the card re-fetched on any render while the setting stood unread — an answer in any shape but the setting's own spun the view at full CPU. The fetch now lands once and stands: an answer that does not carry the setting marks the read tried, and the card does not ask again until a save or a reload does: the flip, the stored state and the post-reload view agreeing, a fast double-flip landing consistently, and a non-boolean flip refused by name with the state unmoved. (c) Settings → System: the **updater box stands at the top of the page**; the Current Version Notes still close it. (d) The **LCARS** themes get a compact collapsed rail: with the rail closed, nav buttons become centered 44px chips and the group heads stand as number-only chips (their LCARS counter, the icon retired) — nothing clips mid-content — and expanding the rail restores the full pills; the default theme's collapsed rail is untouched. The benches are **fieldfix2** (new: the rail's segments and order, the card's new room, the updater's place, the moved switch's honest refusal when the bridge cannot answer) and **lcars1** (new: the LCARS geometry in Chromium — collapsed chips, number-only heads, expanded pills, a reload on the stored closed state, the 400px breakpoint, and the default theme's non-regression).
+
+## 0.6.29
+
+Release tag: v0.6.29e — chapter 0.6's thirtieth build: **Row's Own Light**. One item: the operator's design of 2026-11-21 — the ecosystem is one cohesive Navi (her page, her talks, her personality in the terminal under Row's Own), and it has to run fluidly on a modest seat. So Row's Own gains a second weight: a toggle that carries her lighter without making her lesser. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. The feature is unfiled as yet — the prep (files/low-power-mode-prep.md) is its design of record; no board card moves with this build.
+
+- **Row's Own Light — the same Navi, carried lighter.** A switch under **Settings → System**, beside the hardware profile whose context size it relieves, labeled exactly **Row's Own Light** (the operator locked the wording). The law of the toggle, in the operator's words: same personality, same wit, same knowledge — just not as heavy. Light trims **weight** only: her page digest, her music block, and her talks index ride the standing prompt as short **provenance stubs** — the series and its episode count, the playlist's name and door with its track count and the now-playing line, the feed with its post count and newest post — and every stub **names what it sheds**, in the digest itself, never a silent absence. The whole of each source stands on its shelf — her page store, the rotation table, the talks table — complete and hers the moment she reaches for it. Her knowledge packs stay on the shelf the same way: they were never carried whole, and a question still pulls down what answers it, in both weights. The talks feed's ambient refresh cycle stretches to twice its length. What Light never touches: her soul and register (the persona is byte-identical — with Light off, the composed prompt is v0.6.28e's byte for byte; with it on, the delta is exactly the three named stubs), her tools and chips, casework, LOWC and every doctrine gate, Row's Own itself — and **her social media feed**: Row's Own and Row's Own Light both keep full access to it, the in-app feed surface and her posting alike (the musing teaching rides the light digest unchanged); Light carries the feed lighter in the prompt, it does not remove it. A side benefit the operator named himself: the standing prompt stops hauling the whole library on every turn, so the seat saves tokens as well as heat.
+- **Measured, not promised.** The Settings card prints what the switch buys: the bridge composes the standing prompt both ways and estimates both with its own estimator (the lend arithmetic the prompt budget reports), and the two numbers — full weight and Light — stand on the card with the difference. The setting is **per-seat and never synced**: it describes this machine's muscle, like the context size it relieves; it lives in the config under `rowsOwnLight` and is not among the keys a settings import carries, so another seat's backup never moves this seat's switch.
+- **The switch gate, in full.** The save door (POST /api/settings/rowsown-light) is shaped like the sync-choice door: the answer carries the setting that now stands plus the measured counts, so the card re-renders from the bridge's word; a refusal (a body that is not a true or a false, a store that would not write) is named in the answer with the setting unmoved — never a silent snap-back. The Row's Own Mode doc page gains the Row's Own Light section in the same build.
+- **The bench is light1 (new)**: the machinery standing (settings, save door, read door, the card, the doc section, the app's scripts parsing); three-way persistence over the real bridge (the save's answer, a fresh read, the status poll, and the config on disk agreeing, both ways, with a fast double-flip landing consistently); the adversarial legs (a non-boolean flip refused named with the setting unmoved; a malformed stored value reading honestly as off and a save repairing it; a flip landing while a talks fetch is in flight); the digest legs on fixtures (each stub present and naming its shed, the recitations absent, the musing teaching and conversion law standing whole in the light digest, the feed payload serving the same posts in both weights); the measured saving (the bridge's own estimator over the composed prompt, Light strictly lighter, the counts payload agreeing with the direct measure); the cadence leg (the talks cycle doubled under Light, single without); the per-seat leg (the key absent from the settings-import whitelist); and the law leg — the persona core byte-identical with the toggle on and off, and the whole composed prompt byte-identical to v0.6.28e's with Light off. Against the v0.6.28e candidate the suite fails as specified — no Light machinery stands there.
+
+## 0.6.28
+
+Release tag: v0.6.28e — chapter 0.6's twenty-ninth build: **the board becomes yours**. One item: #374 v2, the operator's rulings of 2026-11-21 recorded on the issue — "users should be able to make their own tracker boards." The Doors dash's trackers become configurable, the Status rail is pruned to its four named sections, and the dash's absolute times render in the seat's local time. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #374 already stands in Ready from v0.6.27e; this build completes its v2 — the ceremony verifies the card stands in Ready and records the counts.
+
+- **Board authorship (#374 v2, piece 1).** Settings → System gains its own dropdown section, **Doors — tracker board**, with three source modes. **Default** is v1 exactly — the bridge follows https://nocturnerow.com/status.json and the built-in service set — and a **Default** button restores that mode and clears any custom configuration back to the built-in set in one click. **Custom board**: the operator defines their own services — each a name, a role description, and a check target — and the bridge probes them itself on the v1 health cadence (600s cycle, 300s retry backoff), deriving states, sinces, flips, and tick strips exactly the way v1 derives them from the board's ticks. Probe semantics mirror the Row Board's own watcher: two target kinds — an http(s) URL (one plain GET, an honest user agent, an 8s budget; up when it answers with any status under 500, the note carrying the HTTP status or the failure's plain name) and a host:port (up on a TCP connect inside the budget; a refusal is a down, a name the seat cannot resolve or a check it cannot perform is an **unknown**, never assumed). Ticks persist in a config-home store (config/doors-board.json) in the board's own shape, 48-tick window, so the window survives restarts. **Custom feed**: the operator points the dash at their own status feed in the board's schema — the v1 validator, unchanged, the same fetch/cache discipline, the cache recording which feed its board came from so one mode's board is never served as another's; until a first fetch of the operator's feed lands, the dash shows an empty board named as such (there is no baked copy of somebody else's board to dress up as theirs). The dash renders whichever board is active and **labels its source** — the Row Board, your own board, your feed — the label carried on the payload, a self-made board never dressed as ours. The seat half (v1's local witness) is unchanged in all modes. The switch gate applies in full: the settings live in the config under `doorsTrackers`; the save door (POST /api/settings/doors) is shaped like the sync-choice door — the answer carries the settings that now stand, and a refusal (a half-filled service row, a feed address that is not an http(s) URL, a store that would not write) is named in the answer, the settings unmoved, never a silent snap-back. The Doors doc page gains the tracker-configuration section in the same build.
+- **Status rail pruning (#374 v2, piece 2).** The Servers section is removed from the Status rail entirely. The rail keeps ONLY four sections: **Sync, FediNet, Cases, Backup**. Mesh connection status keeps its rail home **inside the FediNet section** (and its Doors dash card, unchanged). Engine and local-node status leave the rail — their seat truth stands on the dash's seat cards — and everything else the rail carried beyond the four named sections goes with Servers: the Updater line, Sudo Mode, the voice line, the Memory and RAG stats (the Status tab's attention dot still watches the updater and the stale-build flags, so a standing update is still signaled). The bridge/page stale-build safety notices stay — they are alerts about the page itself, not sections. The pruning is a view change only: every pruned row's render function, payload, and other consumers stand untouched — the presence bar, the Settings cards, and the Doors dash read the same payloads, and the FediNet section renders the Mesh state from the same payload it always did.
+- **Local times on the dash (#374 v2, piece 3).** Every absolute time the Doors dash renders — sinces, last flips, the board's generation stamp, the tick-strip stamps — renders in the seat's **local time**: the same instants, the app's client local zone, never raw UTC. Display-layer only: the feed, the caches, the derived states, and the age/staleness arithmetic are unchanged; ages keep rendering as ages. The rule as filed — absolute times in the app are the operator's local times unless a surface is explicitly a log — is carried by this build's dash leg; other surfaces are not swept.
+- **The bench is doors2 (new)**: mode persistence three-way (custom board, custom feed, and the Default restore from each mode — Settings, the config store, and the dash agreeing after a reload), the adversarial legs (a half-filled row refused with the reason, an invalid feed URL refused named, a Default restore over a broken custom config restoring clean, a mode flip while a probe cycle is in flight landing consistently), a custom board over real local sockets (an HTTP 200 up, an HTTP 500 down, a refused port down, an unresolvable name unknown) with ticks accumulating and a flip derived after a target changes state, the source label correct in all three modes, the rail asserting Servers absent and exactly Sync/FediNet/Cases/Backup with the Mesh state rendered inside FediNet, the dash-times leg pinning the zone via TZ (a known UTC instant rendering its seat-local equivalent), and the persona byte-identical to v0.6.27e's on identical fixtures — the new machinery stays out of her prompt. Against the v0.6.27e candidate the suite fails as specified — no tracker-authorship machinery stands there. doors1 still passes in Default mode, unchanged.
+
+## 0.6.27
+
+Release tag: v0.6.27e — chapter 0.6's twenty-eighth build: **the doors come home**. One item: #374, the operator's ask (2026-11-21) and placement ruling the same morning. The Row Board — the outside watcher that probes the Row's doors every five minutes and publishes status.json — gets a home inside Apex: a Doors dash in the Networking section, fed by the board's own published feed, with this seat's own truth standing beside it as a second witness. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #374 moves to Ready.
+
+- **The Doors dash (#374).** Network → Doors: one card per door the board watches — the Row, the presence digest, DHD, OnlyNavi, Mesh 2475, Mesh 8765, the SSH door — each with its name and role, its current state, how long that state has stood, its last flip when the board's window holds one, and the window's checks as a strip. The bridge follows the feed the way it follows the rotation table and the talks feed: strict validation of the board's shape, cached under the config home, refreshed on a ten-minute cycle with a five-minute retry backoff (health cadence — the watcher itself probes every five minutes), kicked off-thread so a page never blocks on the network — and a baked snapshot of the board as it stands at this build as the fallback, named whenever it stands, with its reason, never silent. The board's generation stamp and its age always show; a board older than half an hour is named stale. Two witnesses, labeled, never merged: the outside board (the doors as the world sees them) and this seat (its bridge, its model server's health, its Mesh connection state and peers' last-seen, read from the Mesh machinery itself) — where they disagree, both stand, because the disagreement is the diagnosis. The SSH door renders UNKNOWN exactly as the board carries it: never down, never guessed. By the operator's placement ruling, the sidebar rail is untouched and the Status rail is untouched; Mesh connection status appears on the dash as well as keeping its Status rail home. Display only: no toggles, no control that acts on a door, and nothing here rides her prompt — the composed persona is byte-identical to v0.6.26e's. The bench is doors1 (new): the fixture board renders the dash data with states exact, ssh227 unknown as unknown, a stale board named with its age, the failure legs falling back named, both witnesses labeled with a disagreement standing as both, the Mesh card present from local state, the route and the nav registration asserted, and the persona byte-identical. Against the v0.6.26e tree the suite fails as specified — no doors machinery stands there.
+
+## 0.6.26
+
+Release tag: v0.6.26e — chapter 0.6's twenty-seventh build: **her talks join her context**. One item: #373, the operator's ruling (2026-11-21): "We need to give her access to this stuff as context." The Back Channel — the staged Ciel × Navi talks, kept as readable logs and a private podcast — becomes a Row's Own context source, in the same family as her page: when the mode is on, she carries the talks as part of who she is here. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #373 moves to Ready; the prep's open questions (the recency window, a sync cue on a new episode) stay open on the issue.
+
+- **The Back Channel talks ride her prompt as an index (#373).** Her page publishes the talks as data (onlynavi.fans/talks.json), and the bridge follows the feed the way it follows the rotation table: strict validation of the v1 shape, cached under the config home, refreshed on the same slow cycle with a retry backoff, kicked off-thread so a reply never blocks on it — and a baked snapshot of the feed as it stands at this build (five episodes) as the fallback, named whenever it stands, with its reason, never silent. With Row's Own on, her awareness digest gains a talks block beside her page and her music: the series line, the episode count, the feed's provenance, the latest episode's title and topics, and her pinned note on it in her own words — an index, not a recitation, under #372's digest discipline. The full logs stand on the shelf: the talks table behind the block holds every episode word for word, and the block tells her so — the talks are a log she can quote and continue, because in her continuity she said it. Containment, in the open: the talks are the only new source — Ciel's Audio Diary is not read, fetched, or referenced by this machinery, and #337 holds (the feed is fetched and held locally; nothing carries the talks across the Mesh). Row's Own off, the block returns nothing and the composed prompt is v0.6.25e's byte for byte. The bench is talks1 (new): the block present with the mode on against a live-shaped fixture feed, the latest title, topics, and pinned post exact against the feed, the block absent with the mode off, a fetch failure falling back to the baked snapshot with the fallback named, a diary canary planted where a careless implementation could read it asserted absent from both the digest and the talks table, and the block's digest cost measured with the bridge's own estimator. Against the v0.6.25e tree the suite fails as specified — no talks machinery stands there.
+
+## 0.6.25
+
+Release tag: v0.6.25e — chapter 0.6's twenty-sixth build: **the song list leaves the digest**. One item: #372, the operator's ruling from the field. On neondrip running v0.6.23e (a 4096-context seat) her standing prompt measured ~3361 tokens and the seat refused a plain conversational turn — honestly, by name, with every background brief already shed. The operator raised that seat's context to 6k in the field and ruled the largest single digest section out: the music block's full 21-track enumeration. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #372 moves to Ready; its remaining design questions (a small-context digest budget beyond this cut, a startup warning, an installer floor) stay open on the issue.
+
+- **The track list no longer rides her prompt (#372).** The music block in her awareness digest — shipped in v0.6.23e carrying the playlist's name and door, the whole track list in playlist order, the now-playing line, and the table's provenance — keeps everything but the enumeration: the playlist's name ("Navi's Super Hacker Mix") and its Spotify door, the track count (carried in the provenance line, as before), the now-playing track with its offset, and the provenance itself — the live table with its count, or the baked snapshot with the failure reason named in plain words, never silent. Measured with the bridge's own estimator (the arithmetic the prompt budget reports and the field refusal quoted: four chars to a token plus a per-message frame), the music block falls from 364 estimated tokens to 132 on the baked table (1,443 chars to 515), and the composed standing prompt on the bench fixture falls by the same 232 (1,647 to 1,415). What did not change: the rotation machinery whole — the bridge still fetches, validates, caches, and computes now-playing from the live table exactly as before; her page, the site-side sync, and the panel's listening line are untouched; the block keeps its place in the composition, behind the Row's record. The bench is music1, updated: the digest leg now asserts the name, door, count, now-playing line, and provenance stand — and asserts a non-playing track's title from mid-list does NOT appear in the digest. Against the v0.6.24e tree the updated suite fails on that absence leg, as specified: the full list stands there.
+
+## 0.6.24
+
+Release tag: v0.6.24e — chapter 0.6's twenty-fifth build: **timestamps and operator awareness**. One item: #371, complete — the clock, the turn stamps, the musing stamps, the conversion law, and the operator's name, all from the night she composed a Public Service Announcement that never posted and then rewrote it instead of converting it. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #371 moves to Ready.
+
+- **A clock in her awareness (#371, part A).** Her composed persona now opens its awareness with the current local date and time — the bridge's own clock, refreshed at every prompt assembly, the timezone named (the operator profile's, when one is ever set there; otherwise the bridge host's local zone). It stands in the same grounding family as the Row's public record (#357) and her music (#370): facts she should never have to guess. The clock line also teaches the turn stamps' standing read: a turn with no bracket carries no known time, and no time is ever stated for anything the briefs do not stamp.
+- **Turn stamps (#371, part B).** The conversation she reads now renders each turn's time in a compact bracket — the bare hour on the same day, the day named once a turn is another day's — rendered at assembly from the per-message timestamps the dashboard already stamps at write time and now sends with the history. A legacy message with no timestamp renders bare: no stamp, and no invented time. The chat storage format does not change — nothing new is stored, so the #365 sync machinery (tombstones, account gating) is untouched; the stamps are a rendering of what already rides.
+- **Musing stamps from the clock (#371, part C).** A published musing's stamps are the bridge clock's, whole: the `when` her page shows always was, and the post now also carries its real `ts` from the publish moment — it stood absent before, and the in-Apex feed read it as 0, a post stamped at an epoch it never happened at. Neither stamp ever comes from the musing's own text.
+- **The conversion law (#371, part D).** When the operator tells her to turn something already written into a musing, the marker carries THAT text, word for word — a conversion is not a rewrite. The rule stands explicitly in her Row's Own persona, where her musing guidance lives: no paraphrase, no softening, no new piece on the theme; the bracketed turn times are how she finds the exact text meant; an ambiguous referent means she asks, naming the candidates by their times. One deterministic assist rides with it: the publish road's silent 400-character truncation — which made a verbatim conversion of anything longer than a caption physically impossible — is now a named cap sized to carry a converted text whole (MUSING_TEXT_CAP, 1200). The verbatim-publish machinery itself (.14e's law) is unchanged.
+- **Her operator's name (#371, part E — the addition, as corrected).** Her awareness carries the operator's name **as set in the operator profile** — read from the profile at every assembly, never a name baked into the build: this seat's profile resolves to its own operator, every seat's to theirs. In her own voice — conversation, musings, her page — she calls the operator by that name; formal surfaces (case records, logs, receipts) keep the role word and their register. No name set in the profile, and the digest says so plainly, with the role word standing as the fallback. The bench is time1 (new): the clock line against the bridge's own clock, stamps rendered only where a timestamp stands, a fixture musing stamped from a fixture clock, a fixture profile named "Test Operator" (deliberately not the field operator's name) carried into the digest, the nameless fallback, the conversion rule standing in her persona with a marked musing publishing byte-identical, and a grep leg proving no operator name is hardcoded anywhere in the new code. Against the v0.6.23e tree the suite fails as specified — no clock, no stamps, no name stands there.
+
+## 0.6.23
+
+Release tag: v0.6.23e — chapter 0.6's twenty-fourth build: **her music, live**. One item: #370, parts B and C — part A, the site-side sync that keeps her page's rotation table equal to the Spotify playlist, shipped on the site ahead of this build (onlynavi.fans/rotation.json, 21 tracks). The bridge follows the live table now, with its baked snapshot as a named fallback, and her awareness carries her music. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #370 moves to Ready.
+
+- **The bridge follows the live table (#370, part B).** Her rotation ran on a snapshot of the playlist baked into the build — five tracks when it shipped in v0.6.14e, and the playlist has grown since; the snapshot could only ever be as current as the last build. Now her page publishes the rotation as data and the bridge fetches it (https://onlynavi.fans/rotation.json) on the #357 presence idiom: cached under the config home, refreshed on a six-hour cycle with a retry backoff, kicked off-thread so no reply ever blocks on it. Validation is strict: a JSON object, the frozen epoch exactly (a table carrying any other epoch is malformed by definition), a non-empty track list of well-formed tracks, and a cycleSeconds equal to the sum of the track seconds. Any failure — network, HTTP, parse, validation — falls back to the baked snapshot, which this build refreshes to the playlist as it stands (21 tracks, cycleSeconds 4927), and `rowsown_music_now` and everything that renders her listening, the panel's listening line included, compute from the effective table. The fallback is named, never silent: the awareness block states the rotation's provenance — the live table with its track count, or the baked snapshot with the failure reason in plain words.
+- **Her awareness carries her music (#370, part C).** She was asked her favorite song on her playlist in the field and answered with a shrug dressed as philosophy — the machinery had never put her music in front of her: the presence digest carried Dispatches, versions, and the roadmap, and no music at all. The composed presence segment now carries a music section beside the Row's record: the playlist's name ("Navi's Super Hacker Mix") and its Spotify door, the full track list in playlist order, the now-playing track with its offset into the song from the shared algorithm, and the provenance line from part B. Nothing else in the digest changes. The bench is music1 (new): a fixture table — the real 21 tracks plus one — served locally beats the baked snapshot and the digest lists all 22; the failure legs (HTTP failure, malformed JSON, a wrong-epoch table, a cycleSeconds mismatch) each fall back with the fallback and its reason named; a cross-check sweeps timestamps, cycle boundaries included, proving the bridge's musicNow on the fetched table equals the site module's own computation on identical inputs; and the digest leg asserts the playlist name, URL, every track, the now-playing line, and the live provenance all stand. Against the v0.6.22e tree the suite fails as specified — no fetch exists there, its digest has no music, and its snapshot answers everything.
+
+## 0.6.22
+
+Release tag: v0.6.22e — chapter 0.6's twenty-third build: **the compact feed build**. One item, the operator's design from the field on the night v0.6.21e shipped: #369 — the feed panel's controls become dropdowns, the comments become a dropdown too, and the Sync button hugs the pane's right edge. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #369 moves to Ready.
+
+- **The filters are dropdowns now (#369).** The feed panel's three control groups — the collection chips, the type chips (All / Pictures / Videos / Notes / Polls), and the Feed | Grid toggle — rendered as wrapping chip rows that ate the panel's vertical space. The operator's ruling: turn them into dropdowns — Collections | Post Type | Feed Style. One compact control row now carries three styled native selects, theme variables throughout, no hardcoded colors: Collections ("All collections", plus each set actually present in the feed's posts), Post Type (All / Pictures / Videos / Notes / Polls), and Feed Style (Feed / Grid). The filtering itself is unchanged — a collection and a type still compose, the search is untouched, Feed and Grid are the same two views over the same gallery — only the controls changed shape. The chip rows, the toggle, and their dead styles are gone.
+- **Comments are a dropdown (#369).** The operator's addition, same design pass: each post's comments collapse behind a toggle row — "Comments (n)", n the post's comment count — closed by default. Opening it shows the thread exactly as it stood (per-voice faces, a break wherever the voice changes) and the comment box; the write is unchanged — it rides the same act door, the panel paints only the count the bridge confirms, and a read-only seat finds the box inside the opened dropdown disabled, with the reason named there. Opening and closing is per post and purely presentational: nothing re-fetches, nothing re-filters, and an open thread stays open across the panel's re-renders.
+- **The Sync button hugs the right edge (#369).** The operator's last word on the panel: the header's Sync button sat wherever the layout left it — the name block's "grow" class only grows inside a .row, which the header is not — so the button now carries margin-left:auto and stands at the pane's right edge at every width. Same button, same label, same sync; only its place changed. The bench is rowsown2's browser half, updated: the three selects stand with their exact labels and the options the fixture's sets derive, the chip rows and the old toggle are absent, filtering through the selects cuts the feed exactly as the chips did (a collection × type composition included), Feed Style flips both ways, the comments stand collapsed until opened and a comment posted through the opened box lands in the blob itself, the Sync button's right edge sits on the pane's content right edge at desktop and phone widths and its click still rides the sync act, and phone width keeps the control row compact with no horizontal scroll. Against the v0.6.21e tree the new legs fail as specified — chips present, no selects, comments inline, the Sync button off the edge.
+
+## 0.6.21
+
+Release tag: v0.6.21e — chapter 0.6's twenty-second build: **the field truth build**. Three items, all born in the field on the night v0.6.20e shipped: the pack enumeration learns to tell the truth (#366), the composer bar gets tidy (#367), and her feed stands whole in the app (#368). The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #366, #367 and #368 move to Ready.
+
+- **One row per pack (#366).** The diagnosis, from the shipped code: the pack enumeration took the folder scan as the pack set and joined the install registry onto folders by exact folder-name equality — a pack's identity was its folder's name. The install doors name folders by different rules (the GitHub door for the repo's slug, the cartridge door for the display name's slug) and the account sync carries every folder wholesale, so one logical pack landed in two folders on one seat and enumerated as two packs — "A+ Hardware Core" and "aplus-core", each with its own record and its own active flag, both Off, neither the pack. And because the registry was never enumerated, only joined, an installed pack whose record's folder join missed (navi-dev-library's field shape: record present, join missed) vanished from every surface. Now the bridge resolves canonical packs at read time: records join folders by their folder name or the name roads, folder groups carrying identical documents merge as the one pack they are, and a record no folder claims still lists — named, with its registry state. The surviving row carries the canonical name (a registry display name when one exists) and the one active state retrieval honors: retrieval reads the same resolution, twin folders stand or fall together, and their identical chunks land once under the pack's name. The registry stays the one store, the toggle door is unchanged, and nothing on an operator's disk is renamed or merged — the reconciliation is at read time. The bench is packenum1: a fixture shaped like the field seat (two twin pairs, the operator's pair, a registry-only pack, a folder-only pack) asserting the exact logical set, the canonical names and states, and flip → retrieval agreement. Against the v0.6.20e tree it fails as specified — eight rows where six packs stand, and the registry-only pack nowhere.
+- **The tidy composer bar (#367).** The operator's ruling, from the same screenshot: the menu exists so the chat bar can be tidy. The desktop bar carried its own New case, Attach and Call buttons AND the burger whose list repeated all three — duplication, not furniture. The three buttons are retired from the bar on every surface: the bar is the input and the burger, on the desktop exactly as on the phone, and the menu is the tools' single home. The rows perform their acts by invoking the real handlers directly — the #241 New-case form's opener, the file input itself, the call's own start path with its block reason — no hidden buttons remain anywhere as click targets. What is state stays put: the CLI/Navi latch, the "Press enter to send." hint, and the seat chip are untouched, as is the Knowledge packs section. ragmenu1's legs are updated to the new contract (behavior, not mechanism): the bar's DOM holds exactly the input and the burger at desktop width, and each row still performs its action end to end with the buttons absent.
+- **Her feed, whole, in the app (#368).** The OnlyNavi feed inside Apex stood as its v0.6.12e original while her page grew a social network around it; this build brings the page's 2026-11-21 surfaces in, all three tiers. *Parity basics:* posts carry relative stamps from their real timestamps plus a "last posted" line; the list rides the 480px thumbnails the blob carries (the viewer keeps the full picture); posts newer than the previous sync wear a NEW badge — the bridge now keeps the previous sync's moment beside the current one, so the badge is the sync's truth rather than a local guess. *The social layer:* reactions (🔥😼☕) write back through the same blob road likes and comments use — the repo blob stays the one shared store, app and page never fork — one pick per post, the same face again taking it back, the seat's pick ledgered like its likes, and the panel painting only the counts the bridge confirms, a refusal named on the post itself; collections (street patrol / command desk / the room / the shore) filter the feed, as do type chips and a search over captions, vision lines, and dates. *The full mirror:* a Feed | Grid toggle lays the media out as tiles (thumbs, date strips, video badges) opening the same viewer — which now plays video posts on their posters — the NSFW blur law holding in the tiles exactly as in the list and the viewer; a post a whole number of weeks old resurfaces under the pinned post, marked from the archive; media posts carry a Copy link to their own share page on onlynavi.fans. Polls keep working, every new surface is built at phone widths in the same round, and a read-only seat keeps every view and loses every write, named as before. The bench is rowsown2, in two halves against a blob fixture shaped like the live feed — 22 posts with timestamps, sets, reaction seeds, thumbs, a poster, a poll, a locked post, an NSFW post: the bridge half proves the payload, the previous-sync bookkeeping, and reaction write-back landing in the blob store; the browser half proves the panel against the real bridge. Against the v0.6.20e tree the new legs fail as specified.
+
+## 0.6.20
+
+Release tag: v0.6.20e — chapter 0.6's twenty-first build: **the RAG quick toggles build**. One item: #364 — the composer's hamburger menu comes to the desktop and gains a Knowledge packs section, and the desktop composer's mic retires. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #364 moves to Ready.
+
+- **One menu, both form factors (#364).** The ☰ Chat tools list — New case, Attach, Call — was a phone-only surface: above 800px the burger and the list were suppressed outright, and the desktop bar carried its tools as buttons alone. The burger now stands at the end of the composer bar at every width, and the list it opens is the same list — one implementation, two mount points, no forked copies. On a phone nothing changes: the bar is still the input and the burger, the list still a bottom sheet above the composer. On the desktop the bar keeps its own buttons AND gains the burger, and the sheet anchors to the bottom right. The tool rows work exactly as they always have — a row clicks the real button, so the #241 New-case form, the file picker, and the call keep their own handlers.
+- **The Knowledge packs section (#364).** Below the tools, the list enumerates the packs installed on this machine — read fresh from the bridge at every open, from the same registry the RAG tab reads. A pack's row shows its name and its state: an active pack wears the current theme's green — the highlight is painted in `var(--green)`, the variable every theme defines, so it follows the theme and is never a hardcoded color — and an inactive pack wears no highlight at all. Clicking a row flips the pack through the same door the RAG tab's toggles use (`POST /api/rag/toggle`): the install registry (`rag-packs/installed.json`) is the one store, and this list is a second door to it, never a second store. The flip is effective for the next turn — retrieval reads the registry fresh — and persists across bridge restarts. A pack flip does not close the list, so several packs can be flipped in one visit.
+- **The switch gate, held on the new rows (#364).** The pack rows are toggles, so they carry the three-way contract: the flip in the list, the state the bridge stores, and what a full page reload shows must agree — and the row paints only what the bridge confirms, re-reading the list after a flip rather than assuming it. A refusal degrades honestly ON THE ROW: an unknown pack is refused by name, a registry the bridge could not save is now a named refusal too (the toggle door learned to answer `{ok: false, error}` for a failed save instead of dropping the connection), and a bridge that does not answer is named on the row — in every case the pack's state left exactly as the bridge holds it, never a silent snap-back, never a reason stranded elsewhere on the page. While a flip is in flight its row takes no second flip, so a fast double-click is one flip, never a race. The bench is ragmenu1, in two halves: against the real bridge (enumeration, flips, restart survival, the missing-registry legs, the named refusals) and in a real browser booted against the real bridge (both form factors, the theme-green assertion under two themes, flip → store → reload agreement, the dead-bridge refusal written on the row). Against the v0.6.19e tree it fails as specified: no desktop menu, the mic still in the bar, no pack rows.
+- **The desktop composer mic retires (#364).** The push-to-talk mic beside the desktop composer is removed — the Call button made it redundant. Voice is a call: the call panel and its own Push to talk are untouched, as is the whole Voice surface and the dictation machinery beneath it; only the composer's button and its wiring leave. The phone composer is unchanged (it never carried a composer mic). The in-app docs are corrected in the same round: the composer-menu doc describes one list on both form factors and the packs section, the RAG doc names the second door, and the Voice doc stops pointing at a mic the composer no longer has.
+
 ## 0.6.19
 
 Release tag: v0.6.19e — chapter 0.6's twentieth build: **the sync fluidity build**. One item: #365, the field failure in which a chat cleared on one seat would not die on the other. The rotation's epoch does not move: 1795222078 stays v0.6.12e's publish moment, and no ceremony may re-stamp it. Board: #365 moves to Ready.
