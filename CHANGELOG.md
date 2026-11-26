@@ -2,6 +2,50 @@
 
 All notable changes to Apex are recorded here. Version language, from 0.1.7 on: a full release carries the bare number (tag v0.1.7); a pre-release is an Edge build and carries the e suffix (tag v0.1.7e). Releases before 0.1.7 were cut as alphas with the a suffix — that history stands as written below.
 
+## 0.8.6
+
+Release tag: v0.8.6e — Chapter 0.8's sixth
+build: the War Room's chairs are bound by
+nodeId. Membership moves out of names — which
+the field proved were never the node's to
+promise — into a host-owned member store the
+mesh sync never writes.
+
+- #484 — War Room chairs keyed by nodeId.
+  The door bound chairs by name: the household
+  road needed an operatorName mesh cards do
+  not carry (every roster record read None,
+  and the operator's own neondrip seat was
+  refused at his own room), and Elric's road
+  searched the paired peers for one NAMED
+  elric — his node answers to its own mesh
+  handle, so his chair stood unbound and no
+  authenticated knock of his ever landed.
+  Stamping names into the roster did not
+  survive sync. Membership is now a
+  host-owned store (config/warroom-members.json)
+  mapping nodeId to chair, seeded once by
+  migrating the bindings the name roads named,
+  and the store's word is final: the door
+  looks the authenticated nodeId up there and
+  nowhere else. Names are display — the
+  store's display name rides the door payload,
+  the room roster and the door's stamps, so a
+  node renaming itself changes nothing, and a
+  stranger wearing a member's NAME is refused:
+  a name is not a credential. The members
+  payload's bound reading for the remote
+  chairs is the store's word too, so a seat
+  shows bound exactly when the door would open
+  — the same fact on the host's record, at the
+  asking seat, and after a reload. A missing
+  store migrates once and is written down; the
+  door's refusal names the store as the road
+  back for a reinstalled seat's new nodeId.
+  Authentication is untouched: the store maps
+  an authenticated node, it authenticates
+  nobody.
+
 ## 0.8.5
 
 Release tag: v0.8.5e — Chapter 0.8's fifth

@@ -412,16 +412,16 @@ VERSION_PATH = os.path.join(ROOT, "VERSION")
 # 1.0.0 placeholder that used to flash in the dashboard's menu
 # footer and then "revert" the freshly baked number. This constant
 # is exactly as old as the code answering, never older.
-SHIPPED_VERSION = "0.8.5"
+SHIPPED_VERSION = "0.8.6"
 SHIPPED_VERSION_STATUS = "edge"
 
 # This build's stamp — the dashboard baked into the same package
 # carries the identical value and compares it against /api/status.
-BRIDGE_BUILD = "2026-11-25.89"
+BRIDGE_BUILD = "2026-11-26.90"
 # Edge build sequence (build .86): this package is its Edge
 # version's publication number SHIPPED_BUILD_SEQ — 0.3.0e
 # Build 3. The Updater's third comparison tier reads it.
-SHIPPED_BUILD_SEQ = 89
+SHIPPED_BUILD_SEQ = 90
 # The one port this build's bridge binds. Deliberately NOT read from
 # navi.config.json: the launchers poll this port, so a config carried
 # across from an older package build (which recorded the old port)
@@ -15616,6 +15616,128 @@ WARROOM_ELRIC_PRESENT_S = 3600
 WARROOM_SPARTAN_PRESENT_S = 3600
 WARROOM_CAP = 500
 
+WARROOM_MEMBERS_PATH = os.path.join(ROOT, "config",
+                                    "warroom-members.json")
+
+
+def _warroom_members_migrate(cfg):
+    """The one-time seed for the member store (v0.8.6e,
+    #484): today's bindings, carried over from the roads
+    that used to decide them — the paired borrow peers
+    and the federation roster, read for the node ids
+    they name Elric's and Spartan's, and the roster
+    records that name this node's operator, whose other
+    nodes are his household. Runs only when the store
+    file does not stand; what it writes is the store's
+    first word, and the store's word is final from then
+    on."""
+    members = {}
+
+    def bind(node_id, author, name):
+        if node_id and str(node_id) not in members:
+            members[str(node_id)] = {"author": author,
+                                     "name": name}
+
+    for nid in warroom_elric_node_ids(cfg):
+        bind(nid, "elric", "Elric")
+    for nid in warroom_spartan_node_ids(cfg):
+        bind(nid, "spartan", "Spartan")
+    try:
+        own = mesh_settings(cfg)["nodeId"]
+    except Exception:
+        own = ""
+    names = set()
+    for raw in (str((cfg or {}).get("operator_name") or ""),):
+        if raw.strip():
+            names.add(raw.strip().lower())
+    try:
+        names.add(accounts_cfg(cfg)["operator"]["displayName"]
+                  .strip().lower())
+    except Exception:
+        pass
+    try:
+        for fed in federation_settings(cfg):
+            for m in _fed_roster_members(fed):
+                if isinstance(m, dict) and own and \
+                        str(m.get("nodeId") or "") == own:
+                    op = str(m.get("operatorName") or "").strip().lower()
+                    if op:
+                        names.add(op)
+    except Exception:
+        pass
+    names.discard("")
+    if names:
+        try:
+            disp = accounts_cfg(cfg)["operator"]["displayName"]
+        except Exception:
+            disp = "Alex"
+        try:
+            for fed in federation_settings(cfg):
+                for m in _fed_roster_members(fed):
+                    if not isinstance(m, dict):
+                        continue
+                    nid = str(m.get("nodeId") or "")
+                    if nid and nid != str(own or "") and \
+                            str(m.get("operatorName") or "").strip().lower() in names:
+                        bind(nid, "alex", disp)
+        except Exception:
+            pass
+    return members
+
+
+def warroom_members_store(cfg):
+    """The War Room's member store (v0.8.6e, #484): a
+    HOST-OWNED binding of nodeId -> {author, name},
+    standing in config/warroom-members.json beside the
+    room's own store. The mesh sync never writes this
+    file — it is not config, and it does not ride any
+    roster — so a binding made here stands until the
+    operator edits it here. Membership is keyed by
+    nodeId because a nodeId is the one thing about a
+    node that is its own: names are display, and a node
+    renaming itself (Elric's node answers to its own
+    mesh handle, never to his name) changes nothing at
+    this door. A missing or unreadable file migrates
+    once from the roads that used to decide membership
+    and is written down, so the room is never silently
+    empty; a file that stands is read as it stands."""
+    try:
+        with open(WARROOM_MEMBERS_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("members"), dict):
+            out = {}
+            for nid, rec in d["members"].items():
+                if isinstance(rec, dict) and rec.get("author"):
+                    out[str(nid)] = {
+                        "author": str(rec["author"]),
+                        "name": str(rec.get("name") or rec["author"])}
+            return out
+    except Exception:
+        pass
+    members = _warroom_members_migrate(cfg)
+    try:
+        tmp = WARROOM_MEMBERS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"members": members}, f,
+                      ensure_ascii=False, indent=1)
+        os.replace(tmp, WARROOM_MEMBERS_PATH)
+    except Exception:
+        pass
+    return members
+
+
+def warroom_member_for(cfg, node_id):
+    """The store's word on one node: its (author, display
+    name) binding, or None. The display name is the
+    store's — the name the room knows the chair by,
+    whatever the node calls itself today."""
+    if not node_id:
+        return None
+    rec = warroom_members_store(cfg).get(str(node_id))
+    if not rec:
+        return None
+    return (rec["author"], rec["name"])
+
 
 def warroom_settings(cfg):
     w = (cfg or {}).get("warroom") or {}
@@ -15770,66 +15892,28 @@ def warroom_home_peer(cfg):
 def warroom_door_member(cfg, asker):
     """Who an authenticated node at the mesh door IS in
     this room: an (author, display name) pair, or None.
-    Elric's nodes are Elric — his chair, as always;
-    Spartan's nodes are Spartan — his chair, built the
-    same way (v0.8.1e, #462). A node
-    of the operator's own household — a roster member
-    whose record names the same operator this node
-    serves — is the operator at another of his chairs:
-    his words land as his, in the one room, whoever's
-    machine carried them (v0.7.13e, #445). Everyone else
-    is not a member of this room, however well
-    authenticated — the Mesh is wide; the room is five
-    chairs."""
+    Membership is a HOST-OWNED BINDING keyed by nodeId
+    (v0.8.6e, #484 — the member store,
+    warroom_members_store): the store's word is the
+    first and only word for the chairs it names. It
+    replaced the name roads, which the field proved
+    dead: mesh cards carry no operatorName, so the
+    household road matched nothing and the operator's
+    own second seat was refused at his own room; the
+    paired-peer road searched for a peer NAMED elric,
+    and Elric's node answers to its own mesh handle —
+    his chair stood unbound while the room waited for a
+    name that was never coming. A name is not a
+    credential: an authenticated node the store does
+    not name is not a member of this room, however it
+    names itself. The Mesh is wide; the room is five
+    chairs. (Authentication itself is unchanged and
+    stands upstream, in _fed_roster_auth: the store
+    maps an authenticated nodeId to a chair — it
+    authenticates nobody.)"""
     if not asker:
         return None
-    if asker in warroom_elric_node_ids(cfg):
-        return ("elric", "Elric")
-    if asker in warroom_spartan_node_ids(cfg):
-        return ("spartan", "Spartan")
-    own = ""
-    try:
-        own = mesh_settings(cfg)["nodeId"]
-    except Exception:
-        pass
-    if own and asker == own:
-        return None
-    names = set()
-    for raw in (str((cfg or {}).get("operator_name") or ""),
-                ):
-        if raw.strip():
-            names.add(raw.strip().lower())
-    try:
-        names.add(accounts_cfg(cfg)["operator"]["displayName"]
-                  .strip().lower())
-    except Exception:
-        pass
-    try:
-        for fed in federation_settings(cfg):
-            for m in _fed_roster_members(fed):
-                if isinstance(m, dict) and own and \
-                        str(m.get("nodeId") or "") == own:
-                    op = str(m.get("operatorName") or "").strip().lower()
-                    if op:
-                        names.add(op)
-    except Exception:
-        pass
-    names.discard("")
-    if not names:
-        return None
-    try:
-        for fed in federation_settings(cfg):
-            for m in _fed_roster_members(fed):
-                if not isinstance(m, dict):
-                    continue
-                if str(m.get("nodeId") or "") == asker and \
-                        str(m.get("operatorName") or "").strip().lower() \
-                        in names:
-                    return ("alex",
-                            accounts_cfg(cfg)["operator"]["displayName"])
-    except Exception:
-        pass
-    return None
+    return warroom_member_for(cfg, asker)
 
 
 def _warroom_chat_sanitize(raw, fallback_id):
@@ -15948,8 +16032,16 @@ def warroom_members(cfg, store):
     ciel_seen = float(store.get("cielLastSeenAt") or 0)
     elric_seen = float(store.get("elricLastSeenAt") or 0)
     spartan_seen = float(store.get("spartanLastSeenAt") or 0)
-    peer = warroom_elric_peer(cfg)
-    spartan_peer = warroom_spartan_peer(cfg)
+    # v0.8.6e (#484): bound is the member store's word
+    # for both remote chairs — a nodeId bound to the
+    # author — never a paired node's name, so the
+    # seat's reading and the door's answer are the
+    # same fact.
+    store_members = warroom_members_store(cfg)
+    elric_bound = any(r.get("author") == "elric"
+                      for r in store_members.values())
+    spartan_bound = any(r.get("author") == "spartan"
+                        for r in store_members.values())
     return [
         {"id": "alex", "name": accts["operator"]["displayName"],
          "seat": accts["operator"]["seatName"], "role": "Operator seat",
@@ -15973,26 +16065,27 @@ def warroom_members(cfg, store):
          "presenceNote": "Always listening; speaks only when addressed, once per address, never twice in a row."},
         {"id": "elric", "name": "Elric", "seat": "His own node",
          "role": "Member — remote",
-         "bound": peer is not None,
+         "bound": elric_bound,
          "present": bool(elric_seen and (now - elric_seen) < WARROOM_ELRIC_PRESENT_S),
          "presenceNote": ("Reached the room through the mesh door recently."
                           if elric_seen and (now - elric_seen) < WARROOM_ELRIC_PRESENT_S
                           else ("Bound to this room through the mesh door; not heard from lately."
-                                if peer is not None
-                                else "No paired node names him yet — his chair stands ready, unbound."))},
+                                if elric_bound
+                                else "No nodeId stands bound to his chair in the member store yet — his chair stands ready, unbound."))},
         {"id": "spartan", "name": "Spartan", "seat": "His own node",
          "role": "Member — remote",
          # v0.8.1e (#462): the fifth chair, bespoke in
-         # Elric's shape — bound judged from a paired
-         # node naming him or his (SKYNET2-Apex),
-         # present judged from his stamp, never painted.
-         "bound": spartan_peer is not None,
+         # Elric's shape. v0.8.6e (#484): bound is the
+         # member store's word for both remote chairs,
+         # never a paired node's name; present judged
+         # from his stamp, never painted.
+         "bound": spartan_bound,
          "present": bool(spartan_seen and (now - spartan_seen) < WARROOM_SPARTAN_PRESENT_S),
          "presenceNote": ("Reached the room through the mesh door recently."
                           if spartan_seen and (now - spartan_seen) < WARROOM_SPARTAN_PRESENT_S
                           else ("Bound to this room through the mesh door; not heard from lately."
-                                if spartan_peer is not None
-                                else "No paired node names him yet — his chair stands ready, unbound."))},
+                                if spartan_bound
+                                else "No nodeId stands bound to his chair in the member store yet — his chair stands ready, unbound."))},
     ]
 
 
@@ -16323,7 +16416,9 @@ def mesh_handle_warroom(handler, body):
     authenticated node must be a MEMBER of this room —
     Elric's node, Spartan's node, or a node of the
     operator's own
-    household (warroom_door_member) — or the ask is
+    household (warroom_door_member — v0.8.6e, #484: the
+    host-owned member store decides, keyed by nodeId;
+    names are display only) — or the ask is
     refused by name. Authorship is stamped by the door
     itself from that membership, whatever the body
     claims. Everything the door does happens HERE, on the
@@ -16348,7 +16443,7 @@ def mesh_handle_warroom(handler, body):
     member = warroom_door_member(cfg, asker)
     if member is None:
         return 200, {"ok": False, "reason": "not-a-member",
-                     "error": "the War Room's door opens for its named members only — this node is not a member of this room"}
+                     "error": "the War Room's door opens for its bound members only — this node is not bound in the room's member store (config/warroom-members.json on the host). A reinstalled seat carries a new nodeId: the host operator re-binds it by adding that nodeId to the store."}
     if not warroom_is_home(cfg):
         return 200, {"ok": False, "reason": "room-not-home",
                      "error": "the War Room does not live on this node — it lives on its host, the fedinet's gateway"}
