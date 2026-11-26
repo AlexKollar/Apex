@@ -2954,6 +2954,13 @@ def _dhd_install_argv(piece, family):
 
 
 def _dhd_run_install_command(command, sudo_password=""):
+    if sys.platform == "win32":
+        # No sudo, no geteuid, no apt/dnf/pacman: the automatic
+        # prerequisite install is Linux-only in this build.
+        return 1, ("Automatic prerequisite installs are not "
+                   "available on Windows in this build \u2014 "
+                   "install the named tool manually, then "
+                   "re-check.")
     if os.geteuid() == 0:
         r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300, cwd=shell_cwd())
         return r.returncode, (r.stdout + r.stderr).strip()
@@ -3010,7 +3017,7 @@ def dhd_install_prereqs(pieces=None, sudo_password=""):
                     ok = True
                     output = "Certificate home created and verified writable."
                 except Exception:
-                    if os.geteuid() != 0 or sudo_password:
+                    if getattr(os, "geteuid", lambda: 0)() != 0 or sudo_password:
                         cmd = "install -d -o " + str(os.getuid()) + " -g " + str(os.getgid()) + ' "' + DHD_DIR + '"' 
                         code, text = _dhd_run_install_command(cmd, sudo_password)
                         output = text
@@ -16868,10 +16875,23 @@ def run_shell(command, timeout=20, sudo=False, sudo_password="",
 # The operator's own sudo inside their session prompts in-terminal.
 
 import codecs
-import fcntl
-import pty
 import signal
-import termios
+
+try:
+    import fcntl
+    import pty
+    import termios
+    _HAVE_PTY = True
+except ImportError:
+    # Windows (the windows-installer build): there is no POSIX
+    # PTY, so the interactive terminal pane degrades by name —
+    # shell_session_open refuses with the reason rather than
+    # the bridge dying here at import. On Linux the imports
+    # succeed, _HAVE_PTY is True, and nothing changes.
+    fcntl = None
+    pty = None
+    termios = None
+    _HAVE_PTY = False
 
 SHELL_IDLE_SECONDS = 1800  # 30 minutes without input
 
@@ -17461,6 +17481,10 @@ def _ensure_sweeper():
 
 
 def shell_session_open(chat_id, cols=80, rows=24):
+    if not _HAVE_PTY:
+        raise RuntimeError(
+            "the interactive terminal is not available on "
+            "Windows in this build \u2014 it needs a POSIX PTY")
     key = str(chat_id)
     with _shell_mgr_lock:
         sess = _shell_sessions.get(key)
@@ -22464,6 +22488,21 @@ def _run_update_apply(cfg):
 
 
 def update_apply_payload(cfg=None):
+    if sys.platform == "win32":
+        # Windows v1 (windows-installer build): the pull
+        # machinery (apply-bootstrap / apply-helper /
+        # install.sh) is Linux-only in this build, so an apply
+        # staged here could never run. The update path on
+        # Windows is the newest installer: its stage-and-swap
+        # carries state across, so re-running it IS the
+        # upgrade. Refuse by name rather than pretend.
+        return {"ok": False, "error": "On Windows, Apex "
+                "updates are installed by running the newest "
+                "Apex installer \u2014 the in-app updater is "
+                "Linux-only in this build. The installer stages "
+                "the new build beside the live one and carries "
+                "your state across; nothing is lost by updating "
+                "that way."}
     # Starts the end-to-end apply (see the section comment) and
     # answers at once: progress and outcome live in the update
     # record, which GET /api/update/result serves and the panel
@@ -22500,6 +22539,17 @@ def update_rollback_payload(cfg=None, with_config=False):
     # panel reads like any apply record. Refusals are by name:
     # no point on disk, no act; an apply already working owns
     # the updater until it finishes.
+    if sys.platform == "win32":
+        # Windows v1: the rollback executor is the Linux
+        # apply-helper, so there is no in-app rollback here.
+        # Re-running the previous installer restores the
+        # previous build (stage-and-swap, state carried, in
+        # both directions) \u2014 refuse by name and say that.
+        return {"ok": False, "error": "On Windows, rollback "
+                "is done by re-running the previous Apex "
+                "installer \u2014 the in-app rollback is "
+                "Linux-only in this build. The installer "
+                "carries your state across the swap."}
     point = _rollback_point_info()
     if not point:
         return {"ok": False, "error": "There is no rollback "
@@ -57795,9 +57845,16 @@ class Handler(BaseHTTPRequestHandler):
             # CLI Mode (Build 3): open (or return) the chat's one
             # standing interactive session.
             data = self._body()
-            sess = shell_session_open(str(data.get("chatId") or "main"),
-                                      data.get("cols") or 80,
-                                      data.get("rows") or 24)
+            try:
+                sess = shell_session_open(
+                    str(data.get("chatId") or "main"),
+                    data.get("cols") or 80,
+                    data.get("rows") or 24)
+            except Exception as e:
+                # No PTY on this platform (Windows): the refusal
+                # is answered by name, not dropped.
+                self._send(200, {"ok": False, "error": str(e)})
+                return
             self._send(200, shell_session_state(sess.chat_id, 0))
         elif self.path == "/api/shell/session/input":
             data = self._body()
@@ -59994,6 +60051,18 @@ def probe_port_holder(port):
 
 
 def pid_alive(pid):
+    if sys.platform == "win32":
+        # See _pid_alive: os.kill(pid, 0) terminates on Windows.
+        try:
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(
+                0x1000, False, int(pid))
+            if not handle:
+                return False
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True
